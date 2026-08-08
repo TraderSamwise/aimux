@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadConfig } from "../config.js";
@@ -25,6 +25,29 @@ import { discoverCodexBackendSessionId } from "../backend-session-discovery.js";
 import { shouldMarkFreshRelaunchAllowed } from "../session-fresh-relaunch.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+
+/** Recordings have no size bound, so only the tail is ever read back. */
+const RECORDING_TAIL_BYTES = 64 * 1024;
+
+function readRecordingTail(path: string): string {
+  let fd: number | null = null;
+  try {
+    const size = statSync(path).size;
+    if (size <= RECORDING_TAIL_BYTES) return readFileSync(path, "utf-8");
+    const buffer = Buffer.alloc(RECORDING_TAIL_BYTES);
+    fd = openSync(path, "r");
+    const read = readSync(fd, buffer, 0, RECORDING_TAIL_BYTES, size - RECORDING_TAIL_BYTES);
+    return buffer.subarray(0, read).toString("utf-8");
+  } catch {
+    return "";
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}
 
 type SessionRuntimeHost = any;
 const RESTORE_EXIT_BLOCK_MS = 30_000;
@@ -452,7 +475,8 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       try {
         const logPath = join(dir, "recordings", `${runtime.id}.log`);
         if (existsSync(logPath)) {
-          const raw = readFileSync(logPath, "utf-8");
+          // Recordings are unbounded, and a crash hint only needs the tail.
+          const raw = readRecordingTail(logPath);
           const lines = raw
             .split("\n")
             .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
