@@ -120,6 +120,35 @@ describe("recording cleanup", () => {
     expect(removed).toHaveLength(2);
   });
 
+  it("keeps a recording whose session the project still knows about", () => {
+    // Age cannot distinguish a dead recording from a long-idle live session.
+    makeRecording("alpha", "claude-idle.log", 400);
+    writeFileSync(join(projectsRoot, "alpha", "state.json"), JSON.stringify({ sessions: [{ id: "claude-idle" }] }));
+
+    const result = plan();
+
+    expect(result.remove).toEqual([]);
+    expect(result.keptCount).toBe(1);
+  });
+
+  it("still removes a recording whose session is gone from state", () => {
+    makeRecording("alpha", "claude-gone.log", 400);
+    writeFileSync(join(projectsRoot, "alpha", "state.json"), JSON.stringify({ sessions: [] }));
+
+    expect(plan().remove).toHaveLength(1);
+  });
+
+  it("sweeps recordings kept beside a repo, not just the global layout", () => {
+    const local = join(projectsRoot, "worktree", ".aimux", "recordings");
+    mkdirSync(local, { recursive: true });
+    const path = join(local, "codex-local.log");
+    writeFileSync(path, "x".repeat(256));
+    const seconds = (NOW - 90 * DAY) / 1000;
+    utimesSync(path, seconds, seconds);
+
+    expect(plan({ extraDirs: [local] }).remove.map((entry) => entry.path)).toEqual([path]);
+  });
+
   it("defaults to a conservative retention", () => {
     expect(DEFAULT_RECORDING_RETENTION_DAYS).toBe(30);
   });

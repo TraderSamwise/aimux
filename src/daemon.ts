@@ -1,9 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
-import { resolve as pathResolve } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 import type { Worker } from "node:worker_threads";
-import { ensureProjectPaths, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
+import { ensureProjectPaths, getAimuxDirFor, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestBinary, requestJson } from "./http-client.js";
@@ -165,8 +165,14 @@ import {
   repairTmuxRuntime,
 } from "./tmux/doctor.js";
 import { planInstallCleanup, runInstallCleanup } from "./install-cleanup.js";
-import { DEFAULT_INSTALLS_CONFIG, isPrimaryInstallLane, loadInstallsConfig } from "./install-config.js";
+import {
+  DEFAULT_INSTALLS_CONFIG,
+  type InstallsConfig,
+  isPrimaryInstallLane,
+  loadInstallsConfig,
+} from "./install-config.js";
 import { planRecordingCleanup, runRecordingCleanup } from "./recording-cleanup.js";
+import { loadRecordingsConfig } from "./recording-config.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
@@ -768,7 +774,7 @@ export class AimuxDaemon {
     if (this.installCleanupTimer) clearTimeout(this.installCleanupTimer);
     this.installCleanupTimer = setTimeout(() => {
       this.installCleanupTimer = null;
-      void this.sweepSupersededInstalls();
+      void this.runDiskMaintenance();
     }, delayMs);
     this.installCleanupTimer.unref?.();
   }
@@ -778,7 +784,11 @@ export class AimuxDaemon {
    * lane's daemon sees the same one. Only the default lane sweeps it, which keeps
    * two daemons from removing the same directory underneath each other.
    */
-  private async sweepSupersededInstalls(): Promise<void> {
+  /**
+   * One maintenance tick. The two sweeps are independent: whether installs can be
+   * assessed says nothing about recordings, so neither may skip the other.
+   */
+  private async runDiskMaintenance(): Promise<void> {
     if (this.stopping || this.installCleanupRunning) return;
     this.installCleanupRunning = true;
     // Falls back to the default cadence so a failed config read still reschedules.
@@ -787,7 +797,19 @@ export class AimuxDaemon {
       // Re-read per run so enabling or disabling the sweep needs no daemon restart.
       const config = loadInstallsConfig();
       intervalMs = config.cleanupIntervalMs;
+      // The recordings root follows AIMUX_HOME, so every lane owns its own and
+      // must sweep it. Only the shared install root needs the lane gate.
+      await this.sweepStaleRecordings();
       if (!config.cleanupEnabled || !isPrimaryInstallLane()) return;
+      await this.sweepSupersededInstalls(config);
+    } finally {
+      this.installCleanupRunning = false;
+      this.scheduleInstallCleanup(intervalMs);
+    }
+  }
+
+  private async sweepSupersededInstalls(config: InstallsConfig): Promise<void> {
+    try {
       const plan = planInstallCleanup({
         retentionDays: config.retentionDays,
         keepRecent: config.keepRecent,
@@ -800,10 +822,8 @@ export class AimuxDaemon {
       }
       if (plan.remove.length === 0) {
         log.debug("install cleanup found nothing to remove", "daemon", { root: plan.root, kept: plan.keep.length });
-        await this.sweepStaleRecordings();
         return;
       }
-      await this.sweepStaleRecordings();
       const result = await runInstallCleanup(plan, {}, { dryRun: false, limit: INSTALL_CLEANUP_MAX_PER_SWEEP });
       const removed = result.results.filter((entry) => entry.status === "removed").length;
       log.info("install cleanup removed superseded installs", "daemon", {
@@ -817,9 +837,6 @@ export class AimuxDaemon {
       });
     } catch (error) {
       log.warn("install cleanup failed", "daemon", { error: error instanceof Error ? error.message : String(error) });
-    } finally {
-      this.installCleanupRunning = false;
-      this.scheduleInstallCleanup(intervalMs);
     }
   }
 
@@ -830,7 +847,14 @@ export class AimuxDaemon {
    */
   private async sweepStaleRecordings(): Promise<void> {
     try {
-      const plan = planRecordingCleanup();
+      // Recordings also sit beside each repo, which the global layout never reaches.
+      const extraDirs = this.listProjectsForRoute()
+        .map((project) => (typeof project.path === "string" ? project.path.trim() : ""))
+        .filter(Boolean)
+        .map((projectPath) => join(getAimuxDirFor(projectPath), "recordings"));
+      const config = loadRecordingsConfig();
+      if (!config.cleanupEnabled) return;
+      const plan = planRecordingCleanup({ extraDirs, retentionDays: config.retentionDays });
       if (plan.remove.length === 0) return;
       const result = await runRecordingCleanup(plan, {}, { dryRun: false, limit: RECORDING_CLEANUP_MAX_PER_SWEEP });
       log.info("recording cleanup removed stale recordings", "daemon", {

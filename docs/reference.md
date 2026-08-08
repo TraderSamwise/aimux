@@ -797,6 +797,16 @@ would let anyone who clones a repo open a network listener — see [hosted mode]
 the `installs` block, because one install root serves every project on the machine, so no single
 repo should get a say in how it is swept.
 
+Recordings:
+
+- `cleanupEnabled` — whether the daemon sweeps recordings past retention (default `true`)
+- `retentionDays` — recordings younger than this are always kept (default `30`, accepted range `1`–`3650`)
+
+Graveyarding an agent deletes its recording by session id, so a session that leaves project state
+another way used to strand its file for good. The sweep is keyed to age instead, and covers both
+the global layout and the `.aimux/recordings` directory beside each repo. A recording whose session
+the project still knows about is kept however old it is.
+
 Installs:
 
 - `cleanupEnabled` — whether the daemon sweeps superseded installs on a cadence (default `true`)

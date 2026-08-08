@@ -1,6 +1,6 @@
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getGlobalAimuxDir } from "./paths.js";
 
 /**
@@ -38,6 +38,11 @@ export interface RecordingCleanupResult {
 
 export interface PlanRecordingCleanupOptions {
   projectsRoot?: string;
+  /**
+   * Recordings also live beside the repo in `<project>/.aimux/recordings`, which
+   * the global projects layout does not reach. Pass those directories here.
+   */
+  extraDirs?: string[];
   retentionDays?: number;
   now?: () => number;
 }
@@ -46,29 +51,57 @@ export interface RecordingCleanupOperations {
   removeFile?: (path: string) => void | Promise<void>;
 }
 
-function listRecordingFiles(projectsRoot: string): string[] {
+function listFilesIn(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(dir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function listRecordingFiles(projectsRoot: string, extraDirs: string[]): string[] {
   let projects: string[];
   try {
     projects = readdirSync(projectsRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
   } catch {
-    return [];
+    projects = [];
   }
-  const files: string[] = [];
-  for (const project of projects) {
-    const dir = join(projectsRoot, project, "recordings");
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
+  const dirs = [...projects.map((project) => join(projectsRoot, project, "recordings")), ...extraDirs];
+  return [...new Set(dirs)].flatMap(listFilesIn);
+}
+
+/**
+ * Session ids a project still knows about. Age alone cannot tell a dead recording
+ * from one belonging to a session that has simply been idle, so the registry is
+ * used here as a guard — never as the way recordings are found.
+ */
+function liveSessionIds(recordingsDir: string): Set<string> {
+  const statePath = join(dirname(recordingsDir), "state.json");
+  if (!existsSync(statePath)) return new Set();
+  try {
+    const parsed = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
+    const sessions = parsed?.sessions;
+    if (Array.isArray(sessions)) {
+      return new Set(
+        sessions
+          .map((entry) => (entry && typeof entry === "object" ? (entry as { id?: unknown }).id : entry))
+          .filter((id): id is string => typeof id === "string"),
+      );
     }
-    for (const entry of entries) {
-      if (entry.isFile()) files.push(join(dir, entry.name));
-    }
+    if (sessions && typeof sessions === "object") return new Set(Object.keys(sessions));
+    return new Set();
+  } catch {
+    return new Set();
   }
-  return files;
+}
+
+function recordingSessionId(path: string): string {
+  const base = path.split("/").pop() ?? "";
+  return base.replace(/\.(log|txt)$/, "");
 }
 
 export function planRecordingCleanup(options: PlanRecordingCleanupOptions = {}): RecordingCleanupPlan {
@@ -78,7 +111,18 @@ export function planRecordingCleanup(options: PlanRecordingCleanupOptions = {}):
 
   const remove: RecordingCleanupCandidate[] = [];
   let keptCount = 0;
-  for (const path of listRecordingFiles(projectsRoot)) {
+  const liveByDir = new Map<string, Set<string>>();
+  for (const path of listRecordingFiles(projectsRoot, options.extraDirs ?? [])) {
+    const dir = dirname(path);
+    let live = liveByDir.get(dir);
+    if (!live) {
+      live = liveSessionIds(dir);
+      liveByDir.set(dir, live);
+    }
+    if (live.has(recordingSessionId(path))) {
+      keptCount += 1;
+      continue;
+    }
     let stat;
     try {
       stat = statSync(path);
