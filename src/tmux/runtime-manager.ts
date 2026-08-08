@@ -1004,6 +1004,43 @@ export class TmuxRuntimeManager {
       });
   }
 
+  /**
+   * Command text tmux holds on the server: pane start commands, key bindings, hooks
+   * and options. All of these bake absolute script paths at bind time, so an install
+   * can be referenced here while appearing in no process argv.
+   *
+   * `complete` is false when any read failed. Callers deciding what is unreferenced
+   * must treat incomplete output as "unknown", never as "nothing is referenced".
+   */
+  listPersistedCommandText(): { text: string[]; complete: boolean } {
+    let complete = true;
+    const read = (args: string[]): string => {
+      try {
+        return this.exec(args);
+      } catch {
+        complete = false;
+        return "";
+      }
+    };
+    const sources = [
+      read(["list-panes", "-a", "-F", "#{pane_start_command}"]),
+      read(["list-keys"]),
+      read(["show-options", "-g"]),
+    ];
+    let sessionNames: string[] = [];
+    try {
+      sessionNames = this.listSessionNames();
+    } catch {
+      complete = false;
+    }
+    for (const sessionName of sessionNames) {
+      sources.push(read(["show-options", "-t", sessionName]));
+      sources.push(read(["show-options", "-w", "-t", sessionName]));
+      sources.push(read(["show-hooks", "-t", sessionName]));
+    }
+    return { text: sources.filter(Boolean), complete };
+  }
+
   findClientByTty(clientTty: string): TmuxClientInfo | null {
     const normalized = clientTty.trim();
     if (!normalized) return null;

@@ -48,6 +48,40 @@ function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: str
 }
 
 describe("TmuxRuntimeManager", () => {
+  it("collects pane, binding, hook and option command text tmux holds on the server", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined.startsWith("list-panes")) return "bash -lc dashboard";
+      if (joined === "list-keys") return "bind-key -T root MouseDown1Pane run-shell '/installs/a/scripts/x.sh'";
+      if (joined.startsWith("list-sessions")) return "alpha";
+      if (joined.startsWith("show-hooks")) return "pane-focus-in run-shell '/installs/b/scripts/y.sh'";
+      // Session options carry the statusline path and appear in no process argv.
+      if (joined.startsWith("show-options")) return "status-format[0] \"#(sh '/installs/c/scripts/z.sh')\"";
+      return "";
+    });
+
+    const result = new TmuxRuntimeManager(exec).listPersistedCommandText();
+
+    expect(result.complete).toBe(true);
+    const text = result.text.join("\n");
+    expect(text).toContain("bash -lc dashboard");
+    expect(text).toContain("/installs/a/scripts/x.sh");
+    expect(text).toContain("/installs/b/scripts/y.sh");
+    expect(text).toContain("/installs/c/scripts/z.sh");
+  });
+
+  it("reports incomplete when tmux fails while reading persisted command text", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      if (args.join(" ").startsWith("list-sessions")) return "";
+      throw new Error("no server running");
+    });
+
+    const result = new TmuxRuntimeManager(exec).listPersistedCommandText();
+
+    expect(result.text).toEqual([]);
+    expect(result.complete).toBe(false);
+  });
+
   it("detects tmux availability", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
