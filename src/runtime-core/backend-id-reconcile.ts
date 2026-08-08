@@ -1,6 +1,6 @@
 import { discoverBackendSessionId } from "../backend-session-discovery.js";
 import { getRepoRoot } from "../paths.js";
-import { recordTopologyBackendSessionId } from "./backend-session-ids.js";
+import { discoveryToolKeyForSession, recordTopologyBackendSessionId } from "./backend-session-ids.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./topology-sessions.js";
 
 export interface BackendIdReconcileResult {
@@ -35,20 +35,4 @@ export function reconcileBackendSessionIdForSession(
     sessionId: session.id,
     backendSessionId: discovered,
   }).backendSessionId;
-}
-
-function discoveryToolKeyForSession(session: RuntimeTopologySessionState): string | undefined {
-  return (
-    normalizeDiscoveryToolKey(session.toolConfigKey) ??
-    normalizeDiscoveryToolKey(session.tool) ??
-    normalizeDiscoveryToolKey(session.command)
-  );
-}
-
-function normalizeDiscoveryToolKey(value: string | undefined): "claude" | "codex" | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  const command = trimmed.split(/[\\/]/).pop()?.toLowerCase();
-  if (command === "claude" || command === "codex") return command;
-  return undefined;
 }
