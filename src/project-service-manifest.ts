@@ -2,11 +2,26 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const PROJECT_SERVICE_API_VERSION = 4;
+/**
+ * 5: attachments are bound to a session. `POST /attachments` requires a
+ * `sessionId`, and the read routes honour one — a breaking change for any
+ * client that uploaded without naming a session.
+ */
+export const PROJECT_SERVICE_API_VERSION = 5;
 export const PROJECT_SERVICE_CAPABILITIES = {
   parsedAgentOutput: true,
   attachmentRead: true,
   chatEventStream: true,
+  // The pane projected into messages, server-side. Additive: a client that
+  // does not know the field still gets `parsed` and can map it itself, which
+  // is why this is a capability and not an apiVersion bump — that number
+  // decides whether a running service is killed and respawned.
+  agentTranscriptMessages: true,
+  // Its own flag rather than folded into the one above. The build stamp forces
+  // a stale service to respawn, but only one this process manages — a hosted
+  // peer talks to a service it does not control, and for that client two
+  // fields shipped in one release are still two things to ask about.
+  agentActivityState: true,
 } as const;
 
 export interface ProjectServiceManifest {

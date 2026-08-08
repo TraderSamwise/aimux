@@ -9,6 +9,7 @@ import {
   getReadOnlyProjectPathsFor,
 } from "./paths.js";
 import { quarantineCorruptFile, writeJsonAtomic } from "./atomic-write.js";
+import type { StartupInterstitial } from "./tmux/startup-interstitials.js";
 
 export interface NotificationConfig {
   enabled: boolean;
@@ -152,6 +153,8 @@ export interface ToolConfig {
   turnPatterns?: string[];
   /** Command to use for LLM compaction (default: "claude --print --output-format text") */
   compactCommand?: string;
+  /** Modal prompts this tool shows at startup, and the option that dismisses each. */
+  startupInterstitials?: StartupInterstitial[];
 }
 
 const DEFAULT_CONFIG: AimuxConfig = {
@@ -236,6 +239,17 @@ const DEFAULT_CONFIG: AimuxConfig = {
       developerInstructionsConfigKey: "developer_instructions",
       promptPatterns: ["^> $"],
       turnPatterns: ["^[>❯]\\s*(.+)"],
+      startupInterstitials: [
+        // Plain "Skip", not "Skip until next version": the latter is remembered
+        // for the whole machine, which would silence the update notice in the
+        // user's own terminal too.
+        {
+          id: "codex-update-available",
+          when: ["Update available!", "Press enter to continue"],
+          // The selected option is prefixed "› ", the rest with spaces.
+          choose: "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$",
+        },
+      ],
     },
     aider: {
       command: "aider",
@@ -333,6 +347,11 @@ export function loadConfig(opts: { includeGlobal?: boolean; projectRoot?: string
   if (existsSync(projectPath)) {
     try {
       const projectRaw = JSON.parse(readFileSync(projectPath, "utf-8"));
+      // Hosted mode is global-only (see hosted-config.ts): project config is
+      // committed in repos, so a `hosted` block here is repo-controlled input
+      // that could otherwise open a listener for anyone who clones. Stripped
+      // pre-merge so a legitimate global block still survives load→save.
+      delete projectRaw?.hosted;
       config = deepMerge(config, projectRaw) as AimuxConfig;
     } catch {
       quarantineCorruptFile(projectPath);

@@ -1980,3 +1980,39 @@ describe("TmuxRuntimeManager", () => {
     expect(manager.isInsideTmux({} as NodeJS.ProcessEnv)).toBe(false);
   });
 });
+
+describe("older tmux releases", () => {
+  it("creates a session even when an option the release does not know is refused", () => {
+    // tmux 3.4 (Ubuntu 24.04's version) has no `extended-keys-format`; it
+    // arrived in 3.5. Aborting on it left a session holding a dashboard window
+    // and no agent, reported only as "Failed to create shell agent".
+    const exec = createExecMock();
+    const strict = exec as unknown as TmuxExec;
+    const wrapped = ((args: string[], options?: { cwd?: string }) => {
+      if (args.includes("extended-keys-format")) {
+        throw new Error("invalid option: extended-keys-format");
+      }
+      return (strict as (a: string[], o?: { cwd?: string }) => string)(args, options);
+    }) as TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> };
+    wrapped.calls = exec.calls;
+
+    const manager = new TmuxRuntimeManager(wrapped);
+
+    expect(() => manager.ensureProjectSession("/repo/mobile")).not.toThrow();
+    // It kept going: options set after the unsupported one still ran.
+    expect(exec.calls.some((call) => call.args.includes("focus-events"))).toBe(true);
+  });
+
+  it("still throws when tmux refuses a command for any other reason", () => {
+    const exec = createExecMock();
+    const strict = exec as unknown as (a: string[], o?: { cwd?: string }) => string;
+    const wrapped = ((args: string[], options?: { cwd?: string }) => {
+      if (args.includes("extended-keys-format")) throw new Error("no server running on /tmp/tmux-1000/default");
+      return strict(args, options);
+    }) as TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> };
+    wrapped.calls = exec.calls;
+
+    const manager = new TmuxRuntimeManager(wrapped);
+    expect(() => manager.ensureProjectSession("/repo/mobile")).toThrow(/no server running/);
+  });
+});

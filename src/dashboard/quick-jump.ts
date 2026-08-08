@@ -5,6 +5,9 @@ import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "./sort
 
 export const DASHBOARD_QUICK_JUMP_LIMIT = 9;
 
+/** How long a worktree-level digit waits for a second digit before standing alone. */
+export const DASHBOARD_QUICK_JUMP_TIMEOUT_MS = 2000;
+
 export interface DashboardQuickJumpEntry {
   digit?: number;
   kind: "session" | "service";

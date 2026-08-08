@@ -29,11 +29,14 @@ import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
 import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
 import { discoverCodexBackendSessionId } from "../backend-session-discovery.js";
+import { StartupInterstitialDismisser } from "../tmux/startup-interstitials.js";
 
 type SessionLaunchHost = any;
 
 const CODEX_BACKEND_CAPTURE_ATTEMPTS = 20;
 const CODEX_BACKEND_CAPTURE_INTERVAL_MS = 250;
+const STARTUP_INTERSTITIAL_INTERVAL_MS = 500;
+const STARTUP_INTERSTITIAL_WINDOW_MS = 30_000;
 
 function projectRootFor(host: SessionLaunchHost): string {
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
@@ -177,6 +180,51 @@ function scheduleCodexBackendSessionIdCapture(
     timer.unref?.();
   };
   const timer = setTimeout(capture, CODEX_BACKEND_CAPTURE_INTERVAL_MS);
+  timer.unref?.();
+}
+
+/**
+ * Answer the tool's own startup prompts so a new session lands at its prompt
+ * instead of waiting on a keypress nobody is there to make.
+ *
+ * Keeps watching after a hit: Codex puts its directory-trust prompt behind the
+ * update prompt, so dismissing one reveals the next.
+ */
+function scheduleStartupInterstitialDismissal(
+  host: SessionLaunchHost,
+  sessionId: string,
+  target: any,
+  toolConfigKey: string | undefined,
+): void {
+  const interstitials = toolConfigKey ? (loadConfig().tools[toolConfigKey]?.startupInterstitials ?? []) : [];
+  if (interstitials.length === 0) return;
+  const dismisser = new StartupInterstitialDismisser(interstitials);
+  const deadline = Date.now() + STARTUP_INTERSTITIAL_WINDOW_MS;
+
+  const poll = async () => {
+    if (Date.now() >= deadline || dismisser.done) return;
+    const runtime = host.sessions?.find?.((session: any) => session.id === sessionId);
+    if (!runtime || runtime.exited) return;
+    try {
+      // Visible pane only. Scanning scrollback would match a prompt that was
+      // already answered and type the key into a working agent.
+      const screen = await host.tmuxRuntimeManager.captureTargetAsync(target, { startLine: 0 });
+      const found = dismisser.next(screen);
+      if (found) {
+        host.tmuxRuntimeManager.sendText(target, found.key);
+        debug(`dismissed ${found.interstitial.id} for ${sessionId} with "${found.key}"`, "session");
+      }
+    } catch (error) {
+      debug(
+        `startup interstitial check failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
+    }
+    const next = setTimeout(poll, STARTUP_INTERSTITIAL_INTERVAL_MS);
+    next.unref?.();
+  };
+
+  const timer = setTimeout(poll, STARTUP_INTERSTITIAL_INTERVAL_MS);
   timer.unref?.();
 }
 
@@ -723,6 +771,7 @@ export function createSession(
   host.sessionTmuxTargets.set(sessionId, target);
   const session = tmuxTransport;
   host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime, team);
+  scheduleStartupInterstitialDismissal(host, sessionId, target, toolConfigKey);
 
   session.backendSessionId = backendSessionId;
   if (session instanceof TmuxSessionTransport) {
@@ -927,6 +976,7 @@ export async function createSessionAsync(
   host.sessionTmuxTargets.set(sessionId, target);
   const session = tmuxTransport;
   host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime, team);
+  scheduleStartupInterstitialDismissal(host, sessionId, target, toolConfigKey);
 
   session.backendSessionId = backendSessionId;
   if (session instanceof TmuxSessionTransport) {

@@ -213,6 +213,42 @@ export function getDaemonInfoPath(): string {
   return join(getDaemonDir(), "daemon.json");
 }
 
+/** Hosted-mode state: principals, audit log, event queue. Never project-local. */
+export function getHostedDir(): string {
+  return join(getGlobalAimuxDir(), "hosted");
+}
+
+export function getHostedPrincipalsPath(): string {
+  return join(getHostedDir(), "principals.json");
+}
+
+export function getHostedAuditPath(): string {
+  return join(getHostedDir(), "audit.jsonl");
+}
+
+/**
+ * Prompt bodies, kept apart from the request records.
+ *
+ * Rotation is size-driven, so sharing one file lets anyone who can reach the
+ * listener push every other operator's history out of it with large bodies.
+ */
+export function getHostedAuditPromptsPath(): string {
+  return join(getHostedDir(), "audit-prompts.jsonl");
+}
+
+export function getHostedDevicesPath(): string {
+  return join(getHostedDir(), "devices.json");
+}
+
+export function getHostedLockdownPath(): string {
+  return join(getHostedDir(), "lockdown.json");
+}
+
+/** Events raised by the CLI, delivered by whichever daemon picks them up. */
+export function getHostedOutboxPath(): string {
+  return join(getHostedDir(), "outbox.jsonl");
+}
+
 export function getDaemonStatePath(): string {
   return join(getDaemonDir(), "state.json");
 }

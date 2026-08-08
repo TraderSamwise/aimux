@@ -919,6 +919,29 @@ export class TmuxRuntimeManager {
     this.exec(["switch-client", "-c", clientTty, "-t", target.windowId]);
   }
 
+  /**
+   * Set a session option that older tmux releases may not know about.
+   *
+   * Key-format options are cosmetic, and refusing to create an agent because
+   * one of them is unrecognised makes aimux unusable on a stock LTS box:
+   * `extended-keys-format` arrived in tmux 3.5, and Ubuntu 24.04 ships 3.4. The
+   * failure surfaced as "Failed to create shell agent" with a session that had
+   * a dashboard window and nothing else.
+   *
+   * Only an unrecognised option is tolerated. Any other failure still throws,
+   * because a tmux that is refusing commands for some other reason is not
+   * something to paper over.
+   */
+  private setOptionIfSupported(args: string[]): void {
+    try {
+      this.exec(args);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/invalid option|unknown option/i.test(message)) throw error;
+      debug(`tmux does not support "${args.at(-2)}"; skipping`, "tmux");
+    }
+  }
+
   captureTarget(target: TmuxTarget, options: CaptureTargetOptions = {}): string {
     const startLine = options.startLine ?? "-";
     const args = ["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)];
@@ -1358,8 +1381,14 @@ export class TmuxRuntimeManager {
       "aggressive-resize",
       MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressiveResize,
     ]);
-    this.exec(["set-option", "-t", sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys]);
-    this.exec([
+    this.setOptionIfSupported([
+      "set-option",
+      "-t",
+      sessionName,
+      "extended-keys",
+      MANAGED_TMUX_SESSION_OPTIONS.extendedKeys,
+    ]);
+    this.setOptionIfSupported([
       "set-option",
       "-t",
       sessionName,

@@ -56,7 +56,8 @@
     "release:major": "yarn version --major && git push --follow-tags",
     "prepack": "yarn build:release && yarn build:ui:local",
     "prepare": "husky",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
+    "check:hosted": "yarn build && ./scripts/hosted-check.mjs"
   },
   "lint-staged": {
     "src/**/*.ts": [

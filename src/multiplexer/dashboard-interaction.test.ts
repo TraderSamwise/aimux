@@ -174,57 +174,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
   });
 
-  it("opens the visible session-level digit row without waiting for a second digit", () => {
-    const sessions = [
-      { id: "codex-1", command: "codex", status: "running", worktreePath: "/repo/.aimux/worktrees/demo" },
-      { id: "codex-2", command: "codex", status: "running", worktreePath: "/repo/.aimux/worktrees/demo" },
-    ];
-    const services = [
-      { id: "service-1", command: "shell", args: [], status: "running", worktreePath: "/repo/.aimux/worktrees/demo" },
-    ];
-    const host: any = {
-      mode: "dashboard",
-      dashboardOverlayState: { kind: "none" },
-      dashboardState: {
-        hasWorktrees: () => true,
-        quickJumpDigits: "",
-        level: "sessions",
-        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
-        worktreeEntries: [],
-        sessionIndex: 0,
-      },
-      dashboardSessionsCache: sessions,
-      dashboardServicesCache: services,
-      dashboardWorktreeGroupsCache: [{ name: "demo", path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
-      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
-      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
-      handleDashboardQuickJumpDigit: dashboardInteractionMethods.handleDashboardQuickJumpDigit,
-      updateWorktreeSessions: vi.fn(function (this: any) {
-        this.dashboardState.worktreeEntries = [
-          { kind: "session", id: "codex-1" },
-          { kind: "session", id: "codex-2" },
-          { kind: "service", id: "service-1" },
-        ];
-      }),
-      preferDashboardEntrySelection: vi.fn(),
-      persistDashboardUiState: vi.fn(),
-      activateSelectedDashboardWorktreeEntry: vi.fn(),
-      clearDashboardQuickJump: dashboardInteractionMethods.clearDashboardQuickJump,
-      focusDashboardQuickJumpEntry: dashboardInteractionMethods.focusDashboardQuickJumpEntry,
-    };
-
-    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("3\r"));
-
-    expect(host.dashboardState.sessionIndex).toBe(2);
-    expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith(
-      "service",
-      "service-1",
-      "/repo/.aimux/worktrees/demo",
-    );
-    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
-  });
-
-  it("maps session-level digits to the rendered worktree entry order", () => {
+  it("treats a digit as a worktree jump even while pointing inside a worktree", () => {
     const host: any = {
       mode: "dashboard",
       dashboardOverlayState: { kind: "none" },
@@ -233,14 +183,50 @@ describe("dashboardInteractionMethods", () => {
         quickJumpDigits: "",
         level: "sessions",
         focusedWorktreePath: undefined,
-        worktreeEntries: [
-          { kind: "session", id: "stale-cache-first" },
-          { kind: "session", id: "codex-2" },
-          { kind: "session", id: "codex-3" },
-          { kind: "session", id: "codex-visible" },
-        ],
+        worktreeEntries: [{ kind: "session", id: "main-1" }],
         sessionIndex: 0,
       },
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [
+        { name: "demo", branch: "feat/demo", path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] },
+      ],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: dashboardInteractionMethods.handleDashboardQuickJumpDigit,
+      clearDashboardQuickJump: dashboardInteractionMethods.clearDashboardQuickJump,
+      focusDashboardQuickJumpWorktree: dashboardInteractionMethods.focusDashboardQuickJumpWorktree,
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      activateSelectedDashboardWorktreeEntry: vi.fn(),
+      renderDashboard: vi.fn(),
+    };
+
+    // Digit 2 exceeds the one row of the worktree being pointed into; it must still
+    // reach worktree 2 rather than silently doing nothing.
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("2"));
+
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
+    expect(host.dashboardState.level).toBe("worktrees");
+    expect(host.dashboardState.quickJumpDigits).toBe("2");
+    expect(host.activateSelectedDashboardWorktreeEntry).not.toHaveBeenCalled();
+  });
+
+  it("maps the entry digit to the rendered worktree entry order", () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardOverlayState: { kind: "none" },
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: undefined,
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      // Deliberately ordered differently from the rendered entries below.
       dashboardSessionsCache: [
         { id: "codex-visible", command: "codex", status: "running" },
         { id: "stale-cache-first", command: "codex", status: "running" },
@@ -248,15 +234,26 @@ describe("dashboardInteractionMethods", () => {
       dashboardServicesCache: [],
       dashboardWorktreeGroupsCache: [],
       dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
       handleDashboardQuickJumpDigit: dashboardInteractionMethods.handleDashboardQuickJumpDigit,
-      updateWorktreeSessions: vi.fn(),
+      clearDashboardQuickJump: dashboardInteractionMethods.clearDashboardQuickJump,
+      focusDashboardQuickJumpWorktree: dashboardInteractionMethods.focusDashboardQuickJumpWorktree,
+      updateWorktreeSessions: vi.fn(function (this: any) {
+        this.dashboardState.worktreeEntries = [
+          { kind: "session", id: "stale-cache-first" },
+          { kind: "session", id: "codex-2" },
+          { kind: "session", id: "codex-3" },
+          { kind: "session", id: "codex-visible" },
+        ];
+      }),
       preferDashboardEntrySelection: vi.fn(),
       persistDashboardUiState: vi.fn(),
       activateSelectedDashboardWorktreeEntry: vi.fn(),
-      clearDashboardQuickJump: dashboardInteractionMethods.clearDashboardQuickJump,
+      renderDashboard: vi.fn(),
     };
 
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("1"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("4"));
 
     expect(host.dashboardState.sessionIndex).toBe(3);
@@ -293,6 +290,153 @@ describe("dashboardInteractionMethods", () => {
     expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
     expect(host.dashboardState.level).toBe("worktrees");
     expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  describe("worktree-level two-digit quick jump", () => {
+    const buildQuickJumpHost = (): any => {
+      const host: any = {
+        mode: "dashboard",
+        dashboardOverlayState: { kind: "none" },
+        dashboardState: {
+          hasWorktrees: () => true,
+          quickJumpDigits: "",
+          level: "worktrees",
+          focusedWorktreePath: undefined,
+          worktreeEntries: [],
+          sessionIndex: 0,
+        },
+        dashboardSessionsCache: [],
+        dashboardServicesCache: [],
+        dashboardWorktreeGroupsCache: [
+          { name: "alpha", branch: "feat/alpha", path: "/repo/.aimux/worktrees/alpha", sessions: [], services: [] },
+          { name: "beta", branch: "feat/beta", path: "/repo/.aimux/worktrees/beta", sessions: [], services: [] },
+        ],
+        dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+        dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+        isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+        handleDashboardQuickJumpDigit: dashboardInteractionMethods.handleDashboardQuickJumpDigit,
+        clearDashboardQuickJump: dashboardInteractionMethods.clearDashboardQuickJump,
+        focusDashboardQuickJumpWorktree: dashboardInteractionMethods.focusDashboardQuickJumpWorktree,
+        preferDashboardEntrySelection: vi.fn(),
+        persistDashboardUiState: vi.fn(),
+        activateSelectedDashboardWorktreeEntry: vi.fn(),
+        renderDashboard: vi.fn(),
+      };
+      // The second digit indexes whatever the focused worktree renders.
+      host.updateWorktreeSessions = vi.fn(function (this: any) {
+        this.dashboardState.worktreeEntries =
+          this.dashboardState.focusedWorktreePath === "/repo/.aimux/worktrees/beta"
+            ? [
+                { kind: "session", id: "beta-1" },
+                { kind: "session", id: "beta-2" },
+                { kind: "service", id: "beta-svc" },
+              ]
+            : [];
+      });
+      return host;
+    };
+
+    const press = (host: any, key: string): void => {
+      dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from(key));
+    };
+
+    it("jumps to the worktree then enters the numbered entry inside it", () => {
+      const host = buildQuickJumpHost();
+
+      press(host, "3");
+      expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/beta");
+      expect(host.dashboardState.level).toBe("worktrees");
+      expect(host.activateSelectedDashboardWorktreeEntry).not.toHaveBeenCalled();
+
+      press(host, "2");
+      expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/beta");
+      expect(host.dashboardState.sessionIndex).toBe(1);
+      expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith(
+        "session",
+        "beta-2",
+        "/repo/.aimux/worktrees/beta",
+      );
+      // Selection is committed as well as activated so stepping back out lands on the row.
+      expect(host.dashboardState.level).toBe("sessions");
+      expect(host.persistDashboardUiState).toHaveBeenCalled();
+      expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    });
+
+    it("reaches services through the same entry numbering", () => {
+      const host = buildQuickJumpHost();
+      press(host, "3");
+      press(host, "3");
+      expect(host.dashboardState.sessionIndex).toBe(2);
+      expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith(
+        "service",
+        "beta-svc",
+        "/repo/.aimux/worktrees/beta",
+      );
+      expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    });
+
+    it("stays on the worktree root when no second digit arrives", () => {
+      vi.useFakeTimers();
+      try {
+        const host = buildQuickJumpHost();
+        press(host, "3");
+        expect(host.dashboardState.quickJumpDigits).toBe("3");
+
+        vi.advanceTimersByTime(2000);
+
+        expect(host.dashboardState.quickJumpDigits).toBe("");
+        expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/beta");
+        expect(host.dashboardState.level).toBe("worktrees");
+        expect(host.activateSelectedDashboardWorktreeEntry).not.toHaveBeenCalled();
+
+        // A later digit is a fresh worktree jump, not a stale second digit.
+        press(host, "2");
+        expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/alpha");
+        expect(host.activateSelectedDashboardWorktreeEntry).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stays on the worktree root when the second digit is out of range", () => {
+      const host = buildQuickJumpHost();
+      press(host, "3");
+      press(host, "9");
+      expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/beta");
+      expect(host.dashboardState.level).toBe("worktrees");
+      expect(host.activateSelectedDashboardWorktreeEntry).not.toHaveBeenCalled();
+      expect(host.dashboardState.quickJumpDigits).toBe("");
+    });
+
+    it("drops the pending digit when a non-digit key intervenes", () => {
+      const host = buildQuickJumpHost();
+      host.dashboardState.toggleDetailsSidebar = vi.fn();
+      host.dashboard = { toggleDetailsPane: vi.fn() };
+      host.renderCurrentDashboardView = vi.fn();
+
+      press(host, "3");
+      press(host, "\t");
+      expect(host.dashboardState.quickJumpDigits).toBe("");
+
+      press(host, "1");
+      expect(host.dashboardState.focusedWorktreePath).toBeUndefined();
+      expect(host.activateSelectedDashboardWorktreeEntry).not.toHaveBeenCalled();
+    });
+
+    it("resolves both digits when they arrive in one input chunk", () => {
+      const host = buildQuickJumpHost();
+
+      press(host, "31");
+
+      expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/beta");
+      expect(host.dashboardState.sessionIndex).toBe(0);
+      expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith(
+        "session",
+        "beta-1",
+        "/repo/.aimux/worktrees/beta",
+      );
+      expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    });
   });
 
   it("uses lowercase l for dashboard step-in instead of library", () => {

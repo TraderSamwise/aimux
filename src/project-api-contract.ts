@@ -1,3 +1,6 @@
+import type { AgentTranscriptMessage } from "./agent-transcript.js";
+import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
+
 export const PROJECT_API_ROUTES = {
   events: "/events",
   health: "/health",
@@ -35,6 +38,7 @@ export const PROJECT_API_ROUTES = {
     outputStream: "/agents/output/stream",
     history: "/agents/history",
     input: "/agents/input",
+    promptContext: "/agents/prompt-context",
     spawn: "/agents/spawn",
     fork: "/agents/fork",
     stop: "/agents/stop",
@@ -323,6 +327,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.interactionRequest:
     case PROJECT_API_ROUTES.agents.interactionRespond:
     case PROJECT_API_ROUTES.agents.input:
+    case PROJECT_API_ROUTES.agents.promptContext:
     case PROJECT_API_ROUTES.livePane.input:
       return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
 
@@ -379,6 +384,29 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
   output: string;
   startLine?: number;
   parsed?: unknown;
+  /**
+   * The pane as a conversation, projected server-side.
+   *
+   * Present when the service reports the `agentTranscriptMessages` capability.
+   * Clients should prefer it to mapping `parsed` themselves: the mapping reads
+   * block shapes this service produces, and a client that owns its own copy
+   * falls behind the parser without knowing.
+   */
+  messages?: AgentTranscriptMessage[];
+  /**
+   * What the session is doing, as the runtime understands it.
+   *
+   * Reported by services with the `agentActivityState` capability — and even
+   * there, absent for a session the runtime has no derived state for, so
+   * absence is not idleness. Driven by the tool's own hooks, so it moves
+   * without the pane moving: that is the point, because a client diffing pane
+   * text cannot tell a finished agent from a quiet one.
+   *
+   * `attention` is only meaningfully driven for tools that report it; codex
+   * leaves it at `normal`, so do not read absence as "nothing needed".
+   */
+  activity?: AgentActivityState;
+  attention?: AgentAttentionState;
 }
 
 export interface AgentOutputStreamInput extends LivePaneOutputInput {
@@ -418,6 +446,25 @@ export interface LivePaneInputRequest extends LivePaneSessionInput {
 export interface LivePaneInputResponse extends ProjectApiOk {
   sessionId: string;
   accepted: true;
+}
+
+/**
+ * Set or clear the context the service attaches to this session's prompts.
+ *
+ * Replaces wholesale rather than merging: a client that owns the context owns
+ * all of it, and a merge would leave no way to remove one fact. Empty, null or
+ * absent `text` clears.
+ */
+export interface AgentPromptContextRequest extends LivePaneSessionInput {
+  text?: string | null;
+}
+
+export interface AgentPromptContextResponse extends ProjectApiOk {
+  sessionId: string;
+  /** What is now stored, after normalization — null when cleared. */
+  context: string | null;
+  bytes: number;
+  expiresAt: number | null;
 }
 
 export interface LivePaneInterruptResponse extends ProjectLifecycleTransitionResponse {
@@ -1253,4 +1300,16 @@ export interface GraveyardCleanupInput {
 export interface GraveyardCleanupResponse extends ProjectApiOk {
   dryRun?: boolean;
   [k: string]: unknown;
+}
+
+/**
+ * Does this project-service route answer with raw bytes instead of JSON?
+ *
+ * Lives here, beside the route table, because every layer that proxies a
+ * project service has to agree on it: a route treated as JSON when it is not
+ * arrives at the client as a mangled object, and one treated as bytes when it
+ * is JSON loses its parse. The daemon proxy is the only caller today.
+ */
+export function isBinaryProjectRoute(subPath: string): boolean {
+  return /^\/attachments\/[^/]+\/content$/.test(subPath);
 }

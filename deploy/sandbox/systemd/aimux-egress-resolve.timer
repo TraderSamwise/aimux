@@ -1,0 +1,15 @@
+[Unit]
+Description=Re-resolve the endpoints the aimux runtime may reach directly
+
+[Timer]
+# Well inside the 2h set timeout, so an address stays confirmed through a couple
+# of missed runs before it ages out.
+# Soon after boot: aimux-egress.service loads the table before the network
+# exists and cannot populate the sets itself, so until this first run the pinned
+# endpoints are unreachable.
+OnBootSec=45s
+OnUnitActiveSec=20min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

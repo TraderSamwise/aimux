@@ -29,6 +29,20 @@ interface TuiApiRecoveryOptions {
   immediate?: boolean;
 }
 
+/**
+ * Recovery re-runs `refreshCriticalResources`, which replays the last refresh
+ * options — for desktop-state that is often `?force=1`, bypassing the service
+ * cache and forcing a full synchronous model rebuild. Retrying that at a fixed
+ * cadence against an already-congested service adds load to the exact resource
+ * that is struggling, so consecutive unhealthy outcomes back the retry off.
+ *
+ * Only a fully verified recovery clears the streak. An individual successful
+ * request must not, because a congested service still answers most requests —
+ * letting those reset the backoff would pin it at the shortest retry forever,
+ * which is the exact loop this exists to break.
+ */
+const TUI_API_RECOVERY_BACKOFF_MAX_STREAK = 5;
+
 type TuiApiRequestTransport = (path: string, opts?: TuiApiRequestOptions) => Promise<unknown>;
 type TuiApiMutationTransport = (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>;
 
@@ -109,6 +123,7 @@ interface ResourceState<T = unknown> extends TuiApiResourceSnapshot<T> {
 
 export const TUI_API_RECOVERY_DEBOUNCE_MS = 250;
 export const TUI_API_RECOVERY_COOLDOWN_MS = 1000;
+export const TUI_API_RECOVERY_BACKOFF_MAX_MS = 30_000;
 
 export class TuiApiRuntime {
   private readonly resources = new Map<string, ResourceState>();
@@ -471,12 +486,22 @@ export function hasTuiApiRuntimeReadTransport(host: any): boolean {
   return typeof host.getFromProjectService === "function";
 }
 
+function tuiApiRecoveryStreak(host: any): number {
+  const raw = host.tuiApiRecoveryFailureStreak;
+  if (!Number.isFinite(raw)) return 0;
+  return Math.min(Math.max(0, Math.floor(raw as number)), TUI_API_RECOVERY_BACKOFF_MAX_STREAK);
+}
+
+function tuiApiRecoveryCooldown(host: any): number {
+  return Math.min(TUI_API_RECOVERY_COOLDOWN_MS * 2 ** tuiApiRecoveryStreak(host), TUI_API_RECOVERY_BACKOFF_MAX_MS);
+}
+
 function tuiApiRecoveryDelay(host: any, immediate: boolean): number {
   if (typeof host.tuiApiLastRecoveryAt !== "number") {
     return immediate ? 0 : TUI_API_RECOVERY_DEBOUNCE_MS;
   }
   const sinceLast = Date.now() - host.tuiApiLastRecoveryAt;
-  const cooldownDelay = Math.max(0, TUI_API_RECOVERY_COOLDOWN_MS - sinceLast);
+  const cooldownDelay = Math.max(0, tuiApiRecoveryCooldown(host) - sinceLast);
   return Math.max(immediate ? 0 : TUI_API_RECOVERY_DEBOUNCE_MS, cooldownDelay);
 }
 
@@ -496,6 +521,7 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
   }
   host.tuiApiRecoveryPending = false;
   host.tuiApiRecoveryInFlight = true;
+  let recoveryHealthy = false;
   host.tuiApiRuntime?.beginRecovery?.();
   recordDashboardRepairNotice(host, {
     kind: "tui-api-recovery",
@@ -520,6 +546,7 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
       snapshot?.state === "ready" &&
       snapshot.failedCriticalResources.length === 0
     ) {
+      recoveryHealthy = true;
       recordDashboardRepairNotice(host, {
         kind: "tui-api-recovery",
         phase: "succeeded",
@@ -548,7 +575,13 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
   } finally {
     host.tuiApiRecoveryInFlight = false;
     host.tuiApiLastRecoveryAt = Date.now();
+    if (recoveryHealthy) host.tuiApiRecoveryFailureStreak = 0;
+    // Schedule before escalating so the first retry keeps the fast cooldown and
+    // only a repeatedly unhealthy service is backed off.
     if (host.tuiApiRecoveryPending) scheduleTuiApiRecovery(host);
+    if (!recoveryHealthy) {
+      host.tuiApiRecoveryFailureStreak = Math.min(tuiApiRecoveryStreak(host) + 1, TUI_API_RECOVERY_BACKOFF_MAX_STREAK);
+    }
   }
 }
 

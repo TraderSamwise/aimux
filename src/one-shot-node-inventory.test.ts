@@ -46,6 +46,8 @@ const processInspectionPatterns = [
 const allowedRuntimePatternMatches = new Set<string>();
 const allowedProcessExecPathFiles = new Set(["src/cli-launcher.ts"]);
 const allowedChildProcessFiles = new Set([
+  // Drives the installed CLI, git and tmux to prove hosted mode end to end.
+  "scripts/hosted-check.mjs",
   "src/context/compactor.ts",
   "src/daemon-supervisor.ts",
   "src/default-plugins/gh-pr-context.ts",

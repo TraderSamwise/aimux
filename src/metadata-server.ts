@@ -105,6 +105,7 @@ import { getWorktreeCreatePath } from "./worktree.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
+import type { AgentTranscriptMessage } from "./agent-transcript.js";
 import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
   createUploadedAttachment,
@@ -166,6 +167,13 @@ import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
 import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
+import {
+  PROMPT_CONTEXT_MAX_BYTES,
+  PromptContextStore,
+  composeWithPromptContext,
+  normalizePromptContext,
+  promptContextByteLength,
+} from "./prompt-context.js";
 import {
   permissionRequestHookOutput,
   summarizeClaudeNotification,
@@ -641,12 +649,25 @@ export interface MetadataServerOptions {
       // tmux submit in the background (output arrives via SSE, not this response).
       waitForSubmit?: boolean;
     }) => Promise<{ sessionId: string; accepted: true }> | { sessionId: string; accepted: true };
-    readAgentOutput?: (input: {
-      sessionId: string;
-      startLine?: number;
-    }) =>
-      | Promise<{ sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput }>
-      | { sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput };
+    readAgentOutput?: (input: { sessionId: string; startLine?: number }) =>
+      | Promise<{
+          sessionId: string;
+          output: string;
+          startLine?: number;
+          parsed?: ParsedAgentOutput;
+          messages?: AgentTranscriptMessage[];
+          activity?: AgentActivityState;
+          attention?: AgentAttentionState;
+        }>
+      | {
+          sessionId: string;
+          output: string;
+          startLine?: number;
+          parsed?: ParsedAgentOutput;
+          messages?: AgentTranscriptMessage[];
+          activity?: AgentActivityState;
+          attention?: AgentAttentionState;
+        };
   };
   exposePreviewCache?: ExposePreviewCacheLike | false;
   exposePaneOutputTap?: ExposePaneOutputTapLike | false;
@@ -1391,6 +1412,7 @@ export class MetadataServer {
   private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeHotSnapshotRefreshing = false;
   private exposeHotSnapshotWorker: Worker | null = null;
+  private readonly promptContexts = new PromptContextStore();
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -2431,6 +2453,10 @@ export class MetadataServer {
       let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
       let outputPollTimer: ReturnType<typeof setInterval> | null = null;
       let lastOutput: string | undefined;
+      // Activity changes without the pane changing — an agent finishing
+      // leaves the last frame on screen — so a text-only gate would hold a
+      // stream at "running" indefinitely.
+      let lastLiveness: string | undefined;
       const unsubscribe = this.eventBus.subscribe((event) => {
         if (closed) return;
         if (sessionFilter && event.sessionId && event.sessionId !== sessionFilter) return;
@@ -2458,13 +2484,20 @@ export class MetadataServer {
         try {
           const result = await this.options.lifecycle.readAgentOutput({ sessionId: sessionFilter, startLine });
           if (closed) return;
-          if (result.output !== lastOutput) {
+          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
+          if (result.output !== lastOutput || liveness !== lastLiveness) {
             lastOutput = result.output;
+            lastLiveness = liveness;
             sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, {
               sessionId: result.sessionId,
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
               parsed: result.parsed,
+              // Forwarded explicitly: this payload is hand-picked, so a field
+              // added to readAgentOutput does not reach a stream by itself.
+              messages: result.messages,
+              activity: result.activity,
+              attention: result.attention,
             });
           }
         } catch (error) {
@@ -2818,6 +2851,10 @@ export class MetadataServer {
 
       let closed = false;
       let lastOutput: string | undefined;
+      // Activity changes without the pane changing — an agent finishing
+      // leaves the last frame on screen — so a text-only gate would hold a
+      // stream at "running" indefinitely.
+      let lastLiveness: string | undefined;
       let pollTimer: ReturnType<typeof setInterval> | null = null;
 
       const cleanup = () => {
@@ -2837,13 +2874,20 @@ export class MetadataServer {
         try {
           const result = await this.options.lifecycle!.readAgentOutput!({ sessionId, startLine });
           if (closed) return;
-          if (result.output !== lastOutput) {
+          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
+          if (result.output !== lastOutput || liveness !== lastLiveness) {
             lastOutput = result.output;
+            lastLiveness = liveness;
             sendSseEvent(res, outputEventName, {
               sessionId: result.sessionId,
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
               parsed: result.parsed,
+              // Forwarded explicitly: this payload is hand-picked, so a field
+              // added to readAgentOutput does not reach a stream by itself.
+              messages: result.messages,
+              activity: result.activity,
+              attention: result.attention,
             });
           } else {
             res.write(": keepalive\n\n");
@@ -4666,6 +4710,7 @@ export class MetadataServer {
               sessionId: resolved.teammate.id,
             }),
         );
+        this.promptContexts.clear(resolved.teammate.id);
         notifyCurrentRouteChange();
         send(
           res,
@@ -4907,6 +4952,10 @@ export class MetadataServer {
           { operation: "agent.kill", targetKind: "agent", targetId: body.sessionId },
           () => this.options.lifecycle!.killAgent!({ sessionId: body.sessionId }),
         );
+        // A resurrected session comes back under the same id, so a context left
+        // here would attach itself to a conversation that never asked for it.
+        // Trimmed to match how `set` stored it, or a padded id misses.
+        this.promptContexts.clear(body.sessionId?.trim() ?? "");
         notifyCurrentRouteChange();
         send(
           res,
@@ -4917,6 +4966,41 @@ export class MetadataServer {
             targetId: body.sessionId,
           }),
         );
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.promptContext) {
+        const body = (await readJson(req)) as { sessionId?: string; text?: unknown };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        // Absent, null and empty all mean the same thing on purpose: a client
+        // clearing has one call to make, and a client whose state went empty
+        // does not have to notice that it did.
+        const raw = typeof body.text === "string" ? body.text : "";
+        const normalized = normalizePromptContext(raw);
+        const bytes = promptContextByteLength(normalized);
+        if (bytes > PROMPT_CONTEXT_MAX_BYTES) {
+          // Refused whole rather than truncated. Half a context is worse than
+          // none: the agent cannot tell it was cut and answers confidently from
+          // a sentence that stops mid-fact.
+          send(res, 413, {
+            ok: false,
+            error: `prompt context too large: ${bytes} bytes exceeds ${PROMPT_CONTEXT_MAX_BYTES}`,
+          });
+          return;
+        }
+        const entry = this.promptContexts.set(sessionId, normalized);
+        // Echoed back so a second client can see it clobbered the first.
+        send(res, 200, {
+          ok: true,
+          sessionId,
+          context: entry?.text ?? null,
+          bytes: entry ? bytes : 0,
+          expiresAt: entry?.expiresAt ?? null,
+        });
         return;
       }
 
@@ -4941,7 +5025,13 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "text is required" });
           return;
         }
-        const attachments = attachmentIds.map((id) => getAttachmentRecord(id));
+        // Bound to THIS session, not merely existing. Without the second
+        // argument a caller could name another session's attachment id here
+        // and have the agent read those bytes off local disk and describe
+        // them — an exfiltration path that no HTTP gate can see, because the
+        // bytes never cross the transport. The refusal is deliberately the
+        // same "not found" as a bogus id, so ids cannot be probed.
+        const attachments = attachmentIds.map((id) => getAttachmentRecord(id, sessionId));
         const missingAttachmentId = attachmentIds.find((_, index) => attachments[index] === null);
         if (missingAttachmentId) {
           send(res, 400, { ok: false, error: `attachment not found: ${missingAttachmentId}` });
@@ -4951,9 +5041,17 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent input not supported by this service" });
           return;
         }
-        const formattedText = formatAgentInputWithAttachments(
-          text,
-          attachments.filter((entry): entry is AttachmentRecord => !!entry),
+        // Both spellings of this route, deliberately. `/live-pane/input` is not
+        // a raw terminal — it is this same submit-a-prompt operation under an
+        // older name, and it is what the app's own chat screen calls. Keying
+        // the context off the path would have left aimux's chat the one client
+        // that never carried it. Raw pane work is attach/output/resize.
+        const formattedText = composeWithPromptContext(
+          formatAgentInputWithAttachments(
+            text,
+            attachments.filter((entry): entry is AttachmentRecord => !!entry),
+          ),
+          this.promptContexts.get(sessionId)?.text ?? null,
         );
         // Return as soon as the input is accepted; the tmux submit-confirmation
         // runs in the background. Agent output is delivered over /events (SSE),
@@ -5007,7 +5105,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.attachments) {
-        const body = (await readJson(req)) as { filename?: unknown; mimeType?: unknown; dataBase64?: unknown };
+        const body = (await readJson(req)) as {
+          filename?: unknown;
+          mimeType?: unknown;
+          dataBase64?: unknown;
+          sessionId?: unknown;
+        };
         if (
           typeof body.filename !== "string" ||
           typeof body.mimeType !== "string" ||
@@ -5016,11 +5119,25 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "filename, mimeType, and dataBase64 are required" });
           return;
         }
+        // Every attachment is owned from the moment it exists. Uploading first
+        // and binding later would leave a window in which the record is
+        // reachable by any session that guessed its id.
+        const rawUploadSession = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+        if (!rawUploadSession) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        const uploadSession = validateSessionId(rawUploadSession);
+        if (!uploadSession.ok) {
+          send(res, 400, { ok: false, error: "sessionId is invalid" });
+          return;
+        }
         try {
           const attachment = createUploadedAttachment({
             filename: body.filename,
             mimeType: body.mimeType,
             dataBase64: body.dataBase64,
+            sessionId: uploadSession.value,
           });
           send(res, 200, { ok: true, attachment });
         } catch (error) {
@@ -5029,9 +5146,25 @@ export class MetadataServer {
         return;
       }
 
+      // Omitting `sessionId` on a read is the local path and stays
+      // unrestricted. Sending an EMPTY one is refused rather than treated as
+      // omitted: `?sessionId=` should never be the way to widen access, even
+      // though the operator gate already rejects it upstream. Relying on that
+      // alone would make this fail open by construction rather than by check.
+      const rawReadSession = url.searchParams.get("sessionId");
+      const attachmentReadSession = rawReadSession === null ? undefined : rawReadSession.trim();
+      const attachmentPathMatched = /^\/attachments\/[^/]+(\/content)?$/.test(url.pathname);
+      if (req.method === "GET" && attachmentPathMatched && attachmentReadSession === "") {
+        send(res, 400, { ok: false, error: "sessionId is invalid" });
+        return;
+      }
+
       const attachmentContentMatch = url.pathname.match(/^\/attachments\/([^/]+)\/content$/);
       if (req.method === "GET" && attachmentContentMatch) {
-        const content = getAttachmentContent(decodeURIComponent(attachmentContentMatch[1] || ""));
+        const content = getAttachmentContent(
+          decodeURIComponent(attachmentContentMatch[1] || ""),
+          attachmentReadSession,
+        );
         if (!content) {
           send(res, 404, { ok: false, error: "attachment not found" });
           return;
@@ -5042,7 +5175,7 @@ export class MetadataServer {
 
       const attachmentMatch = url.pathname.match(/^\/attachments\/([^/]+)$/);
       if (req.method === "GET" && attachmentMatch) {
-        const attachment = getAttachment(decodeURIComponent(attachmentMatch[1] || ""));
+        const attachment = getAttachment(decodeURIComponent(attachmentMatch[1] || ""), attachmentReadSession);
         if (!attachment) {
           send(res, 404, { ok: false, error: "attachment not found" });
           return;

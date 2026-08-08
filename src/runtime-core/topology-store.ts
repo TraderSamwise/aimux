@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { atomicWriteFast } from "../atomic-write.js";
@@ -389,7 +389,12 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         freshRelaunchAllowed: asOptionalBoolean(row.freshRelaunchAllowed),
         restoreBlockedReason: asOptionalString(row.restoreBlockedReason),
         graveyardReason: asOptionalString(row.graveyardReason),
-        team: row.team,
+        // The one field typed `unknown`, so it is the one field this coercer cannot
+        // rebuild structurally. Cloning keeps the "no reference escapes the input"
+        // invariant that every other field satisfies by construction — which is what
+        // lets a caller mutate a coerced topology without reaching back into whatever
+        // produced it.
+        team: structuredClone(row.team),
         createdAt: asString(row.createdAt, `sessions[${index}].createdAt`),
         updatedAt: asString(row.updatedAt, `sessions[${index}].updatedAt`),
         lastSeenAt: asOptionalString(row.lastSeenAt),
@@ -652,15 +657,77 @@ function reclaimIfStale(lockPath: string): boolean {
   return true;
 }
 
+/**
+ * Parsed-store cache keyed on the file's exact contents, mirroring the one in
+ * `exchange-store.ts` — see that file for why the key is the contents and not stat
+ * metadata. One dashboard rebuild reads this store several times per project.
+ *
+ * The bound is larger than the exchange store's because the access patterns differ:
+ * an exchange store is read through one project's own path, whereas `scanAllProjects`
+ * walks a topology per registered project, so a small cap would thrash to a zero hit
+ * rate for anyone with more projects than the cap.
+ */
+const RAW_CACHE_MAX = 64;
+const rawCache = new Map<string, { text: string; raw: unknown }>();
+
+// Errnos for which the `existsSync` guard this replaced returned false, so they must
+// keep degrading to an empty topology instead of failing the whole read.
+const MISSING_FILE_ERROR_CODES = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"]);
+
+// Instrumentation for tests that assert how many times one operation parses this store.
+let readCount = 0;
+let parseCount = 0;
+
+export function getTopologyStoreStats(): { reads: number; parses: number } {
+  return { reads: readCount, parses: parseCount };
+}
+
+export function resetTopologyStoreStats(): void {
+  readCount = 0;
+  parseCount = 0;
+}
+
 export class RuntimeTopologyStore {
   constructor(readonly path = getRuntimeTopologyPath()) {}
 
   read(): RuntimeTopology {
-    if (!existsSync(this.path)) return emptyRuntimeTopology();
-    const parsed = parse(readFileSync(this.path, "utf-8"));
-    return coerceRuntimeTopology(parsed);
+    readCount += 1;
+    let text: string;
+    try {
+      text = readFileSync(this.path, "utf-8");
+    } catch (error) {
+      // EACCES deliberately still throws: it did before too, when the file existed but
+      // could not be opened.
+      if (MISSING_FILE_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? "")) {
+        rawCache.delete(this.path);
+        return emptyRuntimeTopology();
+      }
+      throw error;
+    }
+    const cached = rawCache.get(this.path);
+    if (cached && cached.text === text) {
+      rawCache.delete(this.path);
+      rawCache.set(this.path, cached);
+      // Re-coerce rather than hand back a shared object: every field is rebuilt (and
+      // `team` is cloned), so each caller gets its own graph to mutate. `update()`
+      // mutates the read result in place, so this is load-bearing, not tidiness.
+      return coerceRuntimeTopology(cached.raw);
+    }
+    parseCount += 1;
+    const raw = parse(text);
+    // Delete before set so re-inserting an existing path moves it to the tail; without
+    // it, a path whose contents change often would drift toward eviction while hottest.
+    rawCache.delete(this.path);
+    rawCache.set(this.path, { text, raw });
+    if (rawCache.size > RAW_CACHE_MAX) {
+      const oldest = rawCache.keys().next().value;
+      if (oldest !== undefined) rawCache.delete(oldest);
+    }
+    return coerceRuntimeTopology(raw);
   }
 
+  // Deliberately does not seed the cache, same as the exchange store: `normalized` is
+  // handed back to the caller, so storing it would alias caller-owned state.
   write(topology: RuntimeTopology): RuntimeTopology {
     const normalized = coerceRuntimeTopology(topology);
     atomicWriteFast(this.path, stringify(normalized, { lineWidth: 120, sortMapEntries: false }));

@@ -6,7 +6,7 @@ import type { Worker } from "node:worker_threads";
 import { ensureProjectPaths, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
-import { requestJson } from "./http-client.js";
+import { requestBinary, requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { listAllProjectsExposeItems } from "./expose-control.js";
 import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
@@ -14,8 +14,17 @@ import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } fro
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadConfig } from "./config.js";
-import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import {
+  assertOperatorStreamAllowed,
+  assertRemoteAccessAllowed,
+  parseRemoteActor,
+  type RemoteActor,
+} from "./remote-access.js";
+import { isBinaryProjectRoute, PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
+import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
+import { countActiveHostedPrincipals } from "./hosted-principals.js";
+import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
 import { serializeFastControlItem } from "./fast-control.js";
 import {
   CORE_API_ROUTES,
@@ -180,6 +189,15 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
+/**
+ * Ceiling on a proxied binary reply, so the daemon cannot be made to buffer an
+ * unbounded response from a project service.
+ *
+ * Above the hosted listener's own attachment cap on purpose: this is the outer
+ * limit of what the daemon will hold, not the policy on what an operator may
+ * fetch. The listener refuses first, with a message that means something.
+ */
+const PROXY_MAX_BINARY_BYTES = 16 * 1024 * 1024;
 const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
 const DAEMON_SERVER_CLOSE_GRACE_MS = 500;
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 3500;
@@ -327,7 +345,10 @@ function requestHeaders(req: IncomingMessage): Record<string, string> {
 
 function send(res: ServerResponse, status: number, body: unknown, contentType = "application/json"): void {
   if (res.headersSent || res.writableEnded) return;
-  const payload = contentType.startsWith("text/") ? String(body) : JSON.stringify(body);
+  // A Buffer must go out untouched. Falling through to JSON.stringify turns it
+  // into {"type":"Buffer","data":[…]} — six times the size, served under an
+  // image content type, and no longer an image.
+  const payload = Buffer.isBuffer(body) ? body : contentType.startsWith("text/") ? String(body) : JSON.stringify(body);
   res.statusCode = status;
   res.setHeader("content-type", contentType);
   res.setHeader("content-length", Buffer.byteLength(payload));
@@ -367,6 +388,7 @@ function rejectCors(res: ServerResponse): void {
 export class AimuxDaemon {
   private server: Server | null = null;
   private relayClient: RelayClient | null = null;
+  private hostedServer: HostedServerHandle | null = null;
   private readonly serverSockets = new Set<Socket>();
   private readonly pushThrottle = new MobilePushThrottle();
   private readonly projectActors = new Map<string, CoreProjectActor>();
@@ -416,7 +438,41 @@ export class AimuxDaemon {
     this.refreshState();
     this.scheduleGlobalExposeHotSnapshotRefresh(GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS);
     log.info("daemon started", "daemon", { pid: process.pid, host, port });
+    await this.startHostedListenerIfConfigured();
     this.connectRelayIfConfigured();
+  }
+
+  /**
+   * Bring up the hosted listener when the global config asks for it.
+   *
+   * A failure here never takes the daemon down: hosted mode is an addition to a
+   * working local install, so a bad hosted config should cost you hosted mode
+   * and nothing else. It is loud in the log either way.
+   */
+  private async startHostedListenerIfConfigured(): Promise<void> {
+    const config = loadHostedConfig();
+    if (!config.enabled) return;
+
+    const validation = validateHostedStartup(config, countActiveHostedPrincipals());
+    if (!validation.ok) {
+      log.warn("hosted listener refused to start", "hosted", { error: validation.error });
+      return;
+    }
+
+    try {
+      this.hostedServer = await startHostedServer({
+        config,
+        routeHostedRequest: (actor, method, path, body) => this.routeHostedRequest(actor, method, path, body),
+        resolveHostedStream: (actor, method, path) => this.resolveHostedStream(actor, method, path),
+      });
+    } catch (error) {
+      log.warn("hosted listener failed to bind", "hosted", {
+        host: config.bindAddress,
+        port: config.port,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.hostedServer = null;
+    }
   }
 
   // Resolve relay config from stored credentials (`aimux login`), with env-var
@@ -483,6 +539,11 @@ export class AimuxDaemon {
     this.globalExposeHotSnapshotRefreshing = false;
     this.globalExposeHotSnapshotWorker?.terminate().catch(() => {});
     this.globalExposeHotSnapshotWorker = null;
+    // Close the outside door first, so nothing new arrives while the project
+    // actors below are being torn down.
+    const hosted = this.hostedServer;
+    this.hostedServer = null;
+    if (hosted) await hosted.close().catch(() => {});
     this.relayClient?.disconnect();
     this.relayClient = null;
     const serverClose = this.closeServer();
@@ -2896,7 +2957,100 @@ export class AimuxDaemon {
     }
   }
 
+  /**
+   * Which project owns the service port a `/proxy/<host>/<port>/…` path targets.
+   *
+   * Hosted grants name a project root and a session id together, because
+   * session ids are unique only within a project. Resolving the port back to a
+   * root is what stops a grant in one project from authorizing the same session
+   * name in another. Returns null when the port matches no live service, which
+   * denies the operator rather than falling back to an unbound check.
+   */
+  private resolveProxyProjectRoot(pathname: string): string | null {
+    const root = resolveProjectRootForServiceTarget(this.listProjectsForRoute(), parseProxyTarget(pathname));
+    return root === null ? null : pathResolve(root);
+  }
+
+  /**
+   * The hosted listener's way in.
+   *
+   * Separate from `routeRequest` on purpose. The actor is a required argument
+   * rather than an optional override, because `assertRemoteAccessAllowed`
+   * treats a null actor as local and grants it everything — so an optional
+   * parameter that went missing through a refactor would silently promote a
+   * hosted request to owner. The type system now forbids that call.
+   *
+   * Headers are deliberately NOT forwarded. The caller's Authorization header
+   * carries a live bearer token that has no business reaching a project service
+   * or its logs, and a client-supplied content-length or accept-encoding would
+   * corrupt the proxied request.
+   */
+  async routeHostedRequest(
+    actor: RemoteActor,
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<DaemonRouteResponse> {
+    return this.routeWithActor(actor, method, path, body, {});
+  }
+
+  /**
+   * Resolve an operator's stream request to an upstream URL.
+   *
+   * The streaming twin of `routeHostedRequest`, and separate from
+   * `resolveProjectEventStream` for the same reason: that one derives its actor
+   * from headers via `parseRemoteActor`, which by construction can never mint an
+   * operator, so reusing it would silently degrade every hosted stream to guest.
+   * The actor is required here too.
+   *
+   * Returns only a URL. The listener does the piping, because the response has
+   * to be synthesized rather than forwarded — the project service sets a
+   * wildcard CORS header on this route, which must not reach an authenticated
+   * cross-origin surface.
+   */
+  resolveHostedStream(
+    actor: RemoteActor,
+    method: string,
+    path: string,
+  ): { ok: true; url: string; projectRoot: string } | { ok: false; status: number; error: string } {
+    this.refreshState();
+    const routeUrl = new URL(path, getDaemonBaseUrl());
+    const projectRoot = this.resolveProxyProjectRoot(routeUrl.pathname);
+    const access = assertOperatorStreamAllowed(actor, method, routeUrl.pathname, routeUrl.searchParams, {
+      projectRoot,
+    });
+    if (!access.ok) {
+      return { ok: false, status: access.status ?? 403, error: access.error ?? "remote access denied" };
+    }
+
+    const target = parseProxyTarget(routeUrl.pathname);
+    if (!target) return { ok: false, status: 404, error: "not found" };
+    if (!PROXY_ALLOWED_HOSTS.has(target.host)) {
+      return { ok: false, status: 403, error: "proxy host not allowed" };
+    }
+    // Same parsed target the grant was checked against — resolving from one
+    // source and forwarding to another would authorize one service and talk to
+    // another. See proxy-project-binding.ts.
+    // The root comes back so the listener can re-check the grant against the
+    // SAME root while the stream is open, rather than re-deriving it.
+    return {
+      ok: true,
+      url: `http://${target.host}:${target.port}${target.subPath}${routeUrl.search}`,
+      projectRoot: projectRoot!,
+    };
+  }
+
   async routeRequest(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+  ): Promise<DaemonRouteResponse> {
+    return this.routeWithActor(parseRemoteActor(headers), method, path, body, headers);
+  }
+
+  private async routeWithActor(
+    actor: RemoteActor | null,
     method: string,
     path: string,
     body?: unknown,
@@ -2905,8 +3059,12 @@ export class AimuxDaemon {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
-    const actor = parseRemoteActor(headers);
-    const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams);
+    const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams, {
+      body,
+      // Only operators are bound to a project, and resolving costs a registry
+      // read per request — keep it off the owner/local polling path.
+      projectRoot: actor?.role === "operator" ? this.resolveProxyProjectRoot(pathname) : null,
+    });
     if (!access.ok) {
       return { status: access.status ?? 403, body: { ok: false, error: access.error ?? "remote access denied" } };
     }
@@ -3484,7 +3642,33 @@ export class AimuxDaemon {
         return { status: 403, body: { ok: false, error: "proxy host not allowed" } };
       }
       try {
-        const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}${routeUrl.search}`, {
+        const target = `http://${host}:${portStr}${subPath}${routeUrl.search}`;
+        if (method === "GET" && isBinaryProjectRoute(subPath)) {
+          const binary = await requestBinary(target, {
+            method,
+            headers,
+            timeoutMs: PROXY_TIMEOUT_MS,
+            maxBytes: PROXY_MAX_BINARY_BYTES,
+          });
+          const upstreamType = binary.contentType ?? "";
+          // A binary ROUTE does not guarantee a binary REPLY: the service
+          // answers JSON for a missing attachment and for one belonging to
+          // another session, which is the most common outcome a client sees.
+          // Forwarding those as bytes would strip the status down to a generic
+          // failure and turn "no such attachment" into "the box is broken".
+          if (!upstreamType.startsWith("image/")) {
+            const text = binary.body.toString("utf8").trim();
+            try {
+              return { status: binary.status, body: text ? JSON.parse(text) : null };
+            } catch {
+              return { status: 502, body: { ok: false, error: "upstream returned an unreadable response" } };
+            }
+          }
+          // The type is reported, never trusted: the listener picks what it is
+          // willing to serve from its own allowlist.
+          return { status: binary.status, body: binary.body, contentType: upstreamType };
+        }
+        const { status, json } = await requestJson(target, {
           method,
           headers,
           body: body !== undefined ? body : undefined,

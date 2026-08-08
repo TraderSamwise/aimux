@@ -1,0 +1,1187 @@
+{
+  "runtimeLight": {
+    "sessions": [
+      {
+        "index": 0,
+        "id": "claude-0",
+        "command": "claude",
+        "toolConfigKey": "claude",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "status": "running",
+        "active": true,
+        "label": "label-claude-0",
+        "headline": "headline-claude-0",
+        "threadId": "thread-14",
+        "threadName": "Thread 14",
+        "tmuxWindowIndex": 1,
+        "overseer": false,
+        "threadUnreadCount": 8,
+        "threadWaitingCount": 5,
+        "threadWaitingOnMeCount": 0,
+        "threadWaitingOnThemCount": 5,
+        "threadPendingCount": 8,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "workflowTopLabel": "Thread 12 (on me)",
+        "workflowNextAction": "open thread",
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "running",
+            "isAlive": true,
+            "canEnter": true,
+            "canReceiveInput": true,
+            "canInterrupt": true
+          },
+          "user": {
+            "label": "ready",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "pending",
+            "assignedTask": false,
+            "canBeAssignedWork": true
+          },
+          "presentation": {
+            "statusLabel": "ready",
+            "compactHint": "on them",
+            "attentionScore": 2
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 8,
+          "pendingDeliveryCount": 8,
+          "waitingOnMeCount": 0,
+          "waitingOnThemCount": 5,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      },
+      {
+        "index": 1,
+        "id": "claude-1",
+        "command": "claude",
+        "toolConfigKey": "claude",
+        "createdAt": "2026-01-01T00:01:00.000Z",
+        "status": "idle",
+        "active": false,
+        "worktreePath": "<WORKTREE>",
+        "label": "label-claude-1",
+        "headline": "headline-claude-1",
+        "threadId": "thread-15",
+        "threadName": "Thread 15",
+        "tmuxWindowIndex": 2,
+        "overseer": false,
+        "threadUnreadCount": 8,
+        "threadWaitingCount": 8,
+        "threadWaitingOnMeCount": 8,
+        "threadWaitingOnThemCount": 5,
+        "threadPendingCount": 8,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "idle",
+            "isAlive": true,
+            "canEnter": true,
+            "canReceiveInput": true,
+            "canInterrupt": true
+          },
+          "user": {
+            "label": "idle",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "waiting_on_user",
+            "assignedTask": false,
+            "canBeAssignedWork": true
+          },
+          "presentation": {
+            "statusLabel": "idle",
+            "compactHint": "on you",
+            "attentionScore": 2
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 8,
+          "pendingDeliveryCount": 8,
+          "waitingOnMeCount": 8,
+          "waitingOnThemCount": 5,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      },
+      {
+        "index": 2,
+        "id": "codex-offline",
+        "command": "codex",
+        "toolConfigKey": "codex",
+        "restoreState": "blocked",
+        "restoreBlockedReason": "missing exact resumable backend session id",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "status": "offline",
+        "active": false,
+        "worktreePath": "<WORKTREE>",
+        "worktreeName": "feature-a",
+        "worktreeBranch": "feature-a",
+        "overseer": false,
+        "threadUnreadCount": 0,
+        "threadWaitingCount": 0,
+        "threadWaitingOnMeCount": 0,
+        "threadWaitingOnThemCount": 0,
+        "threadPendingCount": 0,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "offline",
+            "isAlive": false,
+            "canEnter": true,
+            "canReceiveInput": false,
+            "canInterrupt": false
+          },
+          "user": {
+            "label": "offline",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "none",
+            "assignedTask": false,
+            "canBeAssignedWork": false
+          },
+          "presentation": {
+            "statusLabel": "offline",
+            "compactHint": null,
+            "attentionScore": 0
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 0,
+          "pendingDeliveryCount": 0,
+          "waitingOnMeCount": 0,
+          "waitingOnThemCount": 0,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      },
+      {
+        "index": 3,
+        "id": "codex-offline-main",
+        "command": "codex",
+        "toolConfigKey": "codex",
+        "restoreState": "blocked",
+        "restoreBlockedReason": "missing exact resumable backend session id",
+        "createdAt": "2026-01-01T00:00:02.000Z",
+        "status": "offline",
+        "active": false,
+        "overseer": false,
+        "threadUnreadCount": 0,
+        "threadWaitingCount": 0,
+        "threadWaitingOnMeCount": 0,
+        "threadWaitingOnThemCount": 0,
+        "threadPendingCount": 0,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "offline",
+            "isAlive": false,
+            "canEnter": true,
+            "canReceiveInput": false,
+            "canInterrupt": false
+          },
+          "user": {
+            "label": "offline",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "none",
+            "assignedTask": false,
+            "canBeAssignedWork": false
+          },
+          "presentation": {
+            "statusLabel": "offline",
+            "compactHint": null,
+            "attentionScore": 0
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 0,
+          "pendingDeliveryCount": 0,
+          "waitingOnMeCount": 0,
+          "waitingOnThemCount": 0,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      }
+    ],
+    "teammates": [],
+    "services": [
+      {
+        "id": "service-api",
+        "args": [],
+        "tmuxWindowId": "@3",
+        "tmuxWindowIndex": 3,
+        "createdAt": "2026-01-01T00:02:00.000Z",
+        "worktreePath": "<REPO>",
+        "worktreeName": "Main Checkout",
+        "worktreeBranch": "master",
+        "status": "running",
+        "active": false,
+        "cwd": "<REPO>"
+      },
+      {
+        "id": "service-web",
+        "command": "yarn dev",
+        "args": [],
+        "createdAt": "2026-01-01T00:00:04.000Z",
+        "worktreePath": "<WORKTREE>",
+        "worktreeName": "feature-a",
+        "worktreeBranch": "feature-a",
+        "status": "offline",
+        "active": false,
+        "label": "svc:yarn dev",
+        "cwd": "<WORKTREE>",
+        "foregroundCommand": "svc:yarn dev",
+        "previewLine": "yarn dev"
+      }
+    ],
+    "worktrees": [
+      {
+        "name": "Main Checkout",
+        "path": "<REPO>",
+        "branch": "master",
+        "isBare": false,
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "name": "feature-a",
+        "path": "<WORKTREE>",
+        "branch": "feature-a",
+        "isBare": false,
+        "createdAt": "2026-01-01T00:00:05.000Z"
+      }
+    ],
+    "worktreeGroups": [
+      {
+        "name": "Main Checkout",
+        "branch": "master",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "status": "active",
+        "sessions": [
+          {
+            "index": 3,
+            "id": "codex-offline-main",
+            "command": "codex",
+            "toolConfigKey": "codex",
+            "restoreState": "blocked",
+            "restoreBlockedReason": "missing exact resumable backend session id",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "status": "offline",
+            "active": false,
+            "overseer": false,
+            "threadUnreadCount": 0,
+            "threadWaitingCount": 0,
+            "threadWaitingOnMeCount": 0,
+            "threadWaitingOnThemCount": 0,
+            "threadPendingCount": 0,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "offline",
+                "isAlive": false,
+                "canEnter": true,
+                "canReceiveInput": false,
+                "canInterrupt": false
+              },
+              "user": {
+                "label": "offline",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "none",
+                "assignedTask": false,
+                "canBeAssignedWork": false
+              },
+              "presentation": {
+                "statusLabel": "offline",
+                "compactHint": null,
+                "attentionScore": 0
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 0,
+              "pendingDeliveryCount": 0,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 0,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          },
+          {
+            "index": 0,
+            "id": "claude-0",
+            "command": "claude",
+            "toolConfigKey": "claude",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "status": "running",
+            "active": true,
+            "label": "label-claude-0",
+            "headline": "headline-claude-0",
+            "threadId": "thread-14",
+            "threadName": "Thread 14",
+            "tmuxWindowIndex": 1,
+            "overseer": false,
+            "threadUnreadCount": 8,
+            "threadWaitingCount": 5,
+            "threadWaitingOnMeCount": 0,
+            "threadWaitingOnThemCount": 5,
+            "threadPendingCount": 8,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "workflowTopLabel": "Thread 12 (on me)",
+            "workflowNextAction": "open thread",
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "running",
+                "isAlive": true,
+                "canEnter": true,
+                "canReceiveInput": true,
+                "canInterrupt": true
+              },
+              "user": {
+                "label": "ready",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "pending",
+                "assignedTask": false,
+                "canBeAssignedWork": true
+              },
+              "presentation": {
+                "statusLabel": "ready",
+                "compactHint": "on them",
+                "attentionScore": 2
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 8,
+              "pendingDeliveryCount": 8,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 5,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          }
+        ],
+        "services": []
+      },
+      {
+        "name": "feature-a",
+        "branch": "feature-a",
+        "path": "<WORKTREE>",
+        "createdAt": "2026-01-01T00:00:05.000Z",
+        "status": "active",
+        "sessions": [
+          {
+            "index": 1,
+            "id": "claude-1",
+            "command": "claude",
+            "toolConfigKey": "claude",
+            "createdAt": "2026-01-01T00:01:00.000Z",
+            "status": "idle",
+            "active": false,
+            "worktreePath": "<WORKTREE>",
+            "label": "label-claude-1",
+            "headline": "headline-claude-1",
+            "threadId": "thread-15",
+            "threadName": "Thread 15",
+            "tmuxWindowIndex": 2,
+            "overseer": false,
+            "threadUnreadCount": 8,
+            "threadWaitingCount": 8,
+            "threadWaitingOnMeCount": 8,
+            "threadWaitingOnThemCount": 5,
+            "threadPendingCount": 8,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "idle",
+                "isAlive": true,
+                "canEnter": true,
+                "canReceiveInput": true,
+                "canInterrupt": true
+              },
+              "user": {
+                "label": "idle",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "waiting_on_user",
+                "assignedTask": false,
+                "canBeAssignedWork": true
+              },
+              "presentation": {
+                "statusLabel": "idle",
+                "compactHint": "on you",
+                "attentionScore": 2
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 8,
+              "pendingDeliveryCount": 8,
+              "waitingOnMeCount": 8,
+              "waitingOnThemCount": 5,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          },
+          {
+            "index": 2,
+            "id": "codex-offline",
+            "command": "codex",
+            "toolConfigKey": "codex",
+            "restoreState": "blocked",
+            "restoreBlockedReason": "missing exact resumable backend session id",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "status": "offline",
+            "active": false,
+            "worktreePath": "<WORKTREE>",
+            "worktreeName": "feature-a",
+            "worktreeBranch": "feature-a",
+            "overseer": false,
+            "threadUnreadCount": 0,
+            "threadWaitingCount": 0,
+            "threadWaitingOnMeCount": 0,
+            "threadWaitingOnThemCount": 0,
+            "threadPendingCount": 0,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "offline",
+                "isAlive": false,
+                "canEnter": true,
+                "canReceiveInput": false,
+                "canInterrupt": false
+              },
+              "user": {
+                "label": "offline",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "none",
+                "assignedTask": false,
+                "canBeAssignedWork": false
+              },
+              "presentation": {
+                "statusLabel": "offline",
+                "compactHint": null,
+                "attentionScore": 0
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 0,
+              "pendingDeliveryCount": 0,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 0,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          }
+        ],
+        "services": [
+          {
+            "id": "service-web",
+            "command": "yarn dev",
+            "args": [],
+            "createdAt": "2026-01-01T00:00:04.000Z",
+            "worktreePath": "<WORKTREE>",
+            "worktreeName": "feature-a",
+            "worktreeBranch": "feature-a",
+            "status": "offline",
+            "active": false,
+            "label": "svc:yarn dev",
+            "cwd": "<WORKTREE>",
+            "foregroundCommand": "svc:yarn dev",
+            "previewLine": "yarn dev"
+          }
+        ]
+      }
+    ],
+    "operationFailures": [],
+    "mainCheckoutInfo": {
+      "name": "Main Checkout",
+      "branch": "master"
+    },
+    "mainCheckoutPath": "<REPO>"
+  },
+  "runtimeFull": {
+    "sessions": [
+      {
+        "index": 0,
+        "id": "claude-0",
+        "command": "claude",
+        "toolConfigKey": "claude",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "status": "running",
+        "active": true,
+        "label": "label-claude-0",
+        "headline": "headline-claude-0",
+        "threadId": "thread-14",
+        "threadName": "Thread 14",
+        "tmuxWindowIndex": 1,
+        "foregroundCommand": "node",
+        "pid": 4242,
+        "previewLine": "last line for @1",
+        "overseer": false,
+        "threadUnreadCount": 8,
+        "threadWaitingCount": 5,
+        "threadWaitingOnMeCount": 0,
+        "threadWaitingOnThemCount": 5,
+        "threadPendingCount": 8,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "workflowTopLabel": "Thread 12 (on me)",
+        "workflowNextAction": "open thread",
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "running",
+            "isAlive": true,
+            "canEnter": true,
+            "canReceiveInput": true,
+            "canInterrupt": true
+          },
+          "user": {
+            "label": "ready",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "pending",
+            "assignedTask": false,
+            "canBeAssignedWork": true
+          },
+          "presentation": {
+            "statusLabel": "ready",
+            "compactHint": "on them",
+            "attentionScore": 2
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 8,
+          "pendingDeliveryCount": 8,
+          "waitingOnMeCount": 0,
+          "waitingOnThemCount": 5,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      },
+      {
+        "index": 1,
+        "id": "claude-1",
+        "command": "claude",
+        "toolConfigKey": "claude",
+        "createdAt": "2026-01-01T00:01:00.000Z",
+        "status": "idle",
+        "active": false,
+        "worktreePath": "<WORKTREE>",
+        "label": "label-claude-1",
+        "headline": "headline-claude-1",
+        "threadId": "thread-15",
+        "threadName": "Thread 15",
+        "tmuxWindowIndex": 2,
+        "foregroundCommand": "node",
+        "pid": 4243,
+        "previewLine": "last line for @2",
+        "overseer": false,
+        "threadUnreadCount": 8,
+        "threadWaitingCount": 8,
+        "threadWaitingOnMeCount": 8,
+        "threadWaitingOnThemCount": 5,
+        "threadPendingCount": 8,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "idle",
+            "isAlive": true,
+            "canEnter": true,
+            "canReceiveInput": true,
+            "canInterrupt": true
+          },
+          "user": {
+            "label": "idle",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "waiting_on_user",
+            "assignedTask": false,
+            "canBeAssignedWork": true
+          },
+          "presentation": {
+            "statusLabel": "idle",
+            "compactHint": "on you",
+            "attentionScore": 2
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 8,
+          "pendingDeliveryCount": 8,
+          "waitingOnMeCount": 8,
+          "waitingOnThemCount": 5,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      },
+      {
+        "index": 2,
+        "id": "codex-offline",
+        "command": "codex",
+        "toolConfigKey": "codex",
+        "restoreState": "blocked",
+        "restoreBlockedReason": "missing exact resumable backend session id",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "status": "offline",
+        "active": false,
+        "worktreePath": "<WORKTREE>",
+        "worktreeName": "feature-a",
+        "worktreeBranch": "feature-a",
+        "overseer": false,
+        "threadUnreadCount": 0,
+        "threadWaitingCount": 0,
+        "threadWaitingOnMeCount": 0,
+        "threadWaitingOnThemCount": 0,
+        "threadPendingCount": 0,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "offline",
+            "isAlive": false,
+            "canEnter": true,
+            "canReceiveInput": false,
+            "canInterrupt": false
+          },
+          "user": {
+            "label": "offline",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "none",
+            "assignedTask": false,
+            "canBeAssignedWork": false
+          },
+          "presentation": {
+            "statusLabel": "offline",
+            "compactHint": null,
+            "attentionScore": 0
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 0,
+          "pendingDeliveryCount": 0,
+          "waitingOnMeCount": 0,
+          "waitingOnThemCount": 0,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      },
+      {
+        "index": 3,
+        "id": "codex-offline-main",
+        "command": "codex",
+        "toolConfigKey": "codex",
+        "restoreState": "blocked",
+        "restoreBlockedReason": "missing exact resumable backend session id",
+        "createdAt": "2026-01-01T00:00:02.000Z",
+        "status": "offline",
+        "active": false,
+        "overseer": false,
+        "threadUnreadCount": 0,
+        "threadWaitingCount": 0,
+        "threadWaitingOnMeCount": 0,
+        "threadWaitingOnThemCount": 0,
+        "threadPendingCount": 0,
+        "workflowOnMeCount": 0,
+        "workflowBlockedCount": 0,
+        "workflowFamilyCount": 0,
+        "notificationUnreadCount": 0,
+        "notificationNeedsInputUnreadCount": 0,
+        "notificationStale": false,
+        "semantic": {
+          "runtime": {
+            "lifecycle": "offline",
+            "isAlive": false,
+            "canEnter": true,
+            "canReceiveInput": false,
+            "canInterrupt": false
+          },
+          "user": {
+            "label": "offline",
+            "attention": "none",
+            "source": "runtime"
+          },
+          "notifications": {
+            "unreadCount": 0
+          },
+          "orchestration": {
+            "pressure": "none",
+            "assignedTask": false,
+            "canBeAssignedWork": false
+          },
+          "presentation": {
+            "statusLabel": "offline",
+            "compactHint": null,
+            "attentionScore": 0
+          },
+          "attention": "normal",
+          "activityNewCount": 0,
+          "threadUnreadCount": 0,
+          "pendingDeliveryCount": 0,
+          "waitingOnMeCount": 0,
+          "waitingOnThemCount": 0,
+          "blockedCount": 0,
+          "familyCount": 0
+        }
+      }
+    ],
+    "teammates": [],
+    "services": [
+      {
+        "id": "service-api",
+        "args": [],
+        "tmuxWindowId": "@3",
+        "tmuxWindowIndex": 3,
+        "createdAt": "2026-01-01T00:02:00.000Z",
+        "worktreePath": "<REPO>",
+        "worktreeName": "Main Checkout",
+        "worktreeBranch": "master",
+        "status": "running",
+        "active": false,
+        "cwd": "node\t4243",
+        "foregroundCommand": "node",
+        "pid": 4243,
+        "previewLine": "last line for @3"
+      },
+      {
+        "id": "service-web",
+        "command": "yarn dev",
+        "args": [],
+        "createdAt": "2026-01-01T00:00:04.000Z",
+        "worktreePath": "<WORKTREE>",
+        "worktreeName": "feature-a",
+        "worktreeBranch": "feature-a",
+        "status": "offline",
+        "active": false,
+        "label": "svc:yarn dev",
+        "cwd": "<WORKTREE>",
+        "foregroundCommand": "svc:yarn dev",
+        "previewLine": "yarn dev"
+      }
+    ],
+    "worktrees": [
+      {
+        "name": "Main Checkout",
+        "path": "<REPO>",
+        "branch": "master",
+        "isBare": false,
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "name": "feature-a",
+        "path": "<WORKTREE>",
+        "branch": "feature-a",
+        "isBare": false,
+        "createdAt": "2026-01-01T00:00:05.000Z"
+      }
+    ],
+    "worktreeGroups": [
+      {
+        "name": "Main Checkout",
+        "branch": "master",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "status": "active",
+        "sessions": [
+          {
+            "index": 3,
+            "id": "codex-offline-main",
+            "command": "codex",
+            "toolConfigKey": "codex",
+            "restoreState": "blocked",
+            "restoreBlockedReason": "missing exact resumable backend session id",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "status": "offline",
+            "active": false,
+            "overseer": false,
+            "threadUnreadCount": 0,
+            "threadWaitingCount": 0,
+            "threadWaitingOnMeCount": 0,
+            "threadWaitingOnThemCount": 0,
+            "threadPendingCount": 0,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "offline",
+                "isAlive": false,
+                "canEnter": true,
+                "canReceiveInput": false,
+                "canInterrupt": false
+              },
+              "user": {
+                "label": "offline",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "none",
+                "assignedTask": false,
+                "canBeAssignedWork": false
+              },
+              "presentation": {
+                "statusLabel": "offline",
+                "compactHint": null,
+                "attentionScore": 0
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 0,
+              "pendingDeliveryCount": 0,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 0,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          },
+          {
+            "index": 0,
+            "id": "claude-0",
+            "command": "claude",
+            "toolConfigKey": "claude",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "status": "running",
+            "active": true,
+            "label": "label-claude-0",
+            "headline": "headline-claude-0",
+            "threadId": "thread-14",
+            "threadName": "Thread 14",
+            "tmuxWindowIndex": 1,
+            "foregroundCommand": "node",
+            "pid": 4242,
+            "previewLine": "last line for @1",
+            "overseer": false,
+            "threadUnreadCount": 8,
+            "threadWaitingCount": 5,
+            "threadWaitingOnMeCount": 0,
+            "threadWaitingOnThemCount": 5,
+            "threadPendingCount": 8,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "workflowTopLabel": "Thread 12 (on me)",
+            "workflowNextAction": "open thread",
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "running",
+                "isAlive": true,
+                "canEnter": true,
+                "canReceiveInput": true,
+                "canInterrupt": true
+              },
+              "user": {
+                "label": "ready",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "pending",
+                "assignedTask": false,
+                "canBeAssignedWork": true
+              },
+              "presentation": {
+                "statusLabel": "ready",
+                "compactHint": "on them",
+                "attentionScore": 2
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 8,
+              "pendingDeliveryCount": 8,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 5,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          }
+        ],
+        "services": []
+      },
+      {
+        "name": "feature-a",
+        "branch": "feature-a",
+        "path": "<WORKTREE>",
+        "createdAt": "2026-01-01T00:00:05.000Z",
+        "status": "active",
+        "sessions": [
+          {
+            "index": 1,
+            "id": "claude-1",
+            "command": "claude",
+            "toolConfigKey": "claude",
+            "createdAt": "2026-01-01T00:01:00.000Z",
+            "status": "idle",
+            "active": false,
+            "worktreePath": "<WORKTREE>",
+            "label": "label-claude-1",
+            "headline": "headline-claude-1",
+            "threadId": "thread-15",
+            "threadName": "Thread 15",
+            "tmuxWindowIndex": 2,
+            "foregroundCommand": "node",
+            "pid": 4243,
+            "previewLine": "last line for @2",
+            "overseer": false,
+            "threadUnreadCount": 8,
+            "threadWaitingCount": 8,
+            "threadWaitingOnMeCount": 8,
+            "threadWaitingOnThemCount": 5,
+            "threadPendingCount": 8,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "idle",
+                "isAlive": true,
+                "canEnter": true,
+                "canReceiveInput": true,
+                "canInterrupt": true
+              },
+              "user": {
+                "label": "idle",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "waiting_on_user",
+                "assignedTask": false,
+                "canBeAssignedWork": true
+              },
+              "presentation": {
+                "statusLabel": "idle",
+                "compactHint": "on you",
+                "attentionScore": 2
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 8,
+              "pendingDeliveryCount": 8,
+              "waitingOnMeCount": 8,
+              "waitingOnThemCount": 5,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          },
+          {
+            "index": 2,
+            "id": "codex-offline",
+            "command": "codex",
+            "toolConfigKey": "codex",
+            "restoreState": "blocked",
+            "restoreBlockedReason": "missing exact resumable backend session id",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "status": "offline",
+            "active": false,
+            "worktreePath": "<WORKTREE>",
+            "worktreeName": "feature-a",
+            "worktreeBranch": "feature-a",
+            "overseer": false,
+            "threadUnreadCount": 0,
+            "threadWaitingCount": 0,
+            "threadWaitingOnMeCount": 0,
+            "threadWaitingOnThemCount": 0,
+            "threadPendingCount": 0,
+            "workflowOnMeCount": 0,
+            "workflowBlockedCount": 0,
+            "workflowFamilyCount": 0,
+            "notificationUnreadCount": 0,
+            "notificationNeedsInputUnreadCount": 0,
+            "notificationStale": false,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "offline",
+                "isAlive": false,
+                "canEnter": true,
+                "canReceiveInput": false,
+                "canInterrupt": false
+              },
+              "user": {
+                "label": "offline",
+                "attention": "none",
+                "source": "runtime"
+              },
+              "notifications": {
+                "unreadCount": 0
+              },
+              "orchestration": {
+                "pressure": "none",
+                "assignedTask": false,
+                "canBeAssignedWork": false
+              },
+              "presentation": {
+                "statusLabel": "offline",
+                "compactHint": null,
+                "attentionScore": 0
+              },
+              "attention": "normal",
+              "activityNewCount": 0,
+              "threadUnreadCount": 0,
+              "pendingDeliveryCount": 0,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 0,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          }
+        ],
+        "services": [
+          {
+            "id": "service-web",
+            "command": "yarn dev",
+            "args": [],
+            "createdAt": "2026-01-01T00:00:04.000Z",
+            "worktreePath": "<WORKTREE>",
+            "worktreeName": "feature-a",
+            "worktreeBranch": "feature-a",
+            "status": "offline",
+            "active": false,
+            "label": "svc:yarn dev",
+            "cwd": "<WORKTREE>",
+            "foregroundCommand": "svc:yarn dev",
+            "previewLine": "yarn dev"
+          }
+        ]
+      }
+    ],
+    "operationFailures": [],
+    "mainCheckoutInfo": {
+      "name": "Main Checkout",
+      "branch": "master"
+    },
+    "mainCheckoutPath": "<REPO>"
+  },
+  "costModel": {
+    "exchangeReads": 136,
+    "topologyReads": 7,
+    "topologyParses": 1,
+    "gitCalls": 2
+  }
+}

@@ -37,6 +37,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/agents/output/stream": "client-stream",
   "/agents/history": "unsupported-legacy",
   "/agents/input": "client-api",
+  "/agents/prompt-context": "client-api",
   "/agents/spawn": "client-api",
   "/agents/fork": "client-api",
   "/agents/stop": "client-api",

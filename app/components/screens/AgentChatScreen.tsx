@@ -33,10 +33,10 @@ import {
   type SharedSessionSummary,
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
-import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useKeyboardInset } from "@/lib/use-keyboard-visible";
 import { parentViewHrefForPath } from "@/lib/view-location";
@@ -45,7 +45,7 @@ import {
   applyOutputSnapshotAtom,
   lastErrorFamily,
   outputBufferFamily,
-  parsedOutputFamily,
+  transcriptFamily,
 } from "@/stores/chat";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
@@ -79,8 +79,9 @@ export default function ChatScreen() {
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
-  const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
+  const transcript = useAtomValue(transcriptFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
+  const setLastError = useSetAtom(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const [activeShare, setActiveShare] = useAtom(activeSharedSessionAtom);
@@ -151,10 +152,19 @@ export default function ChatScreen() {
       -120,
       { token },
     );
+    if (!serviceProjectsTranscript(result.messages)) {
+      // Not an empty pane — a daemon older than this app, which does not
+      // project the transcript at all. Rendering it as empty would look like a
+      // conversation that vanished.
+      setLastError(
+        "This aimux daemon is older than the app and does not send a transcript. Restart it to pick up the new build.",
+      );
+      return;
+    }
     applyOutputSnapshot({
       sessionId: result.sessionId,
       output: result.output,
-      parsed: result.parsed ?? null,
+      messages: result.messages,
     });
   }, [
     applyOutputSnapshot,
@@ -163,6 +173,7 @@ export default function ChatScreen() {
     heartbeatReady,
     routeSessionMissing,
     sessionId,
+    setLastError,
     token,
   ]);
 
@@ -201,7 +212,10 @@ export default function ChatScreen() {
     sessionId,
   ]);
 
-  const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
+  const parsedMessages = useMemo<ChatMessage[]>(
+    () => toChatMessages(transcript, sessionKey),
+    [transcript, sessionKey],
+  );
   const visibleLastError = lastError && !isTransientRequestError(lastError) ? lastError : null;
 
   const allMessages = useMemo<ChatMessage[]>(() => {
@@ -338,6 +352,7 @@ export default function ChatScreen() {
             filename: attachment.filename,
             mimeType: attachment.mimeType,
             dataBase64: attachment.dataBase64,
+            sessionId: sessionKey,
           },
           { token },
         );

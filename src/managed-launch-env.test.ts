@@ -74,6 +74,41 @@ describe("managed launch env", () => {
     expect(env.NO_COLOR).toBeUndefined();
   });
 
+  it("passes proxy settings through, in both spellings", () => {
+    // A host that forces agent traffic through an allowlisting proxy has no
+    // other way to tell the agent where it is: the launch is `env -i`, so a
+    // variable missing from the allowlist reaches the daemon and stops there.
+    const env = buildManagedLaunchEnv({
+      HOME: "/Users/sam",
+      PATH: "/usr/bin",
+      HTTPS_PROXY: "http://127.0.0.1:8888",
+      https_proxy: "http://127.0.0.1:8888",
+      HTTP_PROXY: "http://127.0.0.1:8888",
+      http_proxy: "http://127.0.0.1:8888",
+      NO_PROXY: "127.0.0.1,localhost",
+      no_proxy: "127.0.0.1,localhost",
+    });
+
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:8888");
+    expect(env.https_proxy).toBe("http://127.0.0.1:8888");
+    expect(env.HTTP_PROXY).toBe("http://127.0.0.1:8888");
+    expect(env.http_proxy).toBe("http://127.0.0.1:8888");
+    expect(env.NO_PROXY).toBe("127.0.0.1,localhost");
+    expect(env.no_proxy).toBe("127.0.0.1,localhost");
+  });
+
+  it("carries the proxy into the env -i argv the tool actually launches with", () => {
+    // buildManagedLaunchEnv returning the key is not the same as the child
+    // process receiving it — the wrap is what puts it on the command line.
+    const wrapped = wrapCommandWithManagedLaunchEnv({
+      command: "codex",
+      args: [],
+      env: { HOME: "/home/aimux", PATH: "/usr/bin", HTTPS_PROXY: "http://127.0.0.1:8888" },
+    });
+
+    expect(wrapped.args).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+  });
+
   it("wraps managed launches through env -i", () => {
     const wrapped = wrapCommandWithManagedLaunchEnv({
       command: "claude",
