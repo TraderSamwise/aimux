@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import Animated, { runOnJS, useAnimatedReaction, useAnimatedStyle } from "react-native-reanimated";
 import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -45,7 +46,7 @@ import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
-import { useKeyboardInset } from "@/lib/use-keyboard-visible";
+import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
@@ -126,7 +127,9 @@ export default function ChatScreen() {
   const canAnimateActiveScrollRef = useRef(false);
   const enableScrollAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardInset = useKeyboardInset();
-  const chatKeyboardInset = Platform.OS === "ios" ? keyboardInset : 0;
+  // The composer rides the keyboard on the UI thread, so no re-render per frame and
+  // nothing else in the tree animates alongside it.
+  const keyboardStyle = useAnimatedStyle(() => ({ paddingBottom: keyboardInset.value }));
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
     : null;
@@ -290,10 +293,18 @@ export default function ChatScreen() {
     }
   }, [scheduleScrollAnimationEnable, sessionKey, allMessages.length, output]);
 
-  useEffect(() => {
-    if (!chatKeyboardInset) return;
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
-  }, [chatKeyboardInset]);
+  const scrollToLatest = useCallback(() => {
+    scrollRef.current?.scrollToEnd({ animated: false });
+  }, []);
+
+  // Keep the newest message in view as the keyboard eats the viewport. Reacting to
+  // the shared value rather than to state, since the inset no longer re-renders.
+  useAnimatedReaction(
+    () => keyboardInset.value > 0,
+    (covered, previous) => {
+      if (covered && covered !== previous) runOnJS(scrollToLatest)();
+    },
+  );
 
   useEffect(() => {
     terminalScrollRef.current?.scrollToEnd({ animated: false });
@@ -574,412 +585,423 @@ export default function ChatScreen() {
   );
 
   return (
-    <View className="flex-1 bg-background" style={{ flex: 1, paddingBottom: chatKeyboardInset }}>
-      <View className="flex-1" style={Platform.OS === "web" ? { flexDirection: "row" } : undefined}>
-        {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
-        <View className="flex-1">
-          <View
-            className="border-b border-border px-4 py-3 flex-row items-center justify-between"
-            style={{ flexShrink: 0 }}
-          >
-            <Pressable
-              onPress={goBack}
-              accessibilityLabel="Back"
-              className="mr-3 h-8 w-8 items-center justify-center rounded-md border border-border active:bg-accent"
+    // Animated.View carries plain styles only; NativeWind does not interop it.
+    <Animated.View style={[{ flex: 1 }, keyboardStyle]}>
+      <View className="flex-1 bg-background" style={{ flex: 1 }}>
+        <View
+          className="flex-1"
+          style={Platform.OS === "web" ? { flexDirection: "row" } : undefined}
+        >
+          {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
+          <View className="flex-1">
+            <View
+              className="border-b border-border px-4 py-3 flex-row items-center justify-between"
+              style={{ flexShrink: 0 }}
             >
-              <ChevronLeft size={16} color="#a1a1aa" />
-            </Pressable>
-            <View className="flex-1">
-              <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-                {sessionTitle}
-              </Text>
-              <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                {sessionSubtitle}
-              </Text>
+              <Pressable
+                onPress={goBack}
+                accessibilityLabel="Back"
+                className="mr-3 h-8 w-8 items-center justify-center rounded-md border border-border active:bg-accent"
+              >
+                <ChevronLeft size={16} color="#a1a1aa" />
+              </Pressable>
+              <View className="flex-1">
+                <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
+                  {sessionTitle}
+                </Text>
+                <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                  {sessionSubtitle}
+                </Text>
+              </View>
+              <View className="flex-row items-center">
+                {session ? (
+                  <View className="mr-2">
+                    <AgentActions
+                      session={session}
+                      projectPath={stateProjectPath}
+                      endpoint={serviceEndpoint}
+                      token={token}
+                      compact
+                      mainCheckoutPath={desktopState?.mainCheckoutPath}
+                      onKilled={goBack}
+                    />
+                  </View>
+                ) : null}
+                {session ? (
+                  <>
+                    <Pressable
+                      onPress={() => setSharePanelOpen((open) => !open)}
+                      accessibilityLabel="Invite collaborator"
+                      className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
+                    >
+                      <UserPlus size={15} color="#a1a1aa" />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setManagePanelOpen((open) => !open)}
+                      accessibilityLabel="Manage agent"
+                      accessibilityState={{ expanded: managePanelOpen }}
+                      className={cn(
+                        "h-8 flex-row items-center gap-1.5 rounded-md border px-2.5 mr-2",
+                        managePanelOpen ? "border-primary bg-accent" : "border-border",
+                      )}
+                    >
+                      <SlidersHorizontal
+                        size={14}
+                        color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
+                      />
+                      <Text className="text-xs text-foreground">Manage</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setShowTerminalSplit((current) => !current)}
+                      disabled={!canShowTerminal}
+                      accessibilityLabel={terminalToggleLabel}
+                      className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
+                    >
+                      {showSplit || showTerminalOnly ? (
+                        <MessageSquare size={15} color="#a1a1aa" />
+                      ) : canUseSplitView ? (
+                        <Columns2 size={15} color="#a1a1aa" />
+                      ) : (
+                        <SquareTerminal size={15} color="#a1a1aa" />
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        blurWebActiveElement();
+                        router.push({
+                          pathname: "/plans/[sessionId]",
+                          params: {
+                            sessionId: session.id,
+                            ...(projectPath ? { project: projectPath } : {}),
+                          },
+                        });
+                      }}
+                    >
+                      <Text className="text-sm text-primary">Plan</Text>
+                    </Pressable>
+                  </>
+                ) : null}
+              </View>
             </View>
-            <View className="flex-row items-center">
-              {session ? (
-                <View className="mr-2">
-                  <AgentActions
-                    session={session}
-                    projectPath={stateProjectPath}
-                    endpoint={serviceEndpoint}
-                    token={token}
-                    compact
-                    mainCheckoutPath={desktopState?.mainCheckoutPath}
-                    onKilled={goBack}
-                  />
-                </View>
-              ) : null}
-              {session ? (
-                <>
-                  <Pressable
-                    onPress={() => setSharePanelOpen((open) => !open)}
-                    accessibilityLabel="Invite collaborator"
-                    className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
-                  >
-                    <UserPlus size={15} color="#a1a1aa" />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setManagePanelOpen((open) => !open)}
-                    accessibilityLabel="Manage agent"
-                    accessibilityState={{ expanded: managePanelOpen }}
-                    className={cn(
-                      "h-8 flex-row items-center gap-1.5 rounded-md border px-2.5 mr-2",
-                      managePanelOpen ? "border-primary bg-accent" : "border-border",
-                    )}
-                  >
-                    <SlidersHorizontal size={14} color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"} />
-                    <Text className="text-xs text-foreground">Manage</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setShowTerminalSplit((current) => !current)}
-                    disabled={!canShowTerminal}
-                    accessibilityLabel={terminalToggleLabel}
-                    className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
-                  >
-                    {showSplit || showTerminalOnly ? (
-                      <MessageSquare size={15} color="#a1a1aa" />
-                    ) : canUseSplitView ? (
-                      <Columns2 size={15} color="#a1a1aa" />
-                    ) : (
-                      <SquareTerminal size={15} color="#a1a1aa" />
-                    )}
-                  </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      blurWebActiveElement();
-                      router.push({
-                        pathname: "/plans/[sessionId]",
-                        params: {
-                          sessionId: session.id,
-                          ...(projectPath ? { project: projectPath } : {}),
-                        },
-                      });
-                    }}
-                  >
-                    <Text className="text-sm text-primary">Plan</Text>
-                  </Pressable>
-                </>
-              ) : null}
-            </View>
-          </View>
-          {/*
+            {/*
             Closed by default. These are settings, and pinning them above every
             conversation cost the chat ~250px on every screen for controls with
             no recorded use.
           */}
-          {session && managePanelOpen ? (
-            <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
-              <ScrollView>
-                <AgentManagementPanel
-                  key={`${session.id}:management`}
-                  session={session}
-                  endpoint={serviceEndpoint}
-                  token={token}
-                  projectPath={stateProjectPath}
-                  groups={worktreeGroups}
-                />
-                {canManageTeammates ? (
-                  <TeammatePanel
-                    key={`${session.id}:teammates`}
+            {session && managePanelOpen ? (
+              <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
+                <ScrollView>
+                  <AgentManagementPanel
+                    key={`${session.id}:management`}
                     session={session}
                     endpoint={serviceEndpoint}
                     token={token}
                     projectPath={stateProjectPath}
+                    groups={worktreeGroups}
                   />
-                ) : null}
-              </ScrollView>
-            </View>
-          ) : null}
-          {sharePanelOpen ? (
-            <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
-              {activeShare ? (
-                <View className="flex-row items-center justify-between gap-3">
-                  <View className="flex-1">
-                    <Text className="text-sm font-medium text-foreground">Shared session view</Text>
-                    <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
-                      Connected to {activeShare.ownerUserId}
-                    </Text>
-                  </View>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    label={shareAction ? "Leaving..." : "Leave"}
-                    disabled={!token || Boolean(shareAction)}
-                    onPress={handleLeaveShare}
-                  />
-                </View>
-              ) : (
-                <View className="flex-row items-center gap-2">
-                  <Input
-                    value={inviteEmail}
-                    onChangeText={setInviteEmail}
-                    placeholder="Email address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="email-address"
-                    className="flex-1 h-9 text-sm"
-                  />
-                  <Button
-                    size="sm"
-                    label={inviteBusy ? "Sending..." : "Invite"}
-                    disabled={
-                      inviteBusy ||
-                      !relayConfigured ||
-                      !token ||
-                      !project?.path ||
-                      !sessionId ||
-                      !inviteEmail.trim()
-                    }
-                    onPress={handleSendInvite}
-                  />
-                </View>
-              )}
-              {shareSummary ? (
-                <View className="mt-3 border-t border-border pt-3">
-                  <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                    Participants
-                  </Text>
-                  {shareSummary.participants.map((participant) => (
-                    <View
-                      key={participant.userId}
-                      className="mt-2 flex-row items-center justify-between gap-3"
-                    >
-                      <View className="flex-1">
-                        <Text className="text-sm text-foreground" numberOfLines={1}>
-                          {participant.displayName}
-                        </Text>
-                        <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                          {participant.role} · {participant.status}
-                          {participant.email ? ` · ${participant.email}` : ""}
-                        </Text>
-                      </View>
-                      {!activeShare &&
-                      participant.role !== "owner" &&
-                      participant.status === "active" ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          label={shareAction === participant.userId ? "Removing..." : "Remove"}
-                          disabled={!token || Boolean(shareAction)}
-                          onPress={() => handleRemoveParticipant(participant.userId)}
-                        />
-                      ) : null}
-                    </View>
-                  ))}
-                  {!activeShare &&
-                  shareSummary.invites.some((invite) => invite.status === "pending") ? (
-                    <View className="mt-3">
-                      <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                        Pending invites
-                      </Text>
-                      {shareSummary.invites
-                        .filter((invite) => invite.status === "pending")
-                        .map((invite) => (
-                          <Text
-                            key={invite.id}
-                            className="text-xs text-muted-foreground mt-2"
-                            numberOfLines={1}
-                          >
-                            {invite.email}
-                          </Text>
-                        ))}
-                    </View>
+                  {canManageTeammates ? (
+                    <TeammatePanel
+                      key={`${session.id}:teammates`}
+                      session={session}
+                      endpoint={serviceEndpoint}
+                      token={token}
+                      projectPath={stateProjectPath}
+                    />
                   ) : null}
-                </View>
-              ) : null}
-              {!relayConfigured ? (
-                <Text className="text-xs text-muted-foreground mt-2">
-                  Remote mode is required for shared session invites.
-                </Text>
-              ) : !token ? (
-                <Text className="text-xs text-muted-foreground mt-2">
-                  Sign in is required to send invites.
-                </Text>
-              ) : inviteStatus ? (
-                <Text className="text-xs text-muted-foreground mt-2">{inviteStatus}</Text>
-              ) : null}
-            </View>
-          ) : null}
-
-          {routeSessionMissing ? (
-            <View className="flex-1 p-4">
-              <View className="rounded-lg border border-border bg-card p-4">
-                <Text className="text-base font-semibold text-foreground">
-                  Agent no longer exists.
-                </Text>
-                <Text className="mt-2 text-sm text-muted-foreground">
-                  This agent was removed from the project. Return to the project dashboard to pick
-                  another agent.
-                </Text>
-                <Button className="mt-4 self-start" label="Back to project" onPress={goBack} />
+                </ScrollView>
               </View>
-            </View>
-          ) : !serviceEndpoint ? (
-            <View className="flex-1 p-4">
-              <Text className="text-sm text-muted-foreground">
-                Project service not running. Start the project host to view this session.
-              </Text>
-            </View>
-          ) : (
-            <>
-              <View
-                className="flex-1"
-                style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
-              >
-                {showSplit ? (
-                  <View className="flex-1 border-r border-border">{terminalPane}</View>
-                ) : null}
-                {showTerminalOnly ? (
-                  <View className="flex-1">{terminalPane}</View>
+            ) : null}
+            {sharePanelOpen ? (
+              <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
+                {activeShare ? (
+                  <View className="flex-row items-center justify-between gap-3">
+                    <View className="flex-1">
+                      <Text className="text-sm font-medium text-foreground">
+                        Shared session view
+                      </Text>
+                      <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
+                        Connected to {activeShare.ownerUserId}
+                      </Text>
+                    </View>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      label={shareAction ? "Leaving..." : "Leave"}
+                      disabled={!token || Boolean(shareAction)}
+                      onPress={handleLeaveShare}
+                    />
+                  </View>
                 ) : (
-                  <View className="flex-1">
-                    <ScrollView
-                      ref={scrollRef}
-                      className="flex-1 px-4 py-2"
-                      contentContainerStyle={{ flexGrow: 1 }}
-                      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
-                      keyboardShouldPersistTaps="handled"
-                    >
-                      {allMessages.map((m, idx) => (
-                        <MessageBlock
-                          key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
-                          message={m}
-                          serviceEndpoint={serviceEndpoint}
-                        />
-                      ))}
-                      {restoreBlockedReason ? (
-                        <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
-                          <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                            Resume unavailable
-                          </Text>
-                          <Text className="mt-1 text-sm text-card-foreground">
-                            {restoreBlockedReason}
-                          </Text>
-                        </View>
-                      ) : null}
-                      {visibleLastError ? (
-                        <Text className="text-xs text-destructive my-2">{visibleLastError}</Text>
-                      ) : null}
-                      {sendError ? (
-                        <Text className="text-xs text-destructive my-2">{sendError}</Text>
-                      ) : null}
-                    </ScrollView>
+                  <View className="flex-row items-center gap-2">
+                    <Input
+                      value={inviteEmail}
+                      onChangeText={setInviteEmail}
+                      placeholder="Email address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="email-address"
+                      className="flex-1 h-9 text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      label={inviteBusy ? "Sending..." : "Invite"}
+                      disabled={
+                        inviteBusy ||
+                        !relayConfigured ||
+                        !token ||
+                        !project?.path ||
+                        !sessionId ||
+                        !inviteEmail.trim()
+                      }
+                      onPress={handleSendInvite}
+                    />
                   </View>
                 )}
-              </View>
-              <View
-                className="border-t border-border bg-background px-3 py-3"
-                style={{ flexShrink: 0 }}
-              >
-                {pendingAttachments.length > 0 ? (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
-                    <View className="flex-row gap-2">
-                      {pendingAttachments.map((attachment) => (
-                        <View
-                          key={attachment.id}
-                          className="w-24 rounded-md border border-border bg-card p-1"
-                        >
-                          <Image
-                            source={{ uri: attachment.previewUri }}
-                            className="h-14 w-full rounded"
-                            resizeMode="cover"
-                          />
-                          <Text
-                            className="mt-1 text-[10px] text-muted-foreground"
-                            numberOfLines={1}
-                          >
-                            {attachment.filename}
+                {shareSummary ? (
+                  <View className="mt-3 border-t border-border pt-3">
+                    <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      Participants
+                    </Text>
+                    {shareSummary.participants.map((participant) => (
+                      <View
+                        key={participant.userId}
+                        className="mt-2 flex-row items-center justify-between gap-3"
+                      >
+                        <View className="flex-1">
+                          <Text className="text-sm text-foreground" numberOfLines={1}>
+                            {participant.displayName}
                           </Text>
-                          <Pressable
-                            onPress={() => removePendingAttachment(attachment.id)}
-                            accessibilityLabel={`Remove ${attachment.filename}`}
-                            className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
-                          >
-                            <X size={12} color="#a1a1aa" />
-                          </Pressable>
+                          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                            {participant.role} · {participant.status}
+                            {participant.email ? ` · ${participant.email}` : ""}
+                          </Text>
                         </View>
-                      ))}
-                    </View>
-                  </ScrollView>
+                        {!activeShare &&
+                        participant.role !== "owner" &&
+                        participant.status === "active" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            label={shareAction === participant.userId ? "Removing..." : "Remove"}
+                            disabled={!token || Boolean(shareAction)}
+                            onPress={() => handleRemoveParticipant(participant.userId)}
+                          />
+                        ) : null}
+                      </View>
+                    ))}
+                    {!activeShare &&
+                    shareSummary.invites.some((invite) => invite.status === "pending") ? (
+                      <View className="mt-3">
+                        <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                          Pending invites
+                        </Text>
+                        {shareSummary.invites
+                          .filter((invite) => invite.status === "pending")
+                          .map((invite) => (
+                            <Text
+                              key={invite.id}
+                              className="text-xs text-muted-foreground mt-2"
+                              numberOfLines={1}
+                            >
+                              {invite.email}
+                            </Text>
+                          ))}
+                      </View>
+                    ) : null}
+                  </View>
                 ) : null}
-                {/*
+                {!relayConfigured ? (
+                  <Text className="text-xs text-muted-foreground mt-2">
+                    Remote mode is required for shared session invites.
+                  </Text>
+                ) : !token ? (
+                  <Text className="text-xs text-muted-foreground mt-2">
+                    Sign in is required to send invites.
+                  </Text>
+                ) : inviteStatus ? (
+                  <Text className="text-xs text-muted-foreground mt-2">{inviteStatus}</Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {routeSessionMissing ? (
+              <View className="flex-1 p-4">
+                <View className="rounded-lg border border-border bg-card p-4">
+                  <Text className="text-base font-semibold text-foreground">
+                    Agent no longer exists.
+                  </Text>
+                  <Text className="mt-2 text-sm text-muted-foreground">
+                    This agent was removed from the project. Return to the project dashboard to pick
+                    another agent.
+                  </Text>
+                  <Button className="mt-4 self-start" label="Back to project" onPress={goBack} />
+                </View>
+              </View>
+            ) : !serviceEndpoint ? (
+              <View className="flex-1 p-4">
+                <Text className="text-sm text-muted-foreground">
+                  Project service not running. Start the project host to view this session.
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View
+                  className="flex-1"
+                  style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
+                >
+                  {showSplit ? (
+                    <View className="flex-1 border-r border-border">{terminalPane}</View>
+                  ) : null}
+                  {showTerminalOnly ? (
+                    <View className="flex-1">{terminalPane}</View>
+                  ) : (
+                    <View className="flex-1">
+                      <ScrollView
+                        ref={scrollRef}
+                        className="flex-1 px-4 py-2"
+                        contentContainerStyle={{ flexGrow: 1 }}
+                        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
+                        keyboardShouldPersistTaps="handled"
+                      >
+                        {allMessages.map((m, idx) => (
+                          <MessageBlock
+                            key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
+                            message={m}
+                            serviceEndpoint={serviceEndpoint}
+                          />
+                        ))}
+                        {restoreBlockedReason ? (
+                          <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
+                            <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                              Resume unavailable
+                            </Text>
+                            <Text className="mt-1 text-sm text-card-foreground">
+                              {restoreBlockedReason}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {visibleLastError ? (
+                          <Text className="text-xs text-destructive my-2">{visibleLastError}</Text>
+                        ) : null}
+                        {sendError ? (
+                          <Text className="text-xs text-destructive my-2">{sendError}</Text>
+                        ) : null}
+                      </ScrollView>
+                    </View>
+                  )}
+                </View>
+                <View
+                  className="border-t border-border bg-background px-3 py-3"
+                  style={{ flexShrink: 0 }}
+                >
+                  {pendingAttachments.length > 0 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+                      <View className="flex-row gap-2">
+                        {pendingAttachments.map((attachment) => (
+                          <View
+                            key={attachment.id}
+                            className="w-24 rounded-md border border-border bg-card p-1"
+                          >
+                            <Image
+                              source={{ uri: attachment.previewUri }}
+                              className="h-14 w-full rounded"
+                              resizeMode="cover"
+                            />
+                            <Text
+                              className="mt-1 text-[10px] text-muted-foreground"
+                              numberOfLines={1}
+                            >
+                              {attachment.filename}
+                            </Text>
+                            <Pressable
+                              onPress={() => removePendingAttachment(attachment.id)}
+                              accessibilityLabel={`Remove ${attachment.filename}`}
+                              className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
+                            >
+                              <X size={12} color="#a1a1aa" />
+                            </Pressable>
+                          </View>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  ) : null}
+                  {/*
                   One card holding the message and the controls that act on it, so
                   the composer reads as a single object rather than a field with
                   things parked either side of it. The controls sit under the text
                   because that is where the width is: flanking them costs a third
                   of a phone screen, and the text is the part that needs it.
                 */}
-                <View
-                  onLayout={(event: LayoutChangeEvent) =>
-                    setComposerWidth(event.nativeEvent.layout.width)
-                  }
-                  className="gap-2 rounded-2xl border border-border bg-card px-2.5 pb-2 pt-2.5"
-                >
-                  <Input
-                    nativeID={composerFieldId}
-                    accessibilityLabel="Message the agent"
-                    value={draft}
-                    onChangeText={setDraft}
-                    onKeyPress={handleComposerKeyPress}
-                    placeholder="Ask the agent…"
-                    multiline
-                    // One row at rest. `multiline` alone renders a two-row textarea
-                    // on the web, so the card opens a line taller than it needs.
-                    numberOfLines={1}
-                    editable={!sendBusy}
-                    // The card draws the border and the ground now, so the field
-                    // itself is only text.
-                    className="h-auto max-h-40 min-h-6 rounded-none border-0 bg-transparent px-1 py-0 text-sm"
-                    textAlignVertical="top"
-                  />
-                  <View className="flex-row items-center gap-2">
-                    <ComposerControl
-                      wide={wideControls}
-                      label="Attach"
-                      accessibilityLabel="Attach an image"
-                      icon={<Plus size={17} color={CONTROL_INK} />}
-                      disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
-                      onPress={handleAttachImage}
+                  <View
+                    onLayout={(event: LayoutChangeEvent) =>
+                      setComposerWidth(event.nativeEvent.layout.width)
+                    }
+                    className="gap-2 rounded-2xl border border-border bg-card px-2.5 pb-2 pt-2.5"
+                  >
+                    <Input
+                      nativeID={composerFieldId}
+                      accessibilityLabel="Message the agent"
+                      value={draft}
+                      onChangeText={setDraft}
+                      onKeyPress={handleComposerKeyPress}
+                      placeholder="Ask the agent…"
+                      multiline
+                      // One row at rest. `multiline` alone renders a two-row textarea
+                      // on the web, so the card opens a line taller than it needs.
+                      numberOfLines={1}
+                      editable={!sendBusy}
+                      // The card draws the border and the ground now, so the field
+                      // itself is only text.
+                      className="h-auto max-h-40 min-h-6 rounded-none border-0 bg-transparent px-1 py-0 text-sm"
+                      textAlignVertical="top"
                     />
-                    <View className="flex-1 px-1">
-                      {activityLabel ? (
-                        <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
-                      ) : null}
-                    </View>
-                    {/*
+                    <View className="flex-row items-center gap-2">
+                      <ComposerControl
+                        wide={wideControls}
+                        label="Attach"
+                        accessibilityLabel="Attach an image"
+                        icon={<Plus size={17} color={CONTROL_INK} />}
+                        disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+                        onPress={handleAttachImage}
+                      />
+                      <View className="flex-1 px-1">
+                        {activityLabel ? (
+                          <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
+                        ) : null}
+                      </View>
+                      {/*
                       Always offered, never revealed only while we think the agent
                       is busy. Interrupt is a single ESC, which an idle tool
                       ignores, so gating it on that guess only makes it
                       unavailable exactly when the guess is wrong.
                     */}
-                    <ComposerControl
-                      wide={wideControls}
-                      label="Stop"
-                      accessibilityLabel="Interrupt the agent"
-                      // Filled, because a stop is a stop and an outline reads as
-                      // a checkbox at this size.
-                      icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                      disabled={interruptBusy}
-                      onPress={handleInterrupt}
-                    />
-                    <ComposerControl
-                      wide={wideControls}
-                      brand
-                      label="Send"
-                      accessibilityLabel="Send the message"
-                      icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
-                      disabled={!canSendMessage}
-                      onPress={handleSendMessage}
-                    />
+                      <ComposerControl
+                        wide={wideControls}
+                        label="Stop"
+                        accessibilityLabel="Interrupt the agent"
+                        // Filled, because a stop is a stop and an outline reads as
+                        // a checkbox at this size.
+                        icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                        disabled={interruptBusy}
+                        onPress={handleInterrupt}
+                      />
+                      <ComposerControl
+                        wide={wideControls}
+                        brand
+                        label="Send"
+                        accessibilityLabel="Send the message"
+                        icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+                        disabled={!canSendMessage}
+                        onPress={handleSendMessage}
+                      />
+                    </View>
                   </View>
                 </View>
-              </View>
-            </>
-          )}
+              </>
+            )}
+          </View>
         </View>
       </View>
-    </View>
+    </Animated.View>
   );
 }

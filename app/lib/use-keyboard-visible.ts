@@ -1,31 +1,25 @@
 import { useEffect, useState } from "react";
-import { Dimensions, Keyboard, Platform } from "react-native";
-import type { KeyboardEvent } from "react-native";
+import { Keyboard, Platform } from "react-native";
 
-type KeyboardState = {
-  visible: boolean;
-  inset: number;
-};
-
-export function useKeyboardState() {
-  const [state, setState] = useState<KeyboardState>({ visible: false, inset: 0 });
+/**
+ * Whether the keyboard is up, for chrome that hides rather than moves.
+ *
+ * No `Keyboard.scheduleLayoutAnimation` here: it configures a LayoutAnimation for
+ * the whole next commit, so one hook call animated every view whose frame changed,
+ * and two components using this hook scheduled it twice per event. Anything that
+ * needs to move with the keyboard should ride {@link useKeyboardInset} instead,
+ * which is one continuous value on the UI thread.
+ */
+export function useKeyboardVisible(): boolean {
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
 
-    const frameEvent = Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow";
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const applyKeyboardFrame = (event: KeyboardEvent) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      const screenHeight = Dimensions.get("window").height;
-      const inset =
-        Platform.OS === "ios"
-          ? Math.max(0, screenHeight - event.endCoordinates.screenY)
-          : event.endCoordinates.height;
-      setState({ visible: inset > 0, inset });
-    };
-    const showSub = Keyboard.addListener(frameEvent, applyKeyboardFrame);
-    const hideSub = Keyboard.addListener(hideEvent, applyKeyboardFrame);
+    const showSub = Keyboard.addListener(showEvent, () => setVisible(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setVisible(false));
 
     return () => {
       showSub.remove();
@@ -33,13 +27,5 @@ export function useKeyboardState() {
     };
   }, []);
 
-  return state;
-}
-
-export function useKeyboardInset() {
-  return useKeyboardState().inset;
-}
-
-export function useKeyboardVisible() {
-  return useKeyboardState().visible;
+  return visible;
 }
