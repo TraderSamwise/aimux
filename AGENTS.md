@@ -147,6 +147,39 @@ If a requested shortcut is described as behaving like an existing live-pane pref
 
 Do not re-implement similar logic in `src/hotkeys.ts` or `src/multiplexer/session-launch.ts` unless the feature is explicitly meant to be owned by the in-process Node runtime. For live-pane, latency-sensitive navigation, prefer tmux-local metadata and tmux bindings over Node-side session lists.
 
+### Dashboard Quick-Jump Digit Semantics
+
+Digits on the dashboard are a fixed, level-independent gesture. This is a product
+decision, not an implementation detail, and it has been broken twice by refactors that
+looked locally reasonable. Do not "simplify" it back.
+
+- A first digit always addresses a **worktree**, whether the pointer is at worktree level
+  or already inside a worktree at session level.
+- A second digit within `DASHBOARD_QUICK_JUMP_TIMEOUT_MS` addresses an **entry** in that
+  worktree — agents first, then services, in rendered order.
+- With no second digit, the first digit stands alone: focus the worktree root.
+- An out-of-range second digit is a no-op that leaves the pointer on the worktree root.
+- The second digit must commit the selection (`level`, `sessionIndex`, preferred entry,
+  persist) *before* activating, so stepping back out of the agent or service returns the
+  pointer to that row rather than the worktree header.
+
+The tempting regression is making a digit mean "row N of the worktree I am already in"
+when the pointer is at session level. It reads as a convenient shortcut and it is wrong:
+session level is the resting state after stepping out of an agent, so it silently steals
+the worktree jump, and a digit past that worktree's row count does nothing visible at all.
+Reaching row N of the current worktree is `<that worktree's digit><N>`, which the pair
+already covers.
+
+Digits also arrive coalesced. `parseKeys` batches consecutive printable characters into a
+single event, so a fast pair lands as one `"31"`-style `char` and must be replayed one
+digit at a time — otherwise it parses as digit 31 and is silently swallowed.
+
+Source of truth: `handleDashboardQuickJumpDigit` in `src/multiplexer/dashboard-interaction.ts`,
+with `src/dashboard/quick-jump.ts` for the worktree/entry numbering. Behavior is pinned by
+the `worktree-level two-digit quick jump` tests in `src/multiplexer/dashboard-interaction.test.ts`.
+Verify changes by driving a real dashboard over tmux, not by reading the handler — both
+previous breakages typechecked, passed the suite, and looked correct in source.
+
 ### Releasing The App
 
 Releases go through the shared `@tradersamwise/eas-release` CLI. There are two
