@@ -27,6 +27,22 @@ import {
   stopSessionToOffline,
 } from "./runtime-state.js";
 
+import { SessionBootstrapService } from "../session-bootstrap.js";
+
+/**
+ * The real arg composition, not a stub: these tests exist to pin what gets
+ * launched and what gets remembered, which a stub would simply agree with.
+ */
+function realArgComposition() {
+  const bootstrap = SessionBootstrapService.prototype;
+  return {
+    composeToolArgs: bootstrap.composeToolArgs.bind(bootstrap),
+    composeToolLaunch: bootstrap.composeToolLaunch.bind(bootstrap),
+    stripToolActionArgs: bootstrap.stripToolActionArgs.bind(bootstrap),
+    toolActionArgPatterns: bootstrap.toolActionArgPatterns.bind(bootstrap),
+  };
+}
+
 describe("startStatusRefresh", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -299,6 +315,7 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [{ id: "codex-1" }],
       sessionLabels: new Map(),
       sessionBootstrap: {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => true),
       },
       getSessionLabel: vi.fn(),
@@ -342,6 +359,10 @@ describe("resumeOfflineSession", () => {
       true,
       true,
       team,
+      undefined,
+      // Exact, not "does not contain": expect.not.arrayContaining passes unless
+      // every listed item is present, so a leaked verb would have slipped by.
+      ["--dangerously-bypass-approvals-and-sandbox"],
     ]);
   });
 
@@ -432,7 +453,10 @@ describe("resumeOfflineSession", () => {
       sessions: [],
       offlineSessions: [{ id: "codex-1" }],
       sessionLabels: new Map(),
-      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => true) },
+      sessionBootstrap: {
+        ...realArgComposition(),
+        canResumeWithBackendSessionId: vi.fn(() => true),
+      },
       getSessionLabel: vi.fn(),
       invalidateDesktopStateSnapshot: vi.fn(),
       saveState: vi.fn(),
@@ -470,7 +494,10 @@ describe("resumeOfflineSession", () => {
       sessions: [],
       offlineSessions: [{ id: "codex-1" }],
       sessionLabels: new Map(),
-      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => true) },
+      sessionBootstrap: {
+        ...realArgComposition(),
+        canResumeWithBackendSessionId: vi.fn(() => true),
+      },
       getSessionLabel: vi.fn(),
       invalidateDesktopStateSnapshot: vi.fn(),
       saveState: vi.fn(),
@@ -508,6 +535,7 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [{ id: "codex-1" }],
       sessionLabels: new Map(),
       sessionBootstrap: {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => true),
       },
       getSessionLabel: vi.fn(),
@@ -551,6 +579,10 @@ describe("resumeOfflineSession", () => {
       true,
       true,
       undefined,
+      undefined,
+      // Exact, not "does not contain": expect.not.arrayContaining passes unless
+      // every listed item is present, so a leaked verb would have slipped by.
+      ["--dangerously-bypass-approvals-and-sandbox"],
     ]);
   });
 
@@ -582,6 +614,7 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [{ id: "codex-1" }],
       sessionLabels: new Map(),
       sessionBootstrap: {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => false),
       },
       getSessionLabel: vi.fn(),
@@ -625,6 +658,7 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [{ id: "codex-1", backendSessionId: "backend-current" }],
       sessionLabels: new Map(),
       sessionBootstrap: {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => true),
       },
       getSessionLabel: vi.fn(),
@@ -670,6 +704,10 @@ describe("resumeOfflineSession", () => {
       true,
       true,
       undefined,
+      undefined,
+      // Exact, not "does not contain": expect.not.arrayContaining passes unless
+      // every listed item is present, so a leaked verb would have slipped by.
+      ["--dangerously-bypass-approvals-and-sandbox"],
     ]);
   });
 
@@ -680,6 +718,7 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [{ id: "codex-1" }],
       sessionLabels: new Map(),
       sessionBootstrap: {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => false),
       },
       getSessionLabel: vi.fn(),
@@ -739,7 +778,10 @@ describe("resumeOfflineSession", () => {
         sessions: [],
         offlineSessions: [{ id: "claude-1" }],
         sessionLabels: new Map(),
-        sessionBootstrap: { canResumeWithBackendSessionId: vi.fn((_cfg: any, id: any) => Boolean(id)) },
+        sessionBootstrap: {
+          ...realArgComposition(),
+          canResumeWithBackendSessionId: vi.fn((_cfg: any, id: any) => Boolean(id)),
+        },
         getSessionLabel: vi.fn(),
         invalidateDesktopStateSnapshot: vi.fn(),
         saveState: vi.fn(),
@@ -779,6 +821,7 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [{ id: "claude-error", backendSessionId: "backend-old" }],
       sessionLabels: new Map(),
       sessionBootstrap: {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => false),
       },
       getSessionLabel: vi.fn(),
@@ -817,7 +860,10 @@ describe("resumeOfflineSession", () => {
       sessions: [],
       offlineSessions: [{ id: "codex-empty" }],
       sessionLabels: new Map(),
-      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => false) },
+      sessionBootstrap: {
+        ...realArgComposition(),
+        canResumeWithBackendSessionId: vi.fn(() => false),
+      },
       getSessionLabel: vi.fn(),
       invalidateDesktopStateSnapshot: vi.fn(),
       writeStatuslineFile: vi.fn(),
@@ -995,6 +1041,7 @@ describe("resumeOfflineSession", () => {
         offlineSessions: [{ id: "claude-main" }],
         sessionLabels: new Map(),
         sessionBootstrap: {
+          ...realArgComposition(),
           canResumeWithBackendSessionId: vi.fn((_toolCfg, id) => id === backendSessionId),
         },
         getSessionLabel: vi.fn(),

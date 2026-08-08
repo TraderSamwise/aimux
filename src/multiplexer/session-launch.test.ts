@@ -27,6 +27,21 @@ import {
   startProjectServiceHost,
 } from "./session-launch.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
+import { SessionBootstrapService } from "../session-bootstrap.js";
+
+/**
+ * The real arg composition, not a stub: these tests exist to pin what gets
+ * launched and what gets remembered, which a stub would simply agree with.
+ */
+function realArgComposition() {
+  const bootstrap = SessionBootstrapService.prototype;
+  return {
+    composeToolArgs: bootstrap.composeToolArgs.bind(bootstrap),
+    composeToolLaunch: bootstrap.composeToolLaunch.bind(bootstrap),
+    stripToolActionArgs: bootstrap.stripToolActionArgs.bind(bootstrap),
+    toolActionArgPatterns: bootstrap.toolActionArgPatterns.bind(bootstrap),
+  };
+}
 
 describe("createSession", () => {
   it("inserts Codex developer instructions before subcommands", () => {
@@ -73,6 +88,7 @@ describe("createSession", () => {
     const sessions: any[] = [];
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble,
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -122,6 +138,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -187,6 +204,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -249,6 +267,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -318,6 +337,7 @@ describe("createSession", () => {
       const sessions: any[] = [];
       const host: any = {
         sessionBootstrap: {
+          ...realArgComposition(),
           buildSessionPreamble: vi.fn(() => ""),
           ensurePlanFile: vi.fn(),
           finalizePreamble: vi.fn(),
@@ -373,6 +393,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -427,6 +448,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "PREAMBLE"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -489,6 +511,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -537,6 +560,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -591,6 +615,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -638,6 +663,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -686,6 +712,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -730,6 +757,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -777,6 +805,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -839,6 +868,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -894,6 +924,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -956,6 +987,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => "aimux teammate preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -1015,6 +1047,7 @@ describe("createSession", () => {
 
     const host: any = {
       sessionBootstrap: {
+        ...realArgComposition(),
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
@@ -1087,6 +1120,7 @@ describe("migrateAgent", () => {
       sessionTmuxTargets: new Map(),
       contextWatcher: { syncNow: vi.fn(async () => undefined) },
       sessionBootstrap: {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => false),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
           ...originalArgs,
@@ -1363,6 +1397,7 @@ describe("resumeSessions", () => {
     class Host {
       startHeartbeat = vi.fn();
       sessionBootstrap = {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
           ...originalArgs,
@@ -1410,6 +1445,7 @@ describe("resumeSessions", () => {
     class Host {
       startHeartbeat = vi.fn();
       sessionBootstrap = {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
           ...originalArgs,
@@ -1438,6 +1474,10 @@ describe("resumeSessions", () => {
       false,
       true,
       team,
+      undefined,
+      // Exact, not "does not contain": expect.not.arrayContaining passes unless
+      // every listed item is present, so a leaked verb would have slipped by.
+      ["--dangerously-bypass-approvals-and-sandbox"],
     );
 
     rmSync(repoRoot, { recursive: true, force: true });
@@ -1476,6 +1516,7 @@ describe("resumeSessions", () => {
     class Host {
       startHeartbeat = vi.fn();
       sessionBootstrap = {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
           ...originalArgs,
@@ -1505,6 +1546,10 @@ describe("resumeSessions", () => {
       false,
       true,
       undefined,
+      undefined,
+      // Exact, not "does not contain": expect.not.arrayContaining passes unless
+      // every listed item is present, so a leaked verb would have slipped by.
+      ["--dangerously-bypass-approvals-and-sandbox"],
     );
 
     rmSync(repoRoot, { recursive: true, force: true });
@@ -1542,6 +1587,7 @@ describe("resumeSessions", () => {
       createSession: vi.fn(),
       openTmuxDashboardTarget: vi.fn(),
       runDashboard: vi.fn(),
+      sessionBootstrap: { ...realArgComposition() },
     };
 
     await expect(restoreSessions(host as any)).resolves.toBe(0);
@@ -1587,6 +1633,7 @@ describe("resumeSessions", () => {
     class Host {
       startHeartbeat = vi.fn();
       sessionBootstrap = {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => false),
         composeToolArgs: vi.fn(),
       };
@@ -1652,6 +1699,7 @@ describe("resumeSessions", () => {
         });
       });
       sessionBootstrap = {
+        ...realArgComposition(),
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn(),
       };

@@ -720,7 +720,10 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
       `Cannot restore session "${session.id}" without an exact resumable backend session id for "${session.toolConfigKey}"`,
     );
   }
-  const args = [...(toolCfg.args ?? []), ...actionArgs];
+  // Composed from the session's own args, not just the tool's: this dropped the
+  // extras a session was started with, and persisting a launch line the session
+  // never had is how the resume verb ended up stored in the first place.
+  const { launch: args, persist } = host.sessionBootstrap.composeToolLaunch(toolCfg, actionArgs, session.args ?? []);
 
   if (relaunchFresh) {
     updateSessionMetadata(session.id, (current: any) => {
@@ -769,6 +772,8 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     true,
     useBackendResume,
     session.team,
+    undefined,
+    persist,
   );
   if (supersededBackendSessionId && restoredSession) {
     restoredSession.supersededBackendSessionId = supersededBackendSessionId;

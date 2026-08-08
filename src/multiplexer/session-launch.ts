@@ -515,7 +515,7 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
       continue;
     }
     const resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", backendSessionId!));
-    const args = host.sessionBootstrap.composeToolArgs(toolCfg, resumeArgs, saved.args);
+    const { launch: args, persist } = host.sessionBootstrap.composeToolLaunch(toolCfg, resumeArgs, saved.args);
     log.info("resuming session", "session", {
       sessionId: saved.id,
       command: saved.command,
@@ -536,6 +536,8 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
       false,
       true,
       saved.team,
+      undefined,
+      persist,
     );
   }
 
@@ -580,9 +582,12 @@ export async function restoreSessions(host: SessionLaunchHost, toolFilter?: stri
     );
     const extraPreamble = historyContext + (liveContext ? "\n" + liveContext : "");
 
+    // Sanitised on the way past: rows written before this fix carry a resume
+    // verb, and re-persisting it keeps the session unlaunchable for codex.
+    const configuredArgs = host.sessionBootstrap.stripToolActionArgs(toolCfg, saved.args ?? []);
     host.createSession(
       saved.command,
-      saved.args,
+      configuredArgs,
       toolCfg.preambleFlag,
       saved.toolConfigKey,
       extraPreamble.trim() || undefined,
@@ -833,6 +838,8 @@ export async function createSessionAsync(
   suppressStartupPreamble = false,
   team?: SessionTeamMetadata,
   launchEnv?: Record<string, string>,
+  /** See createSession: what to remember, when it differs from the launch. */
+  persistArgs?: string[],
 ): Promise<any> {
   const cols = process.stdout.columns ?? 80;
   const commandExecutable = basename(command) || command;
@@ -999,7 +1006,15 @@ export async function createSessionAsync(
   );
   host.sessionTmuxTargets.set(sessionId, target);
   const session = tmuxTransport;
-  host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime, team);
+  host.registerManagedSession(
+    tmuxTransport,
+    persistArgs ?? args,
+    toolConfigKey,
+    worktreePath,
+    undefined,
+    sessionStartTime,
+    team,
+  );
   scheduleStartupInterstitialDismissal(host, sessionId, target, toolConfigKey);
 
   session.backendSessionId = backendSessionId;
@@ -1090,7 +1105,12 @@ export async function migrateAgent(
   const toolConfigKey = host.sessionToolKeys.get(sessionId) ?? session.command;
   const config = loadConfig();
   const toolCfg = config.tools[toolConfigKey];
-  const originalArgs = host.sessionOriginalArgs.get(sessionId) ?? [];
+  // Reattaching seeds this from tmux metadata, so it carries whatever a launch
+  // before this fix wrote — sanitise before it is composed or remembered again.
+  const originalArgs = host.sessionBootstrap.stripToolActionArgs(
+    toolCfg,
+    host.sessionOriginalArgs.get(sessionId) ?? [],
+  );
 
   const backendSessionId = session.backendSessionId;
   let migrateArgs = originalArgs;

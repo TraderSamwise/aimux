@@ -158,6 +158,68 @@ export class SessionBootstrapService {
     return [...baseArgs, ...actionArgs, ...trailingArgs];
   }
 
+  /**
+   * The argument shapes this tool uses to say "continue that conversation".
+   *
+   * Read from the tool's own config rather than guessed from the shape of an
+   * argument, so a flag the user chose for their own reasons is never mistaken
+   * for one of ours.
+   */
+  toolActionArgPatterns(toolCfg: ToolActionArgConfig | undefined): string[][] {
+    // resumeFallback is deliberately absent: nothing launches with it, so it
+    // was never persisted, and aider's fallback is "--restore-chat-history" —
+    // a flag somebody may legitimately have set for themselves.
+    return [toolCfg?.resumeArgs, toolCfg?.forkArgs].filter(
+      (pattern): pattern is string[] => Array.isArray(pattern) && pattern.length > 0,
+    );
+  }
+
+  /**
+   * A session's args with any of those shapes taken back out.
+   *
+   * How a session was launched is not what a session is: "resume this id" is
+   * decided fresh each time, and storing it meant the next launch composed it
+   * twice. codex refuses a second positional outright, so those sessions simply
+   * stopped starting. Args already on disk are repaired by this on the way past,
+   * which is why it matches a partial pattern too — the oldest rows kept the
+   * verb but not the id.
+   */
+  stripToolActionArgs(toolCfg: ToolActionArgConfig | undefined, args: string[]): string[] {
+    const patterns = this.toolActionArgPatterns(toolCfg);
+    if (patterns.length === 0) return [...args];
+
+    const kept: string[] = [];
+    for (let index = 0; index < args.length; ) {
+      const consumed = patterns.reduce(
+        (longest, pattern) => Math.max(longest, matchedActionArgLength(pattern, args, index)),
+        0,
+      );
+      if (consumed > 0) {
+        index += consumed;
+        continue;
+      }
+      kept.push(args[index]);
+      index += 1;
+    }
+    return kept;
+  }
+
+  /**
+   * How to launch, and what to remember, from one set of inputs — so the two
+   * cannot drift the way they did when each call site built them separately.
+   */
+  composeToolLaunch(
+    toolCfg: { args: string[] } & ToolActionArgConfig,
+    actionArgs: string[],
+    savedArgs: string[] = [],
+  ): { launch: string[]; persist: string[] } {
+    const configured = this.stripToolActionArgs(toolCfg, savedArgs);
+    return {
+      launch: this.composeToolArgs(toolCfg, actionArgs, configured),
+      persist: this.composeToolArgs(toolCfg, [], configured),
+    };
+  }
+
   canResumeWithBackendSessionId(
     toolCfg: { resumeArgs?: string[]; resumeByBackendSessionId?: boolean } | undefined,
     backendSessionId: string | undefined,
@@ -425,4 +487,28 @@ export function getToolResumeArgs(
     return undefined;
   }
   return toolCfg.resumeArgs.map((arg) => arg.replace("{sessionId}", backendSessionId));
+}
+
+export interface ToolActionArgConfig {
+  resumeArgs?: string[];
+  forkArgs?: string[];
+}
+
+/**
+ * How many of `args` from `index` are this pattern.
+ *
+ * Partial counts: a row holding only `resume`, with the id long gone, is still
+ * the verb and still breaks the next launch. `{sessionId}` stands for whatever
+ * id was substituted in, which is any single token that is not itself a flag.
+ */
+function matchedActionArgLength(pattern: string[], args: string[], index: number): number {
+  let matched = 0;
+  while (matched < pattern.length && index + matched < args.length) {
+    const expected = pattern[matched];
+    const actual = args[index + matched];
+    const isPlaceholder = expected === "{sessionId}";
+    if (isPlaceholder ? actual.startsWith("-") : actual !== expected) break;
+    matched += 1;
+  }
+  return matched;
 }
