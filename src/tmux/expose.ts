@@ -1039,7 +1039,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       void reload(false)
         .then((result) => {
           if (finished || result === "stale") return;
-          render();
+          render(false);
           if (applyPendingKeys()) return;
           if (refreshCaptures()) render(false);
           startRefreshLoop();
@@ -1056,7 +1056,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           pendingKeys = [];
           captures.clear();
           seedPreviewSnapshots();
-          render();
+          render(false);
           startRefreshLoop();
         });
       return true;
@@ -1067,7 +1067,12 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       void reload(false)
         .then((result) => {
           if (finished || result === "stale") return;
-          render();
+          // Not a full render: the backdrop is a screenshot of the host taken once at
+          // startup and never updated, so repainting it here rewrites the whole screen
+          // to redraw identical pixels. A warm launch lands this ~800ms after the first
+          // frame, which is exactly when it reads as a flash. `needsStatic` still
+          // repaints the chrome whenever the size or tile count actually changed.
+          render(false);
           if (applyPendingKeys()) return;
           if (refreshCaptures()) render(false);
           startRefreshLoop();
@@ -1075,7 +1080,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         .catch(() => {
           if (finished) return;
           loading = false;
-          render();
+          render(false);
           startRefreshLoop();
         });
     };
