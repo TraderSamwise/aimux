@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseAgentOutput } from "./agent-output-parser.js";
+import { messagesFromParsedAgentOutput } from "./agent-transcript.js";
 
 describe("parseAgentOutput", () => {
   it("keeps footer-only trailing Codex input out of chat prompts", () => {
@@ -227,6 +228,47 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[3]?.text).toBe("continue");
     expect(parsed.blocks[4]?.text).toContain("Warping…");
     expect(parsed.blocks[4]?.text).toContain("bypass permissions on");
+  });
+
+  it("drops the composer's echo of a sent message while the turn is still running", () => {
+    // The operator's message is on screen twice: once in the transcript, once in the
+    // composer under the reply. Mid-turn the row below the composer is the work
+    // spinner rather than the footer, which used to leave the echo standing as a
+    // second prompt — the same message rendering below its own answer.
+    const raw = [
+      "› do a quick sanity check of the grand apis",
+      "",
+      "• I'll do a read-only auth sanity check across the installed wrappers.",
+      "",
+      "› do a quick sanity check of the grand apis",
+      "",
+      "* Working (17s)",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    // The demoted echo merges into the trailing status run, leaving one turn.
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response", "status"]);
+    expect(messagesFromParsedAgentOutput(parsed).map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("keeps a genuinely new message sent mid-turn, which the echo rule must not eat", () => {
+    // Same shape as the echo, minus the repeat: this one exists only at the bottom,
+    // so it is the operator's next message and has to survive.
+    const raw = [
+      "› do a quick sanity check of the grand apis",
+      "",
+      "• I'll do a read-only auth sanity check across the installed wrappers.",
+      "",
+      "› actually check billing too",
+      "",
+      "* Working (17s)",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response", "prompt", "status"]);
+    expect(messagesFromParsedAgentOutput(parsed).map((message) => message.role)).toEqual(["user", "assistant", "user"]);
   });
 
   it("keeps assistant markdown bullets with timing as response text", () => {

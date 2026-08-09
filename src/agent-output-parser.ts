@@ -607,10 +607,18 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
       .some((block) => block.type === "prompt" || block.type === "response");
     const trailingFooterInput = nextConversationIndex === -1 && hasPriorConversationTurn;
 
+    // A composer holding text is a prompt line wherever the pane draws it, so the
+    // operator's message parses twice: once from the transcript, once from the
+    // composer below the reply. Which status follows it only says whether the agent
+    // is idle or mid-turn — the echo is an echo either way, and gating on the footer
+    // alone left it standing for the whole turn, which is when it is on screen.
+    const composerEchoBelow =
+      following?.type === "status" &&
+      (looksLikeFooterStatus(following.text) || looksLikeActiveWorkStatus(following.text));
+
     if (
       tool === "codex" &&
-      following?.type === "status" &&
-      looksLikeFooterStatus(following.text) &&
+      composerEchoBelow &&
       (!hasActiveWorkBeforeNextTurn || repeatedPrompt || templatePrompt) &&
       (repeatedPrompt ||
         templatePrompt ||
