@@ -199,6 +199,7 @@ export default function ChatScreen() {
     applyOutputSnapshot({
       sessionId: result.sessionId,
       output: result.output,
+      outputAnsi: result.outputAnsi,
       messages: result.messages,
       activity: result.activity,
       activityText: result.activityText,

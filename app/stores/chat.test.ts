@@ -6,6 +6,7 @@ import {
   ingestEventAtom,
   transcriptFamily,
   lastErrorFamily,
+  outputAnsiFamily,
   outputBufferFamily,
 } from "@/stores/chat";
 
@@ -17,6 +18,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       sessionId: "agent-1",
       output: "hello",
+      outputAnsi: undefined,
       messages: [],
     });
 
@@ -39,6 +41,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       sessionId: "agent-1",
       output: "Published events: 21",
+      outputAnsi: undefined,
       messages: [message],
     });
 
@@ -50,11 +53,39 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       sessionId: "agent-1",
       output: "one",
+      outputAnsi: undefined,
       messages: [message],
     });
-    store.set(applyOutputSnapshotAtom, { sessionId: "agent-1", output: "two" });
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      output: "two",
+      outputAnsi: undefined,
+    });
 
     expect(store.get(transcriptFamily("agent-1"))).toEqual([]);
+  });
+
+  it("keeps the coloured pane when the service sends one", () => {
+    const store = createStore();
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      output: "plain",
+      outputAnsi: "\x1b[31mplain",
+    });
+
+    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[31mplain");
+    expect(store.get(outputBufferFamily("agent-1"))).toBe("plain");
+  });
+
+  it("falls back to the uncoloured pane against a service too old to send one", () => {
+    const store = createStore();
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      output: "plain",
+      outputAnsi: undefined,
+    });
+
+    expect(store.get(outputAnsiFamily("agent-1"))).toBe("plain");
   });
 
   it("takes them from a stream event too", () => {
@@ -63,10 +94,12 @@ describe("the projected transcript", () => {
       type: "agent_output",
       sessionId: "agent-1",
       output: "Published events: 21",
+      outputAnsi: "\x1b[32mPublished events: 21",
       startLine: -120,
       messages: [message],
     });
 
     expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
+    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[32mPublished events: 21");
   });
 });

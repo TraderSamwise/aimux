@@ -58,7 +58,14 @@ export const applyOutputSnapshotAtom = atom(
     snapshot: {
       sessionId: string;
       output: string;
-      outputAnsi?: string;
+      /**
+       * Required, though the value may be undefined: callers build this object
+       * field by field, so an optional key is one a caller can simply forget —
+       * which is how the coloured terminal shipped reading a field nothing ever
+       * set. Spelling it out makes the omission a type error instead of a
+       * silent fall back to the uncoloured text.
+       */
+      outputAnsi: string | undefined;
       messages?: AgentTranscriptMessage[];
       activity?: AgentActivityState;
       activityText?: string;
