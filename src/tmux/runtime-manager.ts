@@ -18,6 +18,7 @@ import { isTmuxClientSessionForHost, isTmuxClientSessionName } from "./session-n
 import type { SessionUserLabel } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { recordTmuxExec } from "./exec-metrics.js";
+import { memoizedTmuxQuery, READ_ONLY_TMUX_VERBS, resetTmuxQueryMemo, tmuxQueryKey } from "./query-memo.js";
 
 export interface TmuxExecOptions {
   cwd?: string;
@@ -151,7 +152,7 @@ export const MANAGED_TMUX_AGENT_WINDOW_OPTIONS = Object.freeze({
 const MODIFIED_ENTER_HEX = "1b 5b 31 33 3b 32 75";
 // Timed because this is the blocking one: the daemon hosts every project service
 // in-process, so time spent here is time no other project's handler can run.
-const DEFAULT_EXEC: TmuxExec = (args, options) => {
+const RAW_EXEC: TmuxExec = (args, options) => {
   const startedAt = performance.now();
   try {
     return execFileSync("tmux", args, {
@@ -232,11 +233,31 @@ export function buildDefaultRootMouseBindingsConfig(input: {
 export class TmuxRuntimeManager {
   private sessionPrefixCache: string | null = null;
 
+  private readonly exec: TmuxExec;
+
   constructor(
-    private readonly exec: TmuxExec = DEFAULT_EXEC,
+    exec: TmuxExec = RAW_EXEC,
     private readonly interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
     private readonly execAsync: TmuxExecAsync = DEFAULT_EXEC_ASYNC,
-  ) {}
+  ) {
+    // Wrapped here rather than around the default, so an injected exec behaves the
+    // same way — otherwise the memo would be untestable and production-only.
+    // Forwarded with the caller's own arity: passing an explicit `undefined`
+    // second argument changes what a mocked exec records, which is a difference
+    // this wrapper has no business making.
+    const call = (args: string[], options?: TmuxExecOptions) =>
+      options === undefined ? exec(args) : exec(args, options);
+    this.exec = (args, options) => {
+      const verb = args[0] ?? "";
+      if (!READ_ONLY_TMUX_VERBS.has(verb)) {
+        // A mutation invalidates every answer given so far: a build that renames a
+        // window and then re-lists has to see the rename.
+        resetTmuxQueryMemo();
+        return call(args, options);
+      }
+      return memoizedTmuxQuery(tmuxQueryKey(args, options?.cwd), () => call(args, options));
+    };
+  }
 
   isAvailable(): boolean {
     try {
