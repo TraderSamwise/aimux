@@ -96,6 +96,21 @@ describe("assessLoopBudget", () => {
     expect(atDelayLimit.withinBudget).toBe(true);
   });
 
+  it("compares the raw share, not the rounded one", () => {
+    // 2.004% rounds to 2.0 and would read as exactly at the limit.
+    const assessment = assessLoopBudget({
+      windowMs: 100_000,
+      eventLoop: { p50: 1, p90: 2, p99: 3, max: 4, mean: 1, monitoring: true },
+      tmuxExec: {
+        sync: { count: 100, totalMs: 2_004, maxMs: 5 },
+        async: { count: 0, totalMs: 0, maxMs: 0 },
+        syncByVerb: {},
+      },
+    });
+    expect(assessment.syncSharePct).toBe(2);
+    expect(assessment.reasons).toEqual(["sync-share-over-budget"]);
+  });
+
   it("names every reason it failed, not just the first", () => {
     const assessment = assessLoopBudget({
       windowMs: MIN_WINDOW_MS - 1,

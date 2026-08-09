@@ -63,19 +63,21 @@ function round(value: number): number {
 
 export function assessLoopBudget(input: LoopBudgetInput): LoopBudgetAssessment {
   const { windowMs, eventLoop, tmuxExec } = input;
-  const syncSharePct = windowMs > 0 ? round((tmuxExec.sync.totalMs / windowMs) * 100) : 0;
+  // Compared raw, reported rounded: rounding first lets 2.004% read as exactly at
+  // the limit and pass.
+  const rawSyncSharePct = windowMs > 0 ? (tmuxExec.sync.totalMs / windowMs) * 100 : 0;
   const reasons: LoopBudgetReason[] = [];
 
   if (windowMs < MIN_WINDOW_MS || tmuxExec.sync.count < MIN_SYNC_CALLS) {
     reasons.push("insufficient-sample");
   }
   if (!eventLoop.monitoring) reasons.push("not-monitoring");
-  if (syncSharePct > MAX_SYNC_SHARE_PCT) reasons.push("sync-share-over-budget");
+  if (rawSyncSharePct > MAX_SYNC_SHARE_PCT) reasons.push("sync-share-over-budget");
   if (eventLoop.p99 > MAX_LOOP_DELAY_P99_MS) reasons.push("loop-delay-over-budget");
 
   return {
     withinBudget: reasons.length === 0,
-    syncSharePct,
+    syncSharePct: round(rawSyncSharePct),
     loopDelayP99Ms: eventLoop.p99,
     reasons,
   };

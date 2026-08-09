@@ -195,6 +195,7 @@ import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from 
 import { parseRuntimeMetadataCliArgs } from "./metadata-cli-routing.js";
 import { getEventLoopDelay, startEventLoopMonitor } from "./event-loop-metrics.js";
 import { getTmuxExecMetrics } from "./tmux/exec-metrics.js";
+import { assessLoopBudget } from "./event-loop-budget.js";
 
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
@@ -3725,14 +3726,20 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === "/diagnostics/loop") {
       if (actor) return { status: 403, body: { ok: false, error: "diagnostics routes are loopback-only" } };
+      const uptimeMs = Math.round(process.uptime() * 1000);
+      const eventLoop = getEventLoopDelay();
+      const tmuxExec = getTmuxExecMetrics();
       return {
         status: 200,
         body: {
           ok: true,
           pid: process.pid,
-          uptimeMs: Math.round(process.uptime() * 1000),
-          eventLoop: getEventLoopDelay(),
-          tmuxExec: getTmuxExecMetrics(),
+          uptimeMs,
+          eventLoop,
+          tmuxExec,
+          // The verdict, not just the numbers: a reader (or a smoke check) should
+          // not have to re-derive the thresholds to know whether this is healthy.
+          budget: assessLoopBudget({ windowMs: uptimeMs, eventLoop, tmuxExec }),
           // Named rather than silently missing: Exposé's hot-snapshot refresh runs
           // in a worker thread with its own module registry, so its tmux calls are
           // absent from these counters — and, the point of this route, absent from

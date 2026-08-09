@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -17,19 +18,64 @@ import { describe, expect, it } from "vitest";
  * adding a call is not.
  */
 
+// Longest-first, so `listWindows` cannot shadow `listProjectManagedWindows` in
+// the alternation. Every method whose body reaches this.exec() is here: a partial
+// list is not a weaker gate, it is a documented bypass.
 const SYNC_TMUX_METHODS = [
-  "listSessionNames",
+  "repairLegacyProjectSessionNames",
+  "applyDefaultRootMouseBindings",
+  "setCurrentRuntimeContract",
+  "listPersistedCommandText",
+  "sendClientCarriageReturn",
+  "replaceWindowWhenReady",
+  "ensureDashboardWindow",
+  "ensureTerminalFeature",
+  "currentClientSession",
+  "ensureProjectSession",
+  "setOptionIfSupported",
+  "switchClientToTarget",
+  "ensureClientSession",
+  "ensureLinkedWindow",
   "listManagedWindows",
-  "listProjectManagedWindows",
-  "isWindowAlive",
+  "sendCarriageReturn",
   "getWindowMetadata",
-  "getWindowOption",
+  "sendModifiedEnter",
   "setWindowMetadata",
-  "displayMessage",
-  "captureTarget",
-  "hasSession",
-  "isWindowActive",
+  "configureSession",
+  "getReturnSession",
   "getSessionOption",
+  "listSessionNames",
+  "setReturnSession",
+  "setSessionOption",
+  "getWindowOption",
+  "sendClientEnter",
+  "setWindowOption",
+  "cancelCopyMode",
+  "displayMessage",
+  "isWindowActive",
+  "captureTarget",
+  "isWindowAlive",
+  "refreshStatus",
+  "respawnWindow",
+  "startPanePipe",
+  "createWindow",
+  "renameWindow",
+  "resizeTarget",
+  "selectWindow",
+  "stopPanePipe",
+  "unlinkWindow",
+  "isAvailable",
+  "killSession",
+  "listClients",
+  "listWindows",
+  "sendFocusIn",
+  "getVersion",
+  "hasSession",
+  "killWindow",
+  "sendEscape",
+  "sendEnter",
+  "sendText",
+  "sendKey",
 ] as const;
 
 // `captureTarget` is a prefix of `captureTargetAsync`, and `displayMessage` of no
@@ -49,14 +95,17 @@ const OFF_LOOP_FILES = new Set(["src/tmux/expose.ts", "src/expose-hot-snapshot-w
  * On the daemon loop and still synchronous. Every entry is a known cost; the list
  * is a worklist, not a permission slip.
  */
-const ALLOWED_SYNC_CALLERS = new Set([
+const ALLOWED_SYNC_CALLERS = [
   "src/agent-prompt-delivery.ts",
   "src/context/context-bridge.ts",
+  "src/daemon.ts",
   "src/dashboard/targets.ts",
-  "src/debug-state.ts",
   "src/expose-control.ts",
+  "src/expose-pane-output-tap.ts",
   "src/fast-control.ts",
+  "src/install-cleanup.ts",
   "src/lifecycle-orphans.ts",
+  "src/main.ts",
   "src/metadata-server.ts",
   "src/multiplexer/dashboard-control.ts",
   "src/multiplexer/dashboard-model.ts",
@@ -66,6 +115,7 @@ const ALLOWED_SYNC_CALLERS = new Set([
   "src/multiplexer/index.ts",
   "src/multiplexer/persistence-methods.ts",
   "src/multiplexer/runtime-guard.ts",
+  "src/multiplexer/runtime-lifecycle-methods.ts",
   "src/multiplexer/runtime-state.ts",
   "src/multiplexer/service-state-snapshot.ts",
   "src/multiplexer/services.ts",
@@ -77,11 +127,15 @@ const ALLOWED_SYNC_CALLERS = new Set([
   "src/tmux/doctor.ts",
   "src/tmux/runtime-manager.ts",
   "src/tmux/runtime-stop.ts",
+  "src/tmux/session-transport.ts",
+  "src/tmux/statusline-artifacts.ts",
   "src/tmux/window-open.ts",
-]);
+];
 
 const SKIP_DIRECTORIES = new Set(["node_modules", "dist", "release", ".git"]);
-const ROOT = new URL("../..", import.meta.url).pathname;
+// fileURLToPath, not .pathname: the latter stays percent-encoded, so a checkout
+// under a path containing a space resolves to a directory that does not exist.
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 function listSourceFiles(): string[] {
   const files: string[] = [];
@@ -105,19 +159,23 @@ describe("synchronous tmux callers", () => {
   const callers = listSourceFiles().filter((file) => methodPattern.test(readFileSync(join(ROOT, file), "utf8")));
 
   it("are confined to the files that already had them", () => {
-    const unexpected = callers.filter((file) => !ALLOWED_SYNC_CALLERS.has(file) && !OFF_LOOP_FILES.has(file));
+    const unexpected = callers.filter((file) => !ALLOWED_SYNC_CALLERS.includes(file) && !OFF_LOOP_FILES.has(file));
     expect(unexpected).toEqual([]);
   });
 
   it("stays sorted, so adding a line is never the path of least resistance", () => {
-    const entries = [...ALLOWED_SYNC_CALLERS];
+    const entries = ALLOWED_SYNC_CALLERS;
     expect(entries).toEqual([...entries].sort());
+  });
+
+  it("has no duplicate entries, which a Set would have hidden", () => {
+    expect(ALLOWED_SYNC_CALLERS).toEqual([...new Set(ALLOWED_SYNC_CALLERS)]);
   });
 
   it("keeps the allowlist honest by failing on entries that no longer apply", () => {
     // A stale entry silently readmits a file that was cleaned up, which is how an
     // allowlist stops meaning anything.
-    const stale = [...ALLOWED_SYNC_CALLERS].filter((file) => !callers.includes(file));
+    const stale = ALLOWED_SYNC_CALLERS.filter((file) => !callers.includes(file));
     expect(stale).toEqual([]);
   });
 
