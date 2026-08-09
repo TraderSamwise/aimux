@@ -614,6 +614,12 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       host.renderDashboard();
       return;
     }
+    // A project service outlives its sessions. Its lifetime belongs to whoever
+    // supervises the process, not to the last agent someone stopped — resolving
+    // the run here would exit with that session's code, which a supervisor reads
+    // as a crash. The daemon-hosted actor never noticed because it never assigns
+    // resolveRun; the standalone entrypoint does.
+    if (host.mode === "project-service") return;
     host.resolveRun?.(code);
     return;
   }

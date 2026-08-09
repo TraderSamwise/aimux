@@ -581,9 +581,12 @@ function commandPath(command: Command): string[] {
   return names;
 }
 
-function loggingProcessKind(command: Command): "cli" | "daemon" {
+function loggingProcessKind(command: Command): "cli" | "daemon" | "project-service" {
   const names = commandPath(command);
   if (names.at(-2) === "daemon" && names.at(-1) === "run") return "daemon";
+  // Without this the service logs as "cli" into the project log, which is exactly
+  // the distinction you need when debugging why a service died.
+  if (names.at(-1) === "__project-service-internal") return "project-service";
   return "cli";
 }
 
@@ -3863,6 +3866,70 @@ teamCmd
       return;
     }
     printTeamInit(result.config);
+  });
+
+program
+  // Hidden: run by hand against a project the daemon already hosts, this binds a
+  // second metadata server and overwrites the endpoint file the first one owns.
+  .command("__project-service-internal", { hidden: true })
+  .description("Internal daemon-managed project service entrypoint")
+  .option("--project-id <id>", "Internal project id")
+  .option("--project-root <path>", "Internal project root")
+  .action(async (opts: { projectId?: string; projectRoot?: string }) => {
+    void opts.projectId;
+    const projectRoot = resolveProjectRoot(opts.projectRoot ? pathResolve(opts.projectRoot) : process.cwd());
+    if (projectRoot !== process.cwd()) {
+      process.chdir(projectRoot);
+    }
+    // initPaths, not withProjectPaths: the latter is AsyncLocalStorage, which
+    // exists because the daemon serves many projects in one process. Here the
+    // process serves one, and callbacks that escape the ALS — signal handlers,
+    // worker messages, timer chains — would fail "paths not initialized".
+    await initPaths(projectRoot);
+    initProject();
+
+    const mux = new Multiplexer({ contextWatcherEnabled: false, projectRoot });
+    let cleanedUp = false;
+    const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
+    const cleanupAll = async () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      await mux.cleanup();
+    };
+
+    const shutdown = () => {
+      void cleanupAll().finally(() => process.exit(0));
+    };
+    process.on("exit", ensureTerminalRestored);
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    process.on("uncaughtException", (err) => {
+      log.error("project service uncaught exception", "runtime", {
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      console.error(err);
+      void cleanupAll().finally(() => process.exit(1));
+    });
+    process.on("unhandledRejection", (reason) => {
+      log.error("project service unhandled rejection", "runtime", {
+        error: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      console.error(reason);
+      void cleanupAll().finally(() => process.exit(1));
+    });
+
+    try {
+      const exitCode = await mux.runProjectService();
+      await cleanupAll();
+      process.exit(exitCode);
+    } catch (err: unknown) {
+      await cleanupAll();
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`aimux project service: ${msg}`);
+      process.exit(1);
+    }
   });
 
 registerExposeCommand(program);

@@ -429,6 +429,79 @@ describe("session runtime prompt submission", () => {
     expect(host.sessionRoles.get("codex-1")).toBeUndefined();
   });
 
+  it("keeps a project service alive when its last session exits", async () => {
+    // A project service outlives its sessions: its lifetime belongs to whoever
+    // supervises the process. Resolving the run here exits with the session's
+    // code, which a supervisor reads as a crash — and the daemon-hosted actor
+    // never caught it, because it is the one caller that never assigns resolveRun.
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const runtime = { id: "claude-last", command: "claude", startTime: Date.now() - 60_000 };
+      const resolveRun = vi.fn();
+      const host: any = {
+        mode: "project-service",
+        sessions: [runtime],
+        offlineSessions: [],
+        stoppingSessionIds: new Set(),
+        sessionOriginalArgs: new Map(),
+        sessionToolKeys: new Map(),
+        sessionWorktreePaths: new Map(),
+        sessionTmuxTargets: new Map(),
+        startedInDashboard: false,
+        resolveRun,
+        getSessionLabel: vi.fn(() => undefined),
+        deriveHeadline: vi.fn(() => undefined),
+        updateContextWatcherSessions: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        saveState: vi.fn(),
+        renderDashboard: vi.fn(),
+        publishAlert: vi.fn(),
+      };
+
+      handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
+
+      expect(resolveRun).not.toHaveBeenCalled();
+      expect(host.renderDashboard).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("still exits a non-dashboard, non-service host when its last session exits", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const runtime = { id: "claude-last", command: "claude", startTime: Date.now() - 60_000 };
+      const resolveRun = vi.fn();
+      const host: any = {
+        mode: "dashboard",
+        sessions: [runtime],
+        offlineSessions: [],
+        stoppingSessionIds: new Set(),
+        sessionOriginalArgs: new Map(),
+        sessionToolKeys: new Map(),
+        sessionWorktreePaths: new Map(),
+        sessionTmuxTargets: new Map(),
+        startedInDashboard: false,
+        resolveRun,
+        getSessionLabel: vi.fn(() => undefined),
+        deriveHeadline: vi.fn(() => undefined),
+        updateContextWatcherSessions: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        saveState: vi.fn(),
+        renderDashboard: vi.fn(),
+        publishAlert: vi.fn(),
+      };
+
+      handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
+
+      expect(resolveRun).toHaveBeenCalledWith(0);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not preserve quick exited sessions only because metadata has a backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {

@@ -95,6 +95,7 @@ No commands currently live in this category.
 | `aimux restart-runtime`                                                 | `CUT`       | daemon + tmux          | Advanced runtime repair uses `/core/runtime-restart-text`; normal restart should decide when needed.   |
 | `aimux repair`                                                          | `CUT`       | daemon + tmux          | Explicit advanced repair uses `/core/repair-text`; stale daemon fallback may bootstrap.               |
 | `aimux host ui`, `host serve`                                           | `INTERNAL`  | daemon                 | Developer service entrypoints; not normal user recovery commands.                    |
+| `aimux __project-service-internal`                                      | `INTERNAL`  | project service        | Hidden; runs one project service as its own process. Not spawned yet — see `per-project-service-processes.md`. |
 | `aimux host stop`, `host kill`, `host restart [--serve|--open]`          | `CUT`       | daemon + caller tmux   | Healthy installed path uses `/core/project-*-text`; `--open` sends caller tmux context to the daemon. |
 | `aimux host agent-read`                                                | `CUT`       | project service + tmux | Healthy installed path uses daemon text routes to project-service live-pane output.  |
 | `aimux host agent-stream`                                              | `CUT`       | project service + tmux | Healthy installed path uses daemon stream text route to project-service SSE output.  |

@@ -450,6 +450,25 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   return exitCode;
 }
 
+/**
+ * Run the project service as this process's whole job, until told to stop.
+ *
+ * The daemon-hosted actor and this share `startProjectServiceHost`, which is the
+ * point: everything project-specific lives there, and the only thing this adds is
+ * staying alive. Anything project-specific added here instead is how the two
+ * paths drift.
+ */
+export async function runProjectService(host: SessionLaunchHost): Promise<number> {
+  await startProjectServiceHost(host);
+
+  const exitCode = await new Promise<number>((resolve) => {
+    host.resolveRun = resolve;
+  });
+
+  host.teardown();
+  return exitCode;
+}
+
 export async function startProjectServiceHost(host: SessionLaunchHost): Promise<void> {
   const projectRoot = projectRootFor(host);
   initProject();
