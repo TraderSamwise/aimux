@@ -84,18 +84,24 @@ function renderTile(
 describe("drawTile", () => {
   const needs = { activity: "running", attention: "needs_input", worktreePath: "/x/beautify-tui" };
 
-  it("draws a double accent frame for the selected tile and fills the tile height", () => {
+  it("draws a double frame at the state tone for the selected tile, filling the tile height", () => {
     const out = renderTile(56, true, needs, ctx("aimux", "beautify-tui"));
     expect(out).toContain("╔");
     expect(out).toContain("╚");
     expect(out).toContain("║");
     expect(stripAnsi(out)).toContain("NEEDS INPUT");
-    // Selection owns both channels now: the accent border, not the state tone. The
-    // state stays readable on the pill.
-    expect(out).toContain("\x1b[1;33m");
-    expect(out).not.toContain("\x1b[38;5;179m");
+    // Selection is the glyph set plus bold; the hue stays the state's, so a focused
+    // tile never trades its state signal for a focus color.
+    expect(out).toContain("\x1b[1;38;5;179m╔"); // bold state tone, not an accent gold
     const lines = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
     expect(lines.length).toBe(6);
+  });
+
+  it("gives selected and unselected tiles the same border hue", () => {
+    const on = renderTile(56, true, needs, ctx("aimux", "beautify-tui"));
+    const off = renderTile(56, false, needs, ctx("aimux", "beautify-tui"));
+    expect(on).toContain("38;5;179m");
+    expect(off).toContain("38;5;179m");
   });
 
   it("uses a light frame at full state tone when not selected, without the marker", () => {

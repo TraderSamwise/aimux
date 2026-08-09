@@ -384,9 +384,6 @@ const STATE_BORDER: Partial<Record<StatusKind, string>> = {
   blocked: "38;5;176",
 };
 const NEUTRAL_BORDER = "38;5;39";
-// The selected tile borrows the accent (the same gold as the `▸` marker and badge) so
-// focus reads as one object. State stays legible on the pill, which is its primary carrier.
-const SELECTED_BORDER = "1;33";
 
 // Inline title in the top rule when the trailing context fits; otherwise drop the
 // context onto its own wrapped row(s). The status pill always gets its own row, so
@@ -461,10 +458,9 @@ export function drawTile(
   const textW = Math.max(0, innerW - 1);
   const kind = agentStatusKind(item.metadata);
   const tone = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
-  const bd = `\x1b[${selected ? SELECTED_BORDER : tone}m`;
-  // Focus changes both the glyph set and the color. Line weight alone was too fine a
-  // difference to spot at a glance, and it was the only channel left while the border
-  // color carried state on every tile.
+  // Focus is the glyph set plus bold, never the hue: the border's color is the state's,
+  // selected or not, so focus can't cost a tile its state signal.
+  const bd = `\x1b[${selected ? `1;${tone}` : tone}m`;
   const box = selected
     ? { tl: "╔", tr: "╗", bl: "╚", br: "╝", h: "═", v: "║" }
     : { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│" };
