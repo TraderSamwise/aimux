@@ -10,7 +10,7 @@ import { formatRelativeRecency } from "../recency.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncateAnsi, wrapText } from "../tui/render/text.js";
 import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
-import { recede, style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
+import { style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
 import {
   focusExposeItem,
   initialExposeScope,
@@ -370,20 +370,20 @@ export function drawBand(band: ExposeSectionBand, top: number, left: number, wid
   return `\x1b[${top};${left}H${truncateAnsi(text, width)}${RESET}`;
 }
 
-// 256-color tile borders tinted to the agent's state, with a bright (selected) and
-// dimmed (unselected) variant. This is Exposé's selection model — distinct from the
-// chip/pill tone, which carries the label color via the shared status vocabulary.
-const STATE_BORDER: Partial<Record<StatusKind, { on: string; off: string }>> = {
-  working: { on: "38;5;38", off: "38;5;24" },
-  ready: { on: "38;5;75", off: "38;5;67" },
-  idle: { on: "38;5;108", off: "38;5;65" },
-  offline: { on: "38;5;244", off: "38;5;238" },
-  needs: { on: "38;5;179", off: "38;5;94" },
-  error: { on: "38;5;174", off: "38;5;88" },
-  done: { on: "38;5;71", off: "38;5;28" },
-  blocked: { on: "38;5;176", off: "38;5;97" },
+// 256-color tile borders tinted to the agent's state, matching the chip/pill tone from
+// the shared status vocabulary. Every tile shows its real state; selection is carried by
+// the border's glyph weight, not by its color.
+const STATE_BORDER: Partial<Record<StatusKind, string>> = {
+  working: "38;5;38",
+  ready: "38;5;75",
+  idle: "38;5;108",
+  offline: "38;5;244",
+  needs: "38;5;179",
+  error: "38;5;174",
+  done: "38;5;71",
+  blocked: "38;5;176",
 };
-const NEUTRAL_BORDER = { on: "38;5;39", off: "38;5;240" };
+const NEUTRAL_BORDER = "38;5;39";
 // The selected tile borrows the accent (the same gold as the `▸` marker and badge) so
 // focus reads as one object. State stays legible on the pill, which is its primary carrier.
 const SELECTED_BORDER = "1;33";
@@ -456,15 +456,12 @@ export function drawTile(
   layout: GridLayout,
   context: TileContext,
   options: TmuxExposeOptions,
-  dimInactive: boolean,
 ): string {
   const innerW = Math.max(1, width - 2);
   const textW = Math.max(0, innerW - 1);
-  // Only non-selected tiles dim, and only when configured; the active tile is always full color.
-  const dimmed = dimInactive && !selected;
   const kind = agentStatusKind(item.metadata);
-  const palette = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
-  const bd = `\x1b[${selected ? SELECTED_BORDER : dimmed ? palette.off : palette.on}m`;
+  const tone = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
+  const bd = `\x1b[${selected ? SELECTED_BORDER : tone}m`;
   // Focus changes both the glyph set and the color. Line weight alone was too fine a
   // difference to spot at a glance, and it was the only channel left while the border
   // color carried state on every tile.
@@ -497,11 +494,8 @@ export function drawTile(
   // The status row is the last header row; preserve it under capacity pressure when
   // it carries either the pill or the recency/status detail.
   const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "" || detail !== "");
-  // Dimmed (non-selected, when enabled) tiles flatten their preview to gray so the chrome
-  // reads above it; otherwise previews keep the captured pane's real colors.
-  const previewRows = preview
-    .slice(0, Math.max(0, bodyCapacity - header.length))
-    .map((line) => (dimmed ? recede(line, "deep") : line));
+  // Previews keep the captured pane's real colors.
+  const previewRows = preview.slice(0, Math.max(0, bodyCapacity - header.length));
   const bodyRows = [...header, ...previewRows];
   while (bodyRows.length < bodyCapacity) bodyRows.push("");
 
@@ -772,7 +766,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       layout,
       tileContext(item),
       options,
-      false,
     );
   };
 
@@ -1000,11 +993,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       void reload(false)
         .then((result) => {
           if (finished || result === "stale") return;
-          // Not a full render: the backdrop is a screenshot of the host taken once at
-          // startup and never updated, so repainting it here rewrites the whole screen
-          // to redraw identical pixels. A warm launch lands this ~800ms after the first
+          // Not a full render: repainting the chrome here rewrites the whole screen to
+          // redraw identical pixels. A warm launch lands this ~800ms after the first
           // frame, which is exactly when it reads as a flash. `needsStatic` still
-          // repaints the chrome whenever the size or tile count actually changed.
+          // repaints whenever the size or tile count actually changed.
           render(false);
           if (applyPendingKeys()) return;
           if (refreshCaptures()) render(false);

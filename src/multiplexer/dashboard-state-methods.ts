@@ -138,7 +138,7 @@ export const dashboardStateMethods = {
       // Dim the dashboard into a backdrop behind a centered modal; the box overdraws
       // its rectangle at full brightness on top. The stored base stays undimmed so a
       // dismissal redraws bright and each frame re-dims freshly.
-      const finalOutput = overlayOutput ? `${recede(output, "faint")}${overlayOutput}` : output;
+      const finalOutput = overlayOutput ? `${recede(output)}${overlayOutput}` : output;
       const renderKey = [
         `${viewport.cols}x${viewport.rows}`,
         `model:${this.dashboardModelVersion ?? 0}`,

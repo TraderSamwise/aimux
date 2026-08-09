@@ -120,46 +120,38 @@ describe("theme primitives", () => {
 });
 
 describe("recede", () => {
-  it("faint mode prepends the gray faint lead and re-injects it after embedded resets", () => {
+  it("prepends the gray faint lead and re-injects it after embedded resets", () => {
     expect(recede("plain")).toBe("\x1b[2;38;5;240mplain\x1b[0m");
     // A pre-styled span keeps its color but gains faint, and the lead resumes after the reset.
     expect(recede(`${style("hi", "danger")}bye`)).toBe("\x1b[2;38;5;240m\x1b[31mhi\x1b[0m\x1b[2;38;5;240mbye\x1b[0m");
   });
 
-  it("faint mode also matches the shorthand reset \\x1b[m", () => {
+  it("also matches the shorthand reset \\x1b[m", () => {
     expect(recede("a\x1b[mb")).toBe("\x1b[2;38;5;240ma\x1b[0m\x1b[2;38;5;240mb\x1b[0m");
   });
 
-  it("faint mode resumes after reset-led sequences, re-emitting their params", () => {
+  it("resumes after reset-led sequences, re-emitting their params", () => {
     // A reset-led form clears faint, so re-apply the lead AND the params (here bold) after it.
     expect(recede("x\x1b[0;1my")).toBe("\x1b[2;38;5;240mx\x1b[0m\x1b[2;38;5;240m\x1b[1my\x1b[0m");
     // A non-reset color (\x1b[31m) is left intact so its color still shows, dimmed.
     expect(recede("\x1b[31mhi")).toBe("\x1b[2;38;5;240m\x1b[31mhi\x1b[0m");
   });
 
-  it("faint mode keeps a reset-led color (e.g. \\x1b[0;31m) so backdrops stay colored", () => {
+  it("keeps a reset-led color (e.g. \\x1b[0;31m) so backdrops stay colored", () => {
     const out = recede("\x1b[0;31mred");
     expect(out).toContain("\x1b[31m"); // the red survives the reset, just faint-dimmed
     expect(out).toContain("\x1b[2;38;5;240m"); // and the faint lead is reapplied after the reset
     expect(stripAnsi(out)).toBe("red");
   });
 
-  it("flatten modes strip color and re-emit as a single 256-color gray", () => {
-    expect(recede(style("hi", "danger"), "soft")).toBe("\x1b[38;5;250mhi\x1b[0m");
-    expect(recede(style("hi", "danger"), "deep")).toBe("\x1b[38;5;240mhi\x1b[0m");
-  });
-
-  it("preserves visible width when flattening multicolor content", () => {
+  it("preserves visible width across multicolor content", () => {
     const colored = `${style("ab", "work")}${style("cd", "accent")}`;
-    expect(visibleWidth(colored)).toBe(4);
-    expect(visibleWidth(recede(colored, "deep"))).toBe(4);
-    expect(stripAnsi(recede(colored, "deep"))).toBe("abcd");
+    expect(visibleWidth(recede(colored))).toBe(4);
+    expect(stripAnsi(recede(colored))).toBe("abcd");
   });
 
-  it("returns an empty string unchanged in every mode", () => {
+  it("returns an empty string unchanged", () => {
     expect(recede("")).toBe("");
-    expect(recede("", "soft")).toBe("");
-    expect(recede("", "deep")).toBe("");
   });
 });
 

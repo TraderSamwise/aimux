@@ -65,7 +65,6 @@ function renderTile(
   context: TileContext,
   tileHeight = 6,
   preview: string[] = ["* Worked for 41s", "recap", "next"],
-  dimInactive = false,
 ): string {
   const layout = {
     tileCols: 1,
@@ -73,22 +72,13 @@ function renderTile(
     tileHeight,
     bodyLines: tileHeight - 3,
     visibleCount: 1,
-    gridTopRow: 3,
+    gridTopRow: 1,
+    gridHeight: tileHeight,
   };
   const item = { id: "x", label: "claude(coder)", target: { windowId: "@1" }, metadata: meta, activity: 0 };
-  return drawTile(
-    item as never,
-    preview,
-    3,
-    selected,
-    1,
-    1,
-    width,
-    layout as never,
-    context,
-    { currentWindowId: "@other" } as never,
-    dimInactive,
-  );
+  return drawTile(item as never, preview, 3, selected, 1, 1, width, layout as never, context, {
+    currentWindowId: "@other",
+  } as never);
 }
 
 describe("drawTile", () => {
@@ -113,15 +103,8 @@ describe("drawTile", () => {
     expect(out).toContain("╭");
     expect(out).toContain("│");
     expect(out).not.toContain("╔");
-    expect(out).toContain("\x1b[38;5;179m"); // bright state tone by default — inactive tiles aren't dimmed
-    expect(out).not.toContain("\x1b[38;5;94m");
+    expect(out).toContain("\x1b[38;5;179m"); // full state tone
     expect(stripAnsi(out)).not.toContain("▸");
-  });
-
-  it("dims the inactive border only when dimInactive is enabled", () => {
-    const out = renderTile(56, false, needs, ctx("aimux", "beautify-tui"), 6, undefined, true);
-    expect(out).toContain("\x1b[38;5;94m"); // dim (off) state tone
-    expect(out).not.toContain("\x1b[38;5;179m");
   });
 
   it("renders the dashboard-semantic user label (not the raw activity) as the pill", () => {
@@ -185,22 +168,14 @@ describe("drawTile", () => {
     expect(stripAnsi(out)).toContain("NEEDS INPUT");
   });
 
-  it("keeps preview colors by default, dimming only inactive tiles when dimInactive is on", () => {
+  it("keeps the captured pane's real colors in every tile's preview", () => {
     const colored = ["\x1b[31mRED error\x1b[0m here", "\x1b[32mgreen line\x1b[0m"];
-    // Default: every tile keeps the captured pane's real colors, no gray flatten.
     for (const sel of [true, false]) {
-      const out = renderTile(56, sel, needs, ctx("aimux", "beautify-tui"), 8, colored, false);
+      const out = renderTile(56, sel, needs, ctx("aimux", "beautify-tui"), 8, colored);
       expect(out).toContain("\x1b[31m");
       expect(out).toContain("\x1b[32m");
-      expect(out).not.toContain("\x1b[38;5;240m");
+      expect(out).not.toContain("\x1b[38;5;240m"); // never flattened to gray
     }
-    // dimInactive on: the active tile stays colored; only the inactive tile flattens to gray.
-    const active = renderTile(56, true, needs, ctx("aimux", "beautify-tui"), 8, colored, true);
-    const inactive = renderTile(56, false, needs, ctx("aimux", "beautify-tui"), 8, colored, true);
-    expect(active).toContain("\x1b[31m");
-    expect(inactive).not.toContain("\x1b[31m");
-    expect(inactive).toContain("\x1b[38;5;240m"); // deep gray flatten
-    expect(stripAnsi(inactive)).toContain("RED error here");
   });
 
   it("keeps every rendered line the same visible width (aligned borders)", () => {
