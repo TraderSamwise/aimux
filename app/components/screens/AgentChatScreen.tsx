@@ -46,6 +46,7 @@ import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
+import { worktreeTone } from "@/lib/worktree-tone";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -343,12 +344,24 @@ export default function ChatScreen() {
     session.restoreState === "blocked"
       ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
       : null;
+  // The worktree leads, as it does in Exposé: it is what the session is, where the
+  // generated id is only how it is addressed. The tone comes from the project's
+  // ordered worktree list so the colour agrees with the sidebar and the TUI.
+  const headerTone = routeSessionMissing
+    ? undefined
+    : worktreeTone(worktreeGroups, { path: session?.worktreePath, name: session?.worktreeName });
   const sessionTitle = routeSessionMissing
     ? "Agent unavailable"
-    : session?.label || sessionId || "Unknown session";
+    : session?.worktreeName || session?.label || sessionId || "Unknown session";
+  const sessionToolLabel = routeSessionMissing ? "" : (session?.command ?? "");
+  // Status and branch, then the id last: the id is the only part that never helps
+  // you tell two of these apart at a glance, but it is still what you quote in a
+  // bug report, so it stays reachable rather than gone.
   const sessionSubtitle = routeSessionMissing
     ? `${sessionId} · not found`
-    : `${session?.command ?? ""} · ${session?.status ?? "unknown"}`;
+    : [session?.status ?? "unknown", session?.worktreeBranch, sessionId]
+        .filter(Boolean)
+        .join(" · ");
   const composerSendText = getComposerSendText({
     draft,
     hasServiceEndpoint: Boolean(serviceEndpoint),
@@ -606,10 +619,23 @@ export default function ChatScreen() {
               >
                 <ChevronLeft size={16} color="#a1a1aa" />
               </Pressable>
+              {headerTone ? (
+                <View
+                  className="mr-2.5 self-stretch rounded-full"
+                  style={{ width: 3, backgroundColor: headerTone }}
+                />
+              ) : null}
               <View className="flex-1">
-                <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-                  {sessionTitle}
-                </Text>
+                <View className="flex-row items-baseline gap-1.5">
+                  <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
+                    {sessionTitle}
+                  </Text>
+                  {sessionToolLabel ? (
+                    <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                      {sessionToolLabel}
+                    </Text>
+                  ) : null}
+                </View>
                 <Text className="text-xs text-muted-foreground" numberOfLines={1}>
                   {sessionSubtitle}
                 </Text>
