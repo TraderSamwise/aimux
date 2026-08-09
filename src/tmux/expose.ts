@@ -1235,9 +1235,14 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           const reloadedItems = refreshTick >= ITEM_RELOAD_EVERY_TICKS;
           if (reloadedItems) {
             refreshTick = 0;
-            const reloadResult = await reload();
+            // A background refresh that fails is not a reason to close the popup.
+            // Letting it throw here reached the outer catch and exited 1, so a
+            // project service briefly out of reach — restarting, endpoint mid-write —
+            // looked exactly like the user pressing q. Keep the last good view and
+            // try again on the next tick.
+            const reloadResult = await reload().catch(() => "failed" as const);
             if (finished) return;
-            if (reloadResult === "stale") {
+            if (reloadResult === "stale" || reloadResult === "failed") {
               scheduleRefresh();
               return;
             }
