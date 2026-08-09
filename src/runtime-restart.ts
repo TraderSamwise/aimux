@@ -740,7 +740,10 @@ async function restartAimuxControlPlaneUnlocked(
     stopPreRestartDashboardRepairWindows(before, dashboardProjectRoots, tmux);
   }
   const previousDaemon = await (options.stopDaemon ?? defaultStopDaemon)();
-  throwIfRestartAborted(options.abortSignal);
+  // No abort checkpoint from here until the daemon is back up. Everything between
+  // is a critical section: aborting after the daemon is stopped leaves the machine
+  // with no daemon and nothing to respawn it, which is how a 45s repair timeout
+  // turned a slow restart into no control plane at all.
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -755,7 +758,6 @@ async function restartAimuxControlPlaneUnlocked(
       sleep,
       killPid,
     });
-    throwIfRestartAborted(options.abortSignal);
     stoppedServicePids = previousDaemon.stoppedProjectServices.map((service) => service.pid);
   }
   const signaledServicePids = new Set(stoppedServicePids);
@@ -778,9 +780,7 @@ async function restartAimuxControlPlaneUnlocked(
     sleep,
     killPid,
   });
-  throwIfRestartAborted(options.abortSignal);
   const currentDaemon = await (options.ensureDaemonRunning ?? defaultEnsureDaemonRunning)();
-  throwIfRestartAborted(options.abortSignal);
   const ensureService = options.ensureProjectService ?? defaultEnsureProjectService;
   const stopService =
     options.stopProjectService ?? (options.ensureProjectService ? async () => null : defaultStopProjectService);
@@ -794,7 +794,9 @@ async function restartAimuxControlPlaneUnlocked(
   const projects: RuntimeRestartProjectResult[] = [];
 
   for (const projectRoot of projectRoots) {
-    throwIfRestartAborted(options.abortSignal);
+    // Still no abort checkpoint. stopDaemon killed every project service, so
+    // bailing here returns a daemon with none running — which is the state that
+    // makes the next repair fire, and the Exposé socket is one of the casualties.
     const result = emptyProjectResult(projectRoot);
     result.runtimeRebuildRequired = runtimeRepairProjectRoots.has(projectRoot);
     result.runtime = repairRuntimeContract({
@@ -853,6 +855,11 @@ async function restartAimuxControlPlaneUnlocked(
 
     projects.push(result);
   }
+
+  // The critical section ends here: a daemon is up and every project service has
+  // been re-ensured, so an abort now leaves a working control plane behind rather
+  // than a half-torn-down one. Deferred, never swallowed.
+  throwIfRestartAborted(options.abortSignal);
 
   const shouldVerifyAfterRestart = options.verifyAfterRestart ?? !options.buildRuntimeCoherenceReport;
   let verification: RuntimeRestartResult["verification"] = {

@@ -319,6 +319,45 @@ describe("restartAimuxControlPlane", () => {
     expect(isRuntimeRestartInProgress()).toBe(false);
   });
 
+  it("brings a daemon back even when the restart is aborted after stopping one", async () => {
+    // The repair path aborts on a 45s timeout. Aborting between stopDaemon and
+    // ensureDaemonRunning left the machine with no daemon and nothing to respawn
+    // it — a slow restart became no control plane at all.
+    const abortController = new AbortController();
+    const ensureDaemonRunning = vi.fn(async () => ({
+      pid: 9101,
+      port: 43190,
+      startedAt: "after",
+      updatedAt: "after",
+    }));
+    const stopDaemon = vi.fn(async () => {
+      abortController.abort();
+      return stoppedDaemon();
+    });
+
+    const ensureProjectService = vi.fn(async () => null);
+    // The abort is deferred, never swallowed: it still throws, but only after the
+    // control plane is whole again.
+    await expect(
+      restartAimuxControlPlane({
+        now: () => new Date("2026-06-20T00:00:01.000Z"),
+        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+        stopDaemon,
+        ensureDaemonRunning,
+        ensureProjectService,
+        createTmux: () => ({ isAvailable: () => true }),
+        isPidAlive: () => false,
+        abortSignal: abortController.signal,
+      }),
+    ).rejects.toThrow();
+
+    expect(stopDaemon).toHaveBeenCalled();
+    expect(ensureDaemonRunning).toHaveBeenCalled();
+    // stopDaemon killed the project services too; returning a daemon with none
+    // running is the state that makes the next repair fire.
+    expect(ensureProjectService).toHaveBeenCalled();
+  });
+
   it("serializes concurrent control-plane restarts with a global lock", async () => {
     let releaseStopDaemon: ((value: ReturnType<typeof stoppedDaemon>) => void) | undefined;
     const stopDaemon = vi.fn(
