@@ -11,6 +11,14 @@ import type {
 
 export const outputBufferFamily = atomFamily((_sessionId: string) => atom<string>(""));
 /**
+ * The same pane with tmux's colours still on it, for the terminal view.
+ *
+ * Held beside `outputBuffer` rather than replacing it: the plain form is what
+ * every other reader (and the parser behind them) takes, and a service too old
+ * to send this one leaves it empty rather than blanking the view.
+ */
+export const outputAnsiFamily = atomFamily((_sessionId: string) => atom<string>(""));
+/**
  * The conversation, as the service projected it.
  *
  * Not derived from `parsed` any more: the mapping from blocks to messages
@@ -50,6 +58,7 @@ export const applyOutputSnapshotAtom = atom(
     snapshot: {
       sessionId: string;
       output: string;
+      outputAnsi?: string;
       messages?: AgentTranscriptMessage[];
       activity?: AgentActivityState;
       activityText?: string;
@@ -57,6 +66,7 @@ export const applyOutputSnapshotAtom = atom(
     },
   ) => {
     set(outputBufferFamily(snapshot.sessionId), snapshot.output);
+    set(outputAnsiFamily(snapshot.sessionId), snapshot.outputAnsi ?? snapshot.output);
     set(transcriptFamily(snapshot.sessionId), snapshot.messages ?? []);
     set(activityFamily(snapshot.sessionId), snapshot.activity);
     set(activityTextFamily(snapshot.sessionId), snapshot.activityText ?? "");
@@ -77,6 +87,7 @@ export const ingestEventAtom = atom(null, (_get, set, event: StreamEvent) => {
       return;
     case "agent_output":
       set(outputBufferFamily(event.sessionId), event.output);
+      set(outputAnsiFamily(event.sessionId), event.outputAnsi ?? event.output);
       set(transcriptFamily(event.sessionId), event.messages ?? []);
       // Only overwrite when the service actually reported one. A stream that
       // stops carrying activity must leave the last known state standing rather

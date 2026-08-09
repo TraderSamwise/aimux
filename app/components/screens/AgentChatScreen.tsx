@@ -55,6 +55,7 @@ import {
   activityTextFamily,
   applyOutputSnapshotAtom,
   lastErrorFamily,
+  outputAnsiFamily,
   outputBufferFamily,
   transcriptFamily,
 } from "@/stores/chat";
@@ -93,6 +94,7 @@ export default function ChatScreen() {
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
+  const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
   const transcript = useAtomValue(transcriptFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
   const activityText = useAtomValue(activityTextFamily(sessionKey));
@@ -331,12 +333,12 @@ export default function ChatScreen() {
     measuredDividerWidth ??
       (canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH),
   );
-  const terminalOutput = useMemo(
+  const terminalLines = useMemo(
     () =>
-      formatTerminalOutputForDisplay(output, {
+      formatTerminalOutputForDisplay(outputAnsi || output, {
         dividerWidth: terminalDividerWidth,
       }),
-    [output, terminalDividerWidth],
+    [outputAnsi, output, terminalDividerWidth],
   );
   const restoreBlockedReason =
     session &&
@@ -595,7 +597,19 @@ export default function ChatScreen() {
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <ScrollView ref={terminalScrollRef} className="flex-1 px-4 py-3" horizontal={false}>
         <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
-        <Text className="text-secondary-foreground text-xs font-mono">{terminalOutput}</Text>
+        {terminalLines.map((spans, index) => (
+          // One Text per row, spans nested inside it: RN only composes styles
+          // through nesting, and a row is also the unit the pane wraps at.
+          <Text key={`row-${index}`} className="text-secondary-foreground text-xs font-mono">
+            {spans.length === 0
+              ? " "
+              : spans.map((span, spanIndex) => (
+                  <Text key={`span-${spanIndex}`} style={span.style}>
+                    {span.text}
+                  </Text>
+                ))}
+          </Text>
+        ))}
       </ScrollView>
     </View>
   );

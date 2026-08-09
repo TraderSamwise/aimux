@@ -382,6 +382,15 @@ export interface LivePaneOutputInput extends LivePaneSessionInput {
 export interface LivePaneOutputResponse extends ProjectApiOk {
   sessionId: string;
   output: string;
+  /**
+   * The same pane with tmux's colours still attached, for a client rendering a
+   * terminal view rather than the transcript.
+   *
+   * Separate from `output` rather than replacing it: stripping SGR from this
+   * reproduces `output` byte for byte, and keeping the plain form authoritative
+   * is what lets the parser go on taking exactly the text it always took.
+   */
+  outputAnsi?: string;
   startLine?: number;
   parsed?: unknown;
   /**

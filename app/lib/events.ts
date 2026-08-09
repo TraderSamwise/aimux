@@ -71,6 +71,8 @@ export interface AgentOutputEvent {
   type: "agent_output";
   sessionId: string;
   output: string;
+  /** The pane with tmux's colours still attached; absent from older services. */
+  outputAnsi?: string;
   startLine: number;
   parsed?: ParsedAgentOutput;
   messages?: AgentTranscriptMessage[];

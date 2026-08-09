@@ -653,6 +653,7 @@ export interface MetadataServerOptions {
       | Promise<{
           sessionId: string;
           output: string;
+          outputAnsi?: string;
           startLine?: number;
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
@@ -663,6 +664,7 @@ export interface MetadataServerOptions {
       | {
           sessionId: string;
           output: string;
+          outputAnsi?: string;
           startLine?: number;
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
@@ -2492,6 +2494,7 @@ export class MetadataServer {
             sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, {
               sessionId: result.sessionId,
               output: result.output,
+              outputAnsi: result.outputAnsi,
               startLine: result.startLine ?? startLine ?? -120,
               parsed: result.parsed,
               // Forwarded explicitly: this payload is hand-picked, so a field
@@ -2883,6 +2886,7 @@ export class MetadataServer {
             sendSseEvent(res, outputEventName, {
               sessionId: result.sessionId,
               output: result.output,
+              outputAnsi: result.outputAnsi,
               startLine: result.startLine ?? startLine ?? -120,
               parsed: result.parsed,
               // Forwarded explicitly: this payload is hand-picked, so a field

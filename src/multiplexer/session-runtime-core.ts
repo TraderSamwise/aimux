@@ -308,6 +308,20 @@ const transcriptCache = new Map<
 >();
 
 /**
+ * SGR only — the colours tmux tracked, none of the cursor motion around them.
+ *
+ * Dropping these from a `-e` capture reproduces the plain capture byte for byte,
+ * which is what lets one capture serve both readers: the parser keeps taking the
+ * exact text it always took, and the terminal view gets the same bytes with the
+ * attributes still attached.
+ */
+const SGR_SEQUENCE = /\x1b\[[0-9;:]*m/g;
+
+export function stripSgr(text: string): string {
+  return text.replace(SGR_SEQUENCE, "");
+}
+
+/**
  * What the session is really doing, from the event enum and the pane together.
  *
  * The enum only moves when the tool emits an event, so an agent that keeps
@@ -334,6 +348,8 @@ export async function readAgentOutput(
 ): Promise<{
   sessionId: string;
   output: string;
+  /** `output` with tmux's colours still on it, for the terminal view. */
+  outputAnsi: string;
   startLine?: number;
   parsed: any;
   messages: AgentTranscriptMessage[];
@@ -347,9 +363,11 @@ export async function readAgentOutput(
   if (!target) {
     throw new Error(`Session "${sessionId}" does not have a live tmux target`);
   }
-  const output = host.tmuxRuntimeManager.captureTarget(target, {
+  const outputAnsi = host.tmuxRuntimeManager.captureTarget(target, {
     startLine: startLine ?? -120,
+    includeEscapes: true,
   });
+  const output = stripSgr(outputAnsi);
 
   // Read every time rather than cached with the transcript below: activity
   // moves independently of the pane — an agent finishing leaves the last frame
@@ -367,6 +385,7 @@ export async function readAgentOutput(
     return {
       sessionId,
       output,
+      outputAnsi,
       startLine: startLine ?? -120,
       parsed: cached.parsed,
       messages: cached.messages,
@@ -391,6 +410,7 @@ export async function readAgentOutput(
   return {
     sessionId,
     output,
+    outputAnsi,
     startLine: startLine ?? -120,
     parsed,
     messages,

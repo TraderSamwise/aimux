@@ -1,3 +1,5 @@
+import { ansiLineText, parseAnsiLines, type AnsiSpan } from "@/lib/ansi";
+
 const DIVIDER_LINE_MIN_LENGTH = 24;
 const DIVIDER_LINE_MIN_RATIO = 0.9;
 const DEFAULT_DIVIDER_WIDTH = 72;
@@ -7,28 +9,40 @@ interface TerminalOutputDisplayOptions {
   dividerWidth?: number;
 }
 
+/**
+ * The pane as styled lines: tmux's colours kept, its full-width rules cut down.
+ *
+ * A tool draws its rules to the width of *its* pane, which is not the width of
+ * this view, so a wrapped rule arrives as two or three rows of box characters.
+ * They are capped to one and de-duplicated.
+ */
 export function formatTerminalOutputForDisplay(
   output: string,
   { dividerWidth = DEFAULT_DIVIDER_WIDTH }: TerminalOutputDisplayOptions = {},
-): string {
-  const lines = output.split("\n");
-  const formatted: string[] = [];
+): AnsiSpan[][] {
+  const lines = parseAnsiLines(output);
+  const formatted: AnsiSpan[][] = [];
   let previousWasDivider = false;
 
-  for (const line of lines) {
+  for (const spans of lines) {
+    const line = ansiLineText(spans);
     if (isDividerLine(line)) {
       if (previousWasDivider) continue;
       const indent = line.match(/^\s*/)?.[0] ?? "";
-      formatted.push(`${indent}${line.trim().slice(0, dividerWidth)}`);
+      // A rule is one run of one character, so re-emitting it as a single span
+      // at the first span's style loses nothing and avoids slicing across spans.
+      formatted.push([
+        { text: `${indent}${line.trim().slice(0, dividerWidth)}`, style: spans[0]?.style ?? {} },
+      ]);
       previousWasDivider = true;
       continue;
     }
 
-    formatted.push(line);
+    formatted.push(spans);
     previousWasDivider = false;
   }
 
-  return formatted.join("\n");
+  return formatted;
 }
 
 function isDividerLine(line: string): boolean {
