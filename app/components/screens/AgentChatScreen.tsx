@@ -117,6 +117,7 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
@@ -936,11 +937,18 @@ export default function ChatScreen() {
                     onLayout={(event: LayoutChangeEvent) =>
                       setComposerWidth(event.nativeEvent.layout.width)
                     }
-                    className="gap-2 rounded-2xl border border-border bg-card px-2.5 pb-2 pt-2.5"
+                    className={cn(
+                      "gap-2 rounded-2xl border bg-card px-2.5 pb-2 pt-2.5",
+                      // The card is the object here, so the card shows focus. The
+                      // field's own ring would draw a second rounded rect inside it.
+                      composerFocused ? "border-ring" : "border-border",
+                    )}
                   >
                     <Input
                       nativeID={composerFieldId}
                       accessibilityLabel="Message the agent"
+                      onFocus={() => setComposerFocused(true)}
+                      onBlur={() => setComposerFocused(false)}
                       value={draft}
                       onChangeText={setDraft}
                       onKeyPress={handleComposerKeyPress}
