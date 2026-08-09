@@ -44,6 +44,36 @@ describe("computeLayout grid shape on a roomy terminal", () => {
     expect(computeLayout(1, WIDE, TALL).tileCols).toBe(1);
   });
 
+  it("spends every row but the title and help bars on the grid", () => {
+    // Full-bleed: the layout is handed the raw viewport, not an inset panel's interior.
+    const layout = computeLayout(4, WIDE, TALL);
+    expect(layout.gridTopRow).toBe(1);
+    expect(layout.gridHeight).toBe(TALL - 2);
+    // Two rows of tiles claim the whole grid height, give or take the floor remainder.
+    expect(layout.tileHeight * 2).toBeGreaterThanOrEqual(layout.gridHeight - 1);
+  });
+
+  it("spends every column but the grid gaps on tiles", () => {
+    const layout = computeLayout(4, WIDE, TALL);
+    expect(layout.tileWidth * layout.tileCols + (layout.tileCols - 1) * 1).toBeGreaterThanOrEqual(WIDE - 1);
+  });
+
+  it("keeps the grid inside the viewport, clear of the title and help bars", () => {
+    for (const cols of [60, 80, 120, 200, 341]) {
+      for (const rows of [12, 24, 41, 50, 90]) {
+        for (const count of [1, 2, 4, 7, 12]) {
+          const layout = computeLayout(count, cols, rows);
+          const tileRows = Math.ceil(layout.visibleCount / layout.tileCols);
+          const bottom = 1 + layout.gridTopRow + layout.tileHeight * tileRows - 1;
+          const right = 1 + (layout.tileCols - 1) * (layout.tileWidth + 1) + layout.tileWidth - 1;
+          const at = `${cols}x${rows}/${count}`;
+          expect([at, bottom < rows]).toEqual([at, true]); // help bar owns the last row
+          expect([at, right <= cols]).toEqual([at, true]);
+        }
+      }
+    }
+  });
+
   it("returns a finite layout for an empty rung", () => {
     const layout = computeLayout(0, WIDE, TALL);
     expect(layout.visibleCount).toBe(0);

@@ -14,7 +14,6 @@ describe("toExposeOptions", () => {
         currentPath: "/proj/sub",
         paneId: "%3",
         aimuxHome: "/home/u/.aimux",
-        backdropFile: "/tmp/backdrop",
       }),
     ).toEqual({
       projectRoot: "/proj",
@@ -26,7 +25,6 @@ describe("toExposeOptions", () => {
       currentPath: "/proj/sub",
       paneId: "%3",
       aimuxHome: "/home/u/.aimux",
-      backdropFile: "/tmp/backdrop",
     });
   });
 
@@ -35,6 +33,6 @@ describe("toExposeOptions", () => {
     expect(out.projectRoot.startsWith("/")).toBe(true);
     expect(out.projectStateDir.endsWith("rel/state")).toBe(true);
     expect(out.currentWindowId).toBeUndefined();
-    expect(out.backdropFile).toBeUndefined();
+    expect(out.paneId).toBeUndefined();
   });
 });

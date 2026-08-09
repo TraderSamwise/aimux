@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { basename, resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
@@ -38,8 +38,6 @@ export interface TmuxExposeOptions {
   aimuxHome?: string;
   daemonEndpoint?: string;
   selectionFile?: string;
-  /** Host snapshot captured by the launcher before the popup opened (read once, then deleted). */
-  backdropFile?: string;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream & { columns?: number; rows?: number };
   manageTerminal?: boolean;
@@ -176,52 +174,12 @@ function tilePreview(raw: string, count: number): string[] {
   return tail;
 }
 
-// Paint a captured host screen as a dimmed full-screen backdrop, so the floating tile
-// grid reads above the user's real (receded) content. Each line is sanitized (control
-// bytes stripped, SGR kept), clamped to the viewport, then dimmed via recede "faint".
-export function buildBackdrop(capture: string, cols: number, rows: number): string {
-  if (!capture) return "";
-  const lines = capture.replace(/\r/g, "").split("\n");
-  const count = Math.min(lines.length, rows);
-  let out = "";
-  for (let i = 0; i < count; i += 1) {
-    out += `\x1b[${i + 1};1H${recede(truncateAnsi(sanitizeLine(lines[i]!), cols), "faint")}`;
-  }
-  return out;
-}
-
-// Exposé floats as an inset panel (centred, ~90%) over the dimmed backdrop, like a dialog.
-const PANEL_RATIO = 0.9;
-const PANEL_BORDER = "\x1b[38;5;248m";
-
-export interface PanelGeometry {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-}
-
-export function panelGeometry(cols: number, rows: number): PanelGeometry {
-  // Clamp to the viewport last so the floor never makes the panel larger than the screen.
-  const width = Math.min(cols, Math.max(MIN_TILE_WIDTH + 2, Math.round(cols * PANEL_RATIO)));
-  const height = Math.min(rows, Math.max(MIN_TILE_HEIGHT + 4, Math.round(rows * PANEL_RATIO)));
-  const left = Math.max(1, Math.floor((cols - width) / 2) + 1);
-  const top = Math.max(1, Math.floor((rows - height) / 2) + 1);
-  return { top, left, width, height };
-}
-
-// An opaque bordered box that covers the dimmed backdrop so the panel body reads as solid;
-// tiles/title/help are drawn on top of it. Border rows position absolutely.
-export function buildPanelFrame(geo: PanelGeometry): string {
-  const innerW = Math.max(0, geo.width - 2);
-  const fill = " ".repeat(innerW);
-  let out = `\x1b[${geo.top};${geo.left}H${PANEL_BORDER}╭${"─".repeat(innerW)}╮${RESET}`;
-  for (let r = 1; r < geo.height - 1; r += 1) {
-    out += `\x1b[${geo.top + r};${geo.left}H${PANEL_BORDER}│${RESET}${fill}${PANEL_BORDER}│${RESET}`;
-  }
-  out += `\x1b[${geo.top + geo.height - 1};${geo.left}H${PANEL_BORDER}╰${"─".repeat(innerW)}╯${RESET}`;
-  return out;
-}
+// Exposé is full-bleed: the popup already covers 100% of the client, so an inset panel
+// only bought margins. Screen rows 1 and `rows` are the title and help bars; everything
+// between belongs to the grid.
+const TITLE_ROW = 1;
+/** Screen column the title, help, and first tile column all start at. */
+const CONTENT_LEFT = 1;
 
 interface GridLayout {
   tileCols: number;
@@ -229,12 +187,15 @@ interface GridLayout {
   tileHeight: number;
   bodyLines: number;
   visibleCount: number;
+  /** Rows below the title bar the grid starts at. */
   gridTopRow: number;
+  /** Rows available to the grid, between the title and help bars. */
+  gridHeight: number;
 }
 
 export function computeLayout(itemCount: number, cols: number, rows: number): GridLayout {
-  const gridTopRow = 3;
-  const footerRow = rows;
+  const gridTopRow = 1;
+  const footerRow = rows - 1;
   const gridHeight = Math.max(1, footerRow - gridTopRow);
   const fitCols = Math.max(1, Math.floor((cols + GAP) / (MIN_TILE_WIDTH + GAP)));
   const tileCols = Math.max(1, Math.min(balancedCols(itemCount), fitCols));
@@ -250,6 +211,7 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
     bodyLines: Math.max(1, tileHeight - 3),
     visibleCount: Math.min(itemCount, tileCols * tileRows),
     gridTopRow,
+    gridHeight,
   };
 }
 
@@ -665,20 +627,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return { worktree, tone };
   };
 
-  // Read and delete the launcher's backdrop snapshot before terminal setup. Capturing
-  // in-popup would catch the popup's transient host-pane reflow, not the real backdrop.
-  let hostCapture = "";
-  if (options.backdropFile) {
-    try {
-      hostCapture = readFileSync(options.backdropFile, "utf8");
-    } catch {
-      hostCapture = "";
-    }
-    try {
-      unlinkSync(options.backdropFile);
-    } catch {}
-  }
-
   const terminal = manageTerminal ? new TerminalHost() : null;
   if (terminal) {
     terminal.enterRawMode();
@@ -759,7 +707,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let tileCols = 1;
   let sectionSlots: ExposeSectionPlan["slots"] | null = null;
   let visibleCount = items.length;
-  let lastRenderSize = "";
   let staticSize = "";
   let staticVisibleCount = -1;
   let refreshTick = 0;
@@ -800,25 +747,18 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   }
 
   // Section rows come from the plan; without one the grid is a plain uniform pack.
-  const gridHeightFor = (innerH: number, layout: GridLayout): number => Math.max(1, innerH - layout.gridTopRow);
-
-  const sectionPlanFor = (layout: GridLayout, innerH: number): ExposeSectionPlan | null => {
+  const sectionPlanFor = (layout: GridLayout): ExposeSectionPlan | null => {
     const groups = sectionGroups();
     if (!groups) return null;
-    return planExposeSections(groups, layout.tileCols, layout.tileHeight, gridHeightFor(innerH, layout));
+    return planExposeSections(groups, layout.tileCols, layout.tileHeight, layout.gridHeight);
   };
 
-  const renderTileAt = (
-    tileIndex: number,
-    layout: GridLayout,
-    geo: PanelGeometry,
-    plan: ExposeSectionPlan | null,
-  ): string => {
+  const renderTileAt = (tileIndex: number, layout: GridLayout, plan: ExposeSectionPlan | null): string => {
     const slot = plan?.slots[tileIndex];
     const rowOffset = slot ? slot.row : Math.floor(tileIndex / layout.tileCols) * layout.tileHeight;
     const c = slot ? slot.col : tileIndex % layout.tileCols;
-    const top = geo.top + layout.gridTopRow + rowOffset;
-    const left = geo.left + 1 + c * (layout.tileWidth + GAP);
+    const top = TITLE_ROW + layout.gridTopRow + rowOffset;
+    const left = CONTENT_LEFT + c * (layout.tileWidth + GAP);
     const item = items[tileIndex]!;
     const preview = tilePreview(captures.get(item.target.windowId) ?? "", layout.bodyLines);
     return drawTile(
@@ -840,11 +780,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     if (loading || visibleCount === 0) return false;
     const { cols, rows } = terminalSize();
     const size = `${cols}x${rows}`;
-    const geo = panelGeometry(cols, rows);
-    const innerW = geo.width - 2;
-    const innerH = geo.height - 2;
-    const layout = computeLayout(items.length, innerW, innerH);
-    const plan = sectionPlanFor(layout, innerH);
+    const layout = computeLayout(items.length, cols, rows);
+    const plan = sectionPlanFor(layout);
     const nextVisibleCount = plan ? plan.visibleCount : layout.visibleCount;
     if (size !== staticSize || nextVisibleCount !== staticVisibleCount) return false;
     tileCols = layout.tileCols;
@@ -857,7 +794,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     for (const tileIndex of tileIndexes) {
       if (tileIndex < 0 || tileIndex >= visibleCount || seen.has(tileIndex)) continue;
       seen.add(tileIndex);
-      out += renderTileAt(tileIndex, layout, geo, plan);
+      out += renderTileAt(tileIndex, layout, plan);
     }
     output.write(`${out}\x1b[?2026l`);
     return true;
@@ -870,11 +807,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
-    const geo = panelGeometry(cols, rows);
-    const innerW = geo.width - 2;
-    const innerH = geo.height - 2;
-    const layout = computeLayout(items.length, innerW, innerH);
-    const plan = sectionPlanFor(layout, innerH);
+    const layout = computeLayout(items.length, cols, rows);
+    const plan = sectionPlanFor(layout);
     tileCols = layout.tileCols;
     sectionSlots = plan?.slots ?? null;
     visibleCount = plan ? plan.visibleCount : layout.visibleCount;
@@ -883,10 +817,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const hidden = items.length - visibleCount;
     const more = hidden > 0 ? `   +${hidden} more (use ^A s)` : "";
     const zoom = scope === "global" ? "" : " · g zoom out";
-    const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`, innerW - 2);
+    const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`, cols - 2);
     const help = truncateAnsi(
       `\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`,
-      innerW - 2,
+      cols - 2,
     );
 
     // Synchronized output makes the repaint atomic. Static chrome repaints only on full
@@ -895,20 +829,19 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const needsStatic = full || size !== staticSize || visibleCount !== staticVisibleCount;
     let base = "\x1b[?2026h";
     if (needsStatic) {
-      const clear = size === lastRenderSize ? "" : "\x1b[2J";
-      lastRenderSize = size;
       staticSize = size;
       staticVisibleCount = visibleCount;
-      // Dimmed real backdrop fills the screen; the opaque panel floats inset over it.
-      base += `${clear}${buildBackdrop(hostCapture, cols, rows)}${buildPanelFrame(geo)}`;
+      // The grid no longer repaints an opaque panel over the whole screen, so this clear
+      // is what erases tiles that a shrinking count left behind. Atomic inside ?2026.
+      base += "\x1b[2J";
     }
-    const titleAt = `\x1b[${geo.top + 1};${geo.left + 2}H${title}`;
-    const helpAt = `\x1b[${geo.top + innerH};${geo.left + 2}H${help}`;
+    const titleAt = `\x1b[${TITLE_ROW};${CONTENT_LEFT + 1}H${title}`;
+    const helpAt = `\x1b[${rows};${CONTENT_LEFT + 1}H${help}`;
 
     if (loading || visibleCount === 0) {
       const msg = loading ? "Loading sessions..." : `No active agents in ${scopeLabel}.`;
-      const msgCol = geo.left + 1 + Math.max(0, Math.floor((innerW - msg.length) / 2));
-      const msgRow = geo.top + Math.floor(innerH / 2);
+      const msgCol = CONTENT_LEFT + Math.max(0, Math.floor((cols - msg.length) / 2));
+      const msgRow = Math.max(1, Math.floor(rows / 2));
       output.write(`${base}${titleAt}\x1b[${msgRow};${msgCol}H\x1b[2m${msg}${RESET}${helpAt}\x1b[?2026l`);
       if (!firstRenderMarked) {
         firstRenderMarked = true;
@@ -919,10 +852,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
     let out = `${base}${titleAt}`;
     for (const band of plan?.bands ?? []) {
-      out += drawBand(band, geo.top + layout.gridTopRow + band.row, geo.left + 1, innerW);
+      out += drawBand(band, TITLE_ROW + layout.gridTopRow + band.row, CONTENT_LEFT, cols);
     }
     for (let i = 0; i < visibleCount; i += 1) {
-      out += renderTileAt(i, layout, geo, plan);
+      out += renderTileAt(i, layout, plan);
     }
     out += `${helpAt}\x1b[?2026l`;
     output.write(out);

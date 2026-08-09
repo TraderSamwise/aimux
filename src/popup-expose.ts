@@ -12,7 +12,6 @@ export interface ExposeCliOptions {
   currentPath?: string;
   paneId?: string;
   aimuxHome?: string;
-  backdropFile?: string;
 }
 
 /** Map parsed CLI flags to runTmuxExpose options, resolving the two paths to absolute. */
@@ -27,7 +26,6 @@ export function toExposeOptions(opts: ExposeCliOptions): TmuxExposeOptions {
     currentPath: opts.currentPath,
     paneId: opts.paneId,
     aimuxHome: opts.aimuxHome,
-    backdropFile: opts.backdropFile,
   };
 }
 
@@ -48,7 +46,6 @@ export function registerExposeCommand(program: Command): void {
     .option("--current-path <path>", "Current path")
     .option("--pane-id <id>", "Current pane id")
     .option("--aimux-home <path>", "AIMUX_HOME to scope cross-project Exposé")
-    .option("--backdrop-file <path>", "Pre-popup host snapshot to dim as the backdrop")
     .action(async (opts: ExposeCliOptions) => {
       const code = await runTmuxExpose(toExposeOptions(opts));
       process.exit(code);

@@ -1558,7 +1558,6 @@ export class MetadataServer {
       currentPath: header[6] || undefined,
       paneId: header[7] || undefined,
       aimuxHome: header[8] || undefined,
-      backdropFile: header[9] || undefined,
       daemonEndpoint: header[13] || undefined,
       selectionFile: header[14] || undefined,
       input,
