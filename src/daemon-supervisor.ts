@@ -349,7 +349,12 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
   if (!lockPath) {
     const deadline = Date.now() + DAEMON_STARTUP_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      const adopted = await probeDefaultDaemon(options);
+      // Adopt while waiting, even when the caller asked for a fresh daemon. The
+      // point of waiting on this lock is to let the holder start one; carrying
+      // `adoptExisting: false` in here instead terminates whatever it just started,
+      // so the holder restarts, and the wait can only ever end in the timeout. The
+      // daemon the caller wanted replaced was already stopped before we got here.
+      const adopted = await probeDefaultDaemon({ ...options, adoptExisting: true });
       if (adopted) return adopted;
       lockPath = tryAcquireDaemonStartLock();
       if (lockPath) break;

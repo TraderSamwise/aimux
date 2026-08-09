@@ -44,7 +44,7 @@ import {
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { AimuxDaemon } from "./daemon.js";
 import { getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
-import { stopDaemon } from "./daemon-supervisor.js";
+import { isStaleAgainstDaemon, stopDaemon } from "./daemon-supervisor.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import {
   CORE_COMMAND_NAMES,
@@ -216,9 +216,10 @@ async function waitForVerifiedProjectService(
           if (!respawnAttempted) {
             respawnAttempted = true;
             await restartCoreProjectServiceForReadiness(projectRoot);
-          } else {
-            removeMetadataEndpoint(projectRoot);
           }
+          // Second time round, wait the loop out instead of deleting the endpoint.
+          // This process failing to verify is not a reason to break the readers that
+          // are working fine off the same file.
           await new Promise((resolve) => setTimeout(resolve, 150));
           continue;
         }
@@ -235,9 +236,10 @@ async function waitForVerifiedProjectService(
           if (!respawnAttempted) {
             respawnAttempted = true;
             await restartCoreProjectServiceForReadiness(projectRoot);
-          } else {
-            removeMetadataEndpoint(projectRoot);
           }
+          // Second time round, wait the loop out instead of deleting the endpoint.
+          // This process failing to verify is not a reason to break the readers that
+          // are working fine off the same file.
           await new Promise((resolve) => setTimeout(resolve, 150));
           continue;
         }
@@ -257,6 +259,17 @@ async function waitForVerifiedProjectService(
           expected,
           actual: health.serviceInfo ?? null,
         });
+        // A service built after this process is not broken — this process is the old
+        // one. Respawning it here would replace a newer service with an older build
+        // and never converge, so stop now and say which side is stale.
+        if (isStaleAgainstDaemon(health.serviceInfo?.buildStamp, expected.buildStamp)) {
+          throw new ProjectServiceVersionError(
+            `this aimux build is older than the running project service for ${projectRoot}; reload this client`,
+            projectRoot,
+            expected,
+            health.serviceInfo as ProjectServiceManifest,
+          );
+        }
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
         if (
@@ -272,7 +285,11 @@ async function waitForVerifiedProjectService(
             endpoint,
             error: lastError,
           });
-          removeMetadataEndpoint(projectRoot);
+          // Respawn, but leave the endpoint file alone. Deleting it to force a
+          // rewrite breaks every other reader — Exposé loads items through it and
+          // throws synchronously when it is missing, which reads as the popup being
+          // dismissed by a keypress nobody pressed. A refused connection is usually
+          // a service mid-restart, and the service republishes when it comes back.
           await ensureCoreProjectServiceForReadiness(projectRoot);
         }
       }
