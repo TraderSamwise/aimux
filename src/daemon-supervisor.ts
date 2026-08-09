@@ -295,6 +295,17 @@ export async function stopDaemonInfo(
 export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<StoppedDaemonInfo | null> {
   const info = loadDaemonInfo();
   if (!info) return null;
+  // A control-plane restart stops the daemon before it starts one, so this — not
+  // ensureDaemonRunning — is the first place a stale client reaches a newer daemon.
+  // Guarding only the start side let the kill through and then found nothing left to
+  // refuse, which is the restart loop with an extra step.
+  try {
+    const health = await requestDaemonJson("/health", { timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS });
+    if (isAimuxDaemonHealth(health)) assertNotStaleAgainstDaemon(health);
+  } catch (error) {
+    // An unreachable daemon is not a reason to keep it; only a newer one is.
+    if (error instanceof StaleClientBuildError) throw error;
+  }
   return stopDaemonInfo(info, loadDaemonState(), signal);
 }
 
