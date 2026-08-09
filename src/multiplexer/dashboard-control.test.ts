@@ -2518,3 +2518,18 @@ describe("handleDashboardSubscreenNavigationKey", () => {
     }
   });
 });
+
+describe("pruneRuntimeGuardRepairAttempts", () => {
+  it("keeps only attempts inside the flap window", async () => {
+    const { pruneRuntimeGuardRepairAttempts } = await import("./dashboard-control.js");
+    const now = 1_000_000;
+    // 120s window: 130s and 121s ago are out, 119s ago and newer are in.
+    const attempts = [now - 130_000, now - 121_000, now - 119_000, now - 5_000, now];
+    expect(pruneRuntimeGuardRepairAttempts(attempts, now)).toEqual([now - 119_000, now - 5_000, now]);
+  });
+
+  it("returns nothing for an empty history", async () => {
+    const { pruneRuntimeGuardRepairAttempts } = await import("./dashboard-control.js");
+    expect(pruneRuntimeGuardRepairAttempts([], 1_000_000)).toEqual([]);
+  });
+});

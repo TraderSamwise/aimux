@@ -906,12 +906,19 @@ describe("TmuxRuntimeManager", () => {
 
     const prev = process.env.AIMUX_CLIENT_KEY;
     process.env.AIMUX_CLIENT_KEY = "test-client";
+    // Attaching outside tmux needs a terminal to hand over; the runner has none.
+    const stdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const stdoutTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
     try {
       manager.openTarget(target, { insideTmux: true });
       manager.openTarget(target, { insideTmux: false });
     } finally {
       if (prev === undefined) delete process.env.AIMUX_CLIENT_KEY;
       else process.env.AIMUX_CLIENT_KEY = prev;
+      if (stdinTty) Object.defineProperty(process.stdin, "isTTY", stdinTty);
+      if (stdoutTty) Object.defineProperty(process.stdout, "isTTY", stdoutTty);
     }
 
     expect(

@@ -48,18 +48,6 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart", "--json"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "serve"])).toBe("core");
-    expect(cliEntryFor(["node", "/p/bin/aimux", "dashboard-reload", "--open", "--client-tty", "/dev/ttys001"])).toBe(
-      "core",
-    );
-    expect(
-      cliEntryFor([
-        "node",
-        "/p/bin/aimux",
-        "restart-runtime",
-        "--project-root=/p",
-        "--current-client-session=aimux-repo-client-1234abcd",
-      ]),
-    ).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "stop"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "kill"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "restart"])).toBe("core");
@@ -102,6 +90,26 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "unlock"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "--help"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux"])).toBe("main");
+  });
+
+  it("routes the repair commands to main, which is the only place they exist", () => {
+    // Routing them to core sent them to a dispatch with no branch for either, so both
+    // answered "unsupported core command" — while being the documented way out of a
+    // control-plane mess.
+    expect(cliEntryFor(["node", "/p/bin/aimux", "dashboard-reload"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "dashboard-reload", "--open", "--client-tty", "/dev/ttys001"])).toBe(
+      "main",
+    );
+    expect(cliEntryFor(["node", "/p/bin/aimux", "restart-runtime"])).toBe("main");
+    expect(
+      cliEntryFor([
+        "node",
+        "/p/bin/aimux",
+        "restart-runtime",
+        "--project-root=/p",
+        "--current-client-session=aimux-repo-client-1234abcd",
+      ]),
+    ).toBe("main");
   });
 
   it("routes malformed project-ensure to core so it cannot mutate through Commander parsing", () => {

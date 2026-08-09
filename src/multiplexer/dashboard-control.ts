@@ -66,6 +66,8 @@ type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
 const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
 const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
+const RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS = 120_000;
+const RUNTIME_GUARD_REPAIR_FLAP_LIMIT = 5;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 const PENDING_DASHBOARD_LOCAL_NAVIGATION_TTL_MS = 10_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
@@ -472,6 +474,25 @@ function scheduleDashboardReloadAfterRuntimeGuardRepair(host: DashboardControlHo
   timer.unref?.();
 }
 
+/**
+ * Stop repairing when repairing is the problem.
+ *
+ * The retry gate below only paces repairs that *fail*. A repair that reports success
+ * without changing anything — restarting a daemon this dashboard will reject again on
+ * its next probe — is never paced at all, so it runs forever at probe cadence and
+ * takes the project service (and the Exposé socket) down on every pass. Count every
+ * attempt in a rolling window and give up loudly instead.
+ */
+export function pruneRuntimeGuardRepairAttempts(attempts: number[], now: number): number[] {
+  return attempts.filter((at) => now - at < RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS);
+}
+
+function runtimeGuardRepairFlapping(host: DashboardControlHost, now = Date.now()): boolean {
+  const attempts = pruneRuntimeGuardRepairAttempts(host.runtimeGuardRepairAttempts ?? [], now);
+  host.runtimeGuardRepairAttempts = attempts;
+  return attempts.length >= RUNTIME_GUARD_REPAIR_FLAP_LIMIT;
+}
+
 function runtimeGuardRepairRetryReady(host: DashboardControlHost, repairKey: string): boolean {
   const failedKey = host.runtimeGuardRepairFailedKey;
   if (failedKey !== repairKey) return true;
@@ -532,6 +553,17 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lifecycle = captureDashboardLifecycle(host);
   const repairKey = runtimeGuardRepairKey(state);
   if (!runtimeGuardRepairRetryReady(host, repairKey)) return;
+  if (runtimeGuardRepairFlapping(host)) {
+    showRuntimeGuardRepairFailure(
+      host,
+      "Aimux repair is looping",
+      `Repaired ${RUNTIME_GUARD_REPAIR_FLAP_LIMIT} times in ` +
+        `${Math.round(RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS / 1000)}s without settling — stopping. ` +
+        "This dashboard is likely running an older build than the daemon; reload it.",
+    );
+    return;
+  }
+  host.runtimeGuardRepairAttempts = [...(host.runtimeGuardRepairAttempts ?? []), Date.now()];
   const projectRoot = dashboardProjectRoot(host);
   if (isRuntimeRestartInProgress()) {
     blockRuntimeGuardRepair(host, lifecycle);

@@ -386,8 +386,12 @@ describe("core command ownership inventory", () => {
       "security unlock",
     ]);
 
+    // The installed shim serves these over HTTP, but the Node fallback for them lives
+    // in the full CLI only — core has no dispatch branch, so claiming them here means
+    // "unsupported core command" whenever the shim route is unavailable.
+    const mainOnly = new Set(["dashboard-reload", "restart-runtime"]);
     for (const entry of coreCommandDispositions) {
-      expect(isCoreCliCommand(entry.args), entry.command).toBe(true);
+      expect(isCoreCliCommand(entry.args), entry.command).toBe(!mainOnly.has(entry.args[0]!));
     }
     expect(isCoreCliCommand(["restart-runtime", "--open", "--json"])).toBe(false);
     expect(isCoreCliCommand(["dashboard-reload", "--client-tty=-x"])).toBe(false);

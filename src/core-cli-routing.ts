@@ -95,20 +95,6 @@ function parseRestartFlags(args: string[]): CoreRestartArgs | null {
   return parsed;
 }
 
-function consumeOptionalTextFlag(args: string[], index: number, flag: string): number | null | undefined {
-  const arg = args[index];
-  if (arg === flag) {
-    const consumed = consumeRequiredValue(args, index);
-    if (!consumed || consumed.value.startsWith("-")) return null;
-    return consumed.nextIndex;
-  }
-  if (arg.startsWith(`${flag}=`)) {
-    const value = arg.slice(flag.length + 1);
-    return value && !value.startsWith("-") ? index : null;
-  }
-  return undefined;
-}
-
 function consumeRequiredValue(args: string[], index: number): { nextIndex: number; value: string } | null {
   const value = args[index + 1];
   if (value === undefined || value === "") return null;
@@ -213,66 +199,6 @@ export function parseCoreHostRestartArgs(args: string[]): CoreHostRestartArgs | 
   return parsed;
 }
 
-function isCoreDashboardReloadCommand(args: string[]): boolean {
-  if (args[0] !== "dashboard-reload") return false;
-  for (let index = 1; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--open") continue;
-    const clientTtyIndex = consumeOptionalTextFlag(args, index, "--client-tty");
-    if (clientTtyIndex !== undefined) {
-      if (clientTtyIndex === null) return false;
-      index = clientTtyIndex;
-      continue;
-    }
-    const clientSessionIndex = consumeOptionalTextFlag(args, index, "--current-client-session");
-    if (clientSessionIndex !== undefined) {
-      if (clientSessionIndex === null) return false;
-      index = clientSessionIndex;
-      continue;
-    }
-    return false;
-  }
-  return true;
-}
-
-function isCoreRuntimeRestartCommand(args: string[]): boolean {
-  if (args[0] !== "restart-runtime") return false;
-  let open = false;
-  let json = false;
-  for (let index = 1; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--open") {
-      open = true;
-      continue;
-    }
-    if (arg === "--json") {
-      json = true;
-      continue;
-    }
-    const projectRootIndex = consumeOptionalTextFlag(args, index, "--project-root");
-    if (projectRootIndex !== undefined) {
-      if (projectRootIndex === null) return false;
-      index = projectRootIndex;
-      continue;
-    }
-    const clientTtyIndex = consumeOptionalTextFlag(args, index, "--client-tty");
-    if (clientTtyIndex !== undefined) {
-      if (clientTtyIndex === null) return false;
-      index = clientTtyIndex;
-      continue;
-    }
-    const clientSessionIndex = consumeOptionalTextFlag(args, index, "--current-client-session");
-    if (clientSessionIndex !== undefined) {
-      if (clientSessionIndex === null) return false;
-      index = clientSessionIndex;
-      continue;
-    }
-    return false;
-  }
-  if (open && json) return false;
-  return true;
-}
-
 export function isValidCoreProjectEnsureArgs(args: string[]): boolean {
   return parseCoreProjectEnsureArgs(args) !== null;
 }
@@ -286,8 +212,10 @@ export function isCoreCliCommand(args: string[]): boolean {
   const [command, subcommand] = args;
   if (command === "restart") return parseCoreRestartArgs(args) !== null;
   if (command === "serve") return args.length === 1;
-  if (command === "dashboard-reload") return isCoreDashboardReloadCommand(args);
-  if (command === "restart-runtime") return isCoreRuntimeRestartCommand(args);
+  // `dashboard-reload` and `restart-runtime` are implemented in the full CLI only.
+  // Claiming them here routed them to a core dispatch that has no branch for either,
+  // so both answered "unsupported core command" — including when they are the
+  // documented way out of a control-plane mess.
   if (command === "host" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   if (command === "host" && ["stop", "kill"].includes(subcommand ?? "")) return args.length === 2;
   if (command === "host" && subcommand === "restart") return parseCoreHostRestartArgs(args) !== null;

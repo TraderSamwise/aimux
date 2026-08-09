@@ -175,6 +175,13 @@ const DEFAULT_INTERACTIVE_EXEC: TmuxInteractiveExec = (args, options) => {
   }
 };
 
+/** Whether this process owns a terminal it can hand to a foreground tmux client. */
+export function hasInteractiveTerminal(
+  streams: { stdin?: { isTTY?: boolean }; stdout?: { isTTY?: boolean } } = process,
+): boolean {
+  return Boolean(streams.stdin?.isTTY && streams.stdout?.isTTY);
+}
+
 function canonicalizeFilesystemPath(path: string): string {
   try {
     return realpathSync(path);
@@ -1252,6 +1259,16 @@ export class TmuxRuntimeManager {
 
   attachSession(sessionName: string, windowIndex?: number): void {
     const target = windowIndex === undefined ? sessionName : `${sessionName}:${windowIndex}`;
+    // `attach-session` takes over the terminal and only returns when the user
+    // detaches. Run without one — a daemon, a hook, an agent's shell — it instead
+    // blocks forever, still holding whatever lock its caller took. That is how a
+    // repair wedges the daemon startup lock and every later restart reports
+    // "already running" while nothing moves.
+    if (!hasInteractiveTerminal()) {
+      throw new Error(
+        `cannot attach to tmux session ${target} without a terminal; run "tmux attach -t ${target}" yourself`,
+      );
+    }
     this.interactiveExec(["attach-session", "-t", target]);
   }
 
