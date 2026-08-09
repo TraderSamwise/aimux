@@ -46,7 +46,7 @@ import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
-import { worktreeTone } from "@/lib/worktree-tone";
+import { worktreeIdentity } from "@/lib/worktree-tone";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -347,21 +347,23 @@ export default function ChatScreen() {
   // The worktree leads, as it does in Exposé: it is what the session is, where the
   // generated id is only how it is addressed. The tone comes from the project's
   // ordered worktree list so the colour agrees with the sidebar and the TUI.
-  const headerTone = routeSessionMissing
+  const worktree = routeSessionMissing
     ? undefined
-    : worktreeTone(worktreeGroups, { path: session?.worktreePath, name: session?.worktreeName });
+    : worktreeIdentity(worktreeGroups, {
+        path: session?.worktreePath,
+        name: session?.worktreeName,
+      });
+  const headerTone = worktree?.tone;
   const sessionTitle = routeSessionMissing
     ? "Agent unavailable"
-    : session?.worktreeName || session?.label || sessionId || "Unknown session";
+    : worktree?.name || session?.label || sessionId || "Unknown session";
   const sessionToolLabel = routeSessionMissing ? "" : (session?.command ?? "");
   // Status and branch, then the id last: the id is the only part that never helps
   // you tell two of these apart at a glance, but it is still what you quote in a
   // bug report, so it stays reachable rather than gone.
   const sessionSubtitle = routeSessionMissing
     ? `${sessionId} · not found`
-    : [session?.status ?? "unknown", session?.worktreeBranch, sessionId]
-        .filter(Boolean)
-        .join(" · ");
+    : [session?.status ?? "unknown", worktree?.branch, sessionId].filter(Boolean).join(" · ");
   const composerSendText = getComposerSendText({
     draft,
     hasServiceEndpoint: Boolean(serviceEndpoint),
