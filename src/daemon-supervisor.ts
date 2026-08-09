@@ -123,6 +123,27 @@ function assertNotStaleAgainstDaemon(json: any): void {
   throw new StaleClientBuildError(String(daemonStamp), ownStamp);
 }
 
+/**
+ * Whether an unreachable daemon should be kept rather than replaced.
+ *
+ * Unreachable is not the same answer as gone. A health probe that times out says
+ * only that the daemon did not answer inside its budget — and one slow request
+ * blocks its whole event loop, so every client probing during it reaches the same
+ * verdict and each starts a replacement. The replacement takes over, is equally
+ * busy, and the next probe repeats it: a stall becomes a restart loop, and every
+ * cycle tears down the project service.
+ *
+ * A live process is the evidence that settles it. Replacing one is for a daemon
+ * that is actually gone, or for someone asking in so many words — `aimux restart`
+ * passes `adoptExisting: false` and must still be able to stop a busy daemon.
+ */
+export function shouldKeepUnresponsiveDaemon(
+  options: Pick<EnsureDaemonRunningOptions, "adoptExisting">,
+  daemonPidAlive: boolean,
+): boolean {
+  return options.adoptExisting !== false && daemonPidAlive;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -313,7 +334,19 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
   const existing = loadDaemonInfo();
   if (existing) {
     try {
-      const health = await requestDaemonJson("/health", { timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS });
+      let health: any;
+      try {
+        health = await requestDaemonJson("/health", { timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS });
+      } catch (error) {
+        if (shouldKeepUnresponsiveDaemon(options, isPidAlive(existing.pid))) {
+          log.warn("keeping unresponsive daemon: its process is alive", "daemon", {
+            pid: existing.pid,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return existing;
+        }
+        throw error;
+      }
       if (!isAimuxDaemonHealth(health)) {
         throw new Error("stored daemon health response does not identify Aimux");
       }

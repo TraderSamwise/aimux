@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { StaleClientBuildError, buildStampGeneration, isStaleAgainstDaemon } from "./daemon-supervisor.js";
+import {
+  StaleClientBuildError,
+  buildStampGeneration,
+  isStaleAgainstDaemon,
+  shouldKeepUnresponsiveDaemon,
+} from "./daemon-supervisor.js";
 
 // Real stamps, as `computeBuildStamp` emits them: two artifact mtimes then a hash.
 const OLDER = "1786180016000.1786180016000-35f055a7caff";
@@ -44,5 +49,26 @@ describe("StaleClientBuildError", () => {
     expect(error.message).toContain(NEWER);
     expect(error.message).toContain(OLDER);
     expect(error.message).toContain("reload this client");
+  });
+});
+
+describe("shouldKeepUnresponsiveDaemon", () => {
+  it("keeps a daemon whose process is alive, so a stall cannot become a restart loop", () => {
+    // One slow request blocks the daemon's whole event loop, so every client
+    // probing during it times out at once. Replacing on that verdict means each
+    // one starts a daemon, the replacement is equally busy, and it repeats.
+    expect(shouldKeepUnresponsiveDaemon({}, true)).toBe(true);
+    expect(shouldKeepUnresponsiveDaemon({ adoptExisting: true }, true)).toBe(true);
+  });
+
+  it("replaces one that is actually gone", () => {
+    expect(shouldKeepUnresponsiveDaemon({}, false)).toBe(false);
+  });
+
+  it("still lets an explicit restart stop a busy daemon", () => {
+    // `aimux restart` passes adoptExisting: false. Were the guard to cover that
+    // too, a daemon slow enough to need restarting would be the one you could not
+    // restart.
+    expect(shouldKeepUnresponsiveDaemon({ adoptExisting: false }, true)).toBe(false);
   });
 });
