@@ -127,6 +127,45 @@ describe("read-only verb memoization at the exec boundary", () => {
     expect(log.filter((args) => args[0] === "capture-pane")).toHaveLength(2);
   });
 
+  it("re-reads on every poll of a wait loop, which waits on another process", () => {
+    // replaceWindowWhenReady busy-waits on an option a child process sets. Caching
+    // the first read would spin to the full timeout waiting for news it had
+    // already refused to hear — with the loop blocked the whole time.
+    const log: string[][] = [];
+    const tmux = managerWith(log);
+    withTmuxQueryMemo(() => {
+      for (let i = 0; i < 3; i += 1) {
+        resetTmuxQueryMemo();
+        tmux.hasSession("s");
+      }
+    });
+    expect(log.filter((args) => args[0] === "has-session")).toHaveLength(3);
+  });
+
+  it("invalidates when an interactive tmux command changes the client", () => {
+    const log: string[][] = [];
+    const interactive: string[][] = [];
+    const tmux = new TmuxRuntimeManager(
+      (args) => {
+        log.push([...args]);
+        return "ok";
+      },
+      (args) => {
+        interactive.push([...args]);
+      },
+    );
+    withTmuxQueryMemo(() => {
+      tmux.hasSession("s");
+      tmux.switchClientToTarget("/dev/ttys001", {
+        sessionName: "s",
+        windowId: "@1",
+        windowIndex: 0,
+      } as never);
+      tmux.hasSession("s");
+    });
+    expect(log.filter((args) => args[0] === "has-session").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("is inert with no scope open, so the CLI and TUI are unaffected", () => {
     const log: string[][] = [];
     const tmux = managerWith(log);

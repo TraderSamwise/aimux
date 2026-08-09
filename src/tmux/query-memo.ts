@@ -88,6 +88,9 @@ export function resetTmuxQueryMemo(): void {
  * genuinely changes between two reads inside a single build.
  */
 export const READ_ONLY_TMUX_VERBS = new Set([
+  // `tmux -V`. A version query classified as a mutation made a pure read clear
+  // the whole memo.
+  "-V",
   "display-message",
   "has-session",
   "list-clients",

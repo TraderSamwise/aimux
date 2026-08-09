@@ -235,9 +235,11 @@ export class TmuxRuntimeManager {
 
   private readonly exec: TmuxExec;
 
+  private readonly interactiveExec: TmuxInteractiveExec;
+
   constructor(
     exec: TmuxExec = RAW_EXEC,
-    private readonly interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
+    interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
     private readonly execAsync: TmuxExecAsync = DEFAULT_EXEC_ASYNC,
   ) {
     // Wrapped here rather than around the default, so an injected exec behaves the
@@ -247,6 +249,13 @@ export class TmuxRuntimeManager {
     // this wrapper has no business making.
     const call = (args: string[], options?: TmuxExecOptions) =>
       options === undefined ? exec(args) : exec(args, options);
+    // Attach, detach and switch-client change #{client_session} and
+    // #{window_active} — both memoized display-message reads — and bypass the
+    // exec wrapper entirely, so they invalidate explicitly.
+    this.interactiveExec = (args, options) => {
+      resetTmuxQueryMemo();
+      return options === undefined ? interactiveExec(args) : interactiveExec(args, options);
+    };
     this.exec = (args, options) => {
       const verb = args[0] ?? "";
       if (!READ_ONLY_TMUX_VERBS.has(verb)) {
@@ -900,6 +909,11 @@ export class TmuxRuntimeManager {
     });
     const deadline = Date.now() + readiness.timeoutMs;
     while (Date.now() < deadline) {
+      // This polls for an option a CHILD process sets, so the answer must be able
+      // to change between iterations. Inside a memo scope it would otherwise cache
+      // the first read and spin to the full timeout, blocking the loop for the
+      // whole deadline while waiting for news it had already refused to hear.
+      resetTmuxQueryMemo();
       if (this.getWindowOption(replacement, readiness.option) === readiness.value) {
         const oldName = `${target.windowName}-old`;
         let originalRenamed = false;
