@@ -193,6 +193,8 @@ import {
 import { createAgentOutputSseTextHandler } from "./agent-output-stream.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { parseRuntimeMetadataCliArgs } from "./metadata-cli-routing.js";
+import { getEventLoopDelay, startEventLoopMonitor } from "./event-loop-metrics.js";
+import { getTmuxExecMetrics } from "./tmux/exec-metrics.js";
 
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
@@ -419,6 +421,8 @@ export class AimuxDaemon {
 
   async start(): Promise<void> {
     if (this.server) return;
+    // Before anything else runs on it: the histogram only sees delay after enable.
+    startEventLoopMonitor();
     this.stopping = false;
     saveDaemonInfo({
       pid: process.pid,
@@ -3717,6 +3721,33 @@ export class AimuxDaemon {
       if (!this.pushThrottle.allow(payload)) return { status: 200, body: { ok: true, suppressed: true } };
       this.relayClient.pushNotification(payload);
       return { status: 200, body: { ok: true } };
+    }
+
+    if (method === "GET" && pathname === "/diagnostics/loop") {
+      if (actor) return { status: 403, body: { ok: false, error: "diagnostics routes are loopback-only" } };
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          pid: process.pid,
+          uptimeMs: Math.round(process.uptime() * 1000),
+          eventLoop: getEventLoopDelay(),
+          tmuxExec: getTmuxExecMetrics(),
+          // Named rather than silently missing: Exposé's hot-snapshot refresh runs
+          // in a worker thread with its own module registry, so its tmux calls are
+          // absent from these counters — and, the point of this route, absent from
+          // this event loop too. `expose.ts` shells out from the popup process.
+          excludes: [
+            "expose-hot-snapshot-worker (worker thread)",
+            "expose.ts (popup process)",
+            "interactive tmux attach (CLI only, spawnSync)",
+          ],
+          notes: {
+            sync: "loop occupancy: this process could run nothing else for this long",
+            async: "elapsed wall time, not loop occupancy; concurrent calls overlap and can exceed uptime",
+          },
+        },
+      };
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.exposeItems) {
