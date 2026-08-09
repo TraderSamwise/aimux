@@ -71,6 +71,58 @@ function isMatchingDaemonHealth(json: any): boolean {
   return isAimuxDaemonHealth(json) && manifestsMatch(getProjectServiceManifest(), json?.serviceInfo);
 }
 
+/**
+ * Build stamps lead with the artifact mtime (`<mtimeMs>.<mtimeMs>-<hash>`), so the
+ * leading number orders two local installs against each other.
+ */
+export function buildStampGeneration(stamp: unknown): number | null {
+  const lead = String(stamp ?? "").split(".")[0] ?? "";
+  const value = Number(lead);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** True when the daemon we found was built after the process asking about it. */
+export function isStaleAgainstDaemon(daemonStamp: unknown, ownStamp: unknown): boolean {
+  const daemon = buildStampGeneration(daemonStamp);
+  const own = buildStampGeneration(ownStamp);
+  if (daemon === null || own === null) return false;
+  return daemon > own;
+}
+
+/**
+ * Raised instead of replacing a daemon that is newer than this process.
+ *
+ * Replacing it can never converge: the replacement launches through the stable shim
+ * and so comes back newer again, while this process keeps seeing a mismatch. Left
+ * unguarded that is an unbounded restart loop, and every cycle tears down the
+ * project service — which owns the Exposé socket, so the popup dies with it. The
+ * stale side has to reload itself; it must not keep killing the daemon.
+ */
+export class StaleClientBuildError extends Error {
+  constructor(
+    readonly daemonBuildStamp: string,
+    readonly clientBuildStamp: string,
+  ) {
+    super(
+      `aimux daemon is a newer build (${daemonBuildStamp}) than this process (${clientBuildStamp}); ` +
+        "reload this client instead of restarting the daemon",
+    );
+    this.name = "StaleClientBuildError";
+  }
+}
+
+function assertNotStaleAgainstDaemon(json: any): void {
+  const ownStamp = getProjectServiceManifest().buildStamp;
+  const daemonStamp = json?.serviceInfo?.buildStamp;
+  if (!isStaleAgainstDaemon(daemonStamp, ownStamp)) return;
+  log.warn("refusing to replace a newer aimux daemon", "daemon", {
+    pid: json?.pid,
+    daemonBuildStamp: String(daemonStamp),
+    clientBuildStamp: ownStamp,
+  });
+  throw new StaleClientBuildError(String(daemonStamp), ownStamp);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -129,6 +181,8 @@ async function probeDefaultDaemon(options: EnsureDaemonRunningOptions): Promise<
       timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS,
     });
     if (status >= 200 && status < 300 && json?.ok !== false && isAimuxDaemonHealth(json)) {
+      // Before the adopt/terminate split: a stale client must not take either branch.
+      assertNotStaleAgainstDaemon(json);
       if (options.adoptExisting === false) {
         log.warn("terminating daemon on default port instead of adopting", "daemon", { pid: json.pid });
         await terminateDaemonOnDefaultPort(json.pid);
@@ -149,6 +203,7 @@ async function probeDefaultDaemon(options: EnsureDaemonRunningOptions): Promise<
       return adopted;
     }
   } catch (error) {
+    if (error instanceof StaleClientBuildError) throw error;
     if (error instanceof Error && error.message.includes("different local build")) {
       throw error;
     }
@@ -254,6 +309,7 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
       if (health.pid !== existing.pid) {
         throw new Error(`stored daemon pid ${existing.pid} does not match live pid ${health?.pid ?? "unknown"}`);
       }
+      assertNotStaleAgainstDaemon(health);
       if (options.adoptExisting === false) {
         log.warn("terminating stored daemon instead of adopting", "daemon", { pid: existing.pid });
         await terminateDaemonOnDefaultPort(existing.pid);
@@ -264,6 +320,9 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
         return existing;
       }
     } catch (error) {
+      // Falling through here starts a replacement daemon, which is exactly what a
+      // stale client must not do.
+      if (error instanceof StaleClientBuildError) throw error;
       log.warn("stored daemon info failed health check", "daemon", {
         pid: existing.pid,
         error: error instanceof Error ? error.message : String(error),
