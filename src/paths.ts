@@ -44,6 +44,20 @@ function assertInitialized(): void {
 
 // ── Project ID resolution ──────────────────────────────────────────
 
+/**
+ * Which repository a path belongs to does not change while the process runs, but
+ * asking costs a `git` fork — and the agent hook path asks twice per tool call.
+ *
+ * Only successful lookups are cached. The catch below also swallows ENOENT for a
+ * directory that does not exist yet, and caching that would pin a
+ * not-a-repo answer for a path that is about to become one.
+ *
+ * A `git init` inside an already-resolved directory keeps the parent root for
+ * the rest of the process. Nesting a new repo under a tracked project is not
+ * something the daemon does to itself.
+ */
+const repoRootCache = new Map<string, string>();
+
 function resolveRepoRoot(cwd: string): string {
   const resolvedCwd = resolve(cwd);
   const aimuxWorktreesMarker = `${sep}.aimux${sep}worktrees${sep}`;
@@ -51,6 +65,9 @@ function resolveRepoRoot(cwd: string): string {
   if (markerIndex >= 0) {
     return resolvedCwd.slice(0, markerIndex);
   }
+
+  const cached = repoRootCache.get(resolvedCwd);
+  if (cached !== undefined) return cached;
 
   try {
     // Strip inherited GIT_* env so the command honors `cwd` even when invoked
@@ -71,10 +88,9 @@ function resolveRepoRoot(cwd: string): string {
     const absGitDir = resolve(cwd, gitCommonDir);
     const commonWorktreesMarker = `${sep}.git${sep}worktrees${sep}`;
     const commonMarkerIndex = absGitDir.indexOf(commonWorktreesMarker);
-    if (commonMarkerIndex >= 0) {
-      return absGitDir.slice(0, commonMarkerIndex);
-    }
-    return dirname(absGitDir);
+    const repoRoot = commonMarkerIndex >= 0 ? absGitDir.slice(0, commonMarkerIndex) : dirname(absGitDir);
+    repoRootCache.set(resolvedCwd, repoRoot);
+    return repoRoot;
   } catch {
     // Not a git repo — use cwd
     return resolvedCwd;

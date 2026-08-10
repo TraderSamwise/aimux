@@ -1227,6 +1227,105 @@ describe("resumeOfflineSession", () => {
     expect(runtime.backendSessionId).toBe("backend-current");
   });
 
+  it("writes nothing when runtime and topology already agree", () => {
+    // The hook fires on every tool call and re-sends the id the agent already
+    // has. That case used to take a locked topology write, four mutating tmux
+    // execs, saveState and a statusline rebuild to conclude nothing changed.
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        backendSessionId: "backend-1",
+        lifecycle: "live",
+      },
+    ]);
+    const runtime = { id: "claude-1", command: "claude", backendSessionId: "backend-1" };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      syncTmuxWindowMetadata: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-1", "backend-1")).toEqual({
+      sessionId: "claude-1",
+      backendSessionId: "backend-1",
+    });
+
+    expect(host.saveState).not.toHaveBeenCalled();
+    expect(host.writeStatuslineFile).not.toHaveBeenCalled();
+    expect(host.invalidateDesktopStateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("still writes when topology is missing an id the runtime already holds", () => {
+    // Restore reads backendSessionId off tmux window metadata without writing
+    // topology. Returning early on the runtime value alone would strand that
+    // divergence forever, and `resolveHookSessionId` would stop mapping the
+    // backend id back to this agent.
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "live",
+      },
+    ]);
+    const runtime = { id: "claude-1", command: "claude", backendSessionId: "backend-1" };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      syncTmuxWindowMetadata: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    recordSessionBackendSessionId(host, "claude-1", "backend-1");
+
+    expect(listTopologySessionStates().find((session) => session.id === "claude-1")?.backendSessionId).toBe(
+      "backend-1",
+    );
+    expect(host.saveState).toHaveBeenCalled();
+  });
+
+  it("keeps resyncing window metadata, which Exposé reads live", () => {
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        backendSessionId: "backend-1",
+        lifecycle: "live",
+      },
+    ]);
+    const runtime = { id: "claude-1", command: "claude", backendSessionId: "backend-1" };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      syncTmuxWindowMetadata: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    recordSessionBackendSessionId(host, "claude-1", "backend-1");
+    recordSessionBackendSessionId(host, "claude-1", "backend-1");
+
+    // The skip above is about writes, not about letting the Exposé label go
+    // stale — the sync itself is cheap now because it suppresses no-op writes.
+    expect(host.syncTmuxWindowMetadata).toHaveBeenCalledTimes(2);
+    expect(host.saveState).not.toHaveBeenCalled();
+  });
+
   it("does not reload a starting session as offline from stale saved state", () => {
     const pending = new DashboardPendingActions(() => {});
     pending.setSessionAction("codex-1", "starting");

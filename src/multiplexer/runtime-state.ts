@@ -808,6 +808,22 @@ export function recordSessionBackendSessionId(
     if (!topologySession) {
       throw new Error(`Agent "${sessionId}" is not managed in runtime topology`);
     }
+    // An agent re-sends the id it already has on every tool call. When runtime,
+    // topology and the offline cache all agree, there is nothing to record, and
+    // the locked topology write and saveState below are pure cost. Gating on the
+    // topology row too is what makes this safe: runtime can hold an id topology
+    // never received (restore reads it from tmux window metadata), and returning
+    // on the runtime value alone would make that divergence permanent.
+    if (
+      runtime.backendSessionId === normalizedBackendSessionId &&
+      topologySession.backendSessionId === normalizedBackendSessionId &&
+      (!offline || offline.backendSessionId === normalizedBackendSessionId)
+    ) {
+      // Still resynced: this is the only writer of the window metadata Exposé
+      // reads live, and it self-suppresses when the payload is unchanged.
+      host.syncTmuxWindowMetadata?.(sessionId);
+      return { sessionId, backendSessionId: normalizedBackendSessionId };
+    }
     upsertTopologySession({ ...topologySession, backendSessionId: normalizedBackendSessionId }, "running", {
       projectRoot: getRepoRoot(),
     });

@@ -685,6 +685,28 @@ export function buildTmuxWindowMetadata(
   };
 }
 
+/**
+ * Key-order-independent, so a rebuilt object that happens to serialize its keys
+ * in a different order is not mistaken for a change.
+ */
+function canonicalMetadata(value: unknown): string {
+  return JSON.stringify(value, (_key, nested) => {
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) return nested;
+    const record = nested as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, record[key]]),
+    );
+  });
+}
+
+/**
+ * Window policy is three constants derived from the tool key, so it only has to
+ * be stamped once per window rather than on every metadata sync.
+ */
+const policyAppliedWindows = new Set<string>();
+
 export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: string): void {
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
@@ -701,8 +723,18 @@ export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: stri
     (runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined) ??
     new Date().toISOString();
   runtime.transport.retarget(target);
-  host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
-  host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);
+
+  // The agent hook calls this on every tool call. Comparing first keeps Exposé
+  // exactly as fresh — a status change alters the payload and writes on the very
+  // next sync — while dropping the write, and the memo flush it caused, whenever
+  // nothing moved. A busy agent still writes; a quiet one stops paying.
+  const windowId = typeof target === "string" ? target : target.windowId;
+  const changed = canonicalMetadata(existing) !== canonicalMetadata(metadata);
+  if (changed) host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
+  if (changed || !policyAppliedWindows.has(windowId)) {
+    policyAppliedWindows.add(windowId);
+    host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);
+  }
 }
 
 export function updateContextWatcherSessions(host: SessionRuntimeHost): void {

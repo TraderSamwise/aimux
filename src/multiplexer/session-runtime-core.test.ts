@@ -15,6 +15,7 @@ import {
   resolveLiveSessionTmuxTarget,
   resizeAgentPane,
   sendAgentInput,
+  syncTmuxWindowMetadata,
   updateSessionLabel,
 } from "./session-runtime-core.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -341,6 +342,98 @@ describe("session runtime prompt submission", () => {
         sessionId: "claude-racy",
         backendSessionId: undefined,
       });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not rewrite tmux window metadata that already matches", async () => {
+    // The agent hook syncs this on every tool call. Writing an identical payload
+    // cost a tmux fork that also flushed the read-only query memo.
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "claude" };
+      let stored: any = null;
+      const tmuxRuntimeManager = {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => stored),
+        setWindowMetadata: vi.fn((_target: any, metadata: any) => {
+          stored = JSON.parse(JSON.stringify(metadata));
+        }),
+        applyManagedAgentWindowPolicy: vi.fn(),
+        isWindowAlive: vi.fn(() => true),
+      };
+      const transport = new TmuxSessionTransport("claude-1", "claude", target, tmuxRuntimeManager as any, 80, 24);
+      const host: any = {
+        sessions: [{ id: "claude-1", command: "claude", transport, startTime: 1_700_000_000_000 }],
+        sessionTmuxTargets: new Map([["claude-1", target]]),
+        sessionOriginalArgs: new Map([["claude-1", []]]),
+        sessionToolKeys: new Map([["claude-1", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-1", repoRoot]]),
+        sessionLabels: new Map(),
+        sessionRoles: new Map(),
+        offlineSessions: [],
+        tmuxRuntimeManager,
+      };
+
+      try {
+        syncTmuxWindowMetadata(host, "claude-1");
+        for (let call = 0; call < 20; call += 1) syncTmuxWindowMetadata(host, "claude-1");
+
+        expect(tmuxRuntimeManager.setWindowMetadata).toHaveBeenCalledTimes(1);
+        // Policy is three constants derived from the tool key; once per window.
+        expect(tmuxRuntimeManager.applyManagedAgentWindowPolicy).toHaveBeenCalledTimes(1);
+      } finally {
+        transport.destroy();
+      }
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writes tmux window metadata as soon as the payload actually changes", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const target = { sessionName: "aimux-test", windowId: "@8", windowIndex: 8, windowName: "claude" };
+      let stored: any = null;
+      const tmuxRuntimeManager = {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => stored),
+        setWindowMetadata: vi.fn((_target: any, metadata: any) => {
+          stored = JSON.parse(JSON.stringify(metadata));
+        }),
+        applyManagedAgentWindowPolicy: vi.fn(),
+        isWindowAlive: vi.fn(() => true),
+      };
+      const transport = new TmuxSessionTransport("claude-2", "claude", target, tmuxRuntimeManager as any, 80, 24);
+      const host: any = {
+        sessions: [{ id: "claude-2", command: "claude", transport, startTime: 1_700_000_000_000 }],
+        sessionTmuxTargets: new Map([["claude-2", target]]),
+        sessionOriginalArgs: new Map([["claude-2", []]]),
+        sessionToolKeys: new Map([["claude-2", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-2", repoRoot]]),
+        sessionLabels: new Map([["claude-2", "before"]]),
+        sessionRoles: new Map(),
+        offlineSessions: [],
+        tmuxRuntimeManager,
+      };
+
+      try {
+        syncTmuxWindowMetadata(host, "claude-2");
+        expect(tmuxRuntimeManager.setWindowMetadata).toHaveBeenCalledTimes(1);
+
+        // Exposé reads this payload live, so a change must land on the next sync
+        // rather than waiting for a timer.
+        host.sessionLabels.set("claude-2", "after");
+        syncTmuxWindowMetadata(host, "claude-2");
+
+        expect(tmuxRuntimeManager.setWindowMetadata).toHaveBeenCalledTimes(2);
+        expect(stored.label).toBe("after");
+      } finally {
+        transport.destroy();
+      }
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
