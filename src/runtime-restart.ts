@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { log } from "./debug.js";
+import { logLifecycleAlways } from "./debug.js";
 import { resolve as pathResolve } from "node:path";
 import { type AimuxDaemonInfo, type ProjectServiceState, type StoppedDaemonInfo } from "./daemon-state.js";
 import { resolveDashboardTarget } from "./dashboard/targets.js";
@@ -702,7 +702,7 @@ export async function restartAimuxControlPlane(
   // stops the daemon and starts another, and the caller logs elsewhere — so in
   // the daemon log the pair reads as a spontaneous restart with no cause. That
   // ambiguity is why this loop was misdiagnosed three times.
-  log.warn("control plane restart requested", "daemon", {
+  logLifecycleAlways("control plane restart requested", "daemon", {
     pid: process.pid,
     argv: process.argv.slice(1, 4).join(" "),
     reason: options.reason ?? "unspecified",

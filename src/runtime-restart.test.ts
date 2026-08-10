@@ -325,7 +325,7 @@ describe("restartAimuxControlPlane", () => {
     // no cause — which is how this loop got misdiagnosed three times.
     const logged: Array<{ message: string; fields?: Record<string, unknown> }> = [];
     const debugModule = await import("./debug.js");
-    const spy = vi.spyOn(debugModule.log, "warn").mockImplementation(((
+    const spy = vi.spyOn(debugModule, "logLifecycleAlways").mockImplementation(((
       message: string,
       _category: string,
       fields?: Record<string, unknown>,
