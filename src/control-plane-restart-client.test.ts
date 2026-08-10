@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   loadDaemonState: vi.fn(),
   restartAimuxControlPlane: vi.fn(),
   renderRuntimeRestartResult: vi.fn(),
+  assertNotStoppingNewerDaemon: vi.fn(async () => {}),
   stopDaemonInfo: vi.fn(),
   ensureDaemonRunning: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock("./daemon-state.js", () => ({
 vi.mock("./daemon-supervisor.js", () => ({
   stopDaemonInfo: mocks.stopDaemonInfo,
   ensureDaemonRunning: mocks.ensureDaemonRunning,
+  assertNotStoppingNewerDaemon: mocks.assertNotStoppingNewerDaemon,
 }));
 
 vi.mock("./runtime-restart.js", () => ({
@@ -74,6 +76,7 @@ describe("restartControlPlaneFromCli", () => {
 
     expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      reason: "cli",
       projectRoot: undefined,
       stopDaemon: undefined,
       ensureDaemonRunning: expect.any(Function),
@@ -92,6 +95,7 @@ describe("restartControlPlaneFromCli", () => {
 
     expect(result.text).toBe("project text");
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      reason: "cli",
       projectRoot: "/repo",
       stopDaemon: undefined,
       ensureDaemonRunning: expect.any(Function),

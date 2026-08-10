@@ -40,6 +40,27 @@ export function listProcessArgs(): ProcessArgsEntry[] {
   }
 }
 
+/** pid -> ppid for every process, so a caller can walk an ancestry. */
+export function listProcessParents(): Map<number, number> {
+  const parents = new Map<number, number>();
+  try {
+    const raw = execFileSync("ps", ["-axo", "pid=,ppid="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    for (const line of raw.split("\n")) {
+      const match = line.match(/^\s*(\d+)\s+(\d+)\s*$/);
+      if (!match) continue;
+      const pid = Number(match[1]);
+      const ppid = Number(match[2]);
+      if (Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid)) parents.set(pid, ppid);
+    }
+  } catch {
+    return parents;
+  }
+  return parents;
+}
+
 export function readProcessCwd(pid: number): string | null {
   try {
     const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {

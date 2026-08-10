@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,8 @@ import {
 import { isTmuxClientSessionForHost, isTmuxClientSessionName } from "./session-names.js";
 import type { SessionUserLabel } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
+import { recordTmuxExec } from "./exec-metrics.js";
+import { memoizedTmuxQuery, READ_ONLY_TMUX_VERBS, resetTmuxQueryMemo, tmuxQueryKey } from "./query-memo.js";
 
 export interface TmuxExecOptions {
   cwd?: string;
@@ -147,16 +150,28 @@ export const MANAGED_TMUX_AGENT_WINDOW_OPTIONS = Object.freeze({
 });
 
 const MODIFIED_ENTER_HEX = "1b 5b 31 33 3b 32 75";
-const DEFAULT_EXEC: TmuxExec = (args, options) =>
-  execFileSync("tmux", args, {
-    cwd: options?.cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+// Timed because this is the blocking one: the daemon hosts every project service
+// in-process, so time spent here is time no other project's handler can run.
+const RAW_EXEC: TmuxExec = (args, options) => {
+  const startedAt = performance.now();
+  try {
+    return execFileSync("tmux", args, {
+      cwd: options?.cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } finally {
+    recordTmuxExec(args, performance.now() - startedAt, "sync");
+  }
+};
 
 const DEFAULT_EXEC_ASYNC: TmuxExecAsync = (args, options) =>
   new Promise((resolve, reject) => {
+    const startedAt = performance.now();
     execFile("tmux", args, { cwd: options?.cwd, encoding: "utf8" }, (error, stdout, stderr) => {
+      // Elapsed, not occupied: an async call spends almost none of this on the
+      // loop. Counted separately from sync for exactly that reason.
+      recordTmuxExec(args, performance.now() - startedAt, "async");
       if (error) {
         reject(Object.assign(error, { stderr }));
         return;
@@ -218,11 +233,40 @@ export function buildDefaultRootMouseBindingsConfig(input: {
 export class TmuxRuntimeManager {
   private sessionPrefixCache: string | null = null;
 
+  private readonly exec: TmuxExec;
+
+  private readonly interactiveExec: TmuxInteractiveExec;
+
   constructor(
-    private readonly exec: TmuxExec = DEFAULT_EXEC,
-    private readonly interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
+    exec: TmuxExec = RAW_EXEC,
+    interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
     private readonly execAsync: TmuxExecAsync = DEFAULT_EXEC_ASYNC,
-  ) {}
+  ) {
+    // Wrapped here rather than around the default, so an injected exec behaves the
+    // same way — otherwise the memo would be untestable and production-only.
+    // Forwarded with the caller's own arity: passing an explicit `undefined`
+    // second argument changes what a mocked exec records, which is a difference
+    // this wrapper has no business making.
+    const call = (args: string[], options?: TmuxExecOptions) =>
+      options === undefined ? exec(args) : exec(args, options);
+    // Attach, detach and switch-client change #{client_session} and
+    // #{window_active} — both memoized display-message reads — and bypass the
+    // exec wrapper entirely, so they invalidate explicitly.
+    this.interactiveExec = (args, options) => {
+      resetTmuxQueryMemo();
+      return options === undefined ? interactiveExec(args) : interactiveExec(args, options);
+    };
+    this.exec = (args, options) => {
+      const verb = args[0] ?? "";
+      if (!READ_ONLY_TMUX_VERBS.has(verb)) {
+        // A mutation invalidates every answer given so far: a build that renames a
+        // window and then re-lists has to see the rename.
+        resetTmuxQueryMemo();
+        return call(args, options);
+      }
+      return memoizedTmuxQuery(tmuxQueryKey(args, options?.cwd), () => call(args, options));
+    };
+  }
 
   isAvailable(): boolean {
     try {
@@ -865,6 +909,11 @@ export class TmuxRuntimeManager {
     });
     const deadline = Date.now() + readiness.timeoutMs;
     while (Date.now() < deadline) {
+      // This polls for an option a CHILD process sets, so the answer must be able
+      // to change between iterations. Inside a memo scope it would otherwise cache
+      // the first read and spin to the full timeout, blocking the loop for the
+      // whole deadline while waiting for news it had already refused to hear.
+      resetTmuxQueryMemo();
       if (this.getWindowOption(replacement, readiness.option) === readiness.value) {
         const oldName = `${target.windowName}-old`;
         let originalRenamed = false;

@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type { LoggingConfig, LogLevel } from "./config.js";
+import { getDaemonLogPath } from "./paths.js";
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 0,
@@ -263,6 +264,40 @@ export function logAt(level: LogLevel, message: string, category = "general", fi
     projectRoot: runtimeConfig.projectRoot,
     fields: sanitizeLogFields(fields),
   });
+}
+
+/**
+ * A record that is written whether or not logging is switched on.
+ *
+ * Reserved for control-plane lifecycle events whose absence is itself the bug.
+ * Ordinary logging defaults to disabled, which is right for volume but wrong
+ * here: the processes that ask for a restart are usually short-lived CLI or
+ * dashboard processes with logging off, so the one line naming who asked never
+ * got written — and the daemon log showed a restart with no cause.
+ *
+ * Always to the daemon log, since that is where the restart it explains appears.
+ */
+export function logLifecycleAlways(message: string, category: string, fields?: LogFields): void {
+  const record: LogRecord = {
+    ts: new Date().toISOString(),
+    level: "warn",
+    category,
+    message: sanitizeLogString(message),
+    pid: process.pid,
+    processKind: runtimeConfig.processKind,
+    projectId: runtimeConfig.projectId,
+    projectRoot: runtimeConfig.projectRoot,
+    fields: sanitizeLogFields(fields),
+  };
+  const line = `${JSON.stringify(record)}\n`;
+  try {
+    const path = getDaemonLogPath();
+    mkdirSync(dirname(path), { recursive: true });
+    rotateIfNeeded(path, Buffer.byteLength(line));
+    appendFileSync(path, line);
+  } catch {
+    // Logging must never break aimux runtime behavior.
+  }
 }
 
 export const log = {

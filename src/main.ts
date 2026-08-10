@@ -80,7 +80,13 @@ import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } 
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { rewriteDashboardStatuslineArtifacts } from "./tmux/statusline-artifacts.js";
 import { stopProjectTmuxRuntime } from "./tmux/runtime-stop.js";
-import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
+import {
+  configureLogging,
+  log,
+  logLifecycleAlways,
+  resolveLoggingRuntimeConfig,
+  type LoggingCliOptions,
+} from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
@@ -581,9 +587,12 @@ function commandPath(command: Command): string[] {
   return names;
 }
 
-function loggingProcessKind(command: Command): "cli" | "daemon" {
+function loggingProcessKind(command: Command): "cli" | "daemon" | "project-service" {
   const names = commandPath(command);
   if (names.at(-2) === "daemon" && names.at(-1) === "run") return "daemon";
+  // Without this the service logs as "cli" into the project log, which is exactly
+  // the distinction you need when debugging why a service died.
+  if (names.at(-1) === "__project-service-internal") return "project-service";
   return "cli";
 }
 
@@ -1270,13 +1279,30 @@ daemonCmd
     const daemon = new AimuxDaemon();
     await daemon.start();
     let shuttingDown = false;
-    const shutdown = (exitCode: number) => {
+    const shutdown = (exitCode: number, trigger: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
+      // Always written: a daemon that stops without saying why is the whole
+      // reason this restart loop has been diagnosed wrong three times. The pair
+      // "stopping" then "started" reads as spontaneous unless the stop names its
+      // trigger, and a signal carries no sender, so ppid is the next best clue.
+      logLifecycleAlways("daemon stopping", "daemon", {
+        trigger,
+        exitCode,
+        pid: process.pid,
+        ppid: process.ppid,
+        uptimeMs: Math.round(process.uptime() * 1000),
+      });
       void daemon.stop().finally(() => process.exit(exitCode));
     };
-    process.on("SIGINT", () => shutdown(130));
-    process.on("SIGTERM", () => shutdown(143));
+    process.on("SIGINT", () => shutdown(130, "SIGINT"));
+    process.on("SIGTERM", () => shutdown(143, "SIGTERM"));
+    process.on("disconnect", () => shutdown(0, "parent-disconnect"));
+    process.on("beforeExit", (code) => {
+      // Not a signal: the event loop simply emptied. A daemon should never reach
+      // this, so if it does the log has to say so rather than look like a signal.
+      logLifecycleAlways("daemon event loop drained", "daemon", { code, pid: process.pid });
+    });
     await new Promise(() => {});
   });
 
@@ -3863,6 +3889,70 @@ teamCmd
       return;
     }
     printTeamInit(result.config);
+  });
+
+program
+  // Hidden: run by hand against a project the daemon already hosts, this binds a
+  // second metadata server and overwrites the endpoint file the first one owns.
+  .command("__project-service-internal", { hidden: true })
+  .description("Internal daemon-managed project service entrypoint")
+  .option("--project-id <id>", "Internal project id")
+  .option("--project-root <path>", "Internal project root")
+  .action(async (opts: { projectId?: string; projectRoot?: string }) => {
+    void opts.projectId;
+    const projectRoot = resolveProjectRoot(opts.projectRoot ? pathResolve(opts.projectRoot) : process.cwd());
+    if (projectRoot !== process.cwd()) {
+      process.chdir(projectRoot);
+    }
+    // initPaths, not withProjectPaths: the latter is AsyncLocalStorage, which
+    // exists because the daemon serves many projects in one process. Here the
+    // process serves one, and callbacks that escape the ALS — signal handlers,
+    // worker messages, timer chains — would fail "paths not initialized".
+    await initPaths(projectRoot);
+    initProject();
+
+    const mux = new Multiplexer({ contextWatcherEnabled: false, projectRoot });
+    let cleanedUp = false;
+    const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
+    const cleanupAll = async () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      await mux.cleanup();
+    };
+
+    const shutdown = () => {
+      void cleanupAll().finally(() => process.exit(0));
+    };
+    process.on("exit", ensureTerminalRestored);
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    process.on("uncaughtException", (err) => {
+      log.error("project service uncaught exception", "runtime", {
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      console.error(err);
+      void cleanupAll().finally(() => process.exit(1));
+    });
+    process.on("unhandledRejection", (reason) => {
+      log.error("project service unhandled rejection", "runtime", {
+        error: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      console.error(reason);
+      void cleanupAll().finally(() => process.exit(1));
+    });
+
+    try {
+      const exitCode = await mux.runProjectService();
+      await cleanupAll();
+      process.exit(exitCode);
+    } catch (err: unknown) {
+      await cleanupAll();
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`aimux project service: ${msg}`);
+      process.exit(1);
+    }
   });
 
 registerExposeCommand(program);

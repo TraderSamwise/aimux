@@ -20,6 +20,11 @@ import { openManagedServiceWindow, openManagedSessionWindow, type TmuxServiceTar
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
 import { isPidAlive } from "../process-inspector.js";
 import { isRuntimeRestartInProgress, restartAimuxControlPlane, type RuntimeRestartResult } from "../runtime-restart.js";
+import {
+  clearRuntimeGuardRepairAttempts,
+  loadRuntimeGuardRepairAttempts,
+  recordRuntimeGuardRepairAttempt,
+} from "../runtime-guard-repair-history.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -487,8 +492,16 @@ export function pruneRuntimeGuardRepairAttempts(attempts: number[], now: number)
   return attempts.filter((at) => now - at < RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS);
 }
 
+/**
+ * Read from disk, not from `host`.
+ *
+ * The count used to live on the Multiplexer instance — but a successful repair
+ * reloads the dashboard, which builds a new instance, so the counter reset on
+ * every repair and the limit was unreachable. A breaker whose state is destroyed
+ * by the thing it breaks does not bound anything.
+ */
 function runtimeGuardRepairFlapping(host: DashboardControlHost, now = Date.now()): boolean {
-  const attempts = pruneRuntimeGuardRepairAttempts(host.runtimeGuardRepairAttempts ?? [], now);
+  const attempts = loadRuntimeGuardRepairAttempts(dashboardProjectRoot(host), RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS, now);
   host.runtimeGuardRepairAttempts = attempts;
   return attempts.length >= RUNTIME_GUARD_REPAIR_FLAP_LIMIT;
 }
@@ -563,7 +576,6 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     );
     return;
   }
-  host.runtimeGuardRepairAttempts = [...(host.runtimeGuardRepairAttempts ?? []), Date.now()];
   const projectRoot = dashboardProjectRoot(host);
   if (isRuntimeRestartInProgress()) {
     blockRuntimeGuardRepair(host, lifecycle);
@@ -574,6 +586,10 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     blockRuntimeGuardRepair(host, lifecycle);
     return;
   }
+  // Recorded only once this probe owns the repair. Counting blocked probes spends
+  // the budget on attempts that did nothing — at a 5s heartbeat a single 30s CLI
+  // restart would burn six slots and trip the breaker with a false "older build".
+  host.runtimeGuardRepairAttempts = recordRuntimeGuardRepairAttempt(projectRoot, RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS);
   host.runtimeGuardRepairBlockedNoticeAt = undefined;
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
@@ -695,6 +711,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
     const repairAbort = new AbortController();
     const repair = restartAimuxControlPlane({
+      reason: "dashboard-runtime-guard-repair",
       projectRoot,
       reloadDashboards: false,
       verifyDashboards: false,
@@ -740,6 +757,11 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
         host.runtimeGuardRepairFailedKey = undefined;
         host.runtimeGuardRepairRetryAt = undefined;
         host.runtimeGuardRepairBlockedNoticeAt = undefined;
+        // A later probe seeing "ok" is the only honest evidence a repair settled,
+        // so it is what returns the budget. Clearing inside the repair's own
+        // success path would restore the reset this file exists to prevent.
+        clearRuntimeGuardRepairAttempts(dashboardProjectRoot(host));
+        host.runtimeGuardRepairAttempts = [];
         clearRuntimeGuardRepairError(host);
         if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {
           host.dashboardBusyState = null;

@@ -9,6 +9,7 @@ import { LoopWatcher } from "../loop-watcher.js";
 import { TranscriptReconciler } from "./transcript-reconciler.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo, withWorktreeMemo } from "../worktree.js";
+import { withTmuxQueryMemo } from "../tmux/query-memo.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
@@ -1096,7 +1097,13 @@ export function readTmuxProcessInfo(
 // while sorting, and once per offline session. The body is fully synchronous, so the
 // memo cannot outlive it or be observed elsewhere.
 export function buildDesktopStateSnapshot(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
-  return withWorktreeMemo(() => buildDesktopStateSnapshotUnmemoized(host, options));
+  // Both memos are scoped to this one synchronous build. The tmux memo answers
+  // repeated read-only queries once — measured at 315 list-windows and 137
+  // show-window-options forks in a 66.8s window, each blocking the loop for every
+  // project at once — while any mutating tmux command clears it, so the rename
+  // and set-option this build performs partway through are still observed by the
+  // re-reads that follow them.
+  return withWorktreeMemo(() => withTmuxQueryMemo(() => buildDesktopStateSnapshotUnmemoized(host, options)));
 }
 
 function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {

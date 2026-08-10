@@ -23,6 +23,7 @@ import {
   resumeSessions,
   restoreSessions,
   runDashboard,
+  runProjectService,
   summarizeLaunchArgs,
   startProjectServiceHost,
 } from "./session-launch.js";
@@ -2399,5 +2400,55 @@ describe("runDashboard", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
     expect(host.showDashboardError).not.toHaveBeenCalled();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("runProjectService", () => {
+  const serviceHost = () => {
+    const host: any = {
+      mode: "dashboard",
+      tmuxRuntimeManager: {
+        repairLegacyProjectSessionNames: vi.fn(),
+      },
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      startProjectServices: vi.fn(),
+      startStatusRefresh: vi.fn(),
+      startGraveyardCleanup: vi.fn(),
+      cleanupGraveyard: vi.fn(() => Promise.resolve({ dryRun: false, plan: {}, results: [] })),
+      refreshDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+    };
+    return host;
+  };
+
+  it("stays alive until something resolves the run, then tears down", async () => {
+    // The whole job of the standalone entrypoint: start the same host the daemon
+    // starts, then not exit. Returning early would make the service process
+    // vanish the moment it was ready.
+    const host = serviceHost();
+    const pending = runProjectService(host);
+    await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
+    expect(host.teardown).not.toHaveBeenCalled();
+
+    host.resolveRun(7);
+    await expect(pending).resolves.toBe(7);
+    expect(host.teardown).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the service through the same path the daemon-hosted actor uses", async () => {
+    // Both call startProjectServiceHost. Anything project-specific added to the
+    // entrypoint instead of there is how the two paths drift apart.
+    const host = serviceHost();
+    const pending = runProjectService(host);
+    await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
+    expect(host.startProjectServices).toHaveBeenCalled();
+    // Marked project-service, which is what stops the last agent exiting from
+    // taking the whole process down with it.
+    expect(host.mode).toBe("project-service");
+    host.resolveRun(0);
+    await pending;
   });
 });
