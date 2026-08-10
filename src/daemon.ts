@@ -2834,6 +2834,7 @@ export class AimuxDaemon {
 
   private async restartControlPlane(issuedAt: string, projectRoot?: string): Promise<CoreRestartResult> {
     const restart = await restartAimuxControlPlane({
+      reason: "daemon-route",
       projectRoot,
       stopDaemon: async () => null,
       ensureDaemonRunning: async () => this.currentDaemonInfo(issuedAt),

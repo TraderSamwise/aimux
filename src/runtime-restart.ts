@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { log } from "./debug.js";
 import { resolve as pathResolve } from "node:path";
 import { type AimuxDaemonInfo, type ProjectServiceState, type StoppedDaemonInfo } from "./daemon-state.js";
 import { resolveDashboardTarget } from "./dashboard/targets.js";
@@ -137,6 +138,8 @@ export interface RestartAimuxControlPlaneOptions {
   reloadDashboards?: boolean;
   verifyDashboards?: boolean;
   retainDaemon?: boolean;
+  /** Free-text caller identity, so a restart in the log names who asked for it. */
+  reason?: string;
   abortSignal?: AbortSignal;
 }
 
@@ -695,6 +698,16 @@ export async function restartAimuxControlPlane(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
   throwIfRestartAborted(options.abortSignal);
+  // Who asked, recorded before anything is torn down. A control-plane restart
+  // stops the daemon and starts another, and the caller logs elsewhere — so in
+  // the daemon log the pair reads as a spontaneous restart with no cause. That
+  // ambiguity is why this loop was misdiagnosed three times.
+  log.warn("control plane restart requested", "daemon", {
+    pid: process.pid,
+    argv: process.argv.slice(1, 4).join(" "),
+    reason: options.reason ?? "unspecified",
+    retainDaemon: options.retainDaemon === true,
+  });
   const lockPath = tryAcquireRuntimeRestartLock(options.isPidAlive ?? defaultIsPidAlive);
   if (!lockPath) {
     throw new Error("aimux restart is already running");

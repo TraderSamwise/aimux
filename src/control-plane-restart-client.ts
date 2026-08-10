@@ -12,6 +12,7 @@ export async function restartControlPlaneFromCli(projectRoot?: string): Promise<
   const daemonBeforeRequest = loadDaemonInfo();
   const daemonStateBeforeRequest = loadDaemonState();
   const restart = await restartAimuxControlPlane({
+    reason: "cli",
     projectRoot,
     stopDaemon: daemonBeforeRequest ? () => stopDaemonInfo(daemonBeforeRequest, daemonStateBeforeRequest) : undefined,
     ensureDaemonRunning: () => ensureDaemonRunning({ adoptExisting: false }),

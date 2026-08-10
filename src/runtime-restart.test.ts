@@ -319,6 +319,45 @@ describe("restartAimuxControlPlane", () => {
     expect(isRuntimeRestartInProgress()).toBe(false);
   });
 
+  it("records who asked before tearing anything down", async () => {
+    // A control-plane restart stops the daemon and starts another. The caller logs
+    // elsewhere, so in the daemon log the pair reads as a spontaneous restart with
+    // no cause — which is how this loop got misdiagnosed three times.
+    const logged: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+    const debugModule = await import("./debug.js");
+    const spy = vi.spyOn(debugModule.log, "warn").mockImplementation(((
+      message: string,
+      _category: string,
+      fields?: Record<string, unknown>,
+    ) => {
+      logged.push({ message, fields });
+    }) as never);
+
+    try {
+      await restartAimuxControlPlane({
+        now: () => new Date("2026-06-20T00:00:01.000Z"),
+        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+        stopDaemon: vi.fn(async () => stoppedDaemon()),
+        ensureDaemonRunning: vi.fn(async () => ({
+          pid: 9200,
+          port: 43190,
+          startedAt: "after",
+          updatedAt: "after",
+        })),
+        ensureProjectService: vi.fn(async () => null),
+        createTmux: () => ({ isAvailable: () => true }),
+        isPidAlive: () => false,
+        reason: "dashboard-runtime-guard-repair",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const requested = logged.find((entry) => entry.message === "control plane restart requested");
+    expect(requested?.fields?.reason).toBe("dashboard-runtime-guard-repair");
+    expect(requested?.fields?.pid).toBe(process.pid);
+  });
+
   it("brings a daemon back even when the restart is aborted after stopping one", async () => {
     // The repair path aborts on a 45s timeout. Aborting between stopDaemon and
     // ensureDaemonRunning left the machine with no daemon and nothing to respawn

@@ -74,6 +74,7 @@ describe("restartControlPlaneFromCli", () => {
 
     expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      reason: "cli",
       projectRoot: undefined,
       stopDaemon: undefined,
       ensureDaemonRunning: expect.any(Function),
@@ -92,6 +93,7 @@ describe("restartControlPlaneFromCli", () => {
 
     expect(result.text).toBe("project text");
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      reason: "cli",
       projectRoot: "/repo",
       stopDaemon: undefined,
       ensureDaemonRunning: expect.any(Function),

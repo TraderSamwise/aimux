@@ -711,6 +711,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
     const repairAbort = new AbortController();
     const repair = restartAimuxControlPlane({
+      reason: "dashboard-runtime-guard-repair",
       projectRoot,
       reloadDashboards: false,
       verifyDashboards: false,
