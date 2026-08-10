@@ -43,6 +43,15 @@ export interface ProjectServiceState {
   pid: number;
   startedAt: string;
   updatedAt: string;
+  status?: "stopped" | "starting" | "running" | "restarting";
+  restartCount?: number;
+  lastRestartAt?: string;
+  lastExit?: {
+    at: string;
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    expected: boolean;
+  };
 }
 
 export interface StoppedDaemonInfo extends AimuxDaemonInfo {

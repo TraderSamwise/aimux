@@ -658,7 +658,7 @@ export class AimuxDaemon {
 
   private isProjectServiceLive(entry: ProjectServiceState): boolean {
     const actor = this.projectActors.get(entry.projectId);
-    const live = entry.pid === process.pid && Boolean(actor?.isRunning());
+    const live = Boolean(actor?.isRunning()) && actor?.getState().pid === entry.pid;
     if (live) actor?.ensureEndpointPublished?.();
     return live;
   }
@@ -666,7 +666,8 @@ export class AimuxDaemon {
   private listProjectsForRoute(): ProjectsRouteProject[] {
     const servicesById = this.state.projects;
     return listRegisteredDesktopProjects().map((project) => {
-      const service = servicesById[project.id] ?? null;
+      const actorState = this.projectActors.get(project.id)?.getState() ?? null;
+      const service = actorState ?? servicesById[project.id] ?? null;
       const serviceAlive = service ? this.isProjectServiceLive(service) : false;
       return {
         ...project,
@@ -2671,9 +2672,17 @@ export class AimuxDaemon {
       await this.terminateLegacyProjectService(existing);
     }
 
-    const nextActor = actor ?? new CoreProjectActor(resolvedRoot);
+    const nextActor =
+      actor ??
+      new CoreProjectActor(resolvedRoot, {
+        onStateChange: (state) => {
+          this.state.projects[projectId] = state;
+          this.refreshState();
+        },
+      });
     let state: ProjectServiceState;
     try {
+      this.projectActors.set(projectId, nextActor);
       state = await nextActor.start();
     } catch (error) {
       if (this.projectActors.get(projectId) === nextActor) {

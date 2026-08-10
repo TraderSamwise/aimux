@@ -18,6 +18,7 @@ import { refreshGlobalExposeHotSnapshots } from "./expose-hot-snapshot-worker.js
 let tmpRoot = "";
 let projectRoot = "";
 let nextPid = 20_000;
+let nextActorPid = 30_000;
 let livePids = new Set<number>();
 let childrenByPid = new Map<number, EventEmitter>();
 const spawnMock = vi.fn();
@@ -29,7 +30,12 @@ const coreActorMock = vi.hoisted(() => ({
   kills: vi.fn(),
   failStartFor: new Set<string>(),
   stopBlockers: [] as Array<Promise<void>>,
-  instances: [] as Array<{ projectRoot: string; running: boolean }>,
+  instances: [] as Array<{
+    projectRoot: string;
+    running: boolean;
+    pid: number;
+    emitState: (state: Record<string, unknown>) => void;
+  }>,
 }));
 const runtimeRestartMock = vi.hoisted(() => ({
   restartAimuxControlPlane: vi.fn(),
@@ -103,28 +109,40 @@ vi.mock("./project-scanner.js", () => ({
 vi.mock("./core-project-actor.js", () => ({
   CoreProjectActor: class {
     private running = false;
+    private pid = 0;
+    private stateExtras: Record<string, unknown> = { status: "stopped", restartCount: 0 };
     private readonly projectRoot: string;
     private readonly projectId: string;
     private readonly startedAt = new Date().toISOString();
+    private readonly onStateChange?: (state: unknown) => void;
 
-    constructor(projectRoot: string) {
+    constructor(projectRoot: string, options: { onStateChange?: (state: unknown) => void } = {}) {
       this.projectRoot = projectRoot;
       this.projectId = `proj-${basename(projectRoot)}`;
-      coreActorMock.instances.push(this as unknown as { projectRoot: string; running: boolean });
+      this.onStateChange = options.onStateChange;
+      coreActorMock.instances.push(
+        this as unknown as {
+          projectRoot: string;
+          running: boolean;
+          pid: number;
+          emitState: (state: Record<string, unknown>) => void;
+        },
+      );
     }
 
     getState() {
       return {
         projectId: this.projectId,
         projectRoot: this.projectRoot,
-        pid: process.pid,
+        pid: this.pid,
         startedAt: this.startedAt,
         updatedAt: new Date().toISOString(),
+        ...this.stateExtras,
       };
     }
 
     isRunning() {
-      return this.running;
+      return this.running && livePids.has(this.pid);
     }
 
     ensureEndpointPublished() {
@@ -138,7 +156,7 @@ vi.mock("./core-project-actor.js", () => ({
       );
       try {
         const existing = JSON.parse(readFileSync(endpointPath, "utf8")) as { pid?: unknown };
-        if (existing.pid === process.pid) return;
+        if (existing.pid === this.pid) return;
       } catch {}
       mkdirSync(dirname(endpointPath), { recursive: true });
       writeFileSync(
@@ -146,7 +164,7 @@ vi.mock("./core-project-actor.js", () => ({
         JSON.stringify({
           host: "127.0.0.1",
           port: 44291,
-          pid: process.pid,
+          pid: this.pid,
           updatedAt: new Date().toISOString(),
         }),
       );
@@ -157,21 +175,45 @@ vi.mock("./core-project-actor.js", () => ({
       if (coreActorMock.failStartFor.has(this.projectRoot)) {
         throw new Error("actor start failed");
       }
+      if (!this.pid || !livePids.has(this.pid)) {
+        this.pid = nextActorPid++;
+        livePids.add(this.pid);
+      }
       this.running = true;
+      this.stateExtras = { status: "running", restartCount: 0 };
       this.ensureEndpointPublished();
-      return this.getState();
+      const state = this.getState();
+      this.onStateChange?.(state);
+      return state;
     }
 
     async stop() {
       const blocker = coreActorMock.stopBlockers.shift();
       if (blocker) await blocker;
       this.running = false;
+      livePids.delete(this.pid);
+      this.stateExtras = { ...this.stateExtras, status: "stopped" };
       coreActorMock.stops(this.projectRoot);
+      this.onStateChange?.(this.getState());
     }
 
     async kill() {
       this.running = false;
+      livePids.delete(this.pid);
+      this.stateExtras = { ...this.stateExtras, status: "stopped" };
       coreActorMock.kills(this.projectRoot);
+      this.onStateChange?.(this.getState());
+    }
+
+    emitState(state: Record<string, unknown>) {
+      if (typeof state.pid === "number") this.pid = state.pid;
+      if (state.status === "running") this.running = true;
+      if (state.status === "stopped") this.running = false;
+      this.stateExtras = {
+        ...this.stateExtras,
+        ...state,
+      };
+      this.onStateChange?.(this.getState());
     }
   },
 }));
@@ -264,6 +306,20 @@ function writeMetadataEndpointFor(pid: number, port = 44291) {
       updatedAt: new Date().toISOString(),
     }),
   );
+}
+
+function currentActorPid(): number {
+  const actor = coreActorMock.instances.at(-1);
+  if (!actor?.pid) throw new Error("expected a supervised project actor pid");
+  return actor.pid;
+}
+
+function readPersistedProjectState(projectId = `proj-${basename(projectRoot)}`): Record<string, unknown> {
+  const raw = readFileSync(join(tmpRoot, ".aimux", "daemon", "state.json"), "utf8");
+  const state = JSON.parse(raw) as { projects?: Record<string, Record<string, unknown>> };
+  const project = state.projects?.[projectId];
+  if (!project) throw new Error(`missing persisted project state for ${projectId}`);
+  return project;
 }
 
 function daemonHealth(pid: number, port = 43190) {
@@ -378,6 +434,7 @@ describe("daemon supervision", () => {
     mkdirSync(projectRoot, { recursive: true });
     mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
     nextPid = 20_000;
+    nextActorPid = 30_000;
     livePids = new Set<number>();
     childrenByPid = new Map<number, EventEmitter>();
     resetLoggingForTests();
@@ -486,7 +543,8 @@ describe("daemon supervision", () => {
     const second = await (daemon as any).ensureProject(projectRoot);
 
     expect(first.pid).toBe(second.pid);
-    expect(first.pid).toBe(process.pid);
+    expect(first.pid).toBe(currentActorPid());
+    expect(first.pid).not.toBe(process.pid);
     expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -505,7 +563,8 @@ describe("daemon supervision", () => {
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.result.project.projectRoot).toBe(projectRoot);
-    expect(body.result.project.pid).toBe(process.pid);
+    expect(body.result.project.pid).toBe(currentActorPid());
+    expect(body.result.project.pid).not.toBe(process.pid);
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -1040,8 +1099,10 @@ describe("daemon supervision", () => {
       project: {
         projectId: `proj-${basename(projectRoot)}`,
         projectRoot,
-        pid: process.pid,
+        pid: currentActorPid(),
         startedAt: expect.any(String),
+        status: "running",
+        restartCount: 0,
         updatedAt: expect.any(String),
       },
       tmuxSessionsKilled: ["aimux-test-client-feedbeef", "aimux-test"],
@@ -1207,8 +1268,8 @@ describe("daemon supervision", () => {
     expect(response.status).toBe(200);
     expect(response.contentType).toBe("text/plain; charset=utf-8");
     expect(response.body).toContain("Service: live");
-    expect(response.body).toContain(`Service pid=${process.pid}`);
-    expect(response.body).toContain(`Metadata: {"host":"127.0.0.1","port":44291,"pid":${process.pid}`);
+    expect(response.body).toContain(`Service pid=${currentActorPid()}`);
+    expect(response.body).toContain(`Metadata: {"host":"127.0.0.1","port":44291,"pid":${currentActorPid()}`);
     expect(response.body).toContain("Tmux session: aimux-test");
     expect(ensureProjectPathsMock).toHaveBeenCalledWith(projectRoot);
   });
@@ -1441,7 +1502,9 @@ describe("daemon supervision", () => {
     process.env.AIMUX_DAEMON_PORT = daemonPort;
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
-    writeMetadataEndpointFor(process.pid, servicePort);
+    await (daemon as any).ensureProject(projectRoot);
+    writeMetadataEndpointFor(currentActorPid(), servicePort);
+    coreActorMock.starts.mockClear();
 
     try {
       await daemon.start();
@@ -1454,7 +1517,7 @@ describe("daemon supervision", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toContain("text/plain");
       expect(await response.text()).toBe("one\n\ntwo\n");
-      expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+      expect(coreActorMock.starts).not.toHaveBeenCalled();
     } finally {
       await daemon.stop();
       await closeServer(streamServer);
@@ -1482,7 +1545,9 @@ describe("daemon supervision", () => {
     process.env.AIMUX_DAEMON_PORT = daemonPort;
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
-    writeMetadataEndpointFor(process.pid, servicePort);
+    await (daemon as any).ensureProject(projectRoot);
+    writeMetadataEndpointFor(currentActorPid(), servicePort);
+    coreActorMock.starts.mockClear();
 
     try {
       await daemon.start();
@@ -1613,7 +1678,7 @@ describe("daemon supervision", () => {
 
     expect(response.status).toBe(200);
     expect(response.contentType).toBe("text/plain; charset=utf-8");
-    expect(response.body).toBe(`Ensured project service for ${projectRoot} (pid ${process.pid})\n`);
+    expect(response.body).toBe(`Ensured project service for ${projectRoot} (pid ${currentActorPid()})\n`);
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
   });
 
@@ -1632,7 +1697,7 @@ describe("daemon supervision", () => {
       project: {
         projectId: `proj-${basename(projectRoot)}`,
         projectRoot,
-        pid: process.pid,
+        pid: currentActorPid(),
       },
     });
   });
@@ -1645,11 +1710,13 @@ describe("daemon supervision", () => {
       "POST",
       `${CORE_API_ROUTES.projectServeText}?project=${encodeURIComponent(projectRoot)}`,
     );
+    const servedPid = currentActorPid();
     const stop = await daemon.routeRequest(
       "POST",
       `${CORE_API_ROUTES.projectStopText}?project=${encodeURIComponent(projectRoot)}`,
     );
     await daemon.routeRequest("POST", `${CORE_API_ROUTES.projectServeText}?project=${encodeURIComponent(projectRoot)}`);
+    const killedPid = currentActorPid();
     const kill = await daemon.routeRequest(
       "POST",
       `${CORE_API_ROUTES.projectKillText}?project=${encodeURIComponent(projectRoot)}`,
@@ -1663,9 +1730,9 @@ describe("daemon supervision", () => {
       `${CORE_API_ROUTES.projectRestartText}?serve=1&project=${encodeURIComponent(projectRoot)}`,
     );
 
-    expect(serve.body).toBe(`aimux serve: daemon managing ${projectRoot} (service pid ${process.pid})\n`);
-    expect(stop.body).toBe(`Stopped project service pid ${process.pid}\n`);
-    expect(kill.body).toBe(`Killed project service pid ${process.pid}\n`);
+    expect(serve.body).toBe(`aimux serve: daemon managing ${projectRoot} (service pid ${servedPid})\n`);
+    expect(stop.body).toBe(`Stopped project service pid ${servedPid}\n`);
+    expect(kill.body).toBe(`Killed project service pid ${killedPid}\n`);
     expect(restart.body).toBe("Restarted project service for aimux-test\n");
     expect(restartServe.body).toBe(`Restarted project service for ${projectRoot}\n`);
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
@@ -1714,7 +1781,7 @@ describe("daemon supervision", () => {
       project: {
         projectId: `proj-${basename(projectRoot)}`,
         projectRoot,
-        pid: process.pid,
+        pid: currentActorPid(),
       },
     });
     expect(payload.dashboardTarget).toBeUndefined();
@@ -3250,7 +3317,8 @@ describe("daemon supervision", () => {
 
     const replacement = await (daemon as any).ensureProject(projectRoot);
 
-    expect(replacement.pid).toBe(process.pid);
+    expect(replacement.pid).toBe(currentActorPid());
+    expect(replacement.pid).not.toBe(process.pid);
     expect(process.kill).toHaveBeenCalledWith(stalePid, "SIGTERM");
     expect(process.kill).toHaveBeenCalledWith(stalePid, "SIGKILL");
     expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
@@ -3267,7 +3335,8 @@ describe("daemon supervision", () => {
     coreActorMock.failStartFor.delete(projectRoot);
     const state = await (daemon as any).ensureProject(projectRoot);
 
-    expect(state.pid).toBe(process.pid);
+    expect(state.pid).toBe(currentActorPid());
+    expect(state.pid).not.toBe(process.pid);
     expect(coreActorMock.starts).toHaveBeenCalledTimes(2);
   });
 
@@ -3280,9 +3349,70 @@ describe("daemon supervision", () => {
 
     const second = await (daemon as any).ensureProject(projectRoot);
 
-    expect(second.pid).toBe(first.pid);
-    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(second.pid).not.toBe(first.pid);
+    expect(second.pid).toBe(currentActorPid());
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(2);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("persists supervisor restart state updates and reports the fresh actor state", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const first = await (daemon as any).ensureProject(projectRoot);
+    const actor = coreActorMock.instances.at(-1);
+    if (!actor) throw new Error("expected a project actor");
+    const lastExit = {
+      at: "2026-08-10T07:00:00.000Z",
+      code: 1,
+      signal: null,
+      expected: false,
+    };
+
+    actor.emitState({
+      pid: first.pid,
+      status: "restarting",
+      restartCount: 1,
+      lastExit,
+      updatedAt: "2026-08-10T07:00:01.000Z",
+    });
+
+    expect(readPersistedProjectState()).toMatchObject({
+      pid: first.pid,
+      status: "restarting",
+      restartCount: 1,
+      lastExit,
+    });
+
+    const replacementPid = first.pid + 77;
+    livePids.delete(first.pid);
+    livePids.add(replacementPid);
+    writeMetadataEndpointFor(replacementPid);
+    actor.emitState({
+      pid: replacementPid,
+      status: "running",
+      restartCount: 1,
+      lastRestartAt: "2026-08-10T07:00:02.000Z",
+      lastExit,
+      updatedAt: "2026-08-10T07:00:02.000Z",
+    });
+
+    expect(readPersistedProjectState()).toMatchObject({
+      pid: replacementPid,
+      status: "running",
+      restartCount: 1,
+      lastRestartAt: "2026-08-10T07:00:02.000Z",
+      lastExit,
+    });
+    const projects = await daemon.routeRequest("GET", "/projects");
+    expect((projects.body as any).projects[0].serviceAlive).toBe(true);
+    expect((projects.body as any).projects[0].service).toMatchObject({
+      pid: replacementPid,
+      status: "running",
+      restartCount: 1,
+      lastRestartAt: "2026-08-10T07:00:02.000Z",
+      lastExit,
+    });
   });
 
   it("republishes a just-started live project service when its metadata endpoint is missing", async () => {
@@ -3470,7 +3600,7 @@ describe("daemon supervision", () => {
     expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGTERM");
   });
 
-  it("starts in-process project actors when logging is enabled", async () => {
+  it("starts supervised project actors when logging is enabled", async () => {
     configureLogging({
       enabled: true,
       level: "debug",
@@ -3485,7 +3615,8 @@ describe("daemon supervision", () => {
     const daemon = new AimuxDaemon();
     const project = await (daemon as any).ensureProject(projectRoot);
 
-    expect(project.pid).toBe(process.pid);
+    expect(project.pid).toBe(currentActorPid());
+    expect(project.pid).not.toBe(process.pid);
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -3925,6 +4056,7 @@ describe("daemon routing (relay + proxy)", () => {
     livePids = new Set();
     childrenByPid = new Map();
     nextPid = 30_000;
+    nextActorPid = 40_000;
     spawnMock.mockReset();
     coreActorMock.starts.mockReset();
     coreActorMock.stops.mockReset();
@@ -4366,7 +4498,7 @@ describe("daemon routing (relay + proxy)", () => {
 
     const after = await daemon.routeRequest("GET", "/projects");
     expect((after.body as any).projects[0].serviceAlive).toBe(true);
-    expect((after.body as any).projects[0].service).toMatchObject({ pid: process.pid });
+    expect((after.body as any).projects[0].service).toMatchObject({ pid: currentActorPid() });
   });
 
   it("allows browser preflight requests to daemon routes", async () => {
