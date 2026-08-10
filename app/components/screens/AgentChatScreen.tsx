@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
   Text as RNText,
   useWindowDimensions,
   View,
+  type KeyboardEvent,
   type NativeSyntheticEvent,
   type TextInputContentSizeChangeEventData,
 } from "react-native";
@@ -63,6 +65,7 @@ import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
+import { getVersionString } from "@/lib/version";
 import {
   activityFamily,
   activityTextFamily,
@@ -95,12 +98,49 @@ const COMPOSER_INPUT_MIN_HEIGHT = 24;
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 3;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
+const KEYBOARD_DEBUG_EVENT_NAMES = [
+  "keyboardWillChangeFrame",
+  "keyboardWillShow",
+  "keyboardDidShow",
+  "keyboardWillHide",
+  "keyboardDidHide",
+] as const;
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
 
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
+};
+
+type KeyboardDebugState = {
+  animatedHeight: number;
+  animatedUpdates: number;
+  eventCount: number;
+  lastAnimatedAt: number | null;
+  lastEventAt: number | null;
+  lastEventName: string;
+  lastEventDuration: number | null;
+  lastEventEasing: string;
+  lastEventStartY: number | null;
+  lastEventEndY: number | null;
+  lastEventEndHeight: number | null;
+  lastEventComputedInset: number | null;
+};
+
+const INITIAL_KEYBOARD_DEBUG: KeyboardDebugState = {
+  animatedHeight: 0,
+  animatedUpdates: 0,
+  eventCount: 0,
+  lastAnimatedAt: null,
+  lastEventAt: null,
+  lastEventName: "none",
+  lastEventDuration: null,
+  lastEventEasing: "none",
+  lastEventStartY: null,
+  lastEventEndY: null,
+  lastEventEndHeight: null,
+  lastEventComputedInset: null,
 };
 
 export default function ChatScreen() {
@@ -159,6 +199,33 @@ export default function ChatScreen() {
   const composerLiftStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -keyboardInset.value }],
   }));
+  const [keyboardDebug, setKeyboardDebug] = useState<KeyboardDebugState>(INITIAL_KEYBOARD_DEBUG);
+  const updateAnimatedKeyboardDebug = useCallback((height: number) => {
+    setKeyboardDebug((current) => ({
+      ...current,
+      animatedHeight: height,
+      animatedUpdates: current.animatedUpdates + 1,
+      lastAnimatedAt: Date.now(),
+    }));
+  }, []);
+  const updateKeyboardEventDebug = useCallback(
+    (eventName: string, event: KeyboardEvent) => {
+      const endY = event.endCoordinates.screenY;
+      setKeyboardDebug((current) => ({
+        ...current,
+        eventCount: current.eventCount + 1,
+        lastEventAt: Date.now(),
+        lastEventName: eventName,
+        lastEventDuration: event.duration ?? null,
+        lastEventEasing: event.easing ?? "none",
+        lastEventStartY: event.startCoordinates?.screenY ?? null,
+        lastEventEndY: endY,
+        lastEventEndHeight: event.endCoordinates.height,
+        lastEventComputedInset: Math.max(0, Math.round(windowHeight - endY)),
+      }));
+    },
+    [windowHeight],
+  );
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
     : null;
@@ -186,6 +253,24 @@ export default function ChatScreen() {
       cancelled = true;
     };
   }, [getToken]);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    const subscriptions = KEYBOARD_DEBUG_EVENT_NAMES.map((eventName) =>
+      Keyboard.addListener(eventName, (event) => updateKeyboardEventDebug(eventName, event)),
+    );
+    return () => {
+      subscriptions.forEach((subscription) => subscription.remove());
+    };
+  }, [updateKeyboardEventDebug]);
+
+  useAnimatedReaction(
+    () => Math.round(keyboardInset.value),
+    (height, previousHeight) => {
+      if (height === previousHeight) return;
+      runOnJS(updateAnimatedKeyboardDebug)(height);
+    },
+  );
 
   /**
    * Driven by the runtime's own activity state, not by whether bytes arrived.
@@ -1147,22 +1232,44 @@ export default function ChatScreen() {
                   )}
                 </View>
                 {overlaysComposer ? (
-                  <Animated.View
-                    onLayout={(event: LayoutChangeEvent) =>
-                      setComposerFooterHeight(Math.ceil(event.nativeEvent.layout.height))
-                    }
-                    style={[
-                      {
-                        position: "absolute",
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                      },
-                      composerLiftStyle,
-                    ]}
-                  >
-                    {composerFooter}
-                  </Animated.View>
+                  <>
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        {
+                          position: "absolute",
+                          left: 8,
+                          right: 8,
+                          bottom: composerFooterHeight + 8,
+                          zIndex: 30,
+                        },
+                        composerLiftStyle,
+                      ]}
+                    >
+                      <KeyboardDebugOverlay
+                        bottomInset={bottomInset}
+                        composerFooterHeight={composerFooterHeight}
+                        state={keyboardDebug}
+                        windowHeight={windowHeight}
+                      />
+                    </Animated.View>
+                    <Animated.View
+                      onLayout={(event: LayoutChangeEvent) =>
+                        setComposerFooterHeight(Math.ceil(event.nativeEvent.layout.height))
+                      }
+                      style={[
+                        {
+                          position: "absolute",
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                        },
+                        composerLiftStyle,
+                      ]}
+                    >
+                      {composerFooter}
+                    </Animated.View>
+                  </>
                 ) : (
                   composerFooter
                 )}
@@ -1199,6 +1306,51 @@ function ComposerFocusShell({
       {children({ onBlur, onFocus })}
     </View>
   );
+}
+
+function KeyboardDebugOverlay({
+  bottomInset,
+  composerFooterHeight,
+  state,
+  windowHeight,
+}: {
+  bottomInset: number;
+  composerFooterHeight: number;
+  state: KeyboardDebugState;
+  windowHeight: number;
+}) {
+  const eventTime = formatDebugTimestamp(state.lastEventAt);
+  const animatedTime = formatDebugTimestamp(state.lastAnimatedAt);
+  const eventDuration = state.lastEventDuration === null ? "none" : `${state.lastEventDuration}ms`;
+  const startY = formatDebugNumber(state.lastEventStartY);
+  const endY = formatDebugNumber(state.lastEventEndY);
+  const endHeight = formatDebugNumber(state.lastEventEndHeight);
+  const computedInset = formatDebugNumber(state.lastEventComputedInset);
+
+  return (
+    <View className="rounded-md border border-amber-400/80 bg-black/90 px-2 py-1">
+      <Text className="font-mono text-[10px] leading-3 text-amber-100">
+        {`kbd diag ${getVersionString()} · ${Platform.OS} · win ${Math.round(windowHeight)}`}
+      </Text>
+      <Text className="font-mono text-[10px] leading-3 text-amber-100">
+        {`native #${state.eventCount} ${state.lastEventName} t ${eventTime} dur ${eventDuration} ease ${state.lastEventEasing}`}
+      </Text>
+      <Text className="font-mono text-[10px] leading-3 text-amber-100">
+        {`frame y ${startY}->${endY} h ${endHeight} inset ${computedInset} · reanimated #${state.animatedUpdates} h ${state.animatedHeight} t ${animatedTime}`}
+      </Text>
+      <Text className="font-mono text-[10px] leading-3 text-amber-100">
+        {`composer ${composerFooterHeight} · safe ${Math.round(bottomInset)}`}
+      </Text>
+    </View>
+  );
+}
+
+function formatDebugNumber(value: number | null): string {
+  return value === null ? "none" : String(Math.round(value));
+}
+
+function formatDebugTimestamp(value: number | null): string {
+  return value === null ? "none" : String(value % 100_000);
 }
 
 const TranscriptContent = React.memo(function TranscriptContent({
