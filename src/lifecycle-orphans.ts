@@ -1,9 +1,11 @@
 import {
   listProcessArgs,
+  listProcessParents as defaultListProcessParents,
   readProcessArgs as defaultReadProcessArgs,
   isPidAlive as defaultIsPidAlive,
   type ProcessArgsEntry,
 } from "./process-inspector.js";
+import { isDashboardProcessArgs, selectOrphanedDashboards } from "./dashboard-orphans.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 
 export interface LifecycleOrphanCleanupResult {
@@ -25,6 +27,7 @@ export interface LifecycleOrphanTmux {
 
 export interface CleanupLifecycleOrphansOptions {
   listProcesses?: () => ProcessArgsEntry[];
+  listProcessParents?: () => Map<number, number>;
   readProcessArgs?: (pid: number) => string | null;
   isPidAlive?: (pid: number) => boolean;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
@@ -111,17 +114,37 @@ export async function cleanupLifecycleValidationOrphans(
     }
   }
 
-  const candidatePids = uniqueNumbers(
-    listProcesses()
+  // Two populations, one sweep. Validation orphans are test artifacts under a
+  // throwaway AIMUX_HOME; stale dashboards are real processes from builds that
+  // are no longer installed. The second was invisible here, so this reported zero
+  // orphans while 59 dashboards from 16 builds fought over one daemon.
+  // Orphaned only — never merely "a different build". Build difference is
+  // symmetric while the guard against replacing a newer install is not, so an
+  // older process would reap the newer build's LIVE dashboards: the same bug
+  // inverted. A dashboard whose shell has been reparented to init has no window
+  // to render to on any build, which is safe to reap from any caller.
+  const parents = (options.listProcessParents ?? defaultListProcessParents)();
+  const orphanedDashboardPids = selectOrphanedDashboards(listProcesses(), parents, currentPid).map(
+    (entry) => entry.pid,
+  );
+  const orphanedPidSet = new Set(orphanedDashboardPids);
+  // Re-read guards against pid reuse: a recycled pid that is now a live dashboard
+  // must not be killed just because the pid was on the list.
+  const isReapable = (pid: number, args: string): boolean =>
+    isLifecycleValidationProcessArgs(args) ||
+    (isDashboardProcessArgs(args) && orphanedPidSet.has(pid) && parents.get(parents.get(pid) ?? -1) === 1);
+  const candidatePids = uniqueNumbers([
+    ...listProcesses()
       .filter((entry) => entry.pid !== currentPid && isLifecycleValidationProcessArgs(entry.args))
       .map((entry) => entry.pid),
-  );
+    ...orphanedDashboardPids,
+  ]);
   const attemptedProcessPids: number[] = [];
   const processPids: number[] = [];
   const failedProcessPids: number[] = [];
   for (const pid of candidatePids) {
     const latestArgs = readProcessArgs(pid);
-    if (!latestArgs || !isLifecycleValidationProcessArgs(latestArgs)) continue;
+    if (!latestArgs || !isReapable(pid, latestArgs)) continue;
     attemptedProcessPids.push(pid);
     try {
       killPid(pid, "SIGTERM");
@@ -134,7 +157,7 @@ export async function cleanupLifecycleValidationOrphans(
     }
     if (await waitForPidExit({ pid, timeoutMs: processExitTimeoutMs, isPidAlive, sleep: sleepFn })) continue;
     const argsBeforeKill = readProcessArgs(pid);
-    if (!argsBeforeKill || !isLifecycleValidationProcessArgs(argsBeforeKill)) {
+    if (!argsBeforeKill || !isReapable(pid, argsBeforeKill)) {
       failedProcessPids.push(pid);
       errors.push(`pid ${pid}: command changed before SIGKILL`);
       continue;

@@ -180,4 +180,94 @@ describe("lifecycle validation orphan cleanup", () => {
     expect(result.failedProcessPids).toEqual([101]);
     expect(result.errors).toEqual(["pid 101: command changed before SIGKILL"]);
   });
+
+  it("reaps a dashboard whose window is gone", async () => {
+    // A live dashboard's shell is a child of tmux. When the window or the server
+    // goes away the shell is reparented to init and the node process keeps
+    // running with nothing to render to. 59 of these accumulated in one day.
+    const dash = (build: string) =>
+      `/Users/sam/.volta/bin/node /Users/sam/.aimux/native/${build}/dist/launcher-bin.js --tmux-dashboard-internal`;
+    const processes = [
+      { pid: 11, args: dash("local-old") },
+      { pid: 12, args: dash("local-current") },
+      { pid: 13, args: dash("local-current") },
+    ];
+    // 11 and 12 hang off shells reparented to init; 13's shell descends from tmux.
+    const parents = new Map<number, number>([
+      [11, 111],
+      [111, 1],
+      [12, 112],
+      [112, 1],
+      [13, 113],
+      [113, 900],
+      [900, 1],
+    ]);
+    const killed: number[] = [];
+
+    const result = await cleanupLifecycleValidationOrphans({
+      currentPid: 999,
+      tmux: { isAvailable: () => false } as never,
+      listProcesses: () => processes,
+      listProcessParents: () => parents,
+      readProcessArgs: (pid) => processes.find((entry) => entry.pid === pid)?.args ?? null,
+      isPidAlive: () => false,
+      killPid: (pid) => {
+        killed.push(pid);
+      },
+    });
+
+    expect(killed.sort()).toEqual([11, 12]);
+    expect(result.processPids.sort()).toEqual([11, 12]);
+  });
+
+  it("never reaps a dashboard merely because its build differs", async () => {
+    // Build difference is symmetric while the guard against replacing a newer
+    // install is not, so reaping on it lets an older process kill the newer
+    // build's live dashboards — the same bug inverted.
+    const dash = "/Users/sam/.aimux/native/local-newer/dist/launcher-bin.js --tmux-dashboard-internal";
+    const killed: number[] = [];
+    await cleanupLifecycleValidationOrphans({
+      currentPid: 999,
+      tmux: { isAvailable: () => false } as never,
+      listProcesses: () => [{ pid: 21, args: dash }],
+      listProcessParents: () =>
+        new Map([
+          [21, 121],
+          [121, 900],
+          [900, 1],
+        ]),
+      readProcessArgs: () => dash,
+      isPidAlive: () => false,
+      killPid: (pid) => {
+        killed.push(pid);
+      },
+    });
+    expect(killed).toEqual([]);
+  });
+
+  it("does not kill a pid that is no longer a dashboard when re-read", async () => {
+    // Guards pid reuse: the candidate list is a snapshot, so every pid is re-read
+    // immediately before the kill and anything that is no longer a dashboard is
+    // left alone. The parent chain is snapshotted once, so a pid recycled into a
+    // *live dashboard* inside that window is not covered — vanishingly unlikely,
+    // and named rather than papered over.
+    const dash = "/Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal";
+    const killed: number[] = [];
+    await cleanupLifecycleValidationOrphans({
+      currentPid: 999,
+      tmux: { isAvailable: () => false } as never,
+      listProcesses: () => [{ pid: 31, args: dash }],
+      listProcessParents: () =>
+        new Map([
+          [31, 131],
+          [131, 1],
+        ]),
+      readProcessArgs: () => "/usr/bin/some-other-process --unrelated",
+      isPidAlive: () => false,
+      killPid: (pid) => {
+        killed.push(pid);
+      },
+    });
+    expect(killed).toEqual([]);
+  });
 });
