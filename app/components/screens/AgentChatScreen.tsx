@@ -202,16 +202,11 @@ export default function ChatScreen() {
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [composerFooterHeight, setComposerFooterHeight] = useState(0);
-  const [composerFocused, setComposerFocused] = useState(false);
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
-  const [scrollPinnedToBottom, setScrollPinnedToBottom] = useState<Record<ScrollPaneKey, boolean>>({
-    chat: true,
-    terminal: true,
-  });
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
@@ -374,19 +369,15 @@ export default function ChatScreen() {
   const usesNativeAccessoryComposer = Platform.OS === "ios";
   const overlaysComposer = Platform.OS !== "web" && !usesNativeAccessoryComposer;
   const detachedComposer = Platform.OS !== "web";
+  const composerBottomSpacer = detachedComposer
+    ? (composerFooterHeight || COMPOSER_FOOTER_ESTIMATED_HEIGHT) + 8
+    : 0;
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
   const canUseSplitView = Platform.OS === "web" && viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
   const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
-  const activeScrollPane: ScrollPaneKey = showTerminalOnly ? "terminal" : "chat";
-  const nativeAccessoryComposerVisible =
-    !usesNativeAccessoryComposer || composerFocused || scrollPinnedToBottom[activeScrollPane];
-  const composerBottomSpacer =
-    detachedComposer && nativeAccessoryComposerVisible
-      ? (composerFooterHeight || COMPOSER_FOOTER_ESTIMATED_HEIGHT) + 8
-      : 0;
   const terminalToggleLabel =
     showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
   const measuredDividerWidth = terminalPaneWidth
@@ -530,11 +521,6 @@ export default function ChatScreen() {
       metrics.pinnedToBottom = distanceFromBottom <= SCROLL_BOTTOM_EPSILON;
       metrics.ratio = maxY <= 0 ? 1 : clampScrollRatio(offsetY / maxY);
       metrics.initialized = true;
-      setScrollPinnedToBottom((current) =>
-        current[pane] === metrics.pinnedToBottom
-          ? current
-          : { ...current, [pane]: metrics.pinnedToBottom },
-      );
 
       if (programmaticScrollRef.current[pane]) {
         programmaticScrollRef.current[pane] = false;
@@ -555,10 +541,6 @@ export default function ChatScreen() {
       chat: createScrollPaneMetrics(),
       terminal: createScrollPaneMetrics(),
     };
-    setScrollPinnedToBottom({
-      chat: true,
-      terminal: true,
-    });
     programmaticScrollRef.current = {
       chat: false,
       terminal: false,
@@ -895,7 +877,6 @@ export default function ChatScreen() {
     */}
       <ComposerFocusShell
         onLayout={(event: LayoutChangeEvent) => setComposerWidth(event.nativeEvent.layout.width)}
-        onFocusChange={setComposerFocused}
       >
         {({ onBlur, onFocus }) => (
           <>
@@ -1346,9 +1327,7 @@ export default function ChatScreen() {
                   )}
                 </View>
                 {usesNativeAccessoryComposer ? (
-                  nativeAccessoryComposerVisible ? (
-                    <InputAccessoryView>{composerFooter}</InputAccessoryView>
-                  ) : null
+                  <InputAccessoryView>{composerFooter}</InputAccessoryView>
                 ) : overlaysComposer ? (
                   <View
                     style={{
@@ -1375,21 +1354,13 @@ export default function ChatScreen() {
 function ComposerFocusShell({
   children,
   onLayout,
-  onFocusChange,
 }: {
   children: (handlers: { onBlur: () => void; onFocus: () => void }) => React.ReactNode;
   onLayout: (event: LayoutChangeEvent) => void;
-  onFocusChange?: (focused: boolean) => void;
 }) {
   const [focused, setFocused] = useState(false);
-  const onFocus = useCallback(() => {
-    setFocused(true);
-    onFocusChange?.(true);
-  }, [onFocusChange]);
-  const onBlur = useCallback(() => {
-    setFocused(false);
-    onFocusChange?.(false);
-  }, [onFocusChange]);
+  const onFocus = useCallback(() => setFocused(true), []);
+  const onBlur = useCallback(() => setFocused(false), []);
 
   return (
     <View
