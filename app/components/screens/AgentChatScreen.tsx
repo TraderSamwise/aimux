@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
+  InputAccessoryView,
   Platform,
   Pressable,
   ScrollView,
@@ -10,7 +11,6 @@ import {
   type NativeSyntheticEvent,
   type TextInputContentSizeChangeEventData,
 } from "react-native";
-import Animated, { runOnJS, useAnimatedReaction, useAnimatedStyle } from "react-native-reanimated";
 import type { LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
@@ -59,7 +59,6 @@ import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { worktreeIdentity } from "@/lib/worktree-tone";
-import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
@@ -107,7 +106,6 @@ export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const sessionId = singleRouteParam(params.sessionId);
   const sessionKey = sessionId ?? "";
-  const composerFieldId = `agent-${sessionKey.replace(/[^A-Za-z0-9_-]/g, "-")}-message`;
   const { project, projectPath, endpoint: serviceEndpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
   const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
@@ -155,13 +153,6 @@ export default function ChatScreen() {
   const activeScrollSessionRef = useRef<string | null>(null);
   const canAnimateActiveScrollRef = useRef(false);
   const enableScrollAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const keyboardInset = useKeyboardInset();
-  const composerLiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -keyboardInset.value }],
-  }));
-  const keyboardSpacerStyle = useAnimatedStyle(() => ({
-    height: keyboardInset.value,
-  }));
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
     : null;
@@ -333,26 +324,15 @@ export default function ChatScreen() {
     }
   }, [scheduleScrollAnimationEnable, sessionKey, allMessages.length, output]);
 
-  const scrollToLatest = useCallback(() => {
-    scrollRef.current?.scrollToEnd({ animated: false });
-  }, []);
-
-  // Keep the newest message in view as the keyboard eats the viewport. Reacting to
-  // the shared value rather than to state, since the inset no longer re-renders.
-  useAnimatedReaction(
-    () => keyboardInset.value > 0,
-    (covered, previous) => {
-      if (covered && covered !== previous) runOnJS(scrollToLatest)();
-    },
-  );
-
   useEffect(() => {
     terminalScrollRef.current?.scrollToEnd({ animated: false });
   }, [output, showTerminalSplit]);
 
   const canShowTerminal = Boolean(output);
-  const overlaysComposer = Platform.OS !== "web";
-  const composerBottomSpacer = overlaysComposer
+  const usesNativeAccessoryComposer = Platform.OS === "ios";
+  const overlaysComposer = Platform.OS !== "web" && !usesNativeAccessoryComposer;
+  const detachedComposer = Platform.OS !== "web";
+  const composerBottomSpacer = detachedComposer
     ? (composerFooterHeight || COMPOSER_FOOTER_ESTIMATED_HEIGHT) + 8
     : 0;
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
@@ -646,7 +626,8 @@ export default function ChatScreen() {
       <ScrollView
         ref={terminalScrollRef}
         className="flex-1 px-4 py-3"
-        contentContainerStyle={overlaysComposer ? { paddingBottom: composerBottomSpacer } : null}
+        automaticallyAdjustKeyboardInsets={usesNativeAccessoryComposer}
+        contentContainerStyle={detachedComposer ? { paddingBottom: composerBottomSpacer } : null}
         horizontal={false}
       >
         <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
@@ -667,13 +648,15 @@ export default function ChatScreen() {
                 ))}
           </Text>
         ))}
-        {overlaysComposer ? <Animated.View style={keyboardSpacerStyle} /> : null}
       </ScrollView>
     </View>
   );
 
   const composerFooter = (
     <View
+      onLayout={(event: LayoutChangeEvent) =>
+        setComposerFooterHeight(Math.ceil(event.nativeEvent.layout.height))
+      }
       className="border-t border-border bg-background px-3 py-3"
       style={{ flexShrink: 0, paddingBottom: overlaysComposer ? bottomInset : undefined }}
     >
@@ -718,7 +701,6 @@ export default function ChatScreen() {
         {({ onBlur, onFocus }) => (
           <>
             <Input
-              nativeID={composerFieldId}
               accessibilityLabel="Message the agent"
               onFocus={onFocus}
               onBlur={onBlur}
@@ -1130,6 +1112,7 @@ export default function ChatScreen() {
                       <ScrollView
                         ref={scrollRef}
                         className="flex-1 px-4 py-2"
+                        automaticallyAdjustKeyboardInsets={usesNativeAccessoryComposer}
                         contentContainerStyle={{
                           flexGrow: 1,
                           paddingBottom: composerBottomSpacer,
@@ -1144,28 +1127,23 @@ export default function ChatScreen() {
                           serviceEndpoint={serviceEndpoint}
                           visibleLastError={visibleLastError}
                         />
-                        {overlaysComposer ? <Animated.View style={keyboardSpacerStyle} /> : null}
                       </ScrollView>
                     </View>
                   )}
                 </View>
-                {overlaysComposer ? (
-                  <Animated.View
-                    onLayout={(event: LayoutChangeEvent) =>
-                      setComposerFooterHeight(Math.ceil(event.nativeEvent.layout.height))
-                    }
-                    style={[
-                      {
-                        position: "absolute",
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                      },
-                      composerLiftStyle,
-                    ]}
+                {usesNativeAccessoryComposer ? (
+                  <InputAccessoryView>{composerFooter}</InputAccessoryView>
+                ) : overlaysComposer ? (
+                  <View
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                    }}
                   >
                     {composerFooter}
-                  </Animated.View>
+                  </View>
                 ) : (
                   composerFooter
                 )}
