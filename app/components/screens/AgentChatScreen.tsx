@@ -91,9 +91,12 @@ const APPROX_TERMINAL_CHAR_WIDTH = 7.2;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 const SCROLL_BOTTOM_EPSILON = 24;
-const COMPOSER_INPUT_LINE_HEIGHT = 18;
-const COMPOSER_INPUT_MIN_HEIGHT = 28;
-const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 3;
+const COMPOSER_INPUT_FONT_SIZE = 14;
+const COMPOSER_INPUT_LINE_HEIGHT = 20;
+const COMPOSER_INPUT_VERTICAL_PADDING = 6;
+const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
+const COMPOSER_INPUT_MAX_HEIGHT =
+  COMPOSER_INPUT_LINE_HEIGHT * 3 + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
@@ -638,7 +641,14 @@ export default function ChatScreen() {
   function handleComposerContentSizeChange(
     event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
   ) {
-    setComposerInputContentHeight(Math.ceil(event.nativeEvent.contentSize.height));
+    setComposerInputContentHeight(
+      Math.max(COMPOSER_INPUT_MIN_HEIGHT, Math.ceil(event.nativeEvent.contentSize.height)),
+    );
+  }
+
+  function handleDraftChange(text: string) {
+    setDraft(text);
+    if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
   }
 
   useEffect(() => {
@@ -830,20 +840,22 @@ export default function ChatScreen() {
               onFocus={onFocus}
               onBlur={onBlur}
               value={draft}
-              onChangeText={setDraft}
+              onChangeText={handleDraftChange}
               onKeyPress={handleComposerKeyPress}
               onContentSizeChange={handleComposerContentSizeChange}
               placeholder="Ask the agent…"
               placeholderTextColor="#71717a"
               multiline
               editable={!sendBusy}
-              scrollEnabled={composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT}
+              scrollEnabled={composerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT}
               className="text-sm text-foreground"
               style={{
                 height: composerInputHeight,
+                fontSize: COMPOSER_INPUT_FONT_SIZE,
                 lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
                 paddingHorizontal: 4,
-                paddingVertical: 0,
+                paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
+                paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
               }}
               textAlignVertical="top"
             />
