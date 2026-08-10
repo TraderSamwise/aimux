@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import {
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  View,
+  type NativeSyntheticEvent,
+  type TextInputContentSizeChangeEventData,
+} from "react-native";
 import Animated, { runOnJS, useAnimatedReaction, useAnimatedStyle } from "react-native-reanimated";
 import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
@@ -74,6 +83,10 @@ const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
+const COMPOSER_INPUT_LINE_HEIGHT = 16;
+const COMPOSER_INPUT_MIN_HEIGHT = 24;
+const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 3;
+const MIN_HEADER_ACTIONS_WIDTH = 156;
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
@@ -121,6 +134,8 @@ export default function ChatScreen() {
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [composerInputContentHeight, setComposerInputContentHeight] =
+    useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
@@ -173,6 +188,13 @@ export default function ChatScreen() {
   );
 
   const wideControls = composerWidth >= COMPOSER_CONTROL_LABEL_WIDTH;
+  const compactHeaderActions = width < 430;
+  const headerActionsMaxWidth =
+    Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
+  const composerInputHeight = Math.min(
+    COMPOSER_INPUT_MAX_HEIGHT,
+    Math.max(COMPOSER_INPUT_MIN_HEIGHT, composerInputContentHeight),
+  );
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
@@ -400,6 +422,7 @@ export default function ChatScreen() {
     }
     sendBusyRef.current = true;
     setDraft("");
+    setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     setPendingAttachments([]);
     setSendBusy(true);
     setSendError(null);
@@ -493,6 +516,12 @@ export default function ChatScreen() {
       event.preventDefault?.();
       void handleSendMessage();
     }
+  }
+
+  function handleComposerContentSizeChange(
+    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
+  ) {
+    setComposerInputContentHeight(Math.ceil(event.nativeEvent.contentSize.height));
   }
 
   useEffect(() => {
@@ -642,7 +671,7 @@ export default function ChatScreen() {
                   style={{ width: 3, backgroundColor: headerTone }}
                 />
               ) : null}
-              <View className="flex-1">
+              <View className="flex-1" style={{ minWidth: 0 }}>
                 <View className="flex-row items-baseline gap-1.5">
                   <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
                     {sessionTitle}
@@ -657,22 +686,25 @@ export default function ChatScreen() {
                   {sessionSubtitle}
                 </Text>
               </View>
-              <View className="flex-row items-center">
-                {session ? (
-                  <View className="mr-2">
-                    <AgentActions
-                      session={session}
-                      projectPath={stateProjectPath}
-                      endpoint={serviceEndpoint}
-                      token={token}
-                      compact
-                      mainCheckoutPath={desktopState?.mainCheckoutPath}
-                      onKilled={goBack}
-                    />
-                  </View>
-                ) : null}
-                {session ? (
-                  <>
+              {session ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ flexShrink: 0, maxWidth: headerActionsMaxWidth, minWidth: 0 }}
+                  contentContainerStyle={{ alignItems: "center" }}
+                >
+                  <View className="flex-row items-center">
+                    <View className="mr-2">
+                      <AgentActions
+                        session={session}
+                        projectPath={stateProjectPath}
+                        endpoint={serviceEndpoint}
+                        token={token}
+                        compact
+                        mainCheckoutPath={desktopState?.mainCheckoutPath}
+                        onKilled={goBack}
+                      />
+                    </View>
                     <Pressable
                       onPress={() => setSharePanelOpen((open) => !open)}
                       accessibilityLabel="Invite collaborator"
@@ -685,7 +717,8 @@ export default function ChatScreen() {
                       accessibilityLabel="Manage agent"
                       accessibilityState={{ expanded: managePanelOpen }}
                       className={cn(
-                        "h-8 flex-row items-center gap-1.5 rounded-md border px-2.5 mr-2",
+                        "h-8 flex-row items-center gap-1.5 rounded-md border mr-2",
+                        compactHeaderActions ? "w-8 justify-center px-0" : "px-2.5",
                         managePanelOpen ? "border-primary bg-accent" : "border-border",
                       )}
                     >
@@ -693,7 +726,9 @@ export default function ChatScreen() {
                         size={14}
                         color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
                       />
-                      <Text className="text-xs text-foreground">Manage</Text>
+                      {compactHeaderActions ? null : (
+                        <Text className="text-xs text-foreground">Manage</Text>
+                      )}
                     </Pressable>
                     <Pressable
                       onPress={() => setShowTerminalSplit((current) => !current)}
@@ -720,12 +755,13 @@ export default function ChatScreen() {
                           },
                         });
                       }}
+                      className="h-8 justify-center px-1"
                     >
                       <Text className="text-sm text-primary">Plan</Text>
                     </Pressable>
-                  </>
-                ) : null}
-              </View>
+                  </View>
+                </ScrollView>
+              ) : null}
             </View>
             {/*
             Closed by default. These are settings, and pinning them above every
@@ -995,6 +1031,7 @@ export default function ChatScreen() {
                       value={draft}
                       onChangeText={setDraft}
                       onKeyPress={handleComposerKeyPress}
+                      onContentSizeChange={handleComposerContentSizeChange}
                       placeholder="Ask the agent…"
                       multiline
                       // One row at rest. `multiline` alone renders a two-row textarea
@@ -1003,7 +1040,9 @@ export default function ChatScreen() {
                       editable={!sendBusy}
                       // The card draws the border and the ground now, so the field
                       // itself is only text.
-                      className="h-auto max-h-40 min-h-6 rounded-none border-0 bg-transparent px-1 py-0 text-sm"
+                      scrollEnabled={composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT}
+                      className="rounded-none border-0 bg-transparent px-1 py-0 text-sm"
+                      style={{ height: composerInputHeight }}
                       textAlignVertical="top"
                     />
                     <View className="flex-row items-center gap-2">
