@@ -159,6 +159,9 @@ export default function ChatScreen() {
   const composerLiftStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -keyboardInset.value }],
   }));
+  const keyboardSpacerStyle = useAnimatedStyle(() => ({
+    height: keyboardInset.value,
+  }));
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
     : null;
@@ -642,7 +645,6 @@ export default function ChatScreen() {
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <ScrollView
         ref={terminalScrollRef}
-        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
         className="flex-1 px-4 py-3"
         contentContainerStyle={overlaysComposer ? { paddingBottom: composerBottomSpacer } : null}
         horizontal={false}
@@ -665,6 +667,7 @@ export default function ChatScreen() {
                 ))}
           </Text>
         ))}
+        {overlaysComposer ? <Animated.View style={keyboardSpacerStyle} /> : null}
       </ScrollView>
     </View>
   );
@@ -1126,7 +1129,6 @@ export default function ChatScreen() {
                     <View className="flex-1">
                       <ScrollView
                         ref={scrollRef}
-                        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
                         className="flex-1 px-4 py-2"
                         contentContainerStyle={{
                           flexGrow: 1,
@@ -1142,6 +1144,7 @@ export default function ChatScreen() {
                           serviceEndpoint={serviceEndpoint}
                           visibleLastError={visibleLastError}
                         />
+                        {overlaysComposer ? <Animated.View style={keyboardSpacerStyle} /> : null}
                       </ScrollView>
                     </View>
                   )}

@@ -1,22 +1,73 @@
-import { Platform } from "react-native";
-import { useAnimatedKeyboard, useDerivedValue, type SharedValue } from "react-native-reanimated";
+import { useEffect } from "react";
+import { Keyboard, Platform, useWindowDimensions, type KeyboardEvent } from "react-native";
+import {
+  Easing,
+  useSharedValue,
+  withTiming,
+  type EasingFunction,
+  type SharedValue,
+} from "react-native-reanimated";
+
+const DEFAULT_KEYBOARD_ANIMATION_DURATION_MS = 250;
 
 /**
  * How far the keyboard covers the screen, as a UI-thread value.
  *
- * Deliberately not React state. The state version re-rendered on every keyboard
- * frame and moved things with `Keyboard.scheduleLayoutAnimation`, which animates
- * every view whose frame changed in that commit — so the composer rising and the
- * tab bar vanishing became two animations of the same thing. iOS also fires both
- * `keyboardWillChangeFrame` and `keyboardWillHide` on dismissal, and a second
- * `configureNext` restarts the running animation from wherever it had got to.
- * That restart is the bounce.
- *
- * iOS only: Android resizes the window itself under the default `resize` soft-input
- * mode, so adding an inset there would offset the composer twice.
+ * iOS drives the shared value from native keyboard frame notifications. That
+ * keeps movement on the UI thread without relying on Reanimated's keyboard-view
+ * CAAnimation probe, which can miss the live animation on newer iOS builds.
  */
 export function useKeyboardInset(): SharedValue<number> {
-  const keyboard = useAnimatedKeyboard();
-  const applies = Platform.OS === "ios";
-  return useDerivedValue(() => (applies ? keyboard.height.value : 0));
+  const { height: windowHeight } = useWindowDimensions();
+  const inset = useSharedValue(0);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios") {
+      inset.value = 0;
+      return;
+    }
+
+    const updateInset = (event: KeyboardEvent) => {
+      inset.value = withTiming(resolveKeyboardInset(event, windowHeight), {
+        duration: resolveKeyboardDuration(event),
+        easing: resolveKeyboardEasing(event),
+      });
+    };
+    const frameSub = Keyboard.addListener("keyboardWillChangeFrame", updateInset);
+    const hideSub = Keyboard.addListener("keyboardWillHide", updateInset);
+
+    return () => {
+      frameSub.remove();
+      hideSub.remove();
+    };
+  }, [inset, windowHeight]);
+
+  return inset;
+}
+
+function resolveKeyboardInset(event: KeyboardEvent, windowHeight: number): number {
+  const { height, screenY } = event.endCoordinates;
+  if (height === 0 || screenY <= 0) return 0;
+  return Math.max(0, Math.round(windowHeight - screenY));
+}
+
+function resolveKeyboardDuration(event: KeyboardEvent): number {
+  return Number.isFinite(event.duration) && event.duration > 10
+    ? event.duration
+    : DEFAULT_KEYBOARD_ANIMATION_DURATION_MS;
+}
+
+function resolveKeyboardEasing(event: KeyboardEvent): EasingFunction {
+  switch (event.easing) {
+    case "linear":
+      return Easing.linear;
+    case "easeIn":
+      return Easing.in(Easing.ease);
+    case "easeOut":
+      return Easing.out(Easing.ease);
+    case "easeInEaseOut":
+    case "keyboard":
+    default:
+      return Easing.inOut(Easing.ease);
+  }
 }
