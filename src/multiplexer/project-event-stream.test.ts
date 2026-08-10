@@ -9,6 +9,7 @@ vi.mock("./dashboard-control.js", () => controlMocks);
 
 import {
   applyDashboardAlert,
+  EVENT_REFRESH_DEBOUNCE_MS,
   handleProjectEvent,
   PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS,
   PROJECT_EVENT_STREAM_RETRY_BASE_MS,
@@ -72,7 +73,7 @@ describe("dashboard project event refresh", () => {
     };
 
     scheduleProjectViewRefresh(host, ["notifications", "coordination-worklist"]);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
     host.dashboardInputEpoch = 1;
     resolveModelRefresh(true);
     await vi.runAllTimersAsync();
@@ -109,9 +110,9 @@ describe("dashboard project event refresh", () => {
     };
 
     scheduleProjectViewRefresh(host, ["desktop-state"]);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
     scheduleProjectViewRefresh(host, ["threads"]);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
 
@@ -203,13 +204,32 @@ describe("dashboard project event refresh", () => {
     };
 
     scheduleProjectViewRefresh(host, ["desktop-state"]);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
     host.mode = "session";
     resolveRefresh(true);
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("collapses a burst of project events into one refresh", async () => {
+    // Agent hooks arrive further apart than the old 25ms window, so every tool
+    // call from every agent bought its own full desktop-state rebuild.
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    for (let event = 0; event < 5; event += 1) {
+      scheduleProjectViewRefresh(host, ["desktop-state"]);
+      await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS / 5);
+    }
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
   });
 
   it("does not render after the event adapter stops during an in-flight refresh", async () => {
@@ -227,7 +247,7 @@ describe("dashboard project event refresh", () => {
     };
 
     scheduleProjectViewRefresh(host, ["desktop-state"]);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
     stopDashboardProjectEventStream(host);
     resolveRefresh(true);
     await vi.runAllTimersAsync();
@@ -253,7 +273,7 @@ describe("dashboard project event refresh", () => {
     };
 
     scheduleProjectViewRefresh(host, ["project-observability"]);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
     host.dashboardInputEpoch = 1;
     resolveProjectRefresh(projectPayload());
     await vi.runAllTimersAsync();
@@ -282,7 +302,7 @@ describe("dashboard project event refresh", () => {
     };
 
     scheduleProjectViewRefresh(host, ["project-observability"]);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
     currentScreen = "library";
     resolveProjectRefresh(projectPayload());
     await vi.runAllTimersAsync();
@@ -336,8 +356,8 @@ describe("dashboard project event refresh", () => {
 
     try {
       startDashboardProjectEventStream(host);
-      await vi.advanceTimersByTimeAsync(25);
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
+      await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
 
       expect(fetchMock).toHaveBeenCalledOnce();
       expect(controlMocks.invalidateDashboardProjectServiceEndpointHealth).toHaveBeenCalledWith(host);
@@ -382,7 +402,7 @@ describe("dashboard project event refresh", () => {
       startDashboardProjectEventStream(host);
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS);
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
 
       expect(controlMocks.invalidateDashboardProjectServiceEndpointHealth).toHaveBeenCalledWith(host);
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
@@ -432,8 +452,8 @@ describe("dashboard project event refresh", () => {
 
     try {
       startDashboardProjectEventStream(host);
-      await vi.advanceTimersByTimeAsync(25);
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
+      await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
 
       expect(controlMocks.invalidateDashboardProjectServiceEndpointHealth).toHaveBeenCalledWith(host);
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
@@ -472,7 +492,7 @@ describe("dashboard project event refresh", () => {
 
     try {
       startDashboardProjectEventStream(host);
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
       expect(fetchMock).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(Math.floor(PROJECT_EVENT_STREAM_RETRY_BASE_MS / 2));
@@ -497,8 +517,8 @@ describe("dashboard project event refresh", () => {
     };
 
     startDashboardProjectEventStream(host);
-    await vi.advanceTimersByTimeAsync(25);
-    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
 
     expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();

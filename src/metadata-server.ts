@@ -931,6 +931,15 @@ const CORS_ALLOWED_ORIGINS = new Set([
 ]);
 const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
 const DESKTOP_STATE_STALE_REFRESH_DELAY_MS = 1_000;
+/**
+ * How long a forced rebuild answers for the forced rebuilds behind it.
+ *
+ * Sized under the tightest caller cadence — the worktree settle poll's 100ms —
+ * so a loop that forces in order to watch for an async completion still gets a
+ * real rebuild every poll. It exists only to absorb the burst of every
+ * connected dashboard forcing within a beat of one change event.
+ */
+const DESKTOP_STATE_FORCED_COALESCE_MS = 50;
 
 interface ProjectServiceResourceSnapshot {
   uptimeMs: number;
@@ -1831,9 +1840,13 @@ export class MetadataServer {
       clearTimeout(this.desktopStateRefreshTimer);
       this.desktopStateRefreshTimer = null;
     }
+    // Cleared before the build, not after: the build itself renames tmux windows
+    // and reconciles topology, so a change published during it would otherwise
+    // be marked and then immediately unmarked, and the snapshot would be pinned
+    // as clean while already out of date.
+    this.desktopStateCacheDirty = false;
     const state = this.options.desktop?.getState?.() ?? {};
     this.desktopStateCache = { ts: Date.now(), state };
-    this.desktopStateCacheDirty = false;
     return state;
   }
 
@@ -1901,7 +1914,24 @@ export class MetadataServer {
 
   private getDesktopStateSnapshot(force = false): Record<string, unknown> {
     const now = Date.now();
-    if (force) return this.refreshDesktopStateCache();
+    if (force) {
+      // Every open dashboard forces a refresh within a beat of the same change
+      // event, so one agent tool call rebuilt the whole project snapshot once
+      // per connected client. Collapse only that: a window shorter than any
+      // caller's poll cadence, so the settle loops that force precisely to
+      // observe an async completion still see one rebuild per poll.
+      //
+      // Deliberately not "serve any clean cache". The dirty flag does not cover
+      // everything the build reads — a window killed in tmux directly, a git
+      // worktree change, another process writing topology — so suppressing on
+      // it alone would freeze the snapshot for a project nobody is polling.
+      const coalescable =
+        this.desktopStateCache &&
+        !this.desktopStateCacheDirty &&
+        now - this.desktopStateCache.ts < DESKTOP_STATE_FORCED_COALESCE_MS;
+      if (coalescable) return this.desktopStateCache!.state;
+      return this.refreshDesktopStateCache();
+    }
     if (this.desktopStateCache && this.desktopStateCacheDirty) {
       this.scheduleDesktopStateRefresh(DESKTOP_STATE_STALE_REFRESH_DELAY_MS);
       return this.desktopStateCache.state;

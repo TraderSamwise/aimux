@@ -30,6 +30,7 @@ export const PROJECT_EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 export const PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS = 35_000;
 export const PROJECT_EVENT_STREAM_RETRY_BASE_MS = 1_000;
 export const PROJECT_EVENT_STREAM_RETRY_MAX_MS = 15_000;
+export const EVENT_REFRESH_DEBOUNCE_MS = 250;
 
 class DashboardProjectEventAdapter {
   private controller: AbortController | null = null;
@@ -102,6 +103,15 @@ class DashboardProjectEventAdapter {
     this.armRefreshTimer();
   }
 
+  /**
+   * How long a burst of project events is allowed to collapse into one refresh.
+   *
+   * Only event-driven refreshes come through here — user actions refresh
+   * directly — so this is latency the user does not initiate and cannot feel.
+   * At 25ms it never coalesced anything: agent hooks arrive further apart than
+   * that, so every tool call from every agent bought its own full desktop-state
+   * rebuild, and each rebuild costs more than the window did.
+   */
   private armRefreshTimer(): void {
     const generation = this.generation;
     this.refreshTimer = setTimeout(() => {
@@ -114,7 +124,7 @@ class DashboardProjectEventAdapter {
       const current = this.pendingViews;
       this.pendingViews = null;
       if (current) void this.runRefresh(current, generation);
-    }, 25);
+    }, EVENT_REFRESH_DEBOUNCE_MS);
   }
 
   private async runRefresh(views: Set<ProjectApiView>, generation: number): Promise<void> {

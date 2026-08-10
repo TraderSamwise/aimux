@@ -510,6 +510,41 @@ describe("MetadataServer threads API", () => {
     expect(refreshed.seq).toBe(2);
   });
 
+  it("collapses a burst of forced refreshes but keeps rebuilding for pollers", async () => {
+    // Every open dashboard forces a refresh within a beat of the same change
+    // event, so one agent tool call rebuilt the whole project snapshot once per
+    // connected client.
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    const forced = async () =>
+      fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state?force=1`).then((response) => response.json());
+
+    // Eight clients reacting to one change event, as connected dashboards do.
+    // Asserted as "fewer builds than requests" rather than exactly one: the
+    // window is wall-clock, and pinning an exact count would make this fail on a
+    // loaded machine for a reason that is not a regression.
+    await Promise.all(Array.from({ length: 8 }, forced));
+    expect(getState.mock.calls.length).toBeLessThan(8);
+
+    // Past the window a forced refresh rebuilds again, even with nothing marked
+    // dirty — the settle loops force precisely to observe changes the dirty flag
+    // does not see, such as a window killed in tmux directly.
+    const builds = getState.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await forced();
+    expect(getState.mock.calls.length).toBe(builds + 1);
+  });
+
   it("serves expired desktop-state cache immediately and refreshes off the request path", async () => {
     const getState = vi.fn(() => ({
       sessions: [],
