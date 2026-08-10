@@ -22,6 +22,8 @@ export const PROJECT_API_ROUTES = {
   },
   plans: "/plans",
   statuslineRefresh: "/statusline/refresh",
+  /** Publish or withdraw one statusline segment from outside this process. */
+  statuslineSegment: "/statusline/segment",
   operationFailuresClear: "/operation-failures/clear",
   notifications: {
     list: "/notifications",
@@ -332,6 +334,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
       return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
 
     case PROJECT_API_ROUTES.statuslineRefresh:
+    case PROJECT_API_ROUTES.statuslineSegment:
       return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
 
     case PROJECT_API_ROUTES.operationFailuresClear:

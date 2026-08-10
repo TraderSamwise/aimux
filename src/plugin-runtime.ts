@@ -5,7 +5,9 @@ import { getGlobalAimuxDir, getLocalAimuxDir, getProjectId, getRepoRoot } from "
 import {
   updateSessionMetadata,
   clearSessionLogs,
+  dropStatuslineSegment,
   loadMetadataState,
+  putStatuslineSegment,
   type MetadataTone,
   type MetadataApiEndpoint,
   type SessionContextMetadata,
@@ -186,26 +188,15 @@ export class PluginRuntime {
   }
 
   private clearStatuslineSegment(session: string, id: string, line?: "top" | "bottom"): void {
+    for (const currentLine of line ? [line] : (["top", "bottom"] as const)) {
+      this.statuslineSegments.delete(this.segmentKey(session, currentLine, id));
+    }
+    // The store owns the shape of a rail. This used to reimplement the
+    // replace-and-tidy here, which was fine while a plugin was the only writer
+    // and became two copies to keep in step the moment anything else could
+    // publish one.
     this.applyMetadataChange(() => {
-      updateSessionMetadata(session, (existing) => {
-        const next = { ...existing };
-        if (!next.statusline) return next;
-        const lines = line ? [line] : (["top", "bottom"] as const);
-        next.statusline = { ...next.statusline };
-        for (const currentLine of lines) {
-          const filtered = (next.statusline[currentLine] ?? []).filter((entry) => entry.id !== id);
-          if (filtered.length > 0) {
-            next.statusline[currentLine] = filtered;
-          } else {
-            delete next.statusline[currentLine];
-          }
-          this.statuslineSegments.delete(this.segmentKey(session, currentLine, id));
-        }
-        if (!next.statusline.top?.length && !next.statusline.bottom?.length) {
-          delete next.statusline;
-        }
-        return next;
-      });
+      dropStatuslineSegment(session, id, line);
     });
   }
 
@@ -323,13 +314,7 @@ export class PluginRuntime {
             this.statuslineSegments.add(this.segmentKey(session, line, segment.id));
           }
           this.applyMetadataChange(() => {
-            updateSessionMetadata(session, (existing) => ({
-              ...existing,
-              statusline: {
-                ...(existing.statusline ?? {}),
-                [line]: [...(existing.statusline?.[line] ?? []).filter((entry) => entry.id !== segment.id), segment],
-              },
-            }));
+            putStatuslineSegment(session, line, segment);
           });
         },
         clearStatuslineSegment: (session, id, line) => {

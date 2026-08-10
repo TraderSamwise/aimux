@@ -12,6 +12,7 @@ import {
   handleSessionRuntimeEvent,
   reconcileAgentActivity,
   registerManagedSession,
+  readAgentOutput,
   resolveLiveSessionTmuxTarget,
   resizeAgentPane,
   sendAgentInput,
@@ -342,6 +343,88 @@ describe("session runtime prompt submission", () => {
         sessionId: "claude-racy",
         backendSessionId: undefined,
       });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("captures the pane without revalidating the target on every poll", async () => {
+    // The output stream polls once a second per open session. Revalidating cost
+    // a list-windows and a show-window-options each time to confirm a window id
+    // that only changes when the window does.
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const target = { sessionName: "aimux-test", windowId: "@3", windowIndex: 3, windowName: "claude" };
+      const tmuxRuntimeManager = {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-1" })),
+        captureTarget: vi.fn(() => "pane text"),
+        listProjectManagedWindows: vi.fn(() => []),
+        isWindowAlive: vi.fn(() => true),
+      };
+      const host: any = {
+        sessions: [{ id: "claude-1", command: "claude", status: "running" }],
+        sessionTmuxTargets: new Map([["claude-1", target]]),
+        sessionToolKeys: new Map([["claude-1", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-1", repoRoot]]),
+        sessionLabels: new Map(),
+        sessionRoles: new Map(),
+        sessionOriginalArgs: new Map([["claude-1", []]]),
+        offlineSessions: [],
+        tmuxRuntimeManager,
+      };
+
+      await readAgentOutput(host, "claude-1");
+      await readAgentOutput(host, "claude-1");
+      await readAgentOutput(host, "claude-1");
+
+      expect(tmuxRuntimeManager.captureTarget).toHaveBeenCalledTimes(3);
+      // The first poll rechecks ownership; the rest ride the cached target.
+      expect(tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("re-resolves the target when a capture against the cached one fails", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const stale = { sessionName: "aimux-test", windowId: "@3", windowIndex: 3, windowName: "claude" };
+      const moved = { sessionName: "aimux-test", windowId: "@9", windowIndex: 9, windowName: "claude" };
+      const tmuxRuntimeManager = {
+        getTargetByWindowId: vi.fn(() => moved),
+        getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-1" })),
+        captureTarget: vi.fn((captureTargetArg: any) => {
+          // A window that has gone away makes tmux exit non-zero, and that
+          // failure is the same evidence the removed revalidation was buying.
+          if (captureTargetArg.windowId === "@3") throw new Error("can't find window: @3");
+          return "pane text";
+        }),
+        listProjectManagedWindows: vi.fn(() => []),
+        isWindowAlive: vi.fn(() => true),
+      };
+      const host: any = {
+        sessions: [{ id: "claude-1", command: "claude", status: "running" }],
+        sessionTmuxTargets: new Map([["claude-1", stale]]),
+        sessionToolKeys: new Map([["claude-1", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-1", repoRoot]]),
+        sessionLabels: new Map(),
+        sessionRoles: new Map(),
+        sessionOriginalArgs: new Map([["claude-1", []]]),
+        offlineSessions: [],
+        tmuxRuntimeManager,
+      };
+
+      const result = await readAgentOutput(host, "claude-1");
+
+      expect(result.output).toContain("pane text");
+      // The cached target must actually be attempted first — otherwise this
+      // passes just as well against the old always-resolve path.
+      expect(tmuxRuntimeManager.captureTarget.mock.calls[0]![0]).toEqual(stale);
+      expect(tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalled();
+      expect(host.sessionTmuxTargets.get("claude-1")).toEqual(moved);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

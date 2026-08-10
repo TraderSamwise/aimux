@@ -28,6 +28,11 @@ import {
   type SessionLogEntry,
   type SessionContextMetadata,
   type SessionServiceMetadata,
+  type SessionStatuslineSegment,
+  dropStatuslineSegment,
+  putStatuslineSegment,
+  segmentRejection,
+  MAX_SEGMENT_TTL_SECONDS,
 } from "./metadata-store.js";
 import {
   contextualizeAlertInput,
@@ -3025,6 +3030,82 @@ export class MetadataServer {
         }
         notifyCurrentRouteChange({ sessionId });
         send(res, 200, { ok: true, sessionId });
+        return;
+      }
+
+      if (url.pathname === PROJECT_API_ROUTES.statuslineSegment) {
+        /**
+         * One segment on one rail, published from outside this process.
+         *
+         * The in-process equivalent is the plugin API, which is not available
+         * to a cron, a systemd unit or a shell script — and those are exactly
+         * what tends to know something worth putting on a bar.
+         *
+         * Deliberately incurious about what a segment MEANS. `text` is
+         * rendered, `data` is carried to whoever asked for it, and neither is
+         * interpreted here.
+         */
+        const body = (await readJson(req)) as {
+          session?: string;
+          line?: string;
+          id?: string;
+          text?: string;
+          tone?: MetadataTone;
+          ttlSeconds?: number;
+          data?: unknown;
+        };
+        if (!body.session) {
+          send(res, 400, { ok: false, error: "session is required" });
+          return;
+        }
+        const line = body.line ?? "bottom";
+        if (line !== "top" && line !== "bottom") {
+          send(res, 400, { ok: false, error: "line must be top or bottom" });
+          return;
+        }
+
+        if (req.method === "DELETE") {
+          if (!body.id) {
+            send(res, 400, { ok: false, error: "id is required" });
+            return;
+          }
+          dropStatuslineSegment(body.session, body.id, line);
+          notifyCurrentRouteChange({ sessionId: body.session });
+          send(res, 200, { ok: true });
+          return;
+        }
+
+        if (req.method !== "POST") {
+          send(res, 405, { ok: false, error: "use POST or DELETE" });
+          return;
+        }
+
+        // A TTL rather than an absolute time, because the publisher's clock is
+        // not this one's and a skewed sender would otherwise post something
+        // already expired, or expiring next year.
+        const ttl = body.ttlSeconds;
+        if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0 || ttl > MAX_SEGMENT_TTL_SECONDS)) {
+          send(res, 400, {
+            ok: false,
+            error: `ttlSeconds must be between 1 and ${MAX_SEGMENT_TTL_SECONDS}`,
+          });
+          return;
+        }
+        const segment: SessionStatuslineSegment = {
+          id: body.id,
+          text: body.text ?? "",
+          ...(body.tone ? { tone: body.tone } : {}),
+          ...(ttl ? { expiresAt: new Date(Date.now() + ttl * 1000).toISOString() } : {}),
+          ...(body.data !== undefined ? { data: body.data } : {}),
+        };
+        const rejection = segmentRejection(segment);
+        if (rejection) {
+          send(res, 400, { ok: false, error: rejection });
+          return;
+        }
+        putStatuslineSegment(body.session, line, segment);
+        notifyCurrentRouteChange({ sessionId: body.session });
+        send(res, 200, { ok: true });
         return;
       }
 

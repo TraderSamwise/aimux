@@ -101,6 +101,23 @@ export const READ_ONLY_TMUX_VERBS = new Set([
   "show-window-options",
 ]);
 
+/**
+ * A read whose answer genuinely changes between two calls in one scope, so it
+ * must not be cached — but which must not empty the cache either.
+ *
+ * Without this category `capture-pane` fell through to the mutation branch and
+ * flushed everything. A desktop-state build captures once per rendered row, so
+ * the memo was being wiped a dozen times per build and the read dedup it exists
+ * for barely functioned.
+ *
+ * Classified on argv, not on the verb: `-p` prints to stdout, while a
+ * buffer-writing form like `capture-pane -b` really would be a mutation and has
+ * to keep invalidating.
+ */
+export function isNonCachingTmuxRead(args: readonly string[]): boolean {
+  return args[0] === "capture-pane" && args.includes("-p");
+}
+
 /** The memo key: the full argv plus cwd, since cwd changes what tmux answers. */
 export function tmuxQueryKey(args: readonly string[], cwd?: string): string {
   return JSON.stringify([cwd ?? "", ...args]);

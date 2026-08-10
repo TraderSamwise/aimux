@@ -58,6 +58,31 @@ export interface SessionStatuslineSegment {
   id?: string;
   text: string;
   tone?: MetadataTone;
+  /**
+   * When this segment stops being true, ISO-8601. Absent means indefinitely.
+   *
+   * A plugin does not need one: the runtime knows when a plugin stops and
+   * withdraws what it owned. A publisher OUTSIDE this process has no such
+   * lifecycle — it can be killed, uninstalled, or simply stop running — and a
+   * rail that goes on asserting a fact nobody is maintaining is worse than an
+   * empty one.
+   *
+   * Applied when the state is read, so there is no sweeper to fall behind and
+   * nothing to schedule. The consequence is that a rendered bar keeps showing
+   * an expired segment until the next redraw, which for a publisher that
+   * refreshes on an interval is not a case that arises.
+   */
+  expiresAt?: string;
+  /**
+   * Anything the publisher wants its own reader to have, carried verbatim.
+   *
+   * Never parsed here, and deliberately untyped: this layer transports
+   * segments and has no opinion about what a segment is about. `text` remains
+   * the answer for anything that can only render a line — a client that had to
+   * recover structure by parsing prose would be a client that breaks the first
+   * time the wording changes.
+   */
+  data?: unknown;
 }
 
 export interface SessionStatuslineMetadata {
@@ -161,9 +186,122 @@ function stableMetadataPayload(session: SessionMetadata | undefined): string {
   return JSON.stringify(payload);
 }
 
+/**
+ * Segments whose moment has passed are not returned.
+ *
+ * On read rather than on a timer: nothing to schedule, nothing to fall behind,
+ * and no window in which a reader and a sweeper disagree. The next write of
+ * this session's metadata persists the removal as a side effect, which is a
+ * tidy-up rather than the mechanism.
+ */
+function dropExpiredSegments(state: MetadataState, now: number): MetadataState {
+  for (const session of Object.values(state.sessions ?? {})) {
+    const statusline = session?.statusline;
+    if (!statusline) continue;
+    for (const line of ["top", "bottom"] as const) {
+      const segments = statusline[line];
+      if (!segments) continue;
+      const live = segments.filter((segment) => {
+        if (!segment.expiresAt) return true;
+        const at = Date.parse(segment.expiresAt);
+        // An unparseable date is not an expiry claim. Dropping the segment
+        // would let one malformed publisher silently empty a rail.
+        return Number.isNaN(at) || at > now;
+      });
+      if (live.length === segments.length) continue;
+      if (live.length > 0) statusline[line] = live;
+      else delete statusline[line];
+    }
+    if (!statusline.top?.length && !statusline.bottom?.length) delete session.statusline;
+  }
+  return state;
+}
+
 export function loadMetadataState(projectRoot?: string): MetadataState {
   const state = loadJson<MetadataState>(metadataPathFor(projectRoot), { version: 1, sessions: {} });
-  return scrubProjectionAuthorityFields(state);
+  return dropExpiredSegments(scrubProjectionAuthorityFields(state), Date.now());
+}
+
+/**
+ * The largest a segment's opaque payload may be, serialized.
+ *
+ * Every segment is copied wholesale into the statusline snapshot on each
+ * redraw, so an unbounded payload is not one large file but a large file
+ * rewritten constantly. Four kilobytes is a generous structured summary and
+ * nowhere near a document.
+ */
+export const MAX_SEGMENT_DATA_BYTES = 4096;
+
+/**
+ * The longest a publisher may claim a segment stays true.
+ *
+ * A day. Past that the claim is not a TTL, it is an assertion that something
+ * will still be the case tomorrow — which is exactly what the field exists to
+ * stop an absent publisher making.
+ */
+export const MAX_SEGMENT_TTL_SECONDS = 86_400;
+
+/** Why a segment was refused, or null if it is fine. */
+export function segmentRejection(segment: SessionStatuslineSegment): string | null {
+  if (!segment.id) return "a segment needs an id to be replaceable";
+  if (typeof segment.text !== "string") return "a segment needs text";
+  if (segment.expiresAt && Number.isNaN(Date.parse(segment.expiresAt))) return "expiresAt is not a date";
+  if (segment.data !== undefined) {
+    const size = Buffer.byteLength(JSON.stringify(segment.data) ?? "");
+    if (size > MAX_SEGMENT_DATA_BYTES) return `data is ${size} bytes; the limit is ${MAX_SEGMENT_DATA_BYTES}`;
+  }
+  return null;
+}
+
+/**
+ * Put a segment on a rail, replacing any with the same id.
+ *
+ * Here rather than in the plugin runtime because there are now two callers —
+ * a plugin in this process and an HTTP publisher outside it — and two copies
+ * of "replace by id, then tidy up the empties" is two copies that drift.
+ */
+export function putStatuslineSegment(
+  sessionId: string,
+  line: "top" | "bottom",
+  segment: SessionStatuslineSegment,
+  projectRoot?: string,
+): MetadataState {
+  return updateSessionMetadata(
+    sessionId,
+    (existing) => ({
+      ...existing,
+      statusline: {
+        ...(existing.statusline ?? {}),
+        [line]: [...(existing.statusline?.[line] ?? []).filter((entry) => entry.id !== segment.id), segment],
+      },
+    }),
+    projectRoot,
+  );
+}
+
+/** Take one off, from a named rail or from both. */
+export function dropStatuslineSegment(
+  sessionId: string,
+  id: string,
+  line?: "top" | "bottom",
+  projectRoot?: string,
+): MetadataState {
+  return updateSessionMetadata(
+    sessionId,
+    (existing) => {
+      const next = { ...existing };
+      if (!next.statusline) return next;
+      next.statusline = { ...next.statusline };
+      for (const currentLine of line ? [line] : (["top", "bottom"] as const)) {
+        const filtered = (next.statusline[currentLine] ?? []).filter((entry) => entry.id !== id);
+        if (filtered.length > 0) next.statusline[currentLine] = filtered;
+        else delete next.statusline[currentLine];
+      }
+      if (!next.statusline.top?.length && !next.statusline.bottom?.length) delete next.statusline;
+      return next;
+    },
+    projectRoot,
+  );
 }
 
 export function saveMetadataState(state: MetadataState, projectRoot?: string): void {

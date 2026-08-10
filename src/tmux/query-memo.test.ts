@@ -127,6 +127,22 @@ describe("read-only verb memoization at the exec boundary", () => {
     expect(log.filter((args) => args[0] === "capture-pane")).toHaveLength(2);
   });
 
+  it("keeps the memo across a pane capture, which answers nothing the memo holds", () => {
+    // A desktop-state build captures a pane once per rendered row. Treating that
+    // as a mutation wiped the memo a dozen times per build, so the read dedup
+    // the memo exists for barely functioned.
+    const log: string[][] = [];
+    const tmux = managerWith(log);
+    const target = { sessionName: "s", windowId: "@1", windowIndex: 0 } as never;
+    withTmuxQueryMemo(() => {
+      tmux.hasSession("s");
+      tmux.captureTarget(target);
+      tmux.hasSession("s");
+    });
+    expect(log.filter((args) => args[0] === "has-session")).toHaveLength(1);
+    expect(log.filter((args) => args[0] === "capture-pane")).toHaveLength(1);
+  });
+
   it("re-reads on every poll of a wait loop, which waits on another process", () => {
     // replaceWindowWhenReady busy-waits on an option a child process sets. Caching
     // the first read would spin to the full timeout waiting for news it had

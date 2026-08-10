@@ -12,6 +12,11 @@ import {
   setSessionOverseer,
   findOverseerSessionId,
   updateSessionMetadata,
+  putStatuslineSegment,
+  dropStatuslineSegment,
+  segmentRejection,
+  MAX_SEGMENT_DATA_BYTES,
+  MAX_SEGMENT_TTL_SECONDS,
 } from "./metadata-store.js";
 
 function gitInit(cwd: string): void {
@@ -140,5 +145,104 @@ describe("metadata store", () => {
     expect(findOverseerSessionId(state)).toBe("boss-2");
 
     rmSync(repoRoot, { recursive: true, force: true });
+  });
+});
+
+describe("statusline segments", () => {
+  async function project(name: string): Promise<string> {
+    const repoRoot = mkdtempSync(join(tmpdir(), `aimux-segment-${name}-`));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    return repoRoot;
+  }
+
+  it("puts a segment on a rail and replaces one with the same id", async () => {
+    const root = await project("put");
+    putStatuslineSegment("s1", "bottom", { id: "a", text: "first" }, root);
+    putStatuslineSegment("s1", "bottom", { id: "b", text: "other" }, root);
+    putStatuslineSegment("s1", "bottom", { id: "a", text: "second" }, root);
+
+    const bottom = loadMetadataState(root).sessions.s1?.statusline?.bottom ?? [];
+    expect(bottom.map((entry) => entry.id)).toEqual(["b", "a"]);
+    expect(bottom.find((entry) => entry.id === "a")?.text).toBe("second");
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("carries an opaque payload back verbatim", async () => {
+    const root = await project("data");
+    const data = { anything: [1, { nested: true }], at: "all" };
+    putStatuslineSegment("s1", "top", { id: "a", text: "x", data }, root);
+
+    expect(loadMetadataState(root).sessions.s1?.statusline?.top?.[0]?.data).toEqual(data);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("hides a segment once its moment has passed, and keeps the ones that have not", async () => {
+    const root = await project("expiry");
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const future = new Date(Date.now() + 600_000).toISOString();
+    putStatuslineSegment("s1", "bottom", { id: "gone", text: "stale", expiresAt: past }, root);
+    putStatuslineSegment("s1", "bottom", { id: "here", text: "live", expiresAt: future }, root);
+    putStatuslineSegment("s1", "bottom", { id: "forever", text: "no ttl" }, root);
+
+    const bottom = loadMetadataState(root).sessions.s1?.statusline?.bottom ?? [];
+    expect(bottom.map((entry) => entry.id)).toEqual(["here", "forever"]);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("removes the rail, and the statusline, when everything on it has expired", async () => {
+    const root = await project("empty");
+    const past = new Date(Date.now() - 1000).toISOString();
+    putStatuslineSegment("s1", "top", { id: "a", text: "x", expiresAt: past }, root);
+
+    expect(loadMetadataState(root).sessions.s1?.statusline).toBeUndefined();
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("keeps a segment whose expiry is not a date, rather than emptying the rail", async () => {
+    const root = await project("malformed");
+    putStatuslineSegment("s1", "top", { id: "a", text: "x", expiresAt: "not a date" }, root);
+
+    // One publisher sending nonsense must not be able to blank a rail it
+    // shares with everything else.
+    expect(loadMetadataState(root).sessions.s1?.statusline?.top?.[0]?.id).toBe("a");
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("drops a segment from one rail, or from both", async () => {
+    const root = await project("drop");
+    putStatuslineSegment("s1", "top", { id: "a", text: "t" }, root);
+    putStatuslineSegment("s1", "bottom", { id: "a", text: "b" }, root);
+    putStatuslineSegment("s1", "bottom", { id: "keep", text: "k" }, root);
+
+    dropStatuslineSegment("s1", "a", "top", root);
+    let state = loadMetadataState(root).sessions.s1?.statusline;
+    expect(state?.top).toBeUndefined();
+    expect(state?.bottom?.map((entry) => entry.id)).toEqual(["a", "keep"]);
+
+    dropStatuslineSegment("s1", "a", undefined, root);
+    state = loadMetadataState(root).sessions.s1?.statusline;
+    expect(state?.bottom?.map((entry) => entry.id)).toEqual(["keep"]);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("refuses a segment nothing could replace, or one carrying too much", () => {
+    expect(segmentRejection({ text: "no id" })).toMatch(/id/);
+    expect(segmentRejection({ id: "a", text: "fine" })).toBeNull();
+    expect(segmentRejection({ id: "a", text: "x", expiresAt: "soon" })).toMatch(/date/);
+    expect(segmentRejection({ id: "a", text: "x", data: { big: "x".repeat(MAX_SEGMENT_DATA_BYTES) } })).toMatch(
+      /limit/,
+    );
+    expect(segmentRejection({ id: "a", text: "x", data: { small: true } })).toBeNull();
+  });
+
+  it("caps how far ahead a publisher may claim a segment stays true", () => {
+    expect(MAX_SEGMENT_TTL_SECONDS).toBe(86_400);
   });
 });

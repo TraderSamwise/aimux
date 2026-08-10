@@ -28,6 +28,8 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/team/default-role": "client-api",
   "/plans": "client-api",
   "/statusline/refresh": "client-api",
+  // Written by processes outside aimux, not by the desktop client.
+  "/statusline/segment": "internal-runtime",
   "/operation-failures/clear": "client-api",
   "/notifications": "client-api",
   "/notifications/read": "client-api",

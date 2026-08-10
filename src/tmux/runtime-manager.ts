@@ -18,7 +18,13 @@ import { isTmuxClientSessionForHost, isTmuxClientSessionName } from "./session-n
 import type { SessionUserLabel } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { recordTmuxExec } from "./exec-metrics.js";
-import { memoizedTmuxQuery, READ_ONLY_TMUX_VERBS, resetTmuxQueryMemo, tmuxQueryKey } from "./query-memo.js";
+import {
+  isNonCachingTmuxRead,
+  memoizedTmuxQuery,
+  READ_ONLY_TMUX_VERBS,
+  resetTmuxQueryMemo,
+  tmuxQueryKey,
+} from "./query-memo.js";
 
 export interface TmuxExecOptions {
   cwd?: string;
@@ -258,13 +264,18 @@ export class TmuxRuntimeManager {
     };
     this.exec = (args, options) => {
       const verb = args[0] ?? "";
-      if (!READ_ONLY_TMUX_VERBS.has(verb)) {
-        // A mutation invalidates every answer given so far: a build that renames a
-        // window and then re-lists has to see the rename.
-        resetTmuxQueryMemo();
+      if (READ_ONLY_TMUX_VERBS.has(verb)) {
+        return memoizedTmuxQuery(tmuxQueryKey(args, options?.cwd), () => call(args, options));
+      }
+      if (isNonCachingTmuxRead(args)) {
+        // Asked fresh every time, but it answers no question the memo holds, so
+        // it must not throw away what the rest of the build already paid for.
         return call(args, options);
       }
-      return memoizedTmuxQuery(tmuxQueryKey(args, options?.cwd), () => call(args, options));
+      // A mutation invalidates every answer given so far: a build that renames a
+      // window and then re-lists has to see the rename.
+      resetTmuxQueryMemo();
+      return call(args, options);
     };
   }
 

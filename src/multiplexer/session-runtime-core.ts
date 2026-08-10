@@ -7,6 +7,7 @@ import { getAimuxDirFor, getProjectStateDir, getRepoRoot, getStatusDir } from ".
 import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
+import { withTmuxQueryMemo } from "../tmux/query-memo.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { isAgentOutputEventKind } from "../agent-events.js";
 import { loadLastUsedState } from "../last-used.js";
@@ -341,6 +342,61 @@ export function reconcileAgentActivity(
   return "running";
 }
 
+/**
+ * How long a cached tmux target is trusted before its ownership is rechecked.
+ *
+ * tmux does not reuse window ids within a server's lifetime, so a cached target
+ * can only point at someone else's window after a tmux server restart — where
+ * ids begin again at `@0`. Rare, but being wrong there means serving one
+ * agent's pane as another's, so it is bounded rather than assumed away. One
+ * fork per interval against two per poll.
+ */
+const TARGET_OWNERSHIP_RECHECK_MS = 30_000;
+const lastTargetOwnershipCheckAt = new Map<string, number>();
+
+function targetOwnershipIsDue(target: { sessionName?: string }, sessionId: string): boolean {
+  const key = `${target.sessionName ?? ""} ${sessionId}`;
+  const previous = lastTargetOwnershipCheckAt.get(key);
+  const now = Date.now();
+  if (previous !== undefined && now - previous < TARGET_OWNERSHIP_RECHECK_MS) return false;
+  lastTargetOwnershipCheckAt.set(key, now);
+  return true;
+}
+
+/**
+ * Capture a session's pane without revalidating its target first.
+ *
+ * The output stream polls this about once a second per open session, and
+ * `resolveLiveSessionTmuxTarget` spends two tmux forks — a `list-windows` and a
+ * `show-window-options` — confirming a window id that only changes when the
+ * window itself does. Measured, that revalidation was the single largest
+ * consumer of the daemon's blocked event loop.
+ *
+ * A capture against a target that has gone away fails, and that failure is the
+ * same evidence the revalidation was buying, so it is paid for only then.
+ * `syncSessionsFromTopology` already retargets transports when a window moves,
+ * so the cached target is maintained rather than merely hoped for.
+ */
+function captureSessionPane(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  options: { startLine: number; includeEscapes: boolean },
+): string {
+  const cached = host.sessionTmuxTargets.get(sessionId);
+  if (cached && !targetOwnershipIsDue(cached, sessionId)) {
+    try {
+      return host.tmuxRuntimeManager.captureTarget(cached, options);
+    } catch {
+      // Fall through and re-resolve: the window is gone or has moved.
+    }
+  }
+  const target = resolveLiveSessionTmuxTarget(host, sessionId);
+  if (!target) {
+    throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+  }
+  return host.tmuxRuntimeManager.captureTarget(target, options);
+}
+
 export async function readAgentOutput(
   host: SessionRuntimeHost,
   sessionId: string,
@@ -359,11 +415,7 @@ export async function readAgentOutput(
   attention?: AgentAttentionState;
 }> {
   resolveRunningSession(host, sessionId);
-  const target = resolveLiveSessionTmuxTarget(host, sessionId);
-  if (!target) {
-    throw new Error(`Session "${sessionId}" does not have a live tmux target`);
-  }
-  const outputAnsi = host.tmuxRuntimeManager.captureTarget(target, {
+  const outputAnsi = captureSessionPane(host, sessionId, {
     startLine: startLine ?? -120,
     includeEscapes: true,
   });
@@ -738,16 +790,21 @@ export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: stri
 }
 
 export function updateContextWatcherSessions(host: SessionRuntimeHost): void {
-  host.contextWatcher.updateSessions(
-    host.sessions.map((s: any) => {
-      const key = host.sessionToolKeys.get(s.id);
-      const tc = key ? loadConfig().tools[key] : undefined;
-      return {
-        id: s.id,
-        command: s.command,
-        turnPatterns: tc?.turnPatterns?.map((p: string) => new RegExp(p)),
-        tmuxTarget: resolveLiveSessionTmuxTarget(host, s.id),
-      };
-    }),
-  );
+  // Every session resolves against the same host tmux session, so without a
+  // scope this asks tmux to list the identical window set once per session.
+  // Synchronous throughout, which is what makes the scope safe.
+  withTmuxQueryMemo(() => {
+    host.contextWatcher.updateSessions(
+      host.sessions.map((s: any) => {
+        const key = host.sessionToolKeys.get(s.id);
+        const tc = key ? loadConfig().tools[key] : undefined;
+        return {
+          id: s.id,
+          command: s.command,
+          turnPatterns: tc?.turnPatterns?.map((p: string) => new RegExp(p)),
+          tmuxTarget: resolveLiveSessionTmuxTarget(host, s.id),
+        };
+      }),
+    );
+  });
 }
