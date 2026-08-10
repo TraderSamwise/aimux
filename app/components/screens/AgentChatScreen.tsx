@@ -97,6 +97,8 @@ const COMPOSER_INPUT_VERTICAL_PADDING = 6;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_MAX_HEIGHT =
   COMPOSER_INPUT_LINE_HEIGHT * 3 + COMPOSER_INPUT_VERTICAL_PADDING * 2;
+const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
+const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
@@ -140,6 +142,18 @@ function getPinnedOffset(metrics: ScrollPaneMetrics) {
 function clampScrollRatio(ratio: number) {
   if (!Number.isFinite(ratio)) return 1;
   return Math.min(1, Math.max(0, ratio));
+}
+
+function estimateComposerInputContentHeight(draft: string, composerWidth: number) {
+  if (!draft) return COMPOSER_INPUT_MIN_HEIGHT;
+
+  const usableWidth = Math.max(1, composerWidth - 20 - COMPOSER_INPUT_HORIZONTAL_PADDING * 2);
+  const charsPerLine = Math.max(1, Math.floor(usableWidth / COMPOSER_INPUT_APPROX_CHAR_WIDTH));
+  const lineCount = draft.split("\n").reduce((total, line) => {
+    return total + Math.max(1, Math.ceil(line.length / charsPerLine));
+  }, 0);
+
+  return lineCount * COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 }
 
 export default function ChatScreen() {
@@ -240,9 +254,21 @@ export default function ChatScreen() {
   const compactHeaderActions = width < 430;
   const headerActionsMaxWidth =
     Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
+  const estimatedComposerInputContentHeight = estimateComposerInputContentHeight(
+    draft,
+    composerWidth,
+  );
   const composerInputHeight = Math.min(
     COMPOSER_INPUT_MAX_HEIGHT,
-    Math.max(COMPOSER_INPUT_MIN_HEIGHT, composerInputContentHeight),
+    Math.max(
+      COMPOSER_INPUT_MIN_HEIGHT,
+      composerInputContentHeight,
+      estimatedComposerInputContentHeight,
+    ),
+  );
+  const composerInputOverflowHeight = Math.max(
+    composerInputContentHeight,
+    estimatedComposerInputContentHeight,
   );
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
@@ -847,13 +873,13 @@ export default function ChatScreen() {
               placeholderTextColor="#71717a"
               multiline
               editable={!sendBusy}
-              scrollEnabled={composerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT}
+              scrollEnabled={composerInputOverflowHeight > COMPOSER_INPUT_MAX_HEIGHT}
               className="text-sm text-foreground"
               style={{
                 height: composerInputHeight,
                 fontSize: COMPOSER_INPUT_FONT_SIZE,
                 lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-                paddingHorizontal: 4,
+                paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
                 paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
                 paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
               }}
