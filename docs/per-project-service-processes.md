@@ -77,9 +77,9 @@ too weak.
 ## Sequencing
 
 1. **Make the service addressable as a process.** Extract the project service
-   entrypoint so it can run standalone against a project root, still spawned
-   in-process, and prove parity. Done by the hidden
-   `__project-service-internal` entrypoint and the daemon launch contract.
+   entrypoint so it can run standalone against a project root and prove parity.
+   Done by the hidden `__project-service-internal` entrypoint and the daemon
+   launch contract that now starts it as an external child process.
 2. **Supervision.** The daemon spawns, health-checks, restarts with backoff, and
    reaps. This is where the failure modes live, and it is the phase that most
    wants its own tests: the restart loop this document exists to prevent was a
