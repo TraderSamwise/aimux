@@ -1,6 +1,7 @@
 # Per-Project Service Processes
 
-Status: planned. Measuring document for the process-model half of
+Status: source cutover implemented; live runtime verification pending. Measuring
+document for the process-model half of
 [core-sidecar-north-star.md](core-sidecar-north-star.md).
 
 ## Why
@@ -57,20 +58,39 @@ to do it, and the reason not to treat the memoization as the fix.
 7. The `pid` in `/projects` `serviceEndpoint` identifies a live process, and
    `isAimuxProjectServiceProcess` recognises it.
 
+## Implementation Notes
+
+As of the source cutover, `CoreProjectActor` is the daemon-side supervisor for
+one external `__project-service-internal` child process per active project.
+The actor records the child pid, status, restart count, last restart, and last
+exit in daemon state. `/projects` treats only actor-owned live child pids as
+live services, and `aimux doctor versions` renders the supervisor state from
+daemon state.
+
+Endpoint readiness still uses `metadata-api.json` as the authoritative file and
+requires the pid in that JSON to match the supervised child. Runtime coherence
+already verifies `/health` pid, `projectStateDir`, and manifest for doctor
+output; startup readiness can be tightened to the same health contract in a
+separate hardening change if live verification shows endpoint-only readiness is
+too weak.
+
 ## Sequencing
 
 1. **Make the service addressable as a process.** Extract the project service
    entrypoint so it can run standalone against a project root, still spawned
-   in-process, and prove parity.
+   in-process, and prove parity. Done by the hidden
+   `__project-service-internal` entrypoint and the daemon launch contract.
 2. **Supervision.** The daemon spawns, health-checks, restarts with backoff, and
    reaps. This is where the failure modes live, and it is the phase that most
    wants its own tests: the restart loop this document exists to prevent was a
-   supervision bug, not a performance bug.
+   supervision bug, not a performance bug. Source-level supervision now spawns
+   child processes, records restart state, and reaps on stop/kill.
 3. **Endpoint discovery.** A service that moves ports must not strand hook
    `curl`s or the relay proxy. Decide whether the port is stable per project or
-   discovered per call.
+   discovered per call. Current cutover keeps JSON endpoint discovery and
+   removes stale endpoint metadata when a child exits unexpectedly.
 4. **Cut over.** Delete the in-process path — no dual mode, per the repo's
-   direct-cutover convention.
+   direct-cutover convention. Done in `src/core-project-actor.ts`.
 5. **Verify against the criteria above**, on the live machine, under real agent
    load rather than a synthetic one.
 

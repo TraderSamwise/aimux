@@ -598,6 +598,20 @@ function renderProcess(label: string, process: RuntimeCoherenceProcessReport | n
   return lines;
 }
 
+function renderSupervisorState(state: ProjectServiceState | null): string[] {
+  if (!state) return [];
+  const status = state.status ?? "unknown";
+  const restartCount = state.restartCount ?? 0;
+  const lines = [`    supervisor: status=${status} restarts=${restartCount} pid=${state.pid}`];
+  if (state.lastRestartAt) lines.push(`      last restart: ${state.lastRestartAt}`);
+  if (state.lastExit) {
+    lines.push(
+      `      last exit: ${state.lastExit.expected ? "expected" : "unexpected"} code=${state.lastExit.code ?? "(none)"} signal=${state.lastExit.signal ?? "(none)"} at=${state.lastExit.at}`,
+    );
+  }
+  return lines;
+}
+
 export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): string {
   const lines = [
     "Aimux Versions",
@@ -632,6 +646,7 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
     lines.push(
       `  service: ${project.service.status} endpoint=${formatEndpoint(project.service.endpoint)} pid=${project.service.pid ?? "(unknown)"}`,
     );
+    lines.push(...renderSupervisorState(project.service.daemonState));
     lines.push(...renderProcess("process", project.service.process));
     lines.push(`    running: ${formatManifest(project.service.serviceInfo)}`);
     lines.push(`    expected: ${formatManifest(report.expected.projectService)}`);

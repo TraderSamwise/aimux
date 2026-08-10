@@ -235,6 +235,50 @@ describe("runtime coherence report", () => {
     expect(renderRuntimeCoherenceReport(report)).toContain("service: unreachable");
   });
 
+  it("renders supervised project-service restart metadata from daemon state", async () => {
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => []),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          alpha: {
+            projectId: "alpha",
+            projectRoot: "/repo/alpha",
+            pid: 1001,
+            startedAt: "then",
+            updatedAt: "now",
+            status: "running",
+            restartCount: 2,
+            lastRestartAt: "2026-08-10T07:00:02.000Z",
+            lastExit: {
+              at: "2026-08-10T07:00:00.000Z",
+              code: 1,
+              signal: null,
+              expected: false,
+            },
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43211,
+        pid: 1001,
+        updatedAt: "2026-08-10T07:00:02.000Z",
+      }),
+      requestJson: vi.fn(async () => ({ status: 200, json: serviceHealth("/repo/alpha", 1001) })),
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    const rendered = renderRuntimeCoherenceReport(report);
+    expect(rendered).toContain("supervisor: status=running restarts=2 pid=1001");
+    expect(rendered).toContain("last restart: 2026-08-10T07:00:02.000Z");
+    expect(rendered).toContain("last exit: unexpected code=1 signal=(none) at=2026-08-10T07:00:00.000Z");
+  });
+
   it("rejects service health for the wrong project state directory", async () => {
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({
