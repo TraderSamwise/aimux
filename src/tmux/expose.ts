@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { basename, resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
+import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 import { log } from "../debug.js";
 import { resolveScopedWorktreePath, type FastControlContext, type FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
@@ -24,6 +25,7 @@ import {
 } from "./expose-model.js";
 import { readHotExposeScopeView, writeHotExposeScopeView, type HotExposeScopeKey } from "./expose-hot-snapshot.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
+import { listWorktrees, type WorktreeInfo } from "../worktree.js";
 
 export interface TmuxExposeOptions {
   projectRoot: string;
@@ -215,20 +217,29 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   };
 }
 
-export function orderExposeItems(view: ExposeScopeView, projectRoot = "/"): ExposeScopeItem[] {
+export interface ExposeOrderingOptions {
+  worktreeOrderByProjectRoot?: Record<string, string[]>;
+}
+
+export function orderExposeItems(
+  view: ExposeScopeView,
+  projectRoot = "/",
+  options: ExposeOrderingOptions = {},
+): ExposeScopeItem[] {
   if (view.sublabel === "none") return view.items;
   if (view.sublabel === "worktree") {
-    const groups = groupItemsByWorktree(view.items, projectRoot);
+    const groups = groupItemsByWorktree(view.items, projectRoot, options);
     return groups.length < 2 ? view.items : groups.flatMap((group) => group.items);
   }
   const groups = groupItemsByProject(view.items);
   if (groups.length < 2) {
-    const worktreeGroups = groupItemsByWorktree(view.items, projectRoot);
+    const root = view.items[0]?.projectRoot ?? projectRoot;
+    const worktreeGroups = groupItemsByWorktree(view.items, root, options);
     return worktreeGroups.length < 2 ? view.items : worktreeGroups.flatMap((group) => group.items);
   }
   return groups.flatMap((project) => {
     const root = project.items[0]?.projectRoot ?? projectRoot;
-    const worktreeGroups = groupItemsByWorktree(project.items, root);
+    const worktreeGroups = groupItemsByWorktree(project.items, root, options);
     return worktreeGroups.length < 2 ? project.items : worktreeGroups.flatMap((group) => group.items);
   });
 }
@@ -250,10 +261,11 @@ export function groupItemsByProject(items: ExposeScopeItem[]): Array<{ label: st
   return order.map((label) => ({ label, items: buckets.get(label)! }));
 }
 
-/** Ordered worktree groups, preserving first-seen worktree order and item order within one. */
+/** Ordered worktree groups, matching dashboard worktree order and item order within one. */
 export function groupItemsByWorktree(
   items: ExposeScopeItem[],
   projectRoot: string,
+  options: ExposeOrderingOptions = {},
 ): Array<{ label: string; items: ExposeScopeItem[] }> {
   const order: string[] = [];
   const labels = new Map<string, string>();
@@ -270,7 +282,41 @@ export function groupItemsByWorktree(
     }
     bucket.push(item);
   }
-  return order.map((key) => ({ label: labels.get(key) ?? "main", items: buckets.get(key)! }));
+  if (order.length < 2) return order.map((key) => ({ label: labels.get(key) ?? "main", items: buckets.get(key)! }));
+  const ranks = worktreeOrderRanks(projectRoot, options);
+  const firstSeen = new Map(order.map((key, index) => [key, index]));
+  const fallbackRank = ranks.size;
+  const sorted = [...order].sort((a, b) => {
+    const aRank = ranks.get(a) ?? fallbackRank + (firstSeen.get(a) ?? 0);
+    const bRank = ranks.get(b) ?? fallbackRank + (firstSeen.get(b) ?? 0);
+    return aRank - bRank;
+  });
+  return sorted.map((key) => ({ label: labels.get(key) ?? "main", items: buckets.get(key)! }));
+}
+
+function worktreeOrderRanks(projectRoot: string, options: ExposeOrderingOptions): Map<string, number> {
+  const root = pathResolve(projectRoot);
+  const configured = options.worktreeOrderByProjectRoot?.[root];
+  const paths = configured ?? dashboardWorktreeOrderPaths(projectRoot);
+  const ranks = new Map<string, number>();
+  for (const path of paths) {
+    const key = pathResolve(path);
+    if (!ranks.has(key)) ranks.set(key, ranks.size);
+  }
+  if (!ranks.has(root)) {
+    const shifted = new Map<string, number>([[root, 0]]);
+    for (const [key, rank] of ranks) shifted.set(key, rank + 1);
+    return shifted;
+  }
+  return ranks;
+}
+
+export function dashboardWorktreeOrderPaths(projectRoot: string, worktrees = listWorktrees(projectRoot)): string[] {
+  const root = pathResolve(projectRoot);
+  const secondary = worktrees
+    .filter((worktree) => !worktree.isBare && pathResolve(worktree.path) !== root)
+    .sort((a: WorktreeInfo, b: WorktreeInfo) => dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a));
+  return [root, ...secondary.map((worktree) => worktree.path)];
 }
 
 // Tile titles tint their worktree from a small palette. These are deliberately distinct
