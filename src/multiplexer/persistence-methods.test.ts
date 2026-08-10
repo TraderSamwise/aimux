@@ -77,6 +77,7 @@ import {
 } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
+import { loadMetadataState } from "../metadata-store.js";
 import {
   listTopologySessionStates,
   moveTopologySessionToGraveyard,
@@ -675,6 +676,60 @@ describe("persistenceMethods", () => {
         team: expect.objectContaining({ parentSessionId: "claude-parent" }),
       }),
     );
+  });
+
+  it("carries metadata only for sessions the statusline actually names", () => {
+    // The whole per-session map used to go in — 316 entries and 1.3MB on a real
+    // machine, nearly all of them long-dead sessions. The reader already dropped
+    // them, so every redraw serialised that history twice (once for the
+    // change-detection key, once for the file) to throw it away on load. The
+    // agent hook redraws on every tool call.
+    vi.mocked(loadMetadataState).mockReturnValueOnce({
+      sessions: {
+        "codex-live": { status: { text: "alive" } },
+        "svc-live": { status: { text: "serving" } },
+        "codex-teammate": { status: { text: "reviewing" } },
+        "codex-long-dead": { status: { text: "gone" } },
+      },
+    } as never);
+    const host = {
+      desktopStateSnapshot: {
+        sessions: [
+          { index: 0, id: "codex-live", command: "codex", status: "running", active: true },
+          {
+            index: 1,
+            id: "codex-teammate",
+            command: "codex",
+            status: "running",
+            active: false,
+            team: { teamId: "team-1", parentSessionId: "codex-live", role: "reviewer" },
+          },
+        ],
+        teammates: [],
+        services: [{ index: 0, id: "svc-live", command: "yarn dev", status: "running", active: false }],
+        worktrees: [],
+        operationFailures: [],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        mainCheckoutPath: "/repo",
+      },
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+      dashboardUiStateStore: {
+        orderSessionsForWorktree: vi.fn((sessions) => sessions),
+        orderServicesForWorktree: vi.fn((services) => services),
+      },
+      dashboardState: { screen: "dashboard" },
+      footerFlash: null,
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildDesktopStateSnapshot: vi.fn(),
+    };
+
+    const statusline = persistenceMethods.buildStatuslineSnapshot.call(host);
+
+    // Under-inclusion is the real risk, so services and teammates are pinned
+    // alongside the agent — dropping any of them would blank a live row.
+    expect(Object.keys(statusline.metadata).sort()).toEqual(["codex-live", "codex-teammate", "svc-live"]);
+    expect(statusline.metadata["svc-live"]?.status?.text).toBe("serving");
+    expect(statusline.metadata["codex-teammate"]?.status?.text).toBe("reviewing");
   });
 
   it("derives statusline task counts from runtime exchange", () => {

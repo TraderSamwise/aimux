@@ -60,6 +60,7 @@ import {
   isToolInternalWorktree,
   listWorktrees as listAllWorktrees,
 } from "../worktree.js";
+import { projectStatuslineMetadata } from "../statusline-model.js";
 
 const DEFAULT_GRAVEYARD_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MIN_GRAVEYARD_CLEANUP_INTERVAL_MS = 60_000;
@@ -501,7 +502,14 @@ export const persistenceMethods = {
         projectServiceAlive: true,
       },
       flash: this.footerFlash,
-      metadata: loadMetadataState().sessions,
+      // The same three ordered arrays the projection above is built from, so the
+      // rows kept here are exactly the rows something can look up.
+      metadata: projectStatuslineMetadata(
+        loadMetadataState().sessions,
+        orderedSessions,
+        orderedServices,
+        orderedTeammates,
+      ),
       updatedAt: new Date().toISOString(),
     };
   },

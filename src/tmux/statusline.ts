@@ -24,6 +24,7 @@ import {
   resolveFocusedTeammateGroup,
   resolveFocusedTeammate,
   resolveScopedSessions,
+  projectStatuslineMetadata,
   trim,
   type StatuslineData,
 } from "../statusline-model.js";
@@ -37,15 +38,13 @@ function renderStatusRange(range: string, label: string): string {
 function sanitizeStatuslineProjection(data: StatuslineData): StatuslineData {
   const sessions = Array.isArray(data.sessions) ? data.sessions : [];
   const teammates = Array.isArray(data.teammates) ? data.teammates : [];
-  const knownSessionIds = new Set([...sessions, ...teammates].map((session) => session.id).filter(Boolean));
-  const metadata = Object.fromEntries(
-    Object.entries(data.metadata ?? {}).filter(([sessionId]) => knownSessionIds.has(sessionId)),
-  );
   return {
     ...data,
     sessions,
     teammates,
-    metadata,
+    // Kept even though the writer now projects too: this also has to hold for a
+    // file written by an older build.
+    metadata: projectStatuslineMetadata(data.metadata, sessions, teammates),
   };
 }
 

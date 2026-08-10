@@ -74,6 +74,30 @@ export interface StatuslineMetadataEntry {
   updatedAt?: string;
 }
 
+/**
+ * The metadata rows a statusline projection may carry: only the sessions the
+ * projection itself names.
+ *
+ * Applied when the snapshot is built, not only when it is read. The reader
+ * discards every other row anyway, so carrying the whole per-session map meant
+ * serialising every long-dead session's history twice per redraw — once for the
+ * change-detection key and once for the file — and the agent hook redraws on
+ * every tool call. Shared by both sides so the two cannot drift into disagreeing
+ * about what the file is allowed to contain.
+ */
+export function projectStatuslineMetadata<T>(
+  metadata: Record<string, T> | undefined,
+  ...groups: readonly (readonly { id?: string }[] | undefined)[]
+): Record<string, T> {
+  const known = new Set<string>();
+  for (const group of groups) {
+    for (const entry of group ?? []) {
+      if (entry?.id) known.add(entry.id);
+    }
+  }
+  return Object.fromEntries(Object.entries(metadata ?? {}).filter(([sessionId]) => known.has(sessionId)));
+}
+
 export interface StatuslineData {
   project?: string;
   dashboardScreen?: "dashboard" | "graveyard" | "coordination" | "project" | "library" | "topology" | "help";
