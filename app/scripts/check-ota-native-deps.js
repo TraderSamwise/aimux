@@ -6,18 +6,15 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const packageJsonPath = path.join(root, "package.json");
 const yarnLockPath = path.join(root, "yarn.lock");
-const bundledNativeModulesPath = path.join(
-  root,
-  "node_modules",
-  "expo",
-  "bundledNativeModules.json",
-);
-const podfileLockPath = path.join(root, "ios", "Podfile.lock");
+const versionPath = path.join(root, "lib", "version.ts");
+const nativeRuntimeBaselinePath = path.join(root, "native-runtime-baseline.json");
 
 const nativeDeps = [
   {
     packageName: "react-native-svg",
-    podName: "RNSVG",
+  },
+  {
+    packageName: "react-native-keyboard-controller",
   },
 ];
 
@@ -47,18 +44,41 @@ function fail(errors) {
   process.exit(1);
 }
 
+function readAppVersion(filePath) {
+  const contents = fs.readFileSync(filePath, "utf8");
+  const buildNumber = contents.match(/buildNumber:\s*(\d+)/)?.[1];
+  const otaVersion = contents.match(/otaVersion:\s*(\d+)/)?.[1];
+  if (!buildNumber || !otaVersion) {
+    fail([`Could not read buildNumber/otaVersion from ${path.relative(root, filePath)}`]);
+  }
+  return {
+    buildNumber: Number(buildNumber),
+    otaVersion: Number(otaVersion),
+  };
+}
+
 const packageJson = readJson(packageJsonPath);
-const bundledNativeModules = readJson(bundledNativeModulesPath);
+const appVersion = readAppVersion(versionPath);
+const nativeRuntimeBaseline = readJson(nativeRuntimeBaselinePath);
 const yarnLock = fs.readFileSync(yarnLockPath, "utf8");
-const podfileLock = fs.existsSync(podfileLockPath) ? fs.readFileSync(podfileLockPath, "utf8") : "";
 const errors = [];
 
+if (nativeRuntimeBaseline.buildNumber !== appVersion.buildNumber) {
+  errors.push(
+    `native-runtime-baseline.json is for build ${nativeRuntimeBaseline.buildNumber}; current app build is ${appVersion.buildNumber}. Update it only after the native build is submitted.`,
+  );
+}
+
 for (const dep of nativeDeps) {
-  const expected = bundledNativeModules[dep.packageName];
+  const expected = nativeRuntimeBaseline.nativeDependencies?.[dep.packageName];
   const declared = packageJson.dependencies?.[dep.packageName];
 
   if (!expected) {
-    errors.push(`${dep.packageName} is missing from Expo bundledNativeModules.json`);
+    if (declared) {
+      errors.push(
+        `${dep.packageName}@${declared} is declared but is not in native-runtime-baseline.json for build ${nativeRuntimeBaseline.buildNumber}`,
+      );
+    }
     continue;
   }
 
@@ -83,10 +103,6 @@ for (const dep of nativeDeps) {
     if (installed !== expected) {
       errors.push(`${dep.packageName} installed version is ${installed}; expected ${expected}`);
     }
-  }
-
-  if (podfileLock && !podfileLock.includes(`- ${dep.podName} (${expected})`)) {
-    errors.push(`${dep.podName} pod is not locked to ${expected} in ios/Podfile.lock`);
   }
 }
 

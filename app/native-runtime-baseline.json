@@ -1,0 +1,6 @@
+{
+  "buildNumber": 12,
+  "nativeDependencies": {
+    "react-native-svg": "15.12.1"
+  }
+}

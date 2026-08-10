@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
-  InputAccessoryView,
   Platform,
   Pressable,
   ScrollView,
@@ -14,6 +13,8 @@ import {
   type TextInputContentSizeChangeEventData,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
+import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
+import { useSharedValue, type SharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -119,6 +120,7 @@ type ScrollPaneKey = "chat" | "terminal";
 
 type ScrollPaneMetrics = {
   contentHeight: number;
+  contentInsetBottom: number;
   initialized: boolean;
   offsetY: number;
   pinnedToBottom: boolean;
@@ -126,9 +128,14 @@ type ScrollPaneMetrics = {
   viewportHeight: number;
 };
 
+type ScrollToHandle = {
+  scrollTo: (options: { animated?: boolean; x?: number; y?: number }) => void;
+};
+
 function createScrollPaneMetrics(): ScrollPaneMetrics {
   return {
     contentHeight: 0,
+    contentInsetBottom: 0,
     initialized: false,
     offsetY: 0,
     pinnedToBottom: true,
@@ -138,7 +145,7 @@ function createScrollPaneMetrics(): ScrollPaneMetrics {
 }
 
 function getScrollableHeight(metrics: ScrollPaneMetrics) {
-  return Math.max(0, metrics.contentHeight - metrics.viewportHeight);
+  return Math.max(0, metrics.contentHeight + metrics.contentInsetBottom - metrics.viewportHeight);
 }
 
 function getPinnedOffset(metrics: ScrollPaneMetrics) {
@@ -201,21 +208,25 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
-  const [composerFooterHeight, setComposerFooterHeight] = useState(0);
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
+  const composerHeightShared = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const sendBusyRef = useRef(false);
-  const scrollRef = useRef<ScrollView>(null);
-  const terminalScrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollToHandle | null>(null);
+  const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
     terminal: createScrollPaneMetrics(),
   });
   const programmaticScrollRef = useRef<Record<ScrollPaneKey, boolean>>({
+    chat: false,
+    terminal: false,
+  });
+  const initialContentInsetAppliedRef = useRef<Record<ScrollPaneKey, boolean>>({
     chat: false,
     terminal: false,
   });
@@ -366,12 +377,7 @@ export default function ChatScreen() {
   }, [parsedMessages]);
 
   const canShowTerminal = Boolean(output);
-  const usesNativeAccessoryComposer = Platform.OS === "ios";
-  const overlaysComposer = Platform.OS !== "web" && !usesNativeAccessoryComposer;
-  const detachedComposer = Platform.OS !== "web";
-  const composerBottomSpacer = detachedComposer
-    ? (composerFooterHeight || COMPOSER_FOOTER_ESTIMATED_HEIGHT) + 8
-    : 0;
+  const usesNativeKeyboardController = Platform.OS !== "web";
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -508,12 +514,27 @@ export default function ChatScreen() {
     [settlePaneAfterMetricChange],
   );
 
+  const handleScrollContentInsetChange = useCallback(
+    (pane: ScrollPaneKey, insets: { bottom: number }) => {
+      const metrics = scrollMetricsRef.current[pane];
+      metrics.contentInsetBottom = Math.max(0, insets.bottom);
+      if (!initialContentInsetAppliedRef.current[pane] && insets.bottom > 0) {
+        initialContentInsetAppliedRef.current[pane] = true;
+        settlePaneAfterMetricChange(pane);
+      }
+    },
+    [settlePaneAfterMetricChange],
+  );
+
   const handleScroll = useCallback(
     (pane: ScrollPaneKey, event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
       const offsetY = Math.max(0, contentOffset.y);
       const metrics = scrollMetricsRef.current[pane];
       metrics.contentHeight = Math.max(0, contentSize.height);
+      if (typeof event.nativeEvent.contentInset?.bottom === "number") {
+        metrics.contentInsetBottom = Math.max(0, event.nativeEvent.contentInset.bottom);
+      }
       metrics.viewportHeight = Math.max(0, layoutMeasurement.height);
       const maxY = getScrollableHeight(metrics);
       const distanceFromBottom = Math.max(0, maxY - offsetY);
@@ -545,6 +566,10 @@ export default function ChatScreen() {
       chat: false,
       terminal: false,
     };
+    initialContentInsetAppliedRef.current = {
+      chat: false,
+      terminal: false,
+    };
     requestAnimationFrame(() => {
       applyPaneScrollPosition("chat");
       applyPaneScrollPosition("terminal");
@@ -556,7 +581,7 @@ export default function ChatScreen() {
       if (scrollMetricsRef.current.chat.pinnedToBottom) applyPaneScrollPosition("chat");
       if (scrollMetricsRef.current.terminal.pinnedToBottom) applyPaneScrollPosition("terminal");
     });
-  }, [allMessages.length, applyPaneScrollPosition, composerBottomSpacer, output]);
+  }, [allMessages.length, applyPaneScrollPosition, output]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -795,50 +820,17 @@ export default function ChatScreen() {
     else router.replace(parentViewHrefForPath(pathname, projectPath));
   }
 
-  const terminalPane = (
-    <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
-      <ScrollView
-        ref={terminalScrollRef}
-        className="flex-1 px-4 py-3"
-        automaticallyAdjustKeyboardInsets={usesNativeAccessoryComposer}
-        contentContainerStyle={detachedComposer ? { paddingBottom: composerBottomSpacer } : null}
-        horizontal={false}
-        onContentSizeChange={(_, contentHeight) =>
-          handleScrollContentSizeChange("terminal", contentHeight)
-        }
-        onLayout={(event) => handleScrollLayout("terminal", event)}
-        onScroll={(event) => handleScroll("terminal", event)}
-        scrollEventThrottle={16}
-      >
-        <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
-        {terminalLines.map((spans, index) => (
-          // One Text per row, spans nested inside it: RN only composes styles
-          // through nesting, and a row is also the unit the pane wraps at.
-          <Text
-            key={`row-${index}`}
-            className="text-secondary-foreground font-mono"
-            style={TERMINAL_TEXT_STYLE}
-          >
-            {spans.length === 0
-              ? " "
-              : spans.map((span, spanIndex) => (
-                  <RNText key={`span-${spanIndex}`} style={[TERMINAL_TEXT_STYLE, span.style]}>
-                    {span.text}
-                  </RNText>
-                ))}
-          </Text>
-        ))}
-      </ScrollView>
-    </View>
-  );
-
   const composerFooter = (
     <View
-      onLayout={(event: LayoutChangeEvent) =>
-        setComposerFooterHeight(Math.ceil(event.nativeEvent.layout.height))
-      }
+      onLayout={(event: LayoutChangeEvent) => {
+        const height = Math.ceil(event.nativeEvent.layout.height);
+        composerHeightShared.value = height;
+      }}
       className="border-t border-border bg-background px-3 py-3"
-      style={{ flexShrink: 0, paddingBottom: overlaysComposer ? bottomInset : undefined }}
+      style={{
+        flexShrink: 0,
+        paddingBottom: usesNativeKeyboardController ? bottomInset : undefined,
+      }}
     >
       {pendingAttachments.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
@@ -949,6 +941,51 @@ export default function ChatScreen() {
       </ComposerFocusShell>
     </View>
   );
+
+  const terminalPane = (
+    <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
+      <KeyboardManagedScrollView
+        composerHeightShared={composerHeightShared}
+        pane="terminal"
+        scrollViewRef={terminalScrollRef}
+        showLiveOutputLabel
+        usesNativeKeyboardController={usesNativeKeyboardController}
+        onContentInsetChange={handleScrollContentInsetChange}
+        onContentSizeChange={handleScrollContentSizeChange}
+        onLayout={handleScrollLayout}
+        onScroll={handleScroll}
+      >
+        <TerminalContent terminalLines={terminalLines} />
+      </KeyboardManagedScrollView>
+    </View>
+  );
+
+  const nativeStickyComposer = (
+    <KeyboardStickyView style={{ flexShrink: 0 }}>{composerFooter}</KeyboardStickyView>
+  );
+
+  const chatScroller = serviceEndpoint ? (
+    <KeyboardManagedScrollView
+      composerHeightShared={composerHeightShared}
+      contentContainerStyle={{ flexGrow: 1 }}
+      pane="chat"
+      scrollViewRef={scrollRef}
+      usesNativeKeyboardController={usesNativeKeyboardController}
+      onContentInsetChange={handleScrollContentInsetChange}
+      onContentSizeChange={handleScrollContentSizeChange}
+      onLayout={handleScrollLayout}
+      onScroll={handleScroll}
+    >
+      <TranscriptContent
+        dividerWidth={chatDividerWidth}
+        messages={allMessages}
+        restoreBlockedReason={restoreBlockedReason}
+        sendError={sendError}
+        serviceEndpoint={serviceEndpoint}
+        visibleLastError={visibleLastError}
+      />
+    </KeyboardManagedScrollView>
+  ) : null;
 
   return (
     <View style={{ flex: 1 }}>
@@ -1280,7 +1317,7 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-              <View className="flex-1" style={overlaysComposer ? { position: "relative" } : null}>
+              <View className="flex-1">
                 <View
                   className="flex-1"
                   style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
@@ -1297,51 +1334,11 @@ export default function ChatScreen() {
                         setChatPaneWidth(event.nativeEvent.layout.width)
                       }
                     >
-                      <ScrollView
-                        ref={scrollRef}
-                        className="flex-1 px-4 py-2"
-                        automaticallyAdjustKeyboardInsets={usesNativeAccessoryComposer}
-                        contentContainerStyle={{
-                          flexGrow: 1,
-                          paddingBottom: composerBottomSpacer,
-                        }}
-                        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
-                        keyboardShouldPersistTaps="handled"
-                        onContentSizeChange={(_, contentHeight) =>
-                          handleScrollContentSizeChange("chat", contentHeight)
-                        }
-                        onLayout={(event) => handleScrollLayout("chat", event)}
-                        onScroll={(event) => handleScroll("chat", event)}
-                        scrollEventThrottle={16}
-                      >
-                        <TranscriptContent
-                          dividerWidth={chatDividerWidth}
-                          messages={allMessages}
-                          restoreBlockedReason={restoreBlockedReason}
-                          sendError={sendError}
-                          serviceEndpoint={serviceEndpoint}
-                          visibleLastError={visibleLastError}
-                        />
-                      </ScrollView>
+                      {chatScroller}
                     </View>
                   )}
                 </View>
-                {usesNativeAccessoryComposer ? (
-                  <InputAccessoryView>{composerFooter}</InputAccessoryView>
-                ) : overlaysComposer ? (
-                  <View
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                    }}
-                  >
-                    {composerFooter}
-                  </View>
-                ) : (
-                  composerFooter
-                )}
+                {usesNativeKeyboardController ? nativeStickyComposer : composerFooter}
               </View>
             )}
           </View>
@@ -1376,6 +1373,100 @@ function ComposerFocusShell({
     </View>
   );
 }
+
+function KeyboardManagedScrollView({
+  children,
+  composerHeightShared,
+  contentContainerStyle,
+  onContentInsetChange,
+  onContentSizeChange,
+  onLayout,
+  onScroll,
+  pane,
+  scrollViewRef,
+  showLiveOutputLabel = false,
+  usesNativeKeyboardController,
+}: {
+  children: React.ReactNode;
+  composerHeightShared: SharedValue<number>;
+  contentContainerStyle?: React.ComponentProps<typeof ScrollView>["contentContainerStyle"];
+  onContentInsetChange: (pane: ScrollPaneKey, insets: { bottom: number }) => void;
+  onContentSizeChange: (pane: ScrollPaneKey, contentHeight: number) => void;
+  onLayout: (pane: ScrollPaneKey, event: LayoutChangeEvent) => void;
+  onScroll: (pane: ScrollPaneKey, event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  pane: ScrollPaneKey;
+  scrollViewRef: React.RefObject<ScrollToHandle | null>;
+  showLiveOutputLabel?: boolean;
+  usesNativeKeyboardController: boolean;
+}) {
+  const content = (
+    <>
+      {showLiveOutputLabel ? (
+        <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
+      ) : null}
+      {children}
+    </>
+  );
+  const commonProps = {
+    className: showLiveOutputLabel ? "flex-1 px-4 py-3" : "flex-1 px-4 py-2",
+    contentContainerStyle,
+    horizontal: false,
+    keyboardDismissMode: Platform.OS === "ios" ? ("interactive" as const) : ("none" as const),
+    keyboardShouldPersistTaps: "handled" as const,
+    onContentSizeChange: (_: number, contentHeight: number) =>
+      onContentSizeChange(pane, contentHeight),
+    onLayout: (event: LayoutChangeEvent) => onLayout(pane, event),
+    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => onScroll(pane, event),
+    scrollEventThrottle: 16,
+  };
+
+  if (usesNativeKeyboardController) {
+    return (
+      <KeyboardChatScrollView
+        ref={scrollViewRef as React.RefObject<React.ElementRef<typeof KeyboardChatScrollView>>}
+        {...commonProps}
+        applyWorkaroundForContentInsetHitTestBug
+        extraContentPadding={composerHeightShared}
+        keyboardLiftBehavior="whenAtEnd"
+        onContentInsetChange={(insets) => onContentInsetChange(pane, insets)}
+      >
+        {content}
+      </KeyboardChatScrollView>
+    );
+  }
+
+  return (
+    <ScrollView ref={scrollViewRef as React.RefObject<ScrollView>} {...commonProps}>
+      {content}
+    </ScrollView>
+  );
+}
+
+const TerminalContent = React.memo(function TerminalContent({
+  terminalLines,
+}: {
+  terminalLines: ReturnType<typeof formatTerminalOutputForDisplay>;
+}) {
+  return (
+    <>
+      {terminalLines.map((spans, index) => (
+        <Text
+          key={`row-${index}`}
+          className="text-secondary-foreground font-mono"
+          style={TERMINAL_TEXT_STYLE}
+        >
+          {spans.length === 0
+            ? " "
+            : spans.map((span, spanIndex) => (
+                <RNText key={`span-${spanIndex}`} style={[TERMINAL_TEXT_STYLE, span.style]}>
+                  {span.text}
+                </RNText>
+              ))}
+        </Text>
+      ))}
+    </>
+  );
+});
 
 const TranscriptContent = React.memo(function TranscriptContent({
   messages,
