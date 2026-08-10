@@ -86,6 +86,10 @@ const launchContractUsage = [
     allowedFiles: new Set(["src/cli-launcher.ts", "src/dashboard/command-spec.ts", "src/cli-launcher.test.ts"]),
   },
   {
+    name: "getAimuxProjectServiceLaunchCommand",
+    allowedFiles: new Set(["src/cli-launcher.ts", "src/cli-launcher.test.ts"]),
+  },
+  {
     name: "getAimuxCurrentCliIdentity",
     allowedFiles: new Set(["src/cli-launcher.ts", "src/runtime-coherence.ts", "src/cli-launcher.test.ts"]),
   },

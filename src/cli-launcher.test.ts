@@ -6,6 +6,7 @@ import {
   getAimuxCurrentCliIdentity,
   getAimuxDaemonLaunchCommand,
   getAimuxDashboardLaunchCommand,
+  getAimuxProjectServiceLaunchCommand,
 } from "./cli-launcher.js";
 
 describe("aimux launch contracts", () => {
@@ -56,6 +57,18 @@ describe("aimux launch contracts", () => {
     expect(launch).toMatchObject({
       command: shim,
       args: ["--tmux-dashboard-internal"],
+      source: "stable-shim",
+    });
+  });
+
+  it("uses a dedicated project service launch contract", () => {
+    const launch = getAimuxProjectServiceLaunchCommand("project-1", "/repo/alpha", {
+      env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(dir, "native") },
+      currentArgvEntry: nativeEntry,
+    });
+    expect(launch).toMatchObject({
+      command: shim,
+      args: ["__project-service-internal", "--project-id", "project-1", "--project-root", "/repo/alpha"],
       source: "stable-shim",
     });
   });

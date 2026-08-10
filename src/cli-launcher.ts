@@ -98,6 +98,17 @@ export function getAimuxDashboardLaunchCommand(
   return resolveAimuxCliLaunchCommand(["--tmux-dashboard-internal"], options);
 }
 
+export function getAimuxProjectServiceLaunchCommand(
+  projectId: string,
+  projectRoot: string,
+  options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
+): AimuxCliLaunchCommand {
+  return resolveAimuxCliLaunchCommand(
+    ["__project-service-internal", "--project-id", projectId, "--project-root", projectRoot],
+    options,
+  );
+}
+
 export function getAimuxCurrentCliIdentity(
   options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
 ): AimuxCliLaunchCommand {
