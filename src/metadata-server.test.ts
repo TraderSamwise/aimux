@@ -5911,11 +5911,11 @@ describe("MetadataServer threads API", () => {
     expect(listed.unreadCount).toBe(1);
     expect(listed.notifications[0]).toMatchObject({
       sessionId: "claude-1",
-      title: expect.stringContaining("[Needs input]"),
-      body: "Agent is waiting for input: claude-1 needs input - Waiting — Agent needs input",
+      body: "Needs input: claude-1 - Waiting — Agent needs input",
       categoryLabel: "Needs input",
       reasonLabel: "Agent is waiting for input",
     });
+    expect(listed.notifications[0]?.title).not.toContain("[Needs input]");
 
     const clearRes = await fetch(`${base}/notifications/clear`, {
       method: "POST",
@@ -6024,12 +6024,12 @@ describe("MetadataServer threads API", () => {
     expect(listRes.ok).toBe(true);
     expect(listed.notifications[0]).toMatchObject({
       sessionId: "claude-hb01nv",
-      title: expect.stringContaining("[Needs input]"),
-      body: "Agent is waiting for input: bugs @ Main Checkout needs input - Claude is waiting for your input",
+      body: "Needs input: bugs @ Main Checkout - Claude is waiting for your input",
       worktreeName: "Main Checkout",
       categoryLabel: "Needs input",
       reasonLabel: "Agent is waiting for input",
     });
+    expect(listed.notifications[0]?.title).not.toContain("[Needs input]");
   });
 
   it("uses hook cwd to label notification project and worktree", async () => {
@@ -6081,8 +6081,8 @@ describe("MetadataServer threads API", () => {
     };
     expect(listRes.ok).toBe(true);
     expect(listed.notifications[0]).toMatchObject({
-      title: `[Needs input] ${basename(repoRoot)} / custom-modules-mcp (feat/module-sandbox-cutover)`,
-      body: "Agent is waiting for input: claude @ custom-modules-mcp needs input - Claude is waiting for your input",
+      title: `${basename(repoRoot)} / custom-modules-mcp (feat/module-sandbox-cutover)`,
+      body: "Needs input: claude @ custom-modules-mcp - Claude is waiting for your input",
       worktreePath,
       worktreeName: "custom-modules-mcp",
       branch: "feat/module-sandbox-cutover",

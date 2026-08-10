@@ -129,6 +129,16 @@ function alertMessageBody(reason: string, subjectTitle: string, message: string)
   return `${parts} - ${detail}`;
 }
 
+function alertDisplayTitle(
+  input: AlertPublishInput,
+  context: SessionAlertDisplayContext | undefined,
+  categoryLabel: string,
+): string {
+  const locationTitle = alertLocationTitle(input, context);
+  if (input.kind === "needs_input") return locationTitle;
+  return `[${categoryLabel}] ${locationTitle}`;
+}
+
 export function sessionAlertSubject(
   sessionId: string | undefined,
   context: SessionAlertDisplayContext | undefined,
@@ -186,11 +196,14 @@ export function contextualizeAlertInput(
   const categoryLabel = input.categoryLabel?.trim() || alertCategoryLabel(input);
   const reasonLabel = input.reasonLabel?.trim() || alertReasonLabel(input);
   const subjectTitle = sessionAlertTitle(input.kind, input.sessionId, input.title, context);
+  const bodyReason = input.kind === "needs_input" ? categoryLabel : reasonLabel;
+  const bodySubject =
+    input.kind === "needs_input" ? sessionAlertSubject(input.sessionId, context) || subjectTitle : subjectTitle;
   const worktreeName = input.worktreeName?.trim() || (context ? displayWorktreeLabel(context) : undefined);
   return {
     ...input,
-    title: `[${categoryLabel}] ${alertLocationTitle(input, context)}`,
-    message: alertMessageBody(reasonLabel, subjectTitle, input.message),
+    title: alertDisplayTitle(input, context, categoryLabel),
+    message: alertMessageBody(bodyReason, bodySubject, input.message),
     projectName: project.projectName,
     projectRoot: project.projectRoot,
     worktreePath: input.worktreePath ?? context?.worktreePath,

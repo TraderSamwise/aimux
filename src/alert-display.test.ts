@@ -11,6 +11,27 @@ describe("alert display context", () => {
     ).toBe("bugs @ cdc-patches needs input");
   });
 
+  it("keeps needs-input status out of notification titles", () => {
+    expect(
+      contextualizeAlertInput(
+        {
+          kind: "needs_input",
+          sessionId: "claude-hb01nv",
+          title: "Claude Code",
+          message: "Claude is waiting for your input",
+          projectName: "tealstreet-next",
+          projectRoot: "/repo",
+        },
+        { label: "claude", worktreeName: "Main Checkout", branch: "master" },
+      ),
+    ).toMatchObject({
+      title: "tealstreet-next / Main Checkout (master)",
+      message: "Needs input: claude @ Main Checkout - Claude is waiting for your input",
+      categoryLabel: "Needs input",
+      reasonLabel: "Agent is waiting for input",
+    });
+  });
+
   it("replaces generic service completion titles with contextual titles", () => {
     expect(
       contextualizeAlertInput(

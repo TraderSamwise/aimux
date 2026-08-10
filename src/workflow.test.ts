@@ -62,8 +62,8 @@ describe("workflow model", () => {
 
   it("excludes notification-tagged threads from coordination thread entries", async () => {
     addNotification({
-      title: "[Needs input] claude @ beautify-tui",
-      body: "Claude is waiting for your input",
+      title: "aimux / beautify-tui",
+      body: "Needs input: claude @ beautify-tui - Claude is waiting for your input",
       sessionId: "claude-x",
       kind: "needs_input",
     });
