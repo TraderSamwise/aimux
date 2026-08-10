@@ -825,7 +825,10 @@ describe("renderDashboardFrame worktree progress", () => {
             status: "running",
             active: true,
             previewSnapshot: {
-              output: "\x1b]0;bad title\x07first line\nsecond\x1b[2J line\nthird line",
+              output: `\x1b]0;bad title\x07${Array.from(
+                { length: 16 },
+                (_, index) => `preview ${String(index + 1).padStart(2, "0")}`,
+              ).join("\n")}\x1b[2J`,
               capturedAt: "2026-08-10T00:00:00.000Z",
               source: "tap",
               windowId: "@1",
@@ -841,10 +844,15 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(plain).toContain("DETAILS");
     expect(plain).toContain("PREVIEW");
     expect(plain).toContain("Agent: codex (codex-1)");
-    expect(plain).toContain("second line");
-    expect(plain).toContain("third line");
+    expect(plain).toContain("preview 06");
+    expect(plain).toContain("preview 16");
     expect(frame).not.toContain("\x1b]0;bad title");
     expect((frame.match(/\x1b\[2J/g) ?? []).length).toBe(1);
+
+    const lines = plain.split("\r\n");
+    const previewTopIndex = lines.findIndex((line) => line.includes("PREVIEW"));
+    expect(previewTopIndex).toBeGreaterThan(0);
+    expect(lines[previewTopIndex - 1]).toContain("╰");
   });
 
   it("renders pending teammate labels even when semantic state is stale", () => {

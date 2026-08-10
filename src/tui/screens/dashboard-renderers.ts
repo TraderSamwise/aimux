@@ -575,11 +575,10 @@ export function renderDashboardFrame(
     const finishWithPreview = (detailsRows: string[], previewRows: string[]): string[] => {
       if (previewRows.length === 0 || height < 10) return finish("DETAILS", "info", detailsRows);
       const previewHeight = Math.min(Math.max(5, previewRows.length + 2), Math.max(5, Math.floor(height * 0.45)));
-      const detailsHeight = Math.max(3, height - previewHeight - 1);
+      const detailsHeight = Math.min(Math.max(3, detailsRows.length + 2), Math.max(3, height - previewHeight));
       return [
         ...renderPanelCard("DETAILS", "info", detailsRows, detailsHeight),
-        "",
-        ...renderPanelCard("PREVIEW", "muted", previewRows, height - detailsHeight - 1),
+        ...renderPanelCard("PREVIEW", "muted", previewRows, height - detailsHeight),
       ].slice(0, height);
     };
     const selectedSession = state.selectedSessionId
@@ -819,7 +818,7 @@ export function renderDashboardFrame(
         lines.push(...wrapKeyValue("-", `${state.selectedTeammates.length - 5} more`, width));
       }
     }
-    return finishWithPreview(lines, previewSnapshotRows(selected, width, Math.max(0, Math.floor(height * 0.45) - 2)));
+    return finishWithPreview(lines, previewSnapshotRows(selected, width, Math.max(0, height - 2)));
   };
 
   const devBadge = state.isDevRuntime ? "\x1b[1;30;43m DEV \x1b[0m " : "";
