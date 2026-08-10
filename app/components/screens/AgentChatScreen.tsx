@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import Animated, { runOnJS, useAnimatedReaction, useAnimatedStyle } from "react-native-reanimated";
 import type { LayoutChangeEvent } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -60,6 +61,7 @@ import { worktreeIdentity } from "@/lib/worktree-tone";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
+import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import {
   activityFamily,
   activityTextFamily,
@@ -87,6 +89,7 @@ const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 const COMPOSER_INPUT_LINE_HEIGHT = 16;
 const COMPOSER_INPUT_MIN_HEIGHT = 24;
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 3;
+const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
@@ -121,6 +124,8 @@ export default function ChatScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const { width, height: windowHeight } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
+  const bottomInset = resolveChromeBottomInset(safeAreaInsets.bottom);
   const [token, setToken] = useState<string | null>(null);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [managePanelOpen, setManagePanelOpen] = useState(false);
@@ -134,6 +139,7 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
+  const [composerFooterHeight, setComposerFooterHeight] = useState(0);
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -146,9 +152,9 @@ export default function ChatScreen() {
   const canAnimateActiveScrollRef = useRef(false);
   const enableScrollAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardInset = useKeyboardInset();
-  // The composer rides the keyboard on the UI thread, so no re-render per frame and
-  // nothing else in the tree animates alongside it.
-  const keyboardStyle = useAnimatedStyle(() => ({ paddingBottom: keyboardInset.value }));
+  const composerLiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -keyboardInset.value }],
+  }));
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
     : null;
@@ -338,6 +344,10 @@ export default function ChatScreen() {
   }, [output, showTerminalSplit]);
 
   const canShowTerminal = Boolean(output);
+  const overlaysComposer = Platform.OS !== "web";
+  const composerBottomSpacer = overlaysComposer
+    ? (composerFooterHeight || COMPOSER_FOOTER_ESTIMATED_HEIGHT) + 8
+    : 0;
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -626,7 +636,13 @@ export default function ChatScreen() {
 
   const terminalPane = (
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
-      <ScrollView ref={terminalScrollRef} className="flex-1 px-4 py-3" horizontal={false}>
+      <ScrollView
+        ref={terminalScrollRef}
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        className="flex-1 px-4 py-3"
+        contentContainerStyle={overlaysComposer ? { paddingBottom: composerBottomSpacer } : null}
+        horizontal={false}
+      >
         <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
         {terminalLines.map((spans, index) => (
           // One Text per row, spans nested inside it: RN only composes styles
@@ -645,9 +661,121 @@ export default function ChatScreen() {
     </View>
   );
 
+  const composerFooter = (
+    <View
+      className="border-t border-border bg-background px-3 py-3"
+      style={{ flexShrink: 0, paddingBottom: overlaysComposer ? bottomInset : undefined }}
+    >
+      {pendingAttachments.length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+          <View className="flex-row gap-2">
+            {pendingAttachments.map((attachment) => (
+              <View
+                key={attachment.id}
+                className="w-24 rounded-md border border-border bg-card p-1"
+              >
+                <Image
+                  source={{ uri: attachment.previewUri }}
+                  className="h-14 w-full rounded"
+                  resizeMode="cover"
+                />
+                <Text className="mt-1 text-[10px] text-muted-foreground" numberOfLines={1}>
+                  {attachment.filename}
+                </Text>
+                <Pressable
+                  onPress={() => removePendingAttachment(attachment.id)}
+                  accessibilityLabel={`Remove ${attachment.filename}`}
+                  className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
+                >
+                  <X size={12} color="#a1a1aa" />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      ) : null}
+      {/*
+      One card holding the message and the controls that act on it, so the
+      composer reads as a single object rather than a field with things parked
+      either side of it. The controls sit under the text because that is where
+      the width is: flanking them costs a third of a phone screen, and the text
+      is the part that needs it.
+    */}
+      <ComposerFocusShell
+        onLayout={(event: LayoutChangeEvent) => setComposerWidth(event.nativeEvent.layout.width)}
+      >
+        {({ onBlur, onFocus }) => (
+          <>
+            <Input
+              nativeID={composerFieldId}
+              accessibilityLabel="Message the agent"
+              onFocus={onFocus}
+              onBlur={onBlur}
+              value={draft}
+              onChangeText={setDraft}
+              onKeyPress={handleComposerKeyPress}
+              onContentSizeChange={handleComposerContentSizeChange}
+              placeholder="Ask the agent…"
+              multiline
+              // One row at rest. `multiline` alone renders a two-row textarea
+              // on the web, so the card opens a line taller than it needs.
+              numberOfLines={1}
+              editable={!sendBusy}
+              // The card draws the border and the ground now, so the field
+              // itself is only text.
+              scrollEnabled={composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT}
+              className="rounded-none border-0 bg-transparent px-1 py-0 text-sm"
+              style={{ height: composerInputHeight }}
+              textAlignVertical="top"
+            />
+            <View className="flex-row items-center gap-2">
+              <ComposerControl
+                wide={wideControls}
+                label="Attach"
+                accessibilityLabel="Attach an image"
+                icon={<Plus size={17} color={CONTROL_INK} />}
+                disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+                onPress={handleAttachImage}
+              />
+              <View className="flex-1 px-1">
+                {activityLabel ? (
+                  <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
+                ) : null}
+              </View>
+              {/*
+              Always offered, never revealed only while we think the agent is
+              busy. Interrupt is a single ESC, which an idle tool ignores, so
+              gating it on that guess only makes it unavailable exactly when
+              the guess is wrong.
+            */}
+              <ComposerControl
+                wide={wideControls}
+                label="Stop"
+                accessibilityLabel="Interrupt the agent"
+                // Filled, because a stop is a stop and an outline reads as
+                // a checkbox at this size.
+                icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                disabled={interruptBusy}
+                onPress={handleInterrupt}
+              />
+              <ComposerControl
+                wide={wideControls}
+                brand
+                label="Send"
+                accessibilityLabel="Send the message"
+                icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+                disabled={!canSendMessage}
+                onPress={handleSendMessage}
+              />
+            </View>
+          </>
+        )}
+      </ComposerFocusShell>
+    </View>
+  );
+
   return (
-    // Animated.View carries plain styles only; NativeWind does not interop it.
-    <Animated.View style={[{ flex: 1 }, keyboardStyle]}>
+    <View style={{ flex: 1 }}>
       <View className="flex-1 bg-background" style={{ flex: 1 }}>
         <View
           className="flex-1"
@@ -976,7 +1104,7 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-              <>
+              <View className="flex-1" style={overlaysComposer ? { position: "relative" } : null}>
                 <View
                   className="flex-1"
                   style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
@@ -990,8 +1118,12 @@ export default function ChatScreen() {
                     <View className="flex-1">
                       <ScrollView
                         ref={scrollRef}
+                        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
                         className="flex-1 px-4 py-2"
-                        contentContainerStyle={{ flexGrow: 1 }}
+                        contentContainerStyle={{
+                          flexGrow: 1,
+                          paddingBottom: composerBottomSpacer,
+                        }}
                         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
                         keyboardShouldPersistTaps="handled"
                       >
@@ -1006,129 +1138,32 @@ export default function ChatScreen() {
                     </View>
                   )}
                 </View>
-                <View
-                  className="border-t border-border bg-background px-3 py-3"
-                  style={{ flexShrink: 0 }}
-                >
-                  {pendingAttachments.length > 0 ? (
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
-                      <View className="flex-row gap-2">
-                        {pendingAttachments.map((attachment) => (
-                          <View
-                            key={attachment.id}
-                            className="w-24 rounded-md border border-border bg-card p-1"
-                          >
-                            <Image
-                              source={{ uri: attachment.previewUri }}
-                              className="h-14 w-full rounded"
-                              resizeMode="cover"
-                            />
-                            <Text
-                              className="mt-1 text-[10px] text-muted-foreground"
-                              numberOfLines={1}
-                            >
-                              {attachment.filename}
-                            </Text>
-                            <Pressable
-                              onPress={() => removePendingAttachment(attachment.id)}
-                              accessibilityLabel={`Remove ${attachment.filename}`}
-                              className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
-                            >
-                              <X size={12} color="#a1a1aa" />
-                            </Pressable>
-                          </View>
-                        ))}
-                      </View>
-                    </ScrollView>
-                  ) : null}
-                  {/*
-                  One card holding the message and the controls that act on it, so
-                  the composer reads as a single object rather than a field with
-                  things parked either side of it. The controls sit under the text
-                  because that is where the width is: flanking them costs a third
-                  of a phone screen, and the text is the part that needs it.
-                */}
-                  <ComposerFocusShell
+                {overlaysComposer ? (
+                  <Animated.View
                     onLayout={(event: LayoutChangeEvent) =>
-                      setComposerWidth(event.nativeEvent.layout.width)
+                      setComposerFooterHeight(Math.ceil(event.nativeEvent.layout.height))
                     }
+                    style={[
+                      {
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                      },
+                      composerLiftStyle,
+                    ]}
                   >
-                    {({ onBlur, onFocus }) => (
-                      <>
-                        <Input
-                          nativeID={composerFieldId}
-                          accessibilityLabel="Message the agent"
-                          onFocus={onFocus}
-                          onBlur={onBlur}
-                          value={draft}
-                          onChangeText={setDraft}
-                          onKeyPress={handleComposerKeyPress}
-                          onContentSizeChange={handleComposerContentSizeChange}
-                          placeholder="Ask the agent…"
-                          multiline
-                          // One row at rest. `multiline` alone renders a two-row textarea
-                          // on the web, so the card opens a line taller than it needs.
-                          numberOfLines={1}
-                          editable={!sendBusy}
-                          // The card draws the border and the ground now, so the field
-                          // itself is only text.
-                          scrollEnabled={composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT}
-                          className="rounded-none border-0 bg-transparent px-1 py-0 text-sm"
-                          style={{ height: composerInputHeight }}
-                          textAlignVertical="top"
-                        />
-                        <View className="flex-row items-center gap-2">
-                          <ComposerControl
-                            wide={wideControls}
-                            label="Attach"
-                            accessibilityLabel="Attach an image"
-                            icon={<Plus size={17} color={CONTROL_INK} />}
-                            disabled={
-                              sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-                            }
-                            onPress={handleAttachImage}
-                          />
-                          <View className="flex-1 px-1">
-                            {activityLabel ? (
-                              <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
-                            ) : null}
-                          </View>
-                          {/*
-                          Always offered, never revealed only while we think the agent
-                          is busy. Interrupt is a single ESC, which an idle tool
-                          ignores, so gating it on that guess only makes it
-                          unavailable exactly when the guess is wrong.
-                        */}
-                          <ComposerControl
-                            wide={wideControls}
-                            label="Stop"
-                            accessibilityLabel="Interrupt the agent"
-                            // Filled, because a stop is a stop and an outline reads as
-                            // a checkbox at this size.
-                            icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                            disabled={interruptBusy}
-                            onPress={handleInterrupt}
-                          />
-                          <ComposerControl
-                            wide={wideControls}
-                            brand
-                            label="Send"
-                            accessibilityLabel="Send the message"
-                            icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
-                            disabled={!canSendMessage}
-                            onPress={handleSendMessage}
-                          />
-                        </View>
-                      </>
-                    )}
-                  </ComposerFocusShell>
-                </View>
-              </>
+                    {composerFooter}
+                  </Animated.View>
+                ) : (
+                  composerFooter
+                )}
+              </View>
             )}
           </View>
         </View>
       </View>
-    </Animated.View>
+    </View>
   );
 }
 
