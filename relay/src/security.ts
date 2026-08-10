@@ -84,6 +84,7 @@ export interface SecurityPushTokenRecord {
   deviceId: string;
   token: string;
   platform: "ios" | "android" | "web" | "unknown";
+  agentAlerts?: boolean;
   createdAt: string;
   updatedAt: string;
 }

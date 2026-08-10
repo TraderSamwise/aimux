@@ -1,9 +1,5 @@
 import type { Env } from "./types.js";
-import type {
-  SecurityDeviceRecord,
-  SecurityEventRecord,
-  SecurityPushTokenRecord,
-} from "./security.js";
+import type { SecurityDeviceRecord, SecurityEventRecord, SecurityPushTokenRecord } from "./security.js";
 
 interface DeliveryInput {
   env: Env;
@@ -40,6 +36,7 @@ export async function deliverNotificationPush(input: NotificationPushInput): Pro
   const messages = input.pushTokens
     .filter((record) => record.userId === input.userId)
     .filter((record) => record.platform === "ios" || record.platform === "android")
+    .filter((record) => record.agentAlerts !== false)
     .map((record) => ({
       to: record.token,
       title: input.title,
@@ -163,9 +160,5 @@ function securityEmailText(event: SecurityEventRecord, emergencyUrl: string | un
 }
 
 function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

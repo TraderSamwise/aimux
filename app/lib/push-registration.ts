@@ -4,16 +4,33 @@ import * as Notifications from "expo-notifications";
 import { getClientDeviceInfo } from "@/lib/client-device";
 import { buildSecurityPushRegistrationUrl } from "@/lib/push-registration-url";
 
+export type PushRegistrationResult =
+  | { status: "unsupported" }
+  | { status: "permission_denied"; permissionStatus: Notifications.PermissionStatus }
+  | { status: "missing_auth" }
+  | { status: "registered"; deviceId: string; token: string };
+
+export interface PushRegistrationOptions {
+  ownerUserId?: string;
+  shareId?: string;
+  requestPermission?: boolean;
+  agentAlerts?: boolean;
+}
+
 export async function registerSecurityPushToken(
   relayUrl: string,
   getToken: () => Promise<string | null>,
-  options: { ownerUserId?: string; shareId?: string } = {},
-): Promise<void> {
-  if (Platform.OS === "web") return;
+  options: PushRegistrationOptions = {},
+): Promise<PushRegistrationResult> {
+  if (Platform.OS === "web") return { status: "unsupported" };
   const permission = await Notifications.getPermissionsAsync();
   const finalPermission =
-    permission.status === "granted" ? permission : await Notifications.requestPermissionsAsync();
-  if (finalPermission.status !== "granted") return;
+    permission.status === "granted" || !options.requestPermission
+      ? permission
+      : await Notifications.requestPermissionsAsync();
+  if (finalPermission.status !== "granted") {
+    return { status: "permission_denied", permissionStatus: finalPermission.status };
+  }
 
   const projectId =
     Constants.easConfig?.projectId ??
@@ -29,7 +46,7 @@ export async function registerSecurityPushToken(
   );
   const device = await getClientDeviceInfo();
   const token = await getToken();
-  if (!token) return;
+  if (!token) return { status: "missing_auth" };
 
   const url = buildSecurityPushRegistrationUrl(relayUrl, options);
   const res = await fetch(url.toString(), {
@@ -42,9 +59,11 @@ export async function registerSecurityPushToken(
       deviceId: device.deviceId,
       token: expoToken.data,
       platform: device.kind,
+      agentAlerts: options.agentAlerts ?? true,
     }),
   });
   if (!res.ok) {
     throw new Error(`Push token registration failed (${res.status})`);
   }
+  return { status: "registered", deviceId: device.deviceId, token: expoToken.data };
 }

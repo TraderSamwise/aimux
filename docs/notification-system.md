@@ -80,20 +80,21 @@ The app must not request notification permission on load.
 
 ## Mobile Push Path
 
-Mobile push requires a backend delivery path and should not be implemented as a
-local-only client effect.
+Mobile push uses a backend delivery path, not a local-only client effect.
 
-Planned flow:
+Flow:
 
-1. Native app requests permission with `expo-notifications`.
+1. Native app requests permission with `expo-notifications` from Settings.
 2. Native app registers an Expo push token with the relay, scoped to the Clerk
-   user and device.
-3. Daemon emits canonical notification records over the relay connection.
-4. Relay applies user/device policy and sends push notifications through Expo.
-5. App opens notification targets by project/session when tapped.
+   user and device. Startup re-registers silently when permission is already
+   granted, or when push notifications are enabled in app settings.
+3. Project services emit canonical notification records and desktop alerts.
+4. The daemon forwards alert payloads over its relay connection.
+5. Relay applies user/device policy and sends push notifications through Expo.
+6. App opens notification targets by project/session when tapped.
 
-The relay should own remote delivery because mobile devices may be offline or
-outside the daemon's local network.
+The relay owns remote delivery because mobile devices may be offline or outside
+the daemon's local network.
 
 Security push delivery follows the same relay-owned native push path, but uses
 the security-device registry rather than project notification records.

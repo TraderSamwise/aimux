@@ -78,6 +78,30 @@ describe("deliverNotificationPush", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("skips owner mobile tokens that muted agent alerts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await deliverNotificationPush({
+      userId: "user_owner",
+      title: "Agent done",
+      body: "finished",
+      pushTokens: [
+        token({
+          deviceId: "muted-ios",
+          platform: "ios",
+          token: "ExponentPushToken[muted-ios]",
+          agentAlerts: false,
+        }),
+        token({ deviceId: "live-ios", platform: "ios", token: "ExponentPushToken[live-ios]" }),
+      ],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{ to: string }>;
+    expect(body.map((message) => message.to)).toEqual(["ExponentPushToken[live-ios]"]);
+  });
+
   it("throws when Expo returns a non-2xx response", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("rate limited", { status: 429 }));
     vi.stubGlobal("fetch", fetchMock);

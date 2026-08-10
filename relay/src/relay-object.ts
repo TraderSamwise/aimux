@@ -575,7 +575,12 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   private async registerPushToken(request: Request): Promise<Response> {
-    let body: { deviceId?: string; token?: string; platform?: "ios" | "android" | "web" | "unknown" };
+    let body: {
+      deviceId?: string;
+      token?: string;
+      platform?: "ios" | "android" | "web" | "unknown";
+      agentAlerts?: boolean;
+    };
     try {
       body = (await request.json()) as typeof body;
     } catch {
@@ -615,6 +620,7 @@ export class RelayObject extends DurableObject<Env> {
       deviceId,
       token,
       platform: body.platform ?? "unknown",
+      agentAlerts: body.agentAlerts !== false,
       createdAt,
       updatedAt: now,
     };

@@ -175,13 +175,6 @@ export default function MainLayout() {
     });
     setApiRelay(transport);
     void transport.connect();
-    void registerSecurityPushToken(
-      relayUrl,
-      () => getTokenRef.current(),
-      activeShareRelayOptions,
-    ).catch((err) => {
-      console.warn("security push registration failed:", err);
-    });
     return () => {
       unsub();
       unsubSecurity();
@@ -190,6 +183,29 @@ export default function MainLayout() {
       store.set(relayStatusAtom, "disconnected");
     };
   }, [activeShareOwnerUserId, activeShareRelayKey, activeShareShareId, relayUrl, store]);
+
+  useEffect(() => {
+    if (!relayUrl || relayStatus !== "connected") return;
+    const activeShareRelayOptions =
+      activeShareOwnerUserId && activeShareShareId
+        ? { ownerUserId: activeShareOwnerUserId, shareId: activeShareShareId }
+        : {};
+    const requestPermission = notificationSettings.enabled && notificationSettings.channels.push;
+    void registerSecurityPushToken(relayUrl, () => getTokenRef.current(), {
+      ...activeShareRelayOptions,
+      agentAlerts: requestPermission,
+      requestPermission,
+    }).catch((err) => {
+      console.warn("push registration failed:", err);
+    });
+  }, [
+    activeShareOwnerUserId,
+    activeShareShareId,
+    notificationSettings.channels.push,
+    notificationSettings.enabled,
+    relayStatus,
+    relayUrl,
+  ]);
 
   // Poll /projects as a discovery fallback; project-service updates arrive over SSE.
   useEffect(() => {
