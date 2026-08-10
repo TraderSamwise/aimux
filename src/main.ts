@@ -80,7 +80,13 @@ import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } 
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { rewriteDashboardStatuslineArtifacts } from "./tmux/statusline-artifacts.js";
 import { stopProjectTmuxRuntime } from "./tmux/runtime-stop.js";
-import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
+import {
+  configureLogging,
+  log,
+  logLifecycleAlways,
+  resolveLoggingRuntimeConfig,
+  type LoggingCliOptions,
+} from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
@@ -1273,13 +1279,30 @@ daemonCmd
     const daemon = new AimuxDaemon();
     await daemon.start();
     let shuttingDown = false;
-    const shutdown = (exitCode: number) => {
+    const shutdown = (exitCode: number, trigger: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
+      // Always written: a daemon that stops without saying why is the whole
+      // reason this restart loop has been diagnosed wrong three times. The pair
+      // "stopping" then "started" reads as spontaneous unless the stop names its
+      // trigger, and a signal carries no sender, so ppid is the next best clue.
+      logLifecycleAlways("daemon stopping", "daemon", {
+        trigger,
+        exitCode,
+        pid: process.pid,
+        ppid: process.ppid,
+        uptimeMs: Math.round(process.uptime() * 1000),
+      });
       void daemon.stop().finally(() => process.exit(exitCode));
     };
-    process.on("SIGINT", () => shutdown(130));
-    process.on("SIGTERM", () => shutdown(143));
+    process.on("SIGINT", () => shutdown(130, "SIGINT"));
+    process.on("SIGTERM", () => shutdown(143, "SIGTERM"));
+    process.on("disconnect", () => shutdown(0, "parent-disconnect"));
+    process.on("beforeExit", (code) => {
+      // Not a signal: the event loop simply emptied. A daemon should never reach
+      // this, so if it does the log has to say so rather than look like a signal.
+      logLifecycleAlways("daemon event loop drained", "daemon", { code, pid: process.pid });
+    });
     await new Promise(() => {});
   });
 
