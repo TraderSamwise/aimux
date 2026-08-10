@@ -273,7 +273,15 @@ export const persistenceMethods = {
       const filePath = join(dir, "statusline.json");
       const data = this.buildStatuslineSnapshot();
       const { updatedAt: _updatedAt, ...stableData } = data;
-      const snapshotKey = JSON.stringify(stableData);
+      // `expiresAt` is excluded from the comparison, not from the file.
+      //
+      // A publisher that republishes on a timer sends the same text with a
+      // fresh expiry every round. Counting that as a change would rewrite
+      // statusline.json, every per-window text file and fork tmux to refresh —
+      // on an interval, forever, for a bar that looks identical. What the
+      // dedup is asking is "would this LOOK different", and a moving expiry
+      // does not.
+      const snapshotKey = JSON.stringify(stableData, (key, value) => (key === "expiresAt" ? undefined : value));
       if (!input?.force && snapshotKey === this.lastStatuslineSnapshotKey) {
         return;
       }

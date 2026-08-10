@@ -243,6 +243,52 @@ describe("statusline segments", () => {
   });
 
   it("caps how far ahead a publisher may claim a segment stays true", () => {
+    // A day. Past that a TTL is not a lease, it is an assertion that something
+    // will still hold tomorrow — which is the claim the field exists to stop
+    // an absent publisher making.
     expect(MAX_SEGMENT_TTL_SECONDS).toBe(86_400);
+    const soon = new Date(Date.now() + MAX_SEGMENT_TTL_SECONDS * 1000);
+    expect(segmentRejection({ id: "a", text: "x", expiresAt: soon.toISOString() })).toBeNull();
+  });
+
+  it("refuses an id that is not a string", () => {
+    // `!segment.id` alone lets 7 through, and a numeric id then fails to match
+    // the string the caller uses to withdraw it.
+    expect(segmentRejection({ id: 7 as unknown as string, text: "x" })).toMatch(/id/);
+  });
+
+  /**
+   * The read path must survive a store it did not write.
+   *
+   * `metadata.json` is written by several processes and only has to be valid
+   * JSON to reach the loader — the file already carries a test for a null
+   * session. A throw in here is not one bad segment; it is `loadMetadataState`
+   * failing for the whole daemon, which is every read, permanently.
+   */
+  it("survives a statusline that is the wrong shape all the way down", async () => {
+    const root = await project("malformed-shapes");
+    const paths = getReadOnlyProjectPathsFor(root);
+    writeFileSync(
+      paths.metadataPath,
+      JSON.stringify({
+        version: 1,
+        sessions: {
+          nullSession: null,
+          stringSession: "nonsense",
+          railIsAString: { statusline: { top: "x" }, updatedAt: "2026-01-01T00:00:00.000Z" },
+          railHoldsNull: { statusline: { top: [null] }, updatedAt: "2026-01-01T00:00:00.000Z" },
+          statuslineIsAnArray: { statusline: [], updatedAt: "2026-01-01T00:00:00.000Z" },
+          fine: {
+            statusline: { top: [{ id: "a", text: "keep" }] },
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const state = loadMetadataState(root);
+    expect(state.sessions.fine?.statusline?.top?.[0]?.id).toBe("a");
+
+    rmSync(root, { recursive: true, force: true });
   });
 });

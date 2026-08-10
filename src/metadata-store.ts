@@ -67,10 +67,18 @@ export interface SessionStatuslineSegment {
    * rail that goes on asserting a fact nobody is maintaining is worse than an
    * empty one.
    *
-   * Applied when the state is read, so there is no sweeper to fall behind and
-   * nothing to schedule. The consequence is that a rendered bar keeps showing
-   * an expired segment until the next redraw, which for a publisher that
-   * refreshes on an interval is not a case that arises.
+   * Applied when the state is READ, so there is no sweeper to fall behind and
+   * nothing to schedule. Every reader of the store sees an expired segment as
+   * gone, immediately and exactly.
+   *
+   * A bar that has already been drawn is the exception, and worth being plain
+   * about: the tmux statusline runs at `status-interval 0` and is rewritten
+   * from a snapshot when something changes, so an expiry that is the only
+   * thing to have happened leaves the old text on screen until the next
+   * change. Expiry is exact for anything that asks and best-effort for
+   * anything already painted — which is the right trade for a publisher that
+   * republishes on an interval, and the reason this is a TTL rather than a
+   * promise.
    */
   expiresAt?: string;
   /**
@@ -195,13 +203,22 @@ function stableMetadataPayload(session: SessionMetadata | undefined): string {
  * tidy-up rather than the mechanism.
  */
 function dropExpiredSegments(state: MetadataState, now: number): MetadataState {
+  // Every level is type-checked before it is walked, the same way
+  // `scrubProjectionAuthorityFields` above does. This runs inside
+  // `loadMetadataState`, which is the read path for the whole daemon — a throw
+  // here is not a bad segment, it is a store nobody can open again. The file
+  // is written by other processes and only has to be valid JSON to get this
+  // far, so `{"sessions":{"a":{"statusline":{"top":"x"}}}}` is a reachable
+  // input rather than a hypothetical one.
   for (const session of Object.values(state.sessions ?? {})) {
-    const statusline = session?.statusline;
-    if (!statusline) continue;
+    if (!session || typeof session !== "object") continue;
+    const statusline = (session as SessionMetadata).statusline;
+    if (!statusline || typeof statusline !== "object") continue;
     for (const line of ["top", "bottom"] as const) {
       const segments = statusline[line];
-      if (!segments) continue;
+      if (!Array.isArray(segments)) continue;
       const live = segments.filter((segment) => {
+        if (!segment || typeof segment !== "object") return true;
         if (!segment.expiresAt) return true;
         const at = Date.parse(segment.expiresAt);
         // An unparseable date is not an expiry claim. Dropping the segment
@@ -212,7 +229,7 @@ function dropExpiredSegments(state: MetadataState, now: number): MetadataState {
       if (live.length > 0) statusline[line] = live;
       else delete statusline[line];
     }
-    if (!statusline.top?.length && !statusline.bottom?.length) delete session.statusline;
+    if (!statusline.top?.length && !statusline.bottom?.length) delete (session as SessionMetadata).statusline;
   }
   return state;
 }
@@ -243,7 +260,7 @@ export const MAX_SEGMENT_TTL_SECONDS = 86_400;
 
 /** Why a segment was refused, or null if it is fine. */
 export function segmentRejection(segment: SessionStatuslineSegment): string | null {
-  if (!segment.id) return "a segment needs an id to be replaceable";
+  if (typeof segment.id !== "string" || !segment.id) return "a segment needs an id to be replaceable";
   if (typeof segment.text !== "string") return "a segment needs text";
   if (segment.expiresAt && Number.isNaN(Date.parse(segment.expiresAt))) return "expiresAt is not a date";
   if (segment.data !== undefined) {

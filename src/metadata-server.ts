@@ -983,10 +983,40 @@ function consumeShellStateSuppressFile(sessionId: string): boolean {
   }
 }
 
-async function readJson(req: IncomingMessage): Promise<any> {
+/**
+ * Generous for every body this server takes — the largest is a prompt — and
+ * far below anything that threatens the process.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
+
+/** Thrown when a request body is refused before it is parsed. */
+class BodyTooLarge extends Error {
+  constructor(readonly limit: number) {
+    super(`body exceeds ${limit} bytes`);
+    this.name = "BodyTooLarge";
+  }
+}
+
+/**
+ * Read a body, refusing one too big to hold.
+ *
+ * The cap is enforced while the stream arrives, not after: buffering a
+ * gigabyte and then rejecting it has already done the damage. This server
+ * binds loopback and has no authentication, so anything local — including a
+ * page in a browser, since it answers with `access-control-allow-origin: *` —
+ * can post to it, and an unbounded read is an out-of-memory away.
+ */
+async function readJson(req: IncomingMessage, limit = MAX_BODY_BYTES): Promise<any> {
   const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buf.length;
+    if (size > limit) {
+      req.destroy();
+      throw new BodyTooLarge(limit);
+    }
+    chunks.push(buf);
   }
   const body = Buffer.concat(chunks).toString("utf8").trim();
   return body ? JSON.parse(body) : {};
@@ -3045,21 +3075,30 @@ export class MetadataServer {
          * rendered, `data` is carried to whoever asked for it, and neither is
          * interpreted here.
          */
-        const body = (await readJson(req)) as {
+        let body: {
           session?: string;
-          line?: string;
+          line?: "top" | "bottom";
           id?: string;
           text?: string;
           tone?: MetadataTone;
           ttlSeconds?: number;
           data?: unknown;
         };
+        try {
+          body = await readJson(req);
+        } catch (err) {
+          if (err instanceof BodyTooLarge) {
+            send(res, 413, { ok: false, error: err.message });
+            return;
+          }
+          send(res, 400, { ok: false, error: "body is not JSON" });
+          return;
+        }
         if (!body.session) {
           send(res, 400, { ok: false, error: "session is required" });
           return;
         }
-        const line = body.line ?? "bottom";
-        if (line !== "top" && line !== "bottom") {
+        if (body.line !== undefined && body.line !== "top" && body.line !== "bottom") {
           send(res, 400, { ok: false, error: "line must be top or bottom" });
           return;
         }
@@ -3069,11 +3108,17 @@ export class MetadataServer {
             send(res, 400, { ok: false, error: "id is required" });
             return;
           }
-          dropStatuslineSegment(body.session, body.id, line);
+          // No default here. Omitting the line means "wherever it is", which
+          // is the only way to withdraw a segment without knowing which rail
+          // it was put on — defaulting first made that unreachable and turned
+          // a wrong guess into a silent 200 that removed nothing.
+          dropStatuslineSegment(body.session, body.id, body.line);
           notifyCurrentRouteChange({ sessionId: body.session });
           send(res, 200, { ok: true });
           return;
         }
+
+        const line = body.line ?? "bottom";
 
         if (req.method !== "POST") {
           send(res, 405, { ok: false, error: "use POST or DELETE" });
