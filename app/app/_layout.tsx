@@ -5,6 +5,7 @@ import { useColorScheme } from "nativewind";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AuthProvider, LOCAL_MODE, useAuth } from "@/lib/auth";
 import { useThemeEffect } from "@/lib/theme-effect";
 
@@ -53,23 +54,25 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={navTheme}>
-        <AuthProvider>
-          <AuthGate>
-            <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-            <Stack>
-              <Stack.Screen name="(main)" options={{ headerShown: false }} />
-              <Stack.Screen name="inbox" options={{ headerShown: false }} />
-              <Stack.Screen name="auth" options={{ headerShown: false }} />
-              <Stack.Screen
-                name="shares/invite/[ownerUserId]/[token]/accept"
-                options={{ headerShown: false }}
-              />
-              <Stack.Screen name="cli-auth" options={{ headerShown: false }} />
-            </Stack>
-          </AuthGate>
-        </AuthProvider>
-      </ThemeProvider>
+      <KeyboardProvider>
+        <ThemeProvider value={navTheme}>
+          <AuthProvider>
+            <AuthGate>
+              <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+              <Stack>
+                <Stack.Screen name="(main)" options={{ headerShown: false }} />
+                <Stack.Screen name="inbox" options={{ headerShown: false }} />
+                <Stack.Screen name="auth" options={{ headerShown: false }} />
+                <Stack.Screen
+                  name="shares/invite/[ownerUserId]/[token]/accept"
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen name="cli-auth" options={{ headerShown: false }} />
+              </Stack>
+            </AuthGate>
+          </AuthProvider>
+        </ThemeProvider>
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }
