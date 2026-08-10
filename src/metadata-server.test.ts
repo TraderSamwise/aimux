@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectStateDir, initPaths } from "./paths.js";
@@ -5944,6 +5944,63 @@ describe("MetadataServer threads API", () => {
       worktreeName: "Main Checkout",
       categoryLabel: "Needs input",
       reasonLabel: "Agent is waiting for input",
+    });
+  });
+
+  it("uses hook cwd to label notification project and worktree", async () => {
+    server?.stop();
+    const worktreePath = join(repoRoot, ".aimux/worktrees/custom-modules-mcp");
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        getSessionDisplayContext: (sessionId) =>
+          sessionId === "claude"
+            ? { label: "claude", worktreeName: "Main Checkout", worktreePath: repoRoot, branch: "master" }
+            : undefined,
+        listWorktrees: () => [
+          { name: basename(repoRoot), path: repoRoot, branch: "master", isBare: false },
+          {
+            name: "custom-modules-mcp",
+            path: worktreePath,
+            branch: "feat/module-sandbox-cutover",
+            isBare: false,
+          },
+        ],
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const notifyRes = await fetch(`${base}${PROJECT_API_ROUTES.hooks.claude}?action=notification&sessionId=claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        cwd: join(worktreePath, "apps/web"),
+        message: "Claude is waiting for your input",
+      }),
+    });
+    expect(notifyRes.ok).toBe(true);
+
+    const listRes = await fetch(`${base}/notifications`);
+    const listed = (await listRes.json()) as {
+      ok: boolean;
+      notifications: Array<{
+        title: string;
+        body: string;
+        worktreePath?: string;
+        worktreeName?: string;
+        branch?: string;
+      }>;
+    };
+    expect(listRes.ok).toBe(true);
+    expect(listed.notifications[0]).toMatchObject({
+      title: `[Needs input] ${basename(repoRoot)} / custom-modules-mcp (feat/module-sandbox-cutover)`,
+      body: "Agent is waiting for input: claude @ custom-modules-mcp needs input - Claude is waiting for your input",
+      worktreePath,
+      worktreeName: "custom-modules-mcp",
+      branch: "feat/module-sandbox-cutover",
     });
   });
 

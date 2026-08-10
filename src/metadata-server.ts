@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve as pathResolve } from "node:path";
 import { PassThrough } from "node:stream";
 import type { Worker } from "node:worker_threads";
 import {
@@ -2086,6 +2086,8 @@ export class MetadataServer {
     threadId?: string;
     taskId?: string;
     worktreePath?: string;
+    worktreeName?: string;
+    branch?: string;
     dedupeKey?: string;
     cooldownMs?: number;
     forceNotify?: boolean;
@@ -2099,7 +2101,12 @@ export class MetadataServer {
     };
   }): void {
     const displayContext = this.resolveSessionAlertDisplayContext(input.sessionId, input.worktreePath);
-    this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
+    this.eventBus.publishAlert(
+      contextualizeAlertInput(
+        displayContext?.worktreePath ? { ...input, worktreePath: displayContext.worktreePath } : input,
+        displayContext,
+      ),
+    );
   }
 
   private interactionDedupeKey(input: {
@@ -2195,7 +2202,7 @@ export class MetadataServer {
     markSessionViewed(sessionId, this.currentProjectRoot());
   }
 
-  private emitHookEvent(sessionId: string, event: AgentEvent): void {
+  private emitHookEvent(sessionId: string, event: AgentEvent, worktreePath?: string): void {
     this.tracker.emit(sessionId, event);
     if (event.kind === "needs_input") {
       this.emitAlert({
@@ -2203,6 +2210,7 @@ export class MetadataServer {
         sessionId,
         title: `${sessionId} needs input`,
         message: event.message || "Agent is waiting for input.",
+        worktreePath,
         dedupeKey: `needs_input:${sessionId}`,
         cooldownMs: 15_000,
       });
@@ -2293,7 +2301,7 @@ export class MetadataServer {
       case "notification":
       case "notify": {
         const summary = summarizeClaudeNotification(payload);
-        this.emitHookEvent(sessionId, { kind: "needs_input", message: summary.body, tone: "warn" });
+        this.emitHookEvent(sessionId, { kind: "needs_input", message: summary.body, tone: "warn" }, payload.cwd);
         break;
       }
       case "stop":
@@ -2339,15 +2347,52 @@ export class MetadataServer {
     sessionId: string | undefined,
     worktreePath: string | undefined,
   ): SessionAlertDisplayContext | undefined {
-    if (!sessionId) return worktreePath ? { worktreePath } : undefined;
+    if (!sessionId) return worktreePath ? this.resolveWorktreeAlertDisplayContext(worktreePath) : undefined;
     let context: SessionAlertDisplayContext = {};
     try {
       context = metadataDisplayContext(loadMetadataState().sessions[sessionId]);
     } catch {}
     const liveContext = this.options.desktop?.getSessionDisplayContext?.(sessionId);
     context = mergeDisplayContext(context, liveContext ?? {});
-    if (worktreePath) context.worktreePath = worktreePath;
+    if (worktreePath) {
+      const worktreeContext = this.resolveWorktreeAlertDisplayContext(worktreePath);
+      context = mergeDisplayContext(context, worktreeContext);
+    }
     return Object.values(context).some((value) => value !== undefined) ? context : undefined;
+  }
+
+  private resolveWorktreeAlertDisplayContext(worktreePath: string): SessionAlertDisplayContext {
+    const target = pathResolve(worktreePath);
+    const projectRoot = pathResolve(this.currentProjectRoot());
+    const worktrees: Array<{ path: string; resolvedPath: string; name?: string; branch?: string }> = [];
+    for (const entry of this.options.desktop?.listWorktrees?.() ?? []) {
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as Record<string, unknown>;
+      const path = optionalString(record.path);
+      if (!path) continue;
+      worktrees.push({
+        path,
+        resolvedPath: pathResolve(path),
+        name: optionalString(record.name),
+        branch: optionalString(record.branch),
+      });
+    }
+    worktrees.sort((a, b) => b.resolvedPath.length - a.resolvedPath.length);
+    const match = worktrees.find(
+      (entry) => target === entry.resolvedPath || target.startsWith(`${entry.resolvedPath}/`),
+    );
+    if (match) {
+      const isMain = match.resolvedPath === projectRoot;
+      return {
+        worktreePath: match.path,
+        worktreeName: isMain ? "Main Checkout" : (match.name ?? basename(match.resolvedPath)),
+        branch: match.branch,
+      };
+    }
+    if (target === projectRoot || target.startsWith(`${projectRoot}/`)) {
+      return { worktreePath: this.currentProjectRoot(), worktreeName: "Main Checkout" };
+    }
+    return { worktreePath, worktreeName: basename(target) };
   }
 
   private emitThreadWaitingAlert(input: {
@@ -4105,6 +4150,9 @@ export class MetadataServer {
           sessionId?: string;
           kind?: string;
           force?: boolean;
+          worktreePath?: string;
+          worktreeName?: string;
+          branch?: string;
         };
         const requestedKind = body.kind?.trim();
         const kind: AlertKind =
@@ -4148,6 +4196,9 @@ export class MetadataServer {
           message: [body.subtitle?.trim(), body.message?.trim() || body.title?.trim() || "aimux"]
             .filter(Boolean)
             .join(" — "),
+          worktreePath: optionalString(body.worktreePath),
+          worktreeName: optionalString(body.worktreeName),
+          branch: optionalString(body.branch),
           dedupeKey,
           forceNotify: Boolean(body.force),
         });
