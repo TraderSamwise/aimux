@@ -15,6 +15,7 @@ const healthy = (over: Partial<LoopBudgetInput> = {}): LoopBudgetInput => ({
     sync: { count: 200, totalMs: 300, maxMs: 12 },
     async: { count: 500, totalMs: 4_000, maxMs: 60 },
     syncByVerb: { "list-windows": { count: 200, totalMs: 300, maxMs: 12 } },
+    syncByCaller: {},
   },
   ...over,
 });
@@ -38,6 +39,7 @@ describe("assessLoopBudget", () => {
         sync: { count: 759, totalMs: 6582, maxMs: 21 },
         async: { count: 0, totalMs: 0, maxMs: 0 },
         syncByVerb: { "list-windows": { count: 315, totalMs: 2837, maxMs: 12 } },
+        syncByCaller: {},
       },
     });
 
@@ -57,6 +59,7 @@ describe("assessLoopBudget", () => {
           sync: { count: 1, totalMs: 1, maxMs: 1 },
           async: { count: 0, totalMs: 0, maxMs: 0 },
           syncByVerb: {},
+          syncByCaller: {},
         },
       }),
     );
@@ -82,6 +85,7 @@ describe("assessLoopBudget", () => {
           sync: { count: 100, totalMs: MAX_SYNC_SHARE_PCT * 1_000, maxMs: 5 },
           async: { count: 0, totalMs: 0, maxMs: 0 },
           syncByVerb: {},
+          syncByCaller: {},
         },
       }),
     );
@@ -105,6 +109,7 @@ describe("assessLoopBudget", () => {
         sync: { count: 100, totalMs: 2_004, maxMs: 5 },
         async: { count: 0, totalMs: 0, maxMs: 0 },
         syncByVerb: {},
+        syncByCaller: {},
       },
     });
     expect(assessment.syncSharePct).toBe(2);
@@ -119,6 +124,7 @@ describe("assessLoopBudget", () => {
         sync: { count: MIN_SYNC_CALLS - 1, totalMs: 9_000, maxMs: 900 },
         async: { count: 0, totalMs: 0, maxMs: 0 },
         syncByVerb: {},
+        syncByCaller: {},
       },
     });
     expect(assessment.reasons).toEqual([
