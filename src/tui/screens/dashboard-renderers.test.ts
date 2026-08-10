@@ -812,6 +812,41 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(liveRow).toContain("38;5;174"); // danger "pending" accent retained
   });
 
+  it("renders a selected agent preview below details when pane output is available", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "codex-1",
+        sessions: [
+          {
+            index: 0,
+            id: "codex-1",
+            command: "codex",
+            status: "running",
+            active: true,
+            previewSnapshot: {
+              output: "\x1b]0;bad title\x07first line\nsecond\x1b[2J line\nthird line",
+              capturedAt: "2026-08-10T00:00:00.000Z",
+              source: "tap",
+              windowId: "@1",
+            },
+          },
+        ],
+      }),
+      140,
+      34,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("DETAILS");
+    expect(plain).toContain("PREVIEW");
+    expect(plain).toContain("Agent: codex (codex-1)");
+    expect(plain).toContain("second line");
+    expect(plain).toContain("third line");
+    expect(frame).not.toContain("\x1b]0;bad title");
+    expect((frame.match(/\x1b\[2J/g) ?? []).length).toBe(1);
+  });
+
   it("renders pending teammate labels even when semantic state is stale", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({

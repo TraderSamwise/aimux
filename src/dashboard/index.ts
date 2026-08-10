@@ -1,6 +1,7 @@
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
 import type { SessionLoopMetadata, SessionServiceMetadata } from "../metadata-store.js";
 import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "../pending-actions.js";
+import type { ExposePreviewSnapshot } from "../project-api-contract.js";
 import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
@@ -54,6 +55,7 @@ export interface DashboardSession {
   foregroundCommand?: string;
   pid?: number;
   previewLine?: string;
+  previewSnapshot?: ExposePreviewSnapshot;
   threadId?: string;
   threadName?: string;
   threadUnreadCount?: number;

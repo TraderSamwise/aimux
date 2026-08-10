@@ -91,7 +91,9 @@ describe("refreshDashboardModelFromService", () => {
 
     await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(true);
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?force=1", { timeoutMs: 5000 });
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?includePreview=1&force=1", {
+      timeoutMs: 5000,
+    });
     expect(host.dashboardRawSessionsCache).toEqual([session]);
     expect(host.dashboardRawTeammatesCache).toEqual([]);
     expect(host.dashboardRawServicesCache).toEqual([]);
@@ -112,7 +114,9 @@ describe("refreshDashboardModelFromService", () => {
 
     await expect(refreshDashboardModelFromService(host, true, { allowInactive: true })).resolves.toBe(true);
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?force=1", { timeoutMs: 5000 });
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?includePreview=1&force=1", {
+      timeoutMs: 5000,
+    });
     expect(host.dashboardSessionsCache.map((session: any) => session.id)).toEqual(["fresh"]);
     expect(host.dashboardModelServiceRefreshError).toBeUndefined();
   });
@@ -209,7 +213,7 @@ describe("refreshDashboardModelFromService", () => {
 
     await expect(refreshDashboardModelFromService(host, false)).resolves.toBe(false);
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 3000 });
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?includePreview=1", { timeoutMs: 3000 });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
     expect(host.dashboardModelServiceRefreshError).toBeInstanceOf(Error);
@@ -229,7 +233,9 @@ describe("refreshDashboardModelFromService", () => {
 
     await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(false);
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?force=1", { timeoutMs: 5000 });
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?includePreview=1&force=1", {
+      timeoutMs: 5000,
+    });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
     await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));

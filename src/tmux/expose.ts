@@ -24,6 +24,7 @@ import {
   type ExposeSublabel,
 } from "./expose-model.js";
 import { readHotExposeScopeView, writeHotExposeScopeView, type HotExposeScopeKey } from "./expose-hot-snapshot.js";
+import { sanitizeExposePreviewOutput } from "./expose-preview-sanitize.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
 import { listWorktrees, type WorktreeInfo } from "../worktree.js";
 
@@ -155,22 +156,8 @@ function shortWorktree(item: FastControlItem, projectRoot: string): string {
   return basename(wt);
 }
 
-// Keep SGR color/style sequences from captured agent output so previews render in
-// their real colors, but strip everything else dangerous (cursor moves, OSC, other
-// control bytes) so a rogue pane can't hijack the host terminal or misalign borders.
-function sanitizeLine(line: string): string {
-  return line
-    .replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, (m) => (/^\x1b\[[0-9;:]*m$/.test(m) ? m : ""))
-    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-9;:?]*[ -/]*$/g, "")
-    .replace(/\x1b[^[]/g, "")
-    .replace(/\x1b$/, "")
-    .replace(/[\x00-\x09\x0b-\x1a\x1c-\x1f\x7f-\x9f]/g, " ");
-}
-
 function tilePreview(raw: string, count: number): string[] {
-  const lines = raw.replace(/\r/g, "").split("\n").map(sanitizeLine);
-  while (lines.length && lines[lines.length - 1]!.trim() === "") lines.pop();
+  const lines = sanitizeExposePreviewOutput(raw);
   const tail = lines.slice(-count);
   while (tail.length < count) tail.push("");
   return tail;

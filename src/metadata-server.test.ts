@@ -2296,6 +2296,91 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("attaches expose preview snapshots to desktop-state agent sessions", async () => {
+    server?.stop();
+    const exposePreviewCache = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      get: vi.fn(),
+    };
+    const exposePaneOutputTap = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      read: vi.fn((windowId: string) =>
+        windowId === "@7"
+          ? {
+              output: "details pane preview\n",
+              capturedAt: "2026-08-10T09:00:00.000Z",
+              source: "tap" as const,
+              windowId: "@7",
+              byteCount: 21,
+            }
+          : undefined,
+      ),
+    };
+    const session = {
+      index: 0,
+      id: "agent-1",
+      command: "codex",
+      tmuxWindowId: "@7",
+      tmuxWindowIndex: 7,
+      status: "running",
+      active: true,
+    };
+
+    server = new MetadataServer({
+      exposePreviewCache,
+      exposePaneOutputTap,
+      desktop: {
+        getState: () => ({
+          sessions: [session],
+          teammates: [],
+          services: [],
+          worktrees: [],
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [session],
+              services: [],
+            },
+          ],
+          operationFailures: [],
+          mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}${PROJECT_API_ROUTES.desktopState}`;
+    const withoutPreview = await fetch(base);
+    const withoutPreviewBody = (await withoutPreview.json()) as { sessions: any[] };
+    expect(withoutPreview.status).toBe(200);
+    expect(withoutPreviewBody.sessions[0]?.previewSnapshot).toBeUndefined();
+    expect(exposePaneOutputTap.trackItems).not.toHaveBeenCalled();
+
+    const response = await fetch(`${base}?includePreview=1`);
+    const body = (await response.json()) as { sessions: any[]; worktreeGroups: any[] };
+
+    expect(response.status).toBe(200);
+    expect(body.sessions[0]?.previewSnapshot).toEqual({
+      output: "details pane preview\n",
+      capturedAt: "2026-08-10T09:00:00.000Z",
+      source: "tap",
+      windowId: "@7",
+    });
+    expect(body.worktreeGroups[0]?.sessions[0]?.previewSnapshot).toBeUndefined();
+    expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "agent-1", target: expect.objectContaining({ windowId: "@7" }) }),
+    ]);
+    expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([]);
+  });
+
   it("warms project and per-launch-window worktree expose snapshots in the project service", async () => {
     server?.stop();
     const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;

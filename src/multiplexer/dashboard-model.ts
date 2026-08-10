@@ -1259,7 +1259,9 @@ export async function refreshDashboardModelFromService(
       if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
       return failDashboardServiceRefresh(host, force);
     }
-    const desktopStatePath = force ? `${PROJECT_API_ROUTES.desktopState}?force=1` : PROJECT_API_ROUTES.desktopState;
+    const desktopStateParams = new URLSearchParams({ includePreview: "1" });
+    if (force) desktopStateParams.set("force", "1");
+    const desktopStatePath = `${PROJECT_API_ROUTES.desktopState}?${desktopStateParams.toString()}`;
     const result = await getOrCreateTuiApiRuntime(host).refreshJson(
       "desktop-state",
       desktopStatePath,

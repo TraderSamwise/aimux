@@ -3,6 +3,7 @@ import { isAgentOutputEventKind } from "../../agent-events.js";
 import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionRecencyAnchor } from "../../session-recency.js";
+import { sanitizeExposePreviewOutput } from "../../tmux/expose-preview-sanitize.js";
 import { composeScreenFrame } from "../render/screen-frame.js";
 import { center, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
 import {
@@ -47,6 +48,16 @@ const ROW_STATE_LABELS: Record<SessionRowState, string> = {
 
 function rowStateLabel(value: string): string {
   return ROW_STATE_LABELS[value as SessionRowState] ?? value;
+}
+
+function previewSnapshotRows(session: DashboardSession, width: number, maxRows: number): string[] {
+  const output = session.previewSnapshot?.output;
+  if (!output || maxRows <= 0) return [];
+  return sanitizeExposePreviewOutput(output)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-maxRows)
+    .map((line) => truncateAnsi(line, width));
 }
 
 // Status cells render as attention pills; the rest use plain colored/dim text.
@@ -553,11 +564,23 @@ export function renderDashboardFrame(
 
   const renderSelectedDetailsPanel = (panelWidth: number, height: number): string[] => {
     const width = Math.max(8, panelWidth - 4);
-    const finish = (titleText: string, tone: Tone, rows: string[]): string[] => {
-      const bodyRows = rows.slice(0, Math.max(0, height - 2));
+    const renderPanelCard = (titleText: string, tone: Tone, rows: string[], cardHeight: number): string[] => {
+      const bodyRows = rows.slice(0, Math.max(0, cardHeight - 2));
       const out = card({ tone, title: style(titleText, tone), rows: bodyRows, width: panelWidth });
-      while (out.length < height) out.push("");
-      return out.slice(0, height);
+      while (out.length < cardHeight) out.push("");
+      return out.slice(0, cardHeight);
+    };
+    const finish = (titleText: string, tone: Tone, rows: string[]): string[] =>
+      renderPanelCard(titleText, tone, rows, height);
+    const finishWithPreview = (detailsRows: string[], previewRows: string[]): string[] => {
+      if (previewRows.length === 0 || height < 10) return finish("DETAILS", "info", detailsRows);
+      const previewHeight = Math.min(Math.max(5, previewRows.length + 2), Math.max(5, Math.floor(height * 0.45)));
+      const detailsHeight = Math.max(3, height - previewHeight - 1);
+      return [
+        ...renderPanelCard("DETAILS", "info", detailsRows, detailsHeight),
+        "",
+        ...renderPanelCard("PREVIEW", "muted", previewRows, height - detailsHeight - 1),
+      ].slice(0, height);
     };
     const selectedSession = state.selectedSessionId
       ? state.sessions.find((session) => session.id === state.selectedSessionId)
@@ -796,7 +819,7 @@ export function renderDashboardFrame(
         lines.push(...wrapKeyValue("-", `${state.selectedTeammates.length - 5} more`, width));
       }
     }
-    return finish("DETAILS", "info", lines);
+    return finishWithPreview(lines, previewSnapshotRows(selected, width, Math.max(0, Math.floor(height * 0.45) - 2)));
   };
 
   const devBadge = state.isDevRuntime ? "\x1b[1;30;43m DEV \x1b[0m " : "";

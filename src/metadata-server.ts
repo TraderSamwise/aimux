@@ -931,6 +931,7 @@ const CORS_ALLOWED_ORIGINS = new Set([
 ]);
 const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
 const DESKTOP_STATE_STALE_REFRESH_DELAY_MS = 1_000;
+const DESKTOP_STATE_PREVIEW_MAX_CHARS = 8_192;
 /**
  * How long a forced rebuild answers for the forced rebuilds behind it.
  *
@@ -1642,7 +1643,7 @@ export class MetadataServer {
 
   private attachExposePreviewSnapshots(
     rawItems: FastControlItem[],
-    options: { trackPaneOutput?: boolean } = {},
+    options: { trackPaneOutput?: boolean; maxOutputChars?: number } = {},
   ): FastControlItem[] {
     const captureSnapshots = new Map<string, ReturnType<ExposePreviewCacheLike["get"]>>();
     const tapSnapshots = new Map<string, ReturnType<ExposePaneOutputTapLike["read"]>>();
@@ -1667,8 +1668,58 @@ export class MetadataServer {
               windowId: tapSnapshot.windowId,
             }
           : undefined) ?? captureSnapshot;
-      return previewSnapshot ? { ...item, previewSnapshot } : item;
+      if (!previewSnapshot) return item;
+      const output =
+        options.maxOutputChars && previewSnapshot.output.length > options.maxOutputChars
+          ? previewSnapshot.output.slice(-options.maxOutputChars)
+          : previewSnapshot.output;
+      return { ...item, previewSnapshot: { ...previewSnapshot, output } };
     });
+  }
+
+  private attachDesktopStatePreviewSnapshots(state: Record<string, unknown>): Record<string, unknown> {
+    const sessions = Array.isArray((state as any).sessions) ? (state as any).sessions : [];
+    const previewItems: FastControlItem[] = sessions
+      .filter((session: any) => typeof session?.id === "string" && typeof session?.tmuxWindowId === "string")
+      .map((session: any) => ({
+        id: session.id,
+        target: {
+          windowId: session.tmuxWindowId,
+          windowIndex: typeof session.tmuxWindowIndex === "number" ? session.tmuxWindowIndex : 0,
+          windowName: session.label ?? session.id,
+          sessionName: "",
+        },
+        metadata: {
+          kind: "agent" as const,
+          sessionId: session.id,
+          command: session.command ?? "",
+          label: session.label,
+          worktreePath: session.worktreePath,
+          createdAt: session.createdAt,
+        },
+        label: session.label ?? session.command ?? session.id,
+        urgency: 0,
+        activity: 0,
+        lastUsedAt: session.lastUsedAt,
+        recentRank: Number.MAX_SAFE_INTEGER,
+      }));
+    if (previewItems.length === 0) return state;
+
+    const snapshotsBySessionId = new Map(
+      this.attachExposePreviewSnapshots(previewItems, { maxOutputChars: DESKTOP_STATE_PREVIEW_MAX_CHARS })
+        .filter((item) => item.previewSnapshot)
+        .map((item) => [item.id, item.previewSnapshot] as const),
+    );
+    if (snapshotsBySessionId.size === 0) return state;
+
+    const attachSessionSnapshot = (session: any) => {
+      const previewSnapshot = typeof session?.id === "string" ? snapshotsBySessionId.get(session.id) : undefined;
+      return previewSnapshot ? { ...session, previewSnapshot } : session;
+    };
+    return {
+      ...state,
+      sessions: sessions.map(attachSessionSnapshot),
+    };
   }
 
   private scheduleExposeHotSnapshotRefresh(delayMs = EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
@@ -2721,11 +2772,14 @@ export class MetadataServer {
         return;
       }
       const force = url.searchParams.get("force") === "1" || url.searchParams.get("force") === "true";
+      const includePreview =
+        url.searchParams.get("includePreview") === "1" || url.searchParams.get("includePreview") === "true";
+      const state = this.getDesktopStateSnapshot(force);
       send(res, 200, {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
-        ...this.getDesktopStateSnapshot(force),
+        ...(includePreview ? this.attachDesktopStatePreviewSnapshots(state) : state),
       });
       return;
     }
