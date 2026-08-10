@@ -195,6 +195,7 @@ function stepIntoFocusedDashboardWorktree(host: any): void {
   if (host.dashboardState.worktreeEntries.length > 0) {
     host.dashboardState.level = "sessions";
     host.dashboardState.sessionIndex = 0;
+    host.dashboardUiStateStore?.rememberCurrentEntrySelection?.(host.dashboardState);
     host.renderDashboard();
   }
 }
@@ -279,6 +280,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       if (host.dashboardState.worktreeEntries.length > 1) {
         host.dashboardState.sessionIndex =
           (host.dashboardState.sessionIndex + 1) % host.dashboardState.worktreeEntries.length;
+        host.dashboardUiStateStore?.rememberCurrentEntrySelection?.(host.dashboardState);
         host.renderDashboard();
       }
       return true;
@@ -288,6 +290,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
         host.dashboardState.sessionIndex =
           (host.dashboardState.sessionIndex - 1 + host.dashboardState.worktreeEntries.length) %
           host.dashboardState.worktreeEntries.length;
+        host.dashboardUiStateStore?.rememberCurrentEntrySelection?.(host.dashboardState);
         host.renderDashboard();
       }
       return true;

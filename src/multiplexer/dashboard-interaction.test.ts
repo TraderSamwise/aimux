@@ -161,6 +161,7 @@ describe("dashboardInteractionMethods", () => {
         ],
         sessionIndex: 1,
       },
+      dashboardUiStateStore: { rememberCurrentEntrySelection: vi.fn() },
       isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
       handleDashboardQuickJumpDigit: dashboardInteractionMethods.handleDashboardQuickJumpDigit,
       activateSelectedDashboardWorktreeEntry: vi.fn(),
@@ -170,6 +171,7 @@ describe("dashboardInteractionMethods", () => {
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k\r"));
 
     expect(host.dashboardState.sessionIndex).toBe(0);
+    expect(host.dashboardUiStateStore.rememberCurrentEntrySelection).toHaveBeenCalledWith(host.dashboardState);
     expect(host.renderDashboard).toHaveBeenCalledOnce();
     expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
   });

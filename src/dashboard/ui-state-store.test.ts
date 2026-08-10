@@ -216,6 +216,46 @@ describe("DashboardUiStateStore", () => {
     expect(state.sessionIndex).toBe(0);
   });
 
+  it("keeps a manually remembered entry stable across refresh restore", () => {
+    const writer = new DashboardUiStateStore();
+    writer.persist(
+      "dashboard",
+      "client-a",
+      Object.assign(new DashboardState(), {
+        focusedWorktreePath: "/repo/wt",
+        level: "sessions",
+        worktreeEntries: [{ kind: "session", id: "old-agent" }],
+        sessionIndex: 0,
+      }),
+      0,
+      [{ id: "old-agent" } as any],
+    );
+
+    const state = new DashboardState();
+    state.level = "sessions";
+    state.focusedWorktreePath = "/repo/wt";
+    state.worktreeEntries = [
+      { kind: "session", id: "old-agent" },
+      { kind: "session", id: "manual-agent" },
+    ];
+    state.sessionIndex = 1;
+
+    const store = new DashboardUiStateStore();
+    store.loadInto(state, "client-a");
+    store.rememberCurrentEntrySelection(state);
+
+    state.worktreeEntries = [
+      { kind: "session", id: "inserted-agent" },
+      { kind: "session", id: "old-agent" },
+      { kind: "session", id: "manual-agent" },
+    ];
+    state.sessionIndex = 1;
+    store.markSelectionDirty();
+    store.consumeSelectionRestore(state, [], true, 0, () => undefined);
+
+    expect(state.sessionIndex).toBe(2);
+  });
+
   it("persists and reloads shared dashboard item order", () => {
     const store = new DashboardUiStateStore();
     const state = new DashboardState();

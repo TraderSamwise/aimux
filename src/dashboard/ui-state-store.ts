@@ -142,6 +142,18 @@ export class DashboardUiStateStore {
     this.selectionNeedsRestore = true;
   }
 
+  rememberCurrentEntrySelection(state: DashboardState): void {
+    if (state.level !== "sessions") return;
+    const selectedEntry = state.worktreeEntries[state.sessionIndex];
+    if (!selectedEntry) return;
+    this.preferredSelection = {
+      kind: selectedEntry.kind,
+      id: selectedEntry.id,
+    };
+    this.pendingPreferredSelection = false;
+    this.selectionNeedsRestore = false;
+  }
+
   markSelectionDirty(): void {
     this.selectionNeedsRestore = true;
   }
