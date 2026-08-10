@@ -88,6 +88,12 @@ const TERMINAL_FONT_SIZE = 10.8;
 const TERMINAL_LINE_HEIGHT = 14.4;
 const TERMINAL_TEXT_STYLE = { fontSize: TERMINAL_FONT_SIZE, lineHeight: TERMINAL_LINE_HEIGHT };
 const APPROX_TERMINAL_CHAR_WIDTH = 7.2;
+const CHAT_SCROLL_HORIZONTAL_PADDING = 32;
+const CHAT_ASSISTANT_BUBBLE_MAX_RATIO = 0.9;
+const CHAT_MESSAGE_BUBBLE_HORIZONTAL_PADDING = 24;
+const CHAT_DIVIDER_APPROX_CHAR_WIDTH = 8.8;
+const CHAT_DIVIDER_WIDTH_SAFETY = 2;
+const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 const SCROLL_BOTTOM_EPSILON = 24;
@@ -199,6 +205,7 @@ export default function ChatScreen() {
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const sendBusyRef = useRef(false);
@@ -383,6 +390,18 @@ export default function ChatScreen() {
     canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH,
     measuredDividerWidth ??
       (canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH),
+  );
+  const chatContentWidth = Math.max(
+    0,
+    (chatPaneWidth ?? viewportWidth) - CHAT_SCROLL_HORIZONTAL_PADDING,
+  );
+  const chatBubbleTextWidth = Math.max(
+    0,
+    chatContentWidth * CHAT_ASSISTANT_BUBBLE_MAX_RATIO - CHAT_MESSAGE_BUBBLE_HORIZONTAL_PADDING,
+  );
+  const chatDividerWidth = Math.max(
+    MIN_CHAT_DIVIDER_WIDTH,
+    Math.floor(chatBubbleTextWidth / CHAT_DIVIDER_APPROX_CHAR_WIDTH) - CHAT_DIVIDER_WIDTH_SAFETY,
   );
   const terminalLines = useMemo(
     () =>
@@ -1272,7 +1291,12 @@ export default function ChatScreen() {
                   {showTerminalOnly ? (
                     <View className="flex-1">{terminalPane}</View>
                   ) : (
-                    <View className="flex-1">
+                    <View
+                      className="flex-1"
+                      onLayout={(event: LayoutChangeEvent) =>
+                        setChatPaneWidth(event.nativeEvent.layout.width)
+                      }
+                    >
                       <ScrollView
                         ref={scrollRef}
                         className="flex-1 px-4 py-2"
@@ -1291,6 +1315,7 @@ export default function ChatScreen() {
                         scrollEventThrottle={16}
                       >
                         <TranscriptContent
+                          dividerWidth={chatDividerWidth}
                           messages={allMessages}
                           restoreBlockedReason={restoreBlockedReason}
                           sendError={sendError}
@@ -1354,12 +1379,14 @@ function ComposerFocusShell({
 
 const TranscriptContent = React.memo(function TranscriptContent({
   messages,
+  dividerWidth,
   restoreBlockedReason,
   sendError,
   serviceEndpoint,
   visibleLastError,
 }: {
   messages: ChatMessage[];
+  dividerWidth: number;
   restoreBlockedReason: string | null;
   sendError: string | null;
   serviceEndpoint: ServiceEndpoint;
@@ -1370,6 +1397,7 @@ const TranscriptContent = React.memo(function TranscriptContent({
       {messages.map((message, idx) => (
         <MessageBlock
           key={message.id ?? message.clientMessageId ?? `idx-${idx}`}
+          dividerWidth={dividerWidth}
           message={message}
           serviceEndpoint={serviceEndpoint}
         />

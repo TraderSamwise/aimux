@@ -4,10 +4,12 @@ import { Text } from "@/components/ui/text";
 import type { ChatMessage, HistoryImagePart, HistoryImageReferencePart } from "@/lib/events";
 import { getRelayServiceUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import { env } from "@/lib/env";
+import { formatPlainTextForDisplay } from "@/lib/terminal-output";
 
 interface Props {
   message: ChatMessage;
   serviceEndpoint: ServiceEndpoint;
+  dividerWidth?: number;
 }
 
 export function resolveImageUrl(
@@ -78,10 +80,18 @@ function ImageReferenceToken({
   );
 }
 
-export const MessageBlock = React.memo(function MessageBlock({ message, serviceEndpoint }: Props) {
+export const MessageBlock = React.memo(function MessageBlock({
+  message,
+  serviceEndpoint,
+  dividerWidth,
+}: Props) {
   const role = message.role ?? "assistant";
   const isUser = role === "user";
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
+  const formatMessageText = React.useCallback(
+    (text: string) => formatPlainTextForDisplay(text, { dividerWidth }),
+    [dividerWidth],
+  );
 
   return (
     <View
@@ -110,7 +120,7 @@ export const MessageBlock = React.memo(function MessageBlock({ message, serviceE
                 key={idx}
                 className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}
               >
-                {part.text}
+                {formatMessageText(part.text)}
               </Text>
             );
           }
@@ -120,7 +130,7 @@ export const MessageBlock = React.memo(function MessageBlock({ message, serviceE
         })
       ) : (
         <Text className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}>
-          {message.text ?? ""}
+          {formatMessageText(message.text ?? "")}
         </Text>
       )}
     </View>

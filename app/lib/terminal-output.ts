@@ -45,6 +45,29 @@ export function formatTerminalOutputForDisplay(
   return formatted;
 }
 
+export function formatPlainTextForDisplay(
+  text: string,
+  { dividerWidth = DEFAULT_DIVIDER_WIDTH }: TerminalOutputDisplayOptions = {},
+): string {
+  const formatted: string[] = [];
+  let previousWasDivider = false;
+
+  for (const line of text.split("\n")) {
+    if (isDividerLine(line)) {
+      if (previousWasDivider) continue;
+      const indent = line.match(/^\s*/)?.[0] ?? "";
+      formatted.push(`${indent}${line.trim().slice(0, dividerWidth)}`);
+      previousWasDivider = true;
+      continue;
+    }
+
+    formatted.push(line);
+    previousWasDivider = false;
+  }
+
+  return formatted.join("\n");
+}
+
 function isDividerLine(line: string): boolean {
   const trimmed = line.trim();
   if (trimmed.length < DIVIDER_LINE_MIN_LENGTH) return false;

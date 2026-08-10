@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ansiLineText } from "./ansi";
-import { formatTerminalOutputForDisplay } from "./terminal-output";
+import { formatPlainTextForDisplay, formatTerminalOutputForDisplay } from "./terminal-output";
 
 const plain = (output: string, dividerWidth?: number) =>
   formatTerminalOutputForDisplay(output, dividerWidth === undefined ? {} : { dividerWidth }).map(
@@ -47,5 +47,21 @@ describe("formatTerminalOutputForDisplay", () => {
     // A short rule wrapped in colour is still short; counting bytes would have
     // pushed it past the threshold and capped a line that is not a divider.
     expect(plain("\x1b[31m-----\x1b[0m", 8)).toEqual(["-----"]);
+  });
+});
+
+describe("formatPlainTextForDisplay", () => {
+  it("caps and collapses divider runs in chat text", () => {
+    const divider = "-".repeat(80);
+
+    expect(
+      formatPlainTextForDisplay(["done", divider, divider, "next"].join("\n"), {
+        dividerWidth: 28,
+      }),
+    ).toBe(["done", "-".repeat(28), "next"].join("\n"));
+  });
+
+  it("preserves short markdown separators in chat text", () => {
+    expect(formatPlainTextForDisplay("front\n---\nmatter")).toBe("front\n---\nmatter");
   });
 });
