@@ -49,6 +49,7 @@ const allowedChildProcessFiles = new Set([
   // Drives the installed CLI, git and tmux to prove hosted mode end to end.
   "scripts/hosted-check.mjs",
   "src/context/compactor.ts",
+  "src/core-project-actor.ts",
   "src/daemon-supervisor.ts",
   "src/default-plugins/gh-pr-context.ts",
   "src/desktop-notifier.ts",
@@ -87,7 +88,7 @@ const launchContractUsage = [
   },
   {
     name: "getAimuxProjectServiceLaunchCommand",
-    allowedFiles: new Set(["src/cli-launcher.ts", "src/cli-launcher.test.ts"]),
+    allowedFiles: new Set(["src/cli-launcher.ts", "src/core-project-actor.ts", "src/cli-launcher.test.ts"]),
   },
   {
     name: "getAimuxCurrentCliIdentity",
