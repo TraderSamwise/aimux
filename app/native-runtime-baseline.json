@@ -1,6 +1,7 @@
 {
-  "buildNumber": 12,
+  "buildNumber": 13,
   "nativeDependencies": {
+    "react-native-keyboard-controller": "1.21.9",
     "react-native-svg": "15.12.1"
   }
 }
