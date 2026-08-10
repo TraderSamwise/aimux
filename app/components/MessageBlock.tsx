@@ -78,7 +78,7 @@ function ImageReferenceToken({
   );
 }
 
-export function MessageBlock({ message, serviceEndpoint }: Props) {
+export const MessageBlock = React.memo(function MessageBlock({ message, serviceEndpoint }: Props) {
   const role = message.role ?? "assistant";
   const isUser = role === "user";
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
@@ -125,4 +125,4 @@ export function MessageBlock({ message, serviceEndpoint }: Props) {
       )}
     </View>
   );
-}
+});

@@ -27,7 +27,8 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const isMobile = width < 640;
   const insets = useSafeAreaInsets();
   const bottomInset = resolveChromeBottomInset(insets.bottom);
-  const keyboardVisible = useKeyboardVisible();
+  const collapses = Platform.OS === "ios";
+  const keyboardVisible = useKeyboardVisible(!collapses);
   const keyboardInset = useKeyboardInset();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
@@ -44,8 +45,6 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   }));
   // Only where an inset exists to collapse against; elsewhere the keyboard is not
   // measured here and the bar still hides outright.
-  const collapses = Platform.OS === "ios";
-
   if (!isMobile || (!collapses && keyboardVisible)) return null;
 
   return (

@@ -51,6 +51,7 @@ import {
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { cn } from "@/lib/utils";
+import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
@@ -133,7 +134,6 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
-  const [composerFocused, setComposerFocused] = useState(false);
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -995,29 +995,13 @@ export default function ChatScreen() {
                         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
                         keyboardShouldPersistTaps="handled"
                       >
-                        {allMessages.map((m, idx) => (
-                          <MessageBlock
-                            key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
-                            message={m}
-                            serviceEndpoint={serviceEndpoint}
-                          />
-                        ))}
-                        {restoreBlockedReason ? (
-                          <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
-                            <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                              Resume unavailable
-                            </Text>
-                            <Text className="mt-1 text-sm text-card-foreground">
-                              {restoreBlockedReason}
-                            </Text>
-                          </View>
-                        ) : null}
-                        {visibleLastError ? (
-                          <Text className="text-xs text-destructive my-2">{visibleLastError}</Text>
-                        ) : null}
-                        {sendError ? (
-                          <Text className="text-xs text-destructive my-2">{sendError}</Text>
-                        ) : null}
+                        <TranscriptContent
+                          messages={allMessages}
+                          restoreBlockedReason={restoreBlockedReason}
+                          sendError={sendError}
+                          serviceEndpoint={serviceEndpoint}
+                          visibleLastError={visibleLastError}
+                        />
                       </ScrollView>
                     </View>
                   )}
@@ -1064,80 +1048,80 @@ export default function ChatScreen() {
                   because that is where the width is: flanking them costs a third
                   of a phone screen, and the text is the part that needs it.
                 */}
-                  <View
+                  <ComposerFocusShell
                     onLayout={(event: LayoutChangeEvent) =>
                       setComposerWidth(event.nativeEvent.layout.width)
                     }
-                    className={cn(
-                      "gap-2 rounded-2xl border bg-card px-2.5 pb-2 pt-2.5",
-                      // The card is the object here, so the card shows focus. The
-                      // field's own ring would draw a second rounded rect inside it.
-                      composerFocused ? "border-ring" : "border-border",
-                    )}
                   >
-                    <Input
-                      nativeID={composerFieldId}
-                      accessibilityLabel="Message the agent"
-                      onFocus={() => setComposerFocused(true)}
-                      onBlur={() => setComposerFocused(false)}
-                      value={draft}
-                      onChangeText={setDraft}
-                      onKeyPress={handleComposerKeyPress}
-                      onContentSizeChange={handleComposerContentSizeChange}
-                      placeholder="Ask the agent…"
-                      multiline
-                      // One row at rest. `multiline` alone renders a two-row textarea
-                      // on the web, so the card opens a line taller than it needs.
-                      numberOfLines={1}
-                      editable={!sendBusy}
-                      // The card draws the border and the ground now, so the field
-                      // itself is only text.
-                      scrollEnabled={composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT}
-                      className="rounded-none border-0 bg-transparent px-1 py-0 text-sm"
-                      style={{ height: composerInputHeight }}
-                      textAlignVertical="top"
-                    />
-                    <View className="flex-row items-center gap-2">
-                      <ComposerControl
-                        wide={wideControls}
-                        label="Attach"
-                        accessibilityLabel="Attach an image"
-                        icon={<Plus size={17} color={CONTROL_INK} />}
-                        disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
-                        onPress={handleAttachImage}
-                      />
-                      <View className="flex-1 px-1">
-                        {activityLabel ? (
-                          <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
-                        ) : null}
-                      </View>
-                      {/*
-                      Always offered, never revealed only while we think the agent
-                      is busy. Interrupt is a single ESC, which an idle tool
-                      ignores, so gating it on that guess only makes it
-                      unavailable exactly when the guess is wrong.
-                    */}
-                      <ComposerControl
-                        wide={wideControls}
-                        label="Stop"
-                        accessibilityLabel="Interrupt the agent"
-                        // Filled, because a stop is a stop and an outline reads as
-                        // a checkbox at this size.
-                        icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                        disabled={interruptBusy}
-                        onPress={handleInterrupt}
-                      />
-                      <ComposerControl
-                        wide={wideControls}
-                        brand
-                        label="Send"
-                        accessibilityLabel="Send the message"
-                        icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
-                        disabled={!canSendMessage}
-                        onPress={handleSendMessage}
-                      />
-                    </View>
-                  </View>
+                    {({ onBlur, onFocus }) => (
+                      <>
+                        <Input
+                          nativeID={composerFieldId}
+                          accessibilityLabel="Message the agent"
+                          onFocus={onFocus}
+                          onBlur={onBlur}
+                          value={draft}
+                          onChangeText={setDraft}
+                          onKeyPress={handleComposerKeyPress}
+                          onContentSizeChange={handleComposerContentSizeChange}
+                          placeholder="Ask the agent…"
+                          multiline
+                          // One row at rest. `multiline` alone renders a two-row textarea
+                          // on the web, so the card opens a line taller than it needs.
+                          numberOfLines={1}
+                          editable={!sendBusy}
+                          // The card draws the border and the ground now, so the field
+                          // itself is only text.
+                          scrollEnabled={composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT}
+                          className="rounded-none border-0 bg-transparent px-1 py-0 text-sm"
+                          style={{ height: composerInputHeight }}
+                          textAlignVertical="top"
+                        />
+                        <View className="flex-row items-center gap-2">
+                          <ComposerControl
+                            wide={wideControls}
+                            label="Attach"
+                            accessibilityLabel="Attach an image"
+                            icon={<Plus size={17} color={CONTROL_INK} />}
+                            disabled={
+                              sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+                            }
+                            onPress={handleAttachImage}
+                          />
+                          <View className="flex-1 px-1">
+                            {activityLabel ? (
+                              <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
+                            ) : null}
+                          </View>
+                          {/*
+                          Always offered, never revealed only while we think the agent
+                          is busy. Interrupt is a single ESC, which an idle tool
+                          ignores, so gating it on that guess only makes it
+                          unavailable exactly when the guess is wrong.
+                        */}
+                          <ComposerControl
+                            wide={wideControls}
+                            label="Stop"
+                            accessibilityLabel="Interrupt the agent"
+                            // Filled, because a stop is a stop and an outline reads as
+                            // a checkbox at this size.
+                            icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                            disabled={interruptBusy}
+                            onPress={handleInterrupt}
+                          />
+                          <ComposerControl
+                            wide={wideControls}
+                            brand
+                            label="Send"
+                            accessibilityLabel="Send the message"
+                            icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+                            disabled={!canSendMessage}
+                            onPress={handleSendMessage}
+                          />
+                        </View>
+                      </>
+                    )}
+                  </ComposerFocusShell>
                 </View>
               </>
             )}
@@ -1147,3 +1131,67 @@ export default function ChatScreen() {
     </Animated.View>
   );
 }
+
+function ComposerFocusShell({
+  children,
+  onLayout,
+}: {
+  children: (handlers: { onBlur: () => void; onFocus: () => void }) => React.ReactNode;
+  onLayout: (event: LayoutChangeEvent) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const onFocus = useCallback(() => setFocused(true), []);
+  const onBlur = useCallback(() => setFocused(false), []);
+
+  return (
+    <View
+      onLayout={onLayout}
+      className={cn(
+        "gap-2 rounded-2xl border bg-card px-2.5 pb-2 pt-2.5",
+        // The card is the object here, so the card shows focus. The field's own
+        // ring would draw a second rounded rect inside it.
+        focused ? "border-ring" : "border-border",
+      )}
+    >
+      {children({ onBlur, onFocus })}
+    </View>
+  );
+}
+
+const TranscriptContent = React.memo(function TranscriptContent({
+  messages,
+  restoreBlockedReason,
+  sendError,
+  serviceEndpoint,
+  visibleLastError,
+}: {
+  messages: ChatMessage[];
+  restoreBlockedReason: string | null;
+  sendError: string | null;
+  serviceEndpoint: ServiceEndpoint;
+  visibleLastError: string | null;
+}) {
+  return (
+    <>
+      {messages.map((message, idx) => (
+        <MessageBlock
+          key={message.id ?? message.clientMessageId ?? `idx-${idx}`}
+          message={message}
+          serviceEndpoint={serviceEndpoint}
+        />
+      ))}
+      {restoreBlockedReason ? (
+        <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
+          <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+            Resume unavailable
+          </Text>
+          <Text className="mt-1 text-sm text-card-foreground">{restoreBlockedReason}</Text>
+        </View>
+      ) : null}
+      {visibleLastError ? (
+        <Text className="text-xs text-destructive my-2">{visibleLastError}</Text>
+      ) : null}
+      {sendError ? <Text className="text-xs text-destructive my-2">{sendError}</Text> : null}
+    </>
+  );
+});

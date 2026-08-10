@@ -10,10 +10,11 @@ import { Keyboard, Platform } from "react-native";
  * needs to move with the keyboard should ride {@link useKeyboardInset} instead,
  * which is one continuous value on the UI thread.
  */
-export function useKeyboardVisible(): boolean {
+export function useKeyboardVisible(enabled = true): boolean {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    if (!enabled) return;
     if (Platform.OS === "web") return;
 
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -25,7 +26,7 @@ export function useKeyboardVisible(): boolean {
       showSub.remove();
       hideSub.remove();
     };
-  }, []);
+  }, [enabled]);
 
-  return visible;
+  return enabled ? visible : false;
 }
