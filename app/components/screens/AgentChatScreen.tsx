@@ -338,6 +338,7 @@ export default function ChatScreen() {
   }, [output, showTerminalSplit]);
 
   const canShowTerminal = Boolean(output);
+  const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
   const canUseSplitView = Platform.OS === "web" && viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
@@ -672,12 +673,20 @@ export default function ChatScreen() {
                 />
               ) : null}
               <View className="flex-1" style={{ minWidth: 0 }}>
-                <View className="flex-row items-baseline gap-1.5">
-                  <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
+                <View className="flex-row items-baseline gap-1.5" style={{ minWidth: 0 }}>
+                  <Text
+                    className="text-base font-semibold text-foreground"
+                    numberOfLines={1}
+                    style={{ minWidth: 0, flexShrink: 1 }}
+                  >
                     {sessionTitle}
                   </Text>
-                  {sessionToolLabel ? (
-                    <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                  {sessionToolLabel && !compactHeaderActions ? (
+                    <Text
+                      className="text-xs text-muted-foreground"
+                      numberOfLines={1}
+                      style={{ minWidth: 0, flexShrink: 1 }}
+                    >
                       {sessionToolLabel}
                     </Text>
                   ) : null}
@@ -686,7 +695,40 @@ export default function ChatScreen() {
                   {sessionSubtitle}
                 </Text>
               </View>
-              {session ? (
+              {session && compactHeaderActions ? (
+                <View
+                  className="ml-2 flex-row items-center justify-end"
+                  style={{ flexShrink: 0, width: compactHeaderActionsWidth }}
+                >
+                  <Pressable
+                    onPress={() => setManagePanelOpen((open) => !open)}
+                    accessibilityLabel="Manage agent"
+                    accessibilityState={{ expanded: managePanelOpen }}
+                    className={cn(
+                      canShowTerminal ? "mr-2" : "",
+                      "h-8 w-8 items-center justify-center rounded-md border",
+                      managePanelOpen ? "border-primary bg-accent" : "border-border",
+                    )}
+                  >
+                    <SlidersHorizontal size={14} color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"} />
+                  </Pressable>
+                  {canShowTerminal ? (
+                    <Pressable
+                      onPress={() => setShowTerminalSplit((current) => !current)}
+                      accessibilityLabel={terminalToggleLabel}
+                      className="h-8 w-8 items-center justify-center rounded-md border border-border"
+                    >
+                      {showSplit || showTerminalOnly ? (
+                        <MessageSquare size={15} color="#a1a1aa" />
+                      ) : canUseSplitView ? (
+                        <Columns2 size={15} color="#a1a1aa" />
+                      ) : (
+                        <SquareTerminal size={15} color="#a1a1aa" />
+                      )}
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : session ? (
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -717,8 +759,7 @@ export default function ChatScreen() {
                       accessibilityLabel="Manage agent"
                       accessibilityState={{ expanded: managePanelOpen }}
                       className={cn(
-                        "h-8 flex-row items-center gap-1.5 rounded-md border mr-2",
-                        compactHeaderActions ? "w-8 justify-center px-0" : "px-2.5",
+                        "h-8 flex-row items-center gap-1.5 rounded-md border mr-2 px-2.5",
                         managePanelOpen ? "border-primary bg-accent" : "border-border",
                       )}
                     >
@@ -726,9 +767,7 @@ export default function ChatScreen() {
                         size={14}
                         color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
                       />
-                      {compactHeaderActions ? null : (
-                        <Text className="text-xs text-foreground">Manage</Text>
-                      )}
+                      <Text className="text-xs text-foreground">Manage</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => setShowTerminalSplit((current) => !current)}
@@ -771,6 +810,19 @@ export default function ChatScreen() {
             {session && managePanelOpen ? (
               <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
                 <ScrollView>
+                  {compactHeaderActions ? (
+                    <View className="border-b border-border bg-card px-4 py-3">
+                      <AgentActions
+                        session={session}
+                        projectPath={stateProjectPath}
+                        endpoint={serviceEndpoint}
+                        token={token}
+                        compact
+                        mainCheckoutPath={desktopState?.mainCheckoutPath}
+                        onKilled={goBack}
+                      />
+                    </View>
+                  ) : null}
                   <AgentManagementPanel
                     key={`${session.id}:management`}
                     session={session}
