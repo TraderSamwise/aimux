@@ -215,37 +215,22 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   };
 }
 
-export interface ExposeSectionGroup {
-  label: string;
-  count: number;
-}
-
-export interface ExposeSectionBand {
-  row: number;
-  label: string;
-  count: number;
-  tone: number;
-}
-
-export interface ExposeSectionPlan {
-  /** Tile slots in item order; `row` is a text-row offset from the grid top. */
-  slots: Array<{ row: number; col: number }>;
-  bands: ExposeSectionBand[];
-  visibleCount: number;
-}
-
-/**
- * Tiles must sit in section order for bands to bound contiguous runs. Only reorders when
- * bands will actually be drawn, so single-section and worktree-local scopes keep server order.
- */
 export function orderExposeItems(view: ExposeScopeView, projectRoot = "/"): ExposeScopeItem[] {
-  const groups =
-    view.sublabel === "project-worktree"
-      ? groupItemsByProject(view.items)
-      : view.sublabel === "worktree"
-        ? groupItemsByWorktree(view.items, projectRoot)
-        : [];
-  return groups.length < 2 ? view.items : groups.flatMap((group) => group.items);
+  if (view.sublabel === "none") return view.items;
+  if (view.sublabel === "worktree") {
+    const groups = groupItemsByWorktree(view.items, projectRoot);
+    return groups.length < 2 ? view.items : groups.flatMap((group) => group.items);
+  }
+  const groups = groupItemsByProject(view.items);
+  if (groups.length < 2) {
+    const worktreeGroups = groupItemsByWorktree(view.items, projectRoot);
+    return worktreeGroups.length < 2 ? view.items : worktreeGroups.flatMap((group) => group.items);
+  }
+  return groups.flatMap((project) => {
+    const root = project.items[0]?.projectRoot ?? projectRoot;
+    const worktreeGroups = groupItemsByWorktree(project.items, root);
+    return worktreeGroups.length < 2 ? project.items : worktreeGroups.flatMap((group) => group.items);
+  });
 }
 
 /** Ordered project groups, preserving first-seen project order and item order within one. */
@@ -288,94 +273,14 @@ export function groupItemsByWorktree(
   return order.map((key) => ({ label: labels.get(key) ?? "main", items: buckets.get(key)! }));
 }
 
-export function sectionGroupsForExposeItems(
-  sublabel: ExposeSublabel,
-  items: ExposeScopeItem[],
-  projectRoot: string,
-): ExposeSectionGroup[] | null {
-  const groups =
-    sublabel === "project-worktree"
-      ? groupItemsByProject(items)
-      : sublabel === "worktree"
-        ? groupItemsByWorktree(items, projectRoot)
-        : [];
-  if (groups.length < 2) return null;
-  return groups.map((group) => ({ label: group.label, count: group.items.length }));
-}
-
-/**
- * Lay sections out down the grid: one band row per project, then that project's tiles
- * packed `tileCols` wide. A section that cannot fit its band plus one row of tiles is
- * dropped whole rather than orphaning a header, and tiles that run past the grid are
- * left out — the caller reports them as "+N more".
- */
-export function planExposeSections(
-  groups: ExposeSectionGroup[],
-  tileCols: number,
-  tileHeight: number,
-  gridHeight: number,
-): ExposeSectionPlan {
-  const slots: Array<{ row: number; col: number }> = [];
-  const bands: ExposeSectionBand[] = [];
-  let row = 0;
-  for (let g = 0; g < groups.length; g += 1) {
-    const group = groups[g]!;
-    if (row + 1 + tileHeight > gridHeight) break;
-    bands.push({ row, label: group.label, count: group.count, tone: g });
-    row += 1;
-    let placed = 0;
-    while (placed < group.count) {
-      if (row + tileHeight > gridHeight) return { slots, bands, visibleCount: slots.length };
-      const take = Math.min(tileCols, group.count - placed);
-      for (let c = 0; c < take; c += 1) slots.push({ row, col: c });
-      placed += take;
-      row += tileHeight;
-    }
-  }
-  return { slots, bands, visibleCount: slots.length };
-}
-
-/**
- * Vertical move across a section plan. Section rows are ragged — a project's last row
- * can be short and the next project restarts at column 0 — so stepping by `tileCols`
- * would land on the wrong tile. Hold the column where the neighbouring row is wide
- * enough, otherwise take that row's last tile.
- */
-export function moveExposeIndexVertically(
-  slots: Array<{ row: number; col: number }>,
-  index: number,
-  delta: 1 | -1,
-  visibleCount: number,
-): number {
-  const current = slots[index];
-  if (!current) return index;
-  const rows: number[] = [];
-  for (let i = 0; i < visibleCount; i += 1) {
-    const row = slots[i]?.row;
-    if (row !== undefined && !rows.includes(row)) rows.push(row);
-  }
-  rows.sort((a, b) => a - b);
-  const targetRow = rows[rows.indexOf(current.row) + delta];
-  if (targetRow === undefined) return index;
-  let fallback = index;
-  for (let i = 0; i < visibleCount; i += 1) {
-    const slot = slots[i];
-    if (!slot || slot.row !== targetRow) continue;
-    if (slot.col === current.col) return i;
-    if (slot.col < current.col) fallback = i;
-  }
-  return fallback;
-}
-
-// Bands cycle a small palette so neighbouring projects never share a tint, and tile
-// titles tint their worktree from the same palette. These are deliberately distinct
-// from STATE_BORDER's meaning — a tone groups, it does not report.
-const BAND_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75", "38;5;209"];
+// Tile titles tint their worktree from a small palette. These are deliberately distinct
+// from STATE_BORDER's meaning: a tone groups, it does not report state.
+const WORKTREE_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75", "38;5;209"];
 
 /** Bold text in a grouping tone; `undefined` falls back to the plain strong tone. */
 function toned(text: string, tone: number | undefined): string {
   if (tone === undefined) return style(text, "strong");
-  return `\x1b[1;${BAND_TONES[tone % BAND_TONES.length]}m${text}${RESET}`;
+  return `\x1b[1;${WORKTREE_TONES[tone % WORKTREE_TONES.length]}m${text}${RESET}`;
 }
 
 function worktreeToneKey(item: ExposeScopeItem, projectRoot: string): string {
@@ -397,19 +302,9 @@ export function assignWorktreeTones(items: ExposeScopeItem[], projectRoot: strin
   const tones = new Map<string, number>();
   for (const item of items) {
     const key = worktreeToneKey(item, item.projectRoot ?? projectRoot);
-    if (!tones.has(key)) tones.set(key, tones.size % BAND_TONES.length);
+    if (!tones.has(key)) tones.set(key, tones.size % WORKTREE_TONES.length);
   }
   return tones;
-}
-
-export function drawBand(band: ExposeSectionBand, top: number, left: number, width: number): string {
-  const color = `\x1b[${BAND_TONES[band.tone % BAND_TONES.length]}m`;
-  const right = `${band.count} ${band.count === 1 ? "agent" : "agents"}`;
-  const fill = Math.max(0, width - 4 - visibleWidth(band.label) - right.length);
-  const text =
-    `${color}▌ ${RESET}${style(band.label, "strong")} ` +
-    `${color}${"─".repeat(fill)}${RESET} ${style(right, "muted")}`;
-  return `\x1b[${top};${left}H${truncateAnsi(text, width)}${RESET}`;
 }
 
 // 256-color tile borders tinted to the agent's state, matching the chip/pill tone from
@@ -478,9 +373,9 @@ export function fitHeaderRows(headerRows: string[], capacity: number, hasPill: b
  */
 export interface TileContext {
   worktree: string;
-  /** Only in the global scope, and only when no band already names the project. */
+  /** Only in the global scope, where project and worktree both identify the tile. */
   project?: string;
-  /** Index into BAND_TONES; absent when there is no worktree to tint. */
+  /** Index into WORKTREE_TONES; absent when there is no worktree to tint. */
   tone?: number;
 }
 
@@ -628,20 +523,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let loading = !initialHotView;
   let viewStale = Boolean(initialHotView);
 
-  // Bands only earn their row when more than one grouping is on screen; below that the
-  // grid stays flat and every tile keeps naming its own grouping.
-  let sectionGroupCache: {
-    items: ExposeScopeItem[];
-    sublabel: ExposeSublabel;
-    groups: ExposeSectionGroup[] | null;
-  } | null = null;
-  const sectionGroups = (): ExposeSectionGroup[] | null => {
-    if (sectionGroupCache?.items === items && sectionGroupCache.sublabel === sublabel) return sectionGroupCache.groups;
-    const groups = sectionGroupsForExposeItems(sublabel, items, options.projectRoot);
-    sectionGroupCache = { items, sublabel, groups };
-    return groups;
-  };
-
   // Keyed on the items array itself: `items` is replaced wholesale on every reload and
   // scope change, so identity is the reload signal without touching all three sites.
   let toneCache: { items: ExposeScopeItem[]; tones: Map<string, number> } | null = null;
@@ -657,12 +538,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const root = item.projectRoot ?? options.projectRoot;
     const tone = worktreeTones().get(worktreeToneKey(item, root));
     const worktree = shortWorktree(item, root);
-    const groups = sectionGroups();
-    if (sublabel === "worktree" && groups) return { worktree: "" };
-    // A band already names the project, so the tile only needs its worktree.
-    if (sublabel === "project-worktree" && !groups && item.projectName) {
-      return { worktree, project: item.projectName, tone };
-    }
+    if (sublabel === "project-worktree" && item.projectName) return { worktree, project: item.projectName, tone };
     return { worktree, tone };
   };
 
@@ -744,7 +620,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const clientBaseline =
     options.columns && options.rows ? `${options.columns}x${options.rows}` : queryClientSize(options.clientTty);
   let tileCols = 1;
-  let sectionSlots: ExposeSectionPlan["slots"] | null = null;
   let visibleCount = items.length;
   let staticSize = "";
   let staticVisibleCount = -1;
@@ -785,17 +660,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     process.once("SIGTERM", onFatalSignal);
   }
 
-  // Section rows come from the plan; without one the grid is a plain uniform pack.
-  const sectionPlanFor = (layout: GridLayout): ExposeSectionPlan | null => {
-    const groups = sectionGroups();
-    if (!groups) return null;
-    return planExposeSections(groups, layout.tileCols, layout.tileHeight, layout.gridHeight);
-  };
-
-  const renderTileAt = (tileIndex: number, layout: GridLayout, plan: ExposeSectionPlan | null): string => {
-    const slot = plan?.slots[tileIndex];
-    const rowOffset = slot ? slot.row : Math.floor(tileIndex / layout.tileCols) * layout.tileHeight;
-    const c = slot ? slot.col : tileIndex % layout.tileCols;
+  const renderTileAt = (tileIndex: number, layout: GridLayout): string => {
+    const rowOffset = Math.floor(tileIndex / layout.tileCols) * layout.tileHeight;
+    const c = tileIndex % layout.tileCols;
     const top = TITLE_ROW + layout.gridTopRow + rowOffset;
     const left = CONTENT_LEFT + c * (layout.tileWidth + GAP);
     const item = items[tileIndex]!;
@@ -819,12 +686,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const { cols, rows } = terminalSize();
     const size = `${cols}x${rows}`;
     const layout = computeLayout(items.length, cols, rows);
-    const plan = sectionPlanFor(layout);
-    const nextVisibleCount = plan ? plan.visibleCount : layout.visibleCount;
-    if (size !== staticSize || nextVisibleCount !== staticVisibleCount) return false;
+    if (size !== staticSize || layout.visibleCount !== staticVisibleCount) return false;
     tileCols = layout.tileCols;
-    sectionSlots = plan?.slots ?? null;
-    visibleCount = nextVisibleCount;
+    visibleCount = layout.visibleCount;
     if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
     const seen = new Set<number>();
@@ -832,7 +696,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     for (const tileIndex of tileIndexes) {
       if (tileIndex < 0 || tileIndex >= visibleCount || seen.has(tileIndex)) continue;
       seen.add(tileIndex);
-      out += renderTileAt(tileIndex, layout, plan);
+      out += renderTileAt(tileIndex, layout);
     }
     output.write(`${out}\x1b[?2026l`);
     return true;
@@ -846,10 +710,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
     const layout = computeLayout(items.length, cols, rows);
-    const plan = sectionPlanFor(layout);
     tileCols = layout.tileCols;
-    sectionSlots = plan?.slots ?? null;
-    visibleCount = plan ? plan.visibleCount : layout.visibleCount;
+    visibleCount = layout.visibleCount;
     if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
     const hidden = items.length - visibleCount;
@@ -889,11 +751,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
 
     let out = `${base}${titleAt}`;
-    for (const band of plan?.bands ?? []) {
-      out += drawBand(band, TITLE_ROW + layout.gridTopRow + band.row, CONTENT_LEFT, cols);
-    }
     for (let i = 0; i < visibleCount; i += 1) {
-      out += renderTileAt(i, layout, plan);
+      out += renderTileAt(i, layout);
     }
     out += `${helpAt}\x1b[?2026l`;
     output.write(out);
@@ -1131,8 +990,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
       if (key === "down" || key === "j") {
         const previousIndex = index;
-        if (sectionSlots) index = moveExposeIndexVertically(sectionSlots, index, 1, visibleCount);
-        else if (index + tileCols < visibleCount) index += tileCols;
+        if (index + tileCols < visibleCount) index += tileCols;
         if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
@@ -1140,8 +998,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
       if (key === "up" || key === "k") {
         const previousIndex = index;
-        if (sectionSlots) index = moveExposeIndexVertically(sectionSlots, index, -1, visibleCount);
-        else if (index - tileCols >= 0) index -= tileCols;
+        if (index - tileCols >= 0) index -= tileCols;
         if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
