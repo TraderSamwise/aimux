@@ -4,6 +4,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Text as RNText,
   useWindowDimensions,
   View,
   type NativeSyntheticEvent,
@@ -82,7 +83,10 @@ const NARROW_TERMINAL_DIVIDER_WIDTH = 36;
 const WIDE_TERMINAL_DIVIDER_WIDTH = 96;
 const MIN_TERMINAL_DIVIDER_WIDTH = 24;
 const TERMINAL_HORIZONTAL_PADDING = 32;
-const APPROX_TERMINAL_CHAR_WIDTH = 8;
+const TERMINAL_FONT_SIZE = 10.8;
+const TERMINAL_LINE_HEIGHT = 14.4;
+const TERMINAL_TEXT_STYLE = { fontSize: TERMINAL_FONT_SIZE, lineHeight: TERMINAL_LINE_HEIGHT };
+const APPROX_TERMINAL_CHAR_WIDTH = 7.2;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
@@ -647,13 +651,17 @@ export default function ChatScreen() {
         {terminalLines.map((spans, index) => (
           // One Text per row, spans nested inside it: RN only composes styles
           // through nesting, and a row is also the unit the pane wraps at.
-          <Text key={`row-${index}`} className="text-secondary-foreground text-xs font-mono">
+          <Text
+            key={`row-${index}`}
+            className="text-secondary-foreground font-mono"
+            style={TERMINAL_TEXT_STYLE}
+          >
             {spans.length === 0
               ? " "
               : spans.map((span, spanIndex) => (
-                  <Text key={`span-${spanIndex}`} style={span.style}>
+                  <RNText key={`span-${spanIndex}`} style={[TERMINAL_TEXT_STYLE, span.style]}>
                     {span.text}
-                  </Text>
+                  </RNText>
                 ))}
           </Text>
         ))}
