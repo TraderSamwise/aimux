@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   Text as RNText,
+  TextInput,
   useWindowDimensions,
   View,
   type NativeSyntheticEvent,
@@ -90,8 +91,8 @@ const APPROX_TERMINAL_CHAR_WIDTH = 7.2;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 const SCROLL_BOTTOM_EPSILON = 24;
-const COMPOSER_INPUT_LINE_HEIGHT = 16;
-const COMPOSER_INPUT_MIN_HEIGHT = 24;
+const COMPOSER_INPUT_LINE_HEIGHT = 18;
+const COMPOSER_INPUT_MIN_HEIGHT = 28;
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 3;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
@@ -824,7 +825,7 @@ export default function ChatScreen() {
       >
         {({ onBlur, onFocus }) => (
           <>
-            <Input
+            <TextInput
               accessibilityLabel="Message the agent"
               onFocus={onFocus}
               onBlur={onBlur}
@@ -833,16 +834,17 @@ export default function ChatScreen() {
               onKeyPress={handleComposerKeyPress}
               onContentSizeChange={handleComposerContentSizeChange}
               placeholder="Ask the agent…"
+              placeholderTextColor="#71717a"
               multiline
-              // One row at rest. `multiline` alone renders a two-row textarea
-              // on the web, so the card opens a line taller than it needs.
-              numberOfLines={1}
               editable={!sendBusy}
-              // The card draws the border and the ground now, so the field
-              // itself is only text.
               scrollEnabled={composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT}
-              className="rounded-none border-0 bg-transparent px-1 py-0 text-sm"
-              style={{ height: composerInputHeight }}
+              className="text-sm text-foreground"
+              style={{
+                height: composerInputHeight,
+                lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+                paddingHorizontal: 4,
+                paddingVertical: 0,
+              }}
               textAlignVertical="top"
             />
             <View className="flex-row items-center gap-2">
