@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   View,
   type NativeSyntheticEvent,
+  type NativeScrollEvent,
   type TextInputContentSizeChangeEventData,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
@@ -87,8 +88,8 @@ const TERMINAL_LINE_HEIGHT = 14.4;
 const TERMINAL_TEXT_STYLE = { fontSize: TERMINAL_FONT_SIZE, lineHeight: TERMINAL_LINE_HEIGHT };
 const APPROX_TERMINAL_CHAR_WIDTH = 7.2;
 const MAX_PENDING_ATTACHMENTS = 4;
-const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
+const SCROLL_BOTTOM_EPSILON = 24;
 const COMPOSER_INPUT_LINE_HEIGHT = 16;
 const COMPOSER_INPUT_MIN_HEIGHT = 24;
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 3;
@@ -101,6 +102,41 @@ const CONTROL_ON_BRAND = "#18181b";
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
 };
+
+type ScrollPaneKey = "chat" | "terminal";
+
+type ScrollPaneMetrics = {
+  contentHeight: number;
+  initialized: boolean;
+  offsetY: number;
+  pinnedToBottom: boolean;
+  ratio: number;
+  viewportHeight: number;
+};
+
+function createScrollPaneMetrics(): ScrollPaneMetrics {
+  return {
+    contentHeight: 0,
+    initialized: false,
+    offsetY: 0,
+    pinnedToBottom: true,
+    ratio: 1,
+    viewportHeight: 0,
+  };
+}
+
+function getScrollableHeight(metrics: ScrollPaneMetrics) {
+  return Math.max(0, metrics.contentHeight - metrics.viewportHeight);
+}
+
+function getPinnedOffset(metrics: ScrollPaneMetrics) {
+  return getScrollableHeight(metrics);
+}
+
+function clampScrollRatio(ratio: number) {
+  if (!Number.isFinite(ratio)) return 1;
+  return Math.min(1, Math.max(0, ratio));
+}
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
@@ -150,9 +186,14 @@ export default function ChatScreen() {
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const terminalScrollRef = useRef<ScrollView>(null);
-  const activeScrollSessionRef = useRef<string | null>(null);
-  const canAnimateActiveScrollRef = useRef(false);
-  const enableScrollAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
+    chat: createScrollPaneMetrics(),
+    terminal: createScrollPaneMetrics(),
+  });
+  const programmaticScrollRef = useRef<Record<ScrollPaneKey, boolean>>({
+    chat: false,
+    terminal: false,
+  });
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
     : null;
@@ -287,47 +328,6 @@ export default function ChatScreen() {
     return parsedMessages;
   }, [parsedMessages]);
 
-  const scheduleScrollAnimationEnable = useCallback((nextSessionKey: string) => {
-    if (enableScrollAnimationTimerRef.current) {
-      clearTimeout(enableScrollAnimationTimerRef.current);
-    }
-    enableScrollAnimationTimerRef.current = setTimeout(() => {
-      if (activeScrollSessionRef.current === nextSessionKey) {
-        canAnimateActiveScrollRef.current = true;
-      }
-      enableScrollAnimationTimerRef.current = null;
-    }, CHAT_SCROLL_LOAD_SETTLE_MS);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (enableScrollAnimationTimerRef.current) {
-        clearTimeout(enableScrollAnimationTimerRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    activeScrollSessionRef.current = sessionKey;
-    canAnimateActiveScrollRef.current = false;
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
-  }, [sessionKey]);
-
-  useEffect(() => {
-    const isSameSession = activeScrollSessionRef.current === sessionKey;
-    const animated = isSameSession && canAnimateActiveScrollRef.current;
-    scrollRef.current?.scrollToEnd({ animated });
-    activeScrollSessionRef.current = sessionKey;
-    if (!animated) {
-      canAnimateActiveScrollRef.current = false;
-      scheduleScrollAnimationEnable(sessionKey);
-    }
-  }, [scheduleScrollAnimationEnable, sessionKey, allMessages.length, output]);
-
-  useEffect(() => {
-    terminalScrollRef.current?.scrollToEnd({ animated: false });
-  }, [output, showTerminalSplit]);
-
   const canShowTerminal = Boolean(output);
   const usesNativeAccessoryComposer = Platform.OS === "ios";
   const overlaysComposer = Platform.OS !== "web" && !usesNativeAccessoryComposer;
@@ -401,6 +401,124 @@ export default function ChatScreen() {
     !sendBusy &&
     (composerSendText || hasPendingAttachments),
   );
+
+  const getScrollRef = useCallback(
+    (pane: ScrollPaneKey) => (pane === "chat" ? scrollRef : terminalScrollRef),
+    [],
+  );
+
+  const scrollPaneToOffset = useCallback(
+    (pane: ScrollPaneKey, offsetY: number) => {
+      const ref = getScrollRef(pane).current;
+      if (!ref) return;
+      programmaticScrollRef.current[pane] = true;
+      ref.scrollTo({ y: Math.max(0, offsetY), animated: false });
+      requestAnimationFrame(() => {
+        programmaticScrollRef.current[pane] = false;
+      });
+    },
+    [getScrollRef],
+  );
+
+  const applyPaneScrollPosition = useCallback(
+    (pane: ScrollPaneKey) => {
+      const metrics = scrollMetricsRef.current[pane];
+      if (metrics.viewportHeight <= 0) return;
+      const maxY = getScrollableHeight(metrics);
+      const offsetY = metrics.pinnedToBottom ? getPinnedOffset(metrics) : metrics.ratio * maxY;
+      metrics.offsetY = offsetY;
+      metrics.initialized = true;
+      scrollPaneToOffset(pane, offsetY);
+    },
+    [scrollPaneToOffset],
+  );
+
+  const settlePaneAfterMetricChange = useCallback(
+    (pane: ScrollPaneKey) => {
+      const metrics = scrollMetricsRef.current[pane];
+      const maxY = getScrollableHeight(metrics);
+      if (metrics.initialized && !metrics.pinnedToBottom && metrics.offsetY <= maxY) return;
+      requestAnimationFrame(() => applyPaneScrollPosition(pane));
+    },
+    [applyPaneScrollPosition],
+  );
+
+  const handleScrollLayout = useCallback(
+    (pane: ScrollPaneKey, event: LayoutChangeEvent) => {
+      scrollMetricsRef.current[pane].viewportHeight = Math.max(0, event.nativeEvent.layout.height);
+      settlePaneAfterMetricChange(pane);
+    },
+    [settlePaneAfterMetricChange],
+  );
+
+  const handleScrollContentSizeChange = useCallback(
+    (pane: ScrollPaneKey, contentHeight: number) => {
+      scrollMetricsRef.current[pane].contentHeight = Math.max(0, contentHeight);
+      settlePaneAfterMetricChange(pane);
+    },
+    [settlePaneAfterMetricChange],
+  );
+
+  const handleScroll = useCallback(
+    (pane: ScrollPaneKey, event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const offsetY = Math.max(0, contentOffset.y);
+      const metrics = scrollMetricsRef.current[pane];
+      metrics.contentHeight = Math.max(0, contentSize.height);
+      metrics.viewportHeight = Math.max(0, layoutMeasurement.height);
+      const maxY = getScrollableHeight(metrics);
+      const distanceFromBottom = Math.max(0, maxY - offsetY);
+      metrics.offsetY = offsetY;
+      metrics.pinnedToBottom = distanceFromBottom <= SCROLL_BOTTOM_EPSILON;
+      metrics.ratio = maxY <= 0 ? 1 : clampScrollRatio(offsetY / maxY);
+      metrics.initialized = true;
+
+      if (programmaticScrollRef.current[pane]) {
+        programmaticScrollRef.current[pane] = false;
+        return;
+      }
+
+      const peerPane: ScrollPaneKey = pane === "chat" ? "terminal" : "chat";
+      const peerMetrics = scrollMetricsRef.current[peerPane];
+      peerMetrics.pinnedToBottom = metrics.pinnedToBottom;
+      peerMetrics.ratio = metrics.ratio;
+      if (getScrollRef(peerPane).current) applyPaneScrollPosition(peerPane);
+    },
+    [applyPaneScrollPosition, getScrollRef],
+  );
+
+  useEffect(() => {
+    scrollMetricsRef.current = {
+      chat: createScrollPaneMetrics(),
+      terminal: createScrollPaneMetrics(),
+    };
+    programmaticScrollRef.current = {
+      chat: false,
+      terminal: false,
+    };
+    requestAnimationFrame(() => {
+      applyPaneScrollPosition("chat");
+      applyPaneScrollPosition("terminal");
+    });
+  }, [applyPaneScrollPosition, sessionKey]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (scrollMetricsRef.current.chat.pinnedToBottom) applyPaneScrollPosition("chat");
+      if (scrollMetricsRef.current.terminal.pinnedToBottom) applyPaneScrollPosition("terminal");
+    });
+  }, [allMessages.length, applyPaneScrollPosition, composerBottomSpacer, output]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (showSplit) {
+        applyPaneScrollPosition("chat");
+        applyPaneScrollPosition("terminal");
+        return;
+      }
+      applyPaneScrollPosition(showTerminalOnly ? "terminal" : "chat");
+    });
+  }, [applyPaneScrollPosition, showSplit, showTerminalOnly]);
 
   function handleTerminalPaneLayout(event: LayoutChangeEvent) {
     setTerminalPaneWidth(event.nativeEvent.layout.width);
@@ -629,6 +747,12 @@ export default function ChatScreen() {
         automaticallyAdjustKeyboardInsets={usesNativeAccessoryComposer}
         contentContainerStyle={detachedComposer ? { paddingBottom: composerBottomSpacer } : null}
         horizontal={false}
+        onContentSizeChange={(_, contentHeight) =>
+          handleScrollContentSizeChange("terminal", contentHeight)
+        }
+        onLayout={(event) => handleScrollLayout("terminal", event)}
+        onScroll={(event) => handleScroll("terminal", event)}
+        scrollEventThrottle={16}
       >
         <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
         {terminalLines.map((spans, index) => (
@@ -1119,6 +1243,12 @@ export default function ChatScreen() {
                         }}
                         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
                         keyboardShouldPersistTaps="handled"
+                        onContentSizeChange={(_, contentHeight) =>
+                          handleScrollContentSizeChange("chat", contentHeight)
+                        }
+                        onLayout={(event) => handleScrollLayout("chat", event)}
+                        onScroll={(event) => handleScroll("chat", event)}
+                        scrollEventThrottle={16}
                       >
                         <TranscriptContent
                           messages={allMessages}
