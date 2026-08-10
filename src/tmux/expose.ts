@@ -235,12 +235,16 @@ export interface ExposeSectionPlan {
 }
 
 /**
- * Tiles must sit in project order for bands to bound contiguous runs. Only reorders when
- * bands will actually be drawn, so single-project and narrower scopes keep server order.
+ * Tiles must sit in section order for bands to bound contiguous runs. Only reorders when
+ * bands will actually be drawn, so single-section and worktree-local scopes keep server order.
  */
-export function orderExposeItems(view: ExposeScopeView): ExposeScopeItem[] {
-  if (view.sublabel !== "project-worktree") return view.items;
-  const groups = groupItemsByProject(view.items);
+export function orderExposeItems(view: ExposeScopeView, projectRoot = "/"): ExposeScopeItem[] {
+  const groups =
+    view.sublabel === "project-worktree"
+      ? groupItemsByProject(view.items)
+      : view.sublabel === "worktree"
+        ? groupItemsByWorktree(view.items, projectRoot)
+        : [];
   return groups.length < 2 ? view.items : groups.flatMap((group) => group.items);
 }
 
@@ -259,6 +263,44 @@ export function groupItemsByProject(items: ExposeScopeItem[]): Array<{ label: st
     bucket.push(item);
   }
   return order.map((label) => ({ label, items: buckets.get(label)! }));
+}
+
+/** Ordered worktree groups, preserving first-seen worktree order and item order within one. */
+export function groupItemsByWorktree(
+  items: ExposeScopeItem[],
+  projectRoot: string,
+): Array<{ label: string; items: ExposeScopeItem[] }> {
+  const order: string[] = [];
+  const labels = new Map<string, string>();
+  const buckets = new Map<string, ExposeScopeItem[]>();
+  for (const item of items) {
+    const root = item.projectRoot ?? projectRoot;
+    const key = worktreeToneKey(item, root);
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+      labels.set(key, shortWorktree(item, root));
+      order.push(key);
+    }
+    bucket.push(item);
+  }
+  return order.map((key) => ({ label: labels.get(key) ?? "main", items: buckets.get(key)! }));
+}
+
+export function sectionGroupsForExposeItems(
+  sublabel: ExposeSublabel,
+  items: ExposeScopeItem[],
+  projectRoot: string,
+): ExposeSectionGroup[] | null {
+  const groups =
+    sublabel === "project-worktree"
+      ? groupItemsByProject(items)
+      : sublabel === "worktree"
+        ? groupItemsByWorktree(items, projectRoot)
+        : [];
+  if (groups.length < 2) return null;
+  return groups.map((group) => ({ label: group.label, count: group.items.length }));
 }
 
 /**
@@ -580,19 +622,24 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   });
   const initialHotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
   let view = initialHotView ?? defaultExposeScopeView(scope);
-  let items = orderExposeItems(view);
+  let items = orderExposeItems(view, options.projectRoot);
   let scopeLabel = view.scopeLabel;
   let sublabel: ExposeSublabel = view.sublabel;
   let loading = !initialHotView;
   let viewStale = Boolean(initialHotView);
 
-  // Bands only earn their row when more than one project is on screen; below that the
-  // grid stays flat and every tile keeps naming its own project.
+  // Bands only earn their row when more than one grouping is on screen; below that the
+  // grid stays flat and every tile keeps naming its own grouping.
+  let sectionGroupCache: {
+    items: ExposeScopeItem[];
+    sublabel: ExposeSublabel;
+    groups: ExposeSectionGroup[] | null;
+  } | null = null;
   const sectionGroups = (): ExposeSectionGroup[] | null => {
-    if (sublabel !== "project-worktree") return null;
-    const groups = groupItemsByProject(items);
-    if (groups.length < 2) return null;
-    return groups.map((group) => ({ label: group.label, count: group.items.length }));
+    if (sectionGroupCache?.items === items && sectionGroupCache.sublabel === sublabel) return sectionGroupCache.groups;
+    const groups = sectionGroupsForExposeItems(sublabel, items, options.projectRoot);
+    sectionGroupCache = { items, sublabel, groups };
+    return groups;
   };
 
   // Keyed on the items array itself: `items` is replaced wholesale on every reload and
@@ -610,8 +657,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const root = item.projectRoot ?? options.projectRoot;
     const tone = worktreeTones().get(worktreeToneKey(item, root));
     const worktree = shortWorktree(item, root);
+    const groups = sectionGroups();
+    if (sublabel === "worktree" && groups) return { worktree: "" };
     // A band already names the project, so the tile only needs its worktree.
-    if (sublabel === "project-worktree" && !sectionGroups() && item.projectName) {
+    if (sublabel === "project-worktree" && !groups && item.projectName) {
       return { worktree, project: item.projectName, tone };
     }
     return { worktree, tone };
@@ -887,7 +936,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const selectedWindowId =
       selectionVersionAtStart === selectionVersion ? selectedWindowIdAtStart : items[index]?.target.windowId;
     view = nextView;
-    items = orderExposeItems(view);
+    items = orderExposeItems(view, options.projectRoot);
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
     loading = false;
@@ -950,7 +999,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       scope = next;
       const hotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
       view = hotView ?? defaultExposeScopeView(scope);
-      items = orderExposeItems(view);
+      items = orderExposeItems(view, options.projectRoot);
       scopeLabel = view.scopeLabel;
       sublabel = view.sublabel;
       loading = !hotView;
@@ -970,7 +1019,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           if (finished) return;
           scope = previousScope;
           view = previousView;
-          items = orderExposeItems(view);
+          items = orderExposeItems(view, options.projectRoot);
           scopeLabel = view.scopeLabel;
           sublabel = view.sublabel;
           viewStale = previousViewStale;

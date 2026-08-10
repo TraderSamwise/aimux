@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   drawBand,
   groupItemsByProject,
+  groupItemsByWorktree,
   moveExposeIndexVertically,
   orderExposeItems,
   planExposeSections,
+  sectionGroupsForExposeItems,
   type ExposeSectionGroup,
 } from "./expose.js";
 import type { ExposeScopeItem, ExposeScopeView } from "./expose-model.js";
@@ -16,6 +18,14 @@ function item(id: string, projectName?: string): ExposeScopeItem {
     target: { windowId: id, windowName: id },
     metadata: {},
     projectName,
+  } as unknown as ExposeScopeItem;
+}
+
+function worktreeItem(id: string, worktreePath?: string): ExposeScopeItem {
+  return {
+    label: id,
+    target: { windowId: id, windowName: id },
+    metadata: { worktreePath },
   } as unknown as ExposeScopeItem;
 }
 
@@ -46,6 +56,31 @@ describe("groupItemsByProject", () => {
   });
 });
 
+describe("groupItemsByWorktree", () => {
+  it("keeps first-seen worktree order and item order inside a worktree", () => {
+    const result = groupItemsByWorktree(
+      [
+        worktreeItem("custom-1", "/repo/.aimux/worktrees/custom"),
+        worktreeItem("main-1", "/repo"),
+        worktreeItem("custom-2", "/repo/.aimux/worktrees/custom"),
+        worktreeItem("main-2", "/repo"),
+        worktreeItem("audit-1", "/repo/.aimux/worktrees/e2e-audit"),
+      ],
+      "/repo",
+    );
+    expect(result.map((g) => g.label)).toEqual(["custom", "main", "e2e-audit"]);
+    expect(result[0]!.items.map((i) => i.target.windowId)).toEqual(["custom-1", "custom-2"]);
+    expect(result[1]!.items.map((i) => i.target.windowId)).toEqual(["main-1", "main-2"]);
+    expect(result[2]!.items.map((i) => i.target.windowId)).toEqual(["audit-1"]);
+  });
+
+  it("buckets missing and project-root worktrees under main", () => {
+    const result = groupItemsByWorktree([worktreeItem("x"), worktreeItem("y", "/repo")], "/repo");
+    expect(result).toHaveLength(1);
+    expect(result[0]!.label).toBe("main");
+  });
+});
+
 describe("orderExposeItems", () => {
   it("regroups items by project when bands will be drawn", () => {
     const ordered = orderExposeItems(
@@ -54,11 +89,45 @@ describe("orderExposeItems", () => {
     expect(ordered.map((i) => i.target.windowId)).toEqual(["b1", "b2", "a1"]);
   });
 
-  it("leaves order alone for a single project or a narrower scope", () => {
+  it("regroups project-scope items by worktree when bands will be drawn", () => {
+    const ordered = orderExposeItems(
+      view(
+        [
+          worktreeItem("custom-1", "/repo/.aimux/worktrees/custom"),
+          worktreeItem("main-1", "/repo"),
+          worktreeItem("custom-2", "/repo/.aimux/worktrees/custom"),
+          worktreeItem("main-2", "/repo"),
+          worktreeItem("audit-1", "/repo/.aimux/worktrees/e2e-audit"),
+        ],
+        "worktree",
+      ),
+      "/repo",
+    );
+    expect(ordered.map((i) => i.target.windowId)).toEqual(["custom-1", "custom-2", "main-1", "main-2", "audit-1"]);
+  });
+
+  it("leaves order alone for a single project, a single worktree, or worktree-local scope", () => {
     const single = [item("a1", "alpha"), item("a2", "alpha")];
     expect(orderExposeItems(view(single, "project-worktree"))).toBe(single);
-    const mixed = [item("b1", "beta"), item("a1", "alpha")];
-    expect(orderExposeItems(view(mixed, "worktree"))).toBe(mixed);
+    const singleWorktree = [worktreeItem("custom-1", "/repo/wt/custom"), worktreeItem("custom-2", "/repo/wt/custom")];
+    expect(orderExposeItems(view(singleWorktree, "worktree"), "/repo")).toBe(singleWorktree);
+    const local = [worktreeItem("custom-1", "/repo/wt/custom"), worktreeItem("main-1", "/repo")];
+    expect(orderExposeItems(view(local, "none"), "/repo")).toBe(local);
+  });
+});
+
+describe("sectionGroupsForExposeItems", () => {
+  it("creates worktree bands only when multiple worktrees are present", () => {
+    const multiple = [
+      worktreeItem("custom-1", "/repo/.aimux/worktrees/custom"),
+      worktreeItem("custom-2", "/repo/.aimux/worktrees/custom"),
+      worktreeItem("main-1", "/repo"),
+    ];
+    expect(sectionGroupsForExposeItems("worktree", multiple, "/repo")).toEqual([
+      { label: "custom", count: 2 },
+      { label: "main", count: 1 },
+    ]);
+    expect(sectionGroupsForExposeItems("worktree", multiple.slice(0, 2), "/repo")).toBeNull();
   });
 });
 
