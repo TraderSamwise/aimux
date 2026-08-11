@@ -20,9 +20,14 @@ import type { LayoutChangeEvent } from "react-native";
 import {
   KeyboardChatScrollView,
   KeyboardGestureArea,
-  KeyboardStickyView,
+  useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
-import { useSharedValue, withTiming, type SharedValue } from "react-native-reanimated";
+import Reanimated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -286,9 +291,7 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
-  const [composerLayoutHeight, setComposerLayoutHeight] = useState(
-    COMPOSER_FOOTER_ESTIMATED_HEIGHT,
-  );
+  const [composerLayoutHeight, setComposerLayoutHeight] = useState(0);
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -301,7 +304,7 @@ export default function ChatScreen() {
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
   const composerHiddenRef = useRef(false);
   const [composerHideProgress] = useState(() => new Animated.Value(0));
-  const composerScrollReserve = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
+  const composerScrollReserve = useSharedValue(0);
   const [composerInteractive, setComposerInteractive] = useState(true);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
@@ -477,6 +480,7 @@ export default function ChatScreen() {
   const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
+  const composerReserveHeight = composerLayoutHeight > 0 ? composerHideDistance : 0;
   const composerVisibilityStyle = useMemo(
     () => ({
       opacity: composerHideProgress.interpolate({
@@ -501,7 +505,7 @@ export default function ChatScreen() {
       if (!hidden) setComposerInteractive(true);
       composerHideProgress.stopAnimation();
       // eslint-disable-next-line react-hooks/immutability
-      composerScrollReserve.value = withTiming(hidden ? 0 : composerHideDistance, {
+      composerScrollReserve.value = withTiming(hidden ? 0 : composerReserveHeight, {
         duration: COMPOSER_HIDE_ANIMATION_MS,
       });
       Animated.timing(composerHideProgress, {
@@ -513,7 +517,7 @@ export default function ChatScreen() {
       });
     },
     [
-      composerHideDistance,
+      composerReserveHeight,
       composerHideProgress,
       composerScrollReserve,
       usesNativeKeyboardController,
@@ -532,10 +536,13 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!usesNativeKeyboardController) return;
     // eslint-disable-next-line react-hooks/immutability
-    composerScrollReserve.value = withTiming(composerHiddenRef.current ? 0 : composerHideDistance, {
-      duration: COMPOSER_HIDE_ANIMATION_MS,
-    });
-  }, [composerHideDistance, composerScrollReserve, usesNativeKeyboardController]);
+    composerScrollReserve.value = withTiming(
+      composerHiddenRef.current ? 0 : composerReserveHeight,
+      {
+        duration: COMPOSER_HIDE_ANIMATION_MS,
+      },
+    );
+  }, [composerReserveHeight, composerScrollReserve, usesNativeKeyboardController]);
   const terminalToggleLabel =
     showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
   const measuredDividerWidth = terminalPaneWidth
@@ -1192,7 +1199,7 @@ export default function ChatScreen() {
   );
 
   const nativeStickyComposer = (
-    <KeyboardStickyView
+    <NativeComposerFrame
       pointerEvents={composerInteractive ? "box-none" : "none"}
       style={{
         bottom: 0,
@@ -1208,7 +1215,7 @@ export default function ChatScreen() {
       >
         {composerFooter}
       </Animated.View>
-    </KeyboardStickyView>
+    </NativeComposerFrame>
   );
 
   const chatScroller = serviceEndpoint ? (
@@ -1603,8 +1610,8 @@ export default function ChatScreen() {
                       </View>
                     )}
                   </View>
+                  {usesNativeKeyboardController ? nativeStickyComposer : composerFooter}
                 </KeyboardGestureArea>
-                {usesNativeKeyboardController ? nativeStickyComposer : composerFooter}
               </View>
             )}
           </View>
@@ -1701,6 +1708,28 @@ function KeyboardManagedScrollView({
     <ScrollView ref={scrollViewRef as React.RefObject<ScrollView>} {...commonProps}>
       {content}
     </ScrollView>
+  );
+}
+
+function NativeComposerFrame({
+  children,
+  pointerEvents,
+  style,
+}: {
+  children: React.ReactNode;
+  pointerEvents: "box-none" | "none";
+  style: React.ComponentProps<typeof Reanimated.View>["style"];
+}) {
+  const { height, progress } = useReanimatedKeyboardAnimation();
+  const keyboardStyle = useAnimatedStyle(() => {
+    const translateY = progress.value <= 0.001 ? 0 : height.value;
+    return { transform: [{ translateY }] };
+  }, []);
+
+  return (
+    <Reanimated.View pointerEvents={pointerEvents} style={[style, keyboardStyle]}>
+      {children}
+    </Reanimated.View>
   );
 }
 
