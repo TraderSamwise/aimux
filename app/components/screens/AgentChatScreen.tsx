@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   FlatList,
   Image,
   Platform,
@@ -71,6 +72,7 @@ import { worktreeIdentity } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
+import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import {
   activityFamily,
   activityTextFamily,
@@ -113,6 +115,9 @@ const COMPOSER_INPUT_MAX_HEIGHT =
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
+const COMPOSER_HIDE_SCROLL_DELTA = 14;
+const COMPOSER_REVEAL_SCROLL_DELTA = 10;
+const COMPOSER_HIDE_ANIMATION_MS = 160;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
@@ -295,6 +300,10 @@ export default function ChatScreen() {
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
+  const composerHiddenRef = useRef(false);
+  const nativeChatScrollOffsetRef = useRef(0);
+  const [composerHideProgress] = useState(() => new Animated.Value(0));
+  const [composerInteractive, setComposerInteractive] = useState(true);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
     terminal: createScrollPaneMetrics(),
@@ -461,12 +470,67 @@ export default function ChatScreen() {
 
   const canShowTerminal = Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
+  const keyboardVisible = useKeyboardVisible(usesNativeKeyboardController);
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
   const canUseSplitView = Platform.OS === "web" && viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
   const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
+  const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
+  const composerVisibilityStyle = useMemo(
+    () => ({
+      opacity: composerHideProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 0],
+      }),
+      transform: [
+        {
+          translateY: composerHideProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, composerHideDistance],
+          }),
+        },
+      ],
+    }),
+    [composerHideDistance, composerHideProgress],
+  );
+  const setNativeComposerHidden = useCallback(
+    (hidden: boolean) => {
+      if (!usesNativeKeyboardController || composerHiddenRef.current === hidden) return;
+      composerHiddenRef.current = hidden;
+      if (!hidden) setComposerInteractive(true);
+      composerHideProgress.stopAnimation();
+      Animated.timing(composerHideProgress, {
+        duration: COMPOSER_HIDE_ANIMATION_MS,
+        toValue: hidden ? 1 : 0,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished && hidden) setComposerInteractive(false);
+      });
+    },
+    [composerHideProgress, usesNativeKeyboardController],
+  );
+  const handleNativeChatScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
+      const previousOffsetY = nativeChatScrollOffsetRef.current;
+      nativeChatScrollOffsetRef.current = offsetY;
+
+      if (keyboardVisible || offsetY <= SCROLL_BOTTOM_EPSILON) {
+        setNativeComposerHidden(false);
+        return;
+      }
+
+      const deltaY = offsetY - previousOffsetY;
+      if (deltaY > COMPOSER_HIDE_SCROLL_DELTA) {
+        setNativeComposerHidden(true);
+      } else if (deltaY < -COMPOSER_REVEAL_SCROLL_DELTA) {
+        setNativeComposerHidden(false);
+      }
+    },
+    [keyboardVisible, setNativeComposerHidden],
+  );
   const terminalToggleLabel =
     showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
   const measuredDividerWidth = terminalPaneWidth
@@ -707,12 +771,20 @@ export default function ChatScreen() {
       chat: createUserScrollState(),
       terminal: createUserScrollState(),
     };
+    nativeChatScrollOffsetRef.current = 0;
     requestAnimationFrame(() => {
+      setNativeComposerHidden(false);
       chatListRef.current?.scrollToOffset({ animated: false, offset: 0 });
       applyPaneScrollPosition("chat");
       applyPaneScrollPosition("terminal");
     });
-  }, [applyPaneScrollPosition, sessionKey]);
+  }, [applyPaneScrollPosition, sessionKey, setNativeComposerHidden]);
+
+  useEffect(() => {
+    if (keyboardVisible || showTerminalOnly) {
+      requestAnimationFrame(() => setNativeComposerHidden(false));
+    }
+  }, [keyboardVisible, setNativeComposerHidden, showTerminalOnly]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -1116,7 +1188,14 @@ export default function ChatScreen() {
   );
 
   const nativeStickyComposer = (
-    <KeyboardStickyView style={{ flexShrink: 0 }}>{composerFooter}</KeyboardStickyView>
+    <KeyboardStickyView style={{ flexShrink: 0 }}>
+      <Animated.View
+        pointerEvents={composerInteractive ? "auto" : "none"}
+        style={composerVisibilityStyle}
+      >
+        {composerFooter}
+      </Animated.View>
+    </KeyboardStickyView>
   );
 
   const chatScroller = serviceEndpoint ? (
@@ -1126,6 +1205,7 @@ export default function ChatScreen() {
         items={chatListItems}
         keyboardOffset={bottomInset}
         listRef={chatListRef}
+        onScroll={handleNativeChatScroll}
         serviceEndpoint={serviceEndpoint}
       />
     ) : (
@@ -1615,12 +1695,14 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   items,
   keyboardOffset,
   listRef,
+  onScroll,
   serviceEndpoint,
 }: {
   dividerWidth: number;
   items: ChatListItem[];
   keyboardOffset: number;
   listRef: React.RefObject<FlatList<ChatListItem> | null>;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   serviceEndpoint: ServiceEndpoint;
 }) {
   const renderItem = useCallback(
@@ -1680,6 +1762,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         paddingTop: 8,
       }}
       renderScrollComponent={renderScrollComponent}
+      onScroll={onScroll}
       scrollEventThrottle={16}
     />
   );
