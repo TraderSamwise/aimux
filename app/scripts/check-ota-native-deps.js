@@ -71,7 +71,9 @@ const gitRoot = git(["rev-parse", "--show-toplevel"]);
 const yarnLockPath = findUp("yarn.lock");
 if (!yarnLockPath) fail(["Missing yarn.lock"]);
 
-const versionPath = versionCandidates.map((candidate) => path.join(appRoot, candidate)).find(fs.existsSync);
+const versionPath = versionCandidates
+  .map((candidate) => path.join(appRoot, candidate))
+  .find(fs.existsSync);
 if (!versionPath) fail([`Could not find version file (${versionCandidates.join(", ")})`]);
 
 const versionRel = path.relative(gitRoot, versionPath).replace(/\\/g, "/");
@@ -112,11 +114,15 @@ for (const name of Object.keys(packageJson.dependencies ?? {})) {
   const installed = readJson(installedPath).version;
   const inBuild = buildLock.get(name);
   if (!inBuild) {
-    drift.push(`${name}: not present in build ${buildNumber} - it has no native code on the device`);
+    drift.push(
+      `${name}: not present in build ${buildNumber} - it has no native code on the device`,
+    );
     continue;
   }
   if (!inBuild.has(installed)) {
-    drift.push(`${name}: build ${buildNumber} has ${[...inBuild].join(", ")}, about to ship ${installed}`);
+    drift.push(
+      `${name}: build ${buildNumber} has ${[...inBuild].join(", ")}, about to ship ${installed}`,
+    );
   }
 }
 
