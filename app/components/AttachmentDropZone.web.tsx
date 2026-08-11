@@ -1,13 +1,17 @@
 import React, { useCallback, useState } from "react";
 
+import { imageAttachmentsFromFiles, type PickedImageAttachment } from "@/lib/image-picker";
+
 export function AttachmentDropZone({
   children,
   disabled,
-  onDropFiles,
+  onDropAttachments,
+  onDropRejected,
 }: {
   children: (state: { dragging: boolean }) => React.ReactNode;
   disabled?: boolean;
-  onDropFiles: (files: File[]) => void;
+  onDropAttachments: (attachments: PickedImageAttachment[]) => void;
+  onDropRejected?: (message: string) => void;
 }) {
   const [dragging, setDragging] = useState(false);
 
@@ -32,13 +36,23 @@ export function AttachmentDropZone({
   );
 
   const handleDrop = useCallback(
-    (event: React.DragEvent<HTMLDivElement>) => {
+    async (event: React.DragEvent<HTMLDivElement>) => {
       if (disabled || !hasImage(event)) return;
       event.preventDefault();
       setDragging(false);
-      onDropFiles(Array.from(event.dataTransfer.files ?? []));
+      const files = Array.from(event.dataTransfer.files ?? []);
+      try {
+        const attachments = await imageAttachmentsFromFiles(files);
+        if (files.length > 0 && attachments.length === 0) {
+          onDropRejected?.("Drop image files only.");
+          return;
+        }
+        onDropAttachments(attachments);
+      } catch (err) {
+        onDropRejected?.(err instanceof Error ? err.message : String(err));
+      }
     },
-    [disabled, hasImage, onDropFiles],
+    [disabled, hasImage, onDropAttachments, onDropRejected],
   );
 
   return (

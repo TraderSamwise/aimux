@@ -66,6 +66,7 @@ module.exports = {
           color: "#0a0a0c",
         },
       ],
+      "./plugins/withAimuxAttachmentDropView",
       ...(HAS_REAL_EAS_PROJECT ? ["expo-updates"] : []),
     ],
     experiments: {

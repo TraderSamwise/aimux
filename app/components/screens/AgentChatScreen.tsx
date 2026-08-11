@@ -62,11 +62,7 @@ import {
   uploadImageAttachment,
   type SharedSessionSummary,
 } from "@/lib/api";
-import {
-  imageAttachmentsFromFiles,
-  pickImageAttachment,
-  type PickedImageAttachment,
-} from "@/lib/image-picker";
+import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { cn } from "@/lib/utils";
@@ -907,19 +903,10 @@ export default function ChatScreen() {
     }
   }
 
-  async function handleDropFiles(files: File[]) {
+  function handleDropAttachments(attachments: PickedImageAttachment[]) {
     if (sendBusy || sendBusyRef.current) return;
     setSendError(null);
-    try {
-      const picked = await imageAttachmentsFromFiles(files);
-      if (files.length > 0 && picked.length === 0) {
-        setSendError("Drop image files only.");
-        return;
-      }
-      appendPendingAttachments(picked);
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : String(err));
-    }
+    appendPendingAttachments(attachments);
   }
 
   function appendPendingAttachments(attachments: PickedImageAttachment[]) {
@@ -1139,7 +1126,8 @@ export default function ChatScreen() {
     */}
       <AttachmentDropZone
         disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
-        onDropFiles={handleDropFiles}
+        onDropAttachments={handleDropAttachments}
+        onDropRejected={setSendError}
       >
         {({ dragging }) => (
           <ComposerFocusShell
