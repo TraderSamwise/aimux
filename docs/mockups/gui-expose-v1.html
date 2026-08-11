@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>aimux gui expose mockups v1</title>
+<style>
+  :root {
+    --page: #08090c;
+    --app: #0f1014;
+    --panel: #17181d;
+    --panel-2: #202127;
+    --panel-3: #25262d;
+    --line: #30323a;
+    --line-2: #3a3d47;
+    --fg: #f0f1f3;
+    --muted: #a0a4ae;
+    --faint: #696d78;
+    --green: #4ade80;
+    --cyan: #56b6c2;
+    --gold: #e5c07b;
+    --red: #e06c75;
+    --blue: #8ab4ff;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); color: var(--fg); }
+  body { font: 14px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+
+  .page {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 28px;
+  }
+
+  .pageHeader {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 18px;
+  }
+
+  .pageHeader h1 {
+    margin: 0;
+    font: 750 24px/1.1 var(--mono);
+    letter-spacing: 0;
+  }
+
+  .pageHeader p {
+    margin: 8px 0 0;
+    max-width: 760px;
+    color: var(--muted);
+  }
+
+  .note {
+    color: var(--muted);
+    border: 1px solid var(--line);
+    background: #111217;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 0 0 22px;
+  }
+
+  .mockTitle {
+    margin: 34px 0 10px;
+    color: #d4d7de;
+    font: 700 12px/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+
+  .browser {
+    border: 1px solid #262933;
+    background: #050608;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 20px 70px rgba(0,0,0,.42);
+  }
+
+  .chrome {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 14px;
+    background: #20232b;
+    border-bottom: 1px solid #2f333e;
+  }
+
+  .light { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+  .light:nth-child(2) { background: #febc2e; }
+  .light:nth-child(3) { background: #28c840; }
+  .url {
+    margin-left: 12px;
+    min-width: 0;
+    flex: 1;
+    color: #a6abb6;
+    font: 12px/1 var(--mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app {
+    min-height: 720px;
+    background: var(--app);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .top {
+    height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: #131419;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font: 750 16px/1 var(--mono);
+  }
+
+  .bot {
+    width: 25px;
+    height: 25px;
+    border-radius: 7px;
+    background: #050608;
+    border: 1px solid #242833;
+    display: grid;
+    place-items: center;
+    color: #c8f7d1;
+    font-size: 15px;
+  }
+
+  .topActions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .chip, .iconBtn, .seg {
+    border: 1px solid var(--line);
+    background: #18191f;
+    color: var(--muted);
+    border-radius: 8px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 30px;
+    padding: 0 10px;
+    font: 650 12px/1 var(--sans);
+  }
+
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+  .iconBtn {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font: 16px/1 var(--mono);
+  }
+
+  .content {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+  }
+
+  .side {
+    width: 270px;
+    flex: none;
+    border-right: 1px solid var(--line);
+    background: #14151a;
+    padding: 14px 10px;
+  }
+
+  .sideProject {
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 8px;
+    color: var(--muted);
+  }
+
+  .sideProject.active {
+    color: var(--fg);
+    background: #1d1f26;
+    border: 1px solid var(--line);
+  }
+
+  .sideProject strong {
+    display: block;
+    font-weight: 720;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sideProject span {
+    display: block;
+    margin-top: 3px;
+    font: 11px/1.25 var(--mono);
+    color: var(--faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .main {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .exposeHeader {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    background: #101116;
+  }
+
+  .back {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font: 24px/1 var(--mono);
+  }
+
+  .exposeTitle {
+    min-width: 0;
+  }
+
+  .exposeTitle h2 {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.1;
+    letter-spacing: 0;
+  }
+
+  .exposeTitle p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font: 12px/1.2 var(--mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .filters {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .seg {
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    overflow: hidden;
+  }
+
+  .seg span {
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 11px;
+    color: var(--muted);
+    border-right: 1px solid var(--line);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .seg span:last-child { border-right: 0; }
+  .seg .on { background: #2a2c34; color: var(--fg); }
+
+  .tiles {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    grid-auto-rows: 260px;
+    gap: 14px;
+    align-content: start;
+  }
+
+  .tile {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #313641;
+    border-radius: 8px;
+    background: #1d1f25;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.18) inset;
+  }
+
+  .tile.selected {
+    border-color: #5fafff;
+    box-shadow: 0 0 0 1px #5fafff inset;
+  }
+
+  .tile.done {
+    border-color: rgba(152, 195, 121, .7);
+  }
+
+  .tileTop {
+    height: 37px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 9px;
+    border-bottom: 1px solid var(--line);
+    background: #20222a;
+    min-width: 0;
+  }
+
+  .tileIndex {
+    color: var(--gold);
+    font: 800 12px/1 var(--mono);
+  }
+
+  .tileName {
+    min-width: 0;
+    color: var(--fg);
+    font-weight: 760;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tool {
+    color: var(--muted);
+    font: 12px/1 var(--mono);
+  }
+
+  .state {
+    margin-left: auto;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 4px;
+    padding: 0 7px;
+    background: rgba(86,182,194,.2);
+    color: #bdeaf0;
+    font: 720 11px/1 var(--mono);
+    text-transform: uppercase;
+  }
+
+  .state.done { background: rgba(152,195,121,.17); color: #bfe4a8; }
+  .state.offline { background: rgba(127,132,142,.15); color: #9ba0aa; }
+
+  .metaLine {
+    min-height: 27px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    border-bottom: 1px solid #2b2e36;
+    color: var(--muted);
+    font: 11px/1 var(--mono);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .projectTag {
+    color: var(--cyan);
+    font-weight: 720;
+  }
+
+  .worktreeTag {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .preview {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 10px 12px;
+    color: #d8dae0;
+    font: 12px/1.38 var(--mono);
+    background: #24262d;
+  }
+
+  .preview p { margin: 0 0 10px; }
+  .preview .muted { color: #8b909c; }
+  .preview .green { color: #98c379; }
+  .preview .cyan { color: #56b6c2; }
+  .preview .red { color: #e06c75; }
+  .preview .gold { color: #e5c07b; }
+  .preview .rule { color: #a4a7b0; white-space: nowrap; }
+
+  .tileFoot {
+    height: 33px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 9px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font: 11px/1 var(--mono);
+  }
+
+  .tileFoot .prompt {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .densityNote {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 14px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font: 11px/1 var(--mono);
+    background: #101116;
+  }
+
+  .phoneWrap {
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: #030405;
+    border: 1px solid #262933;
+    border-radius: 14px;
+  }
+
+  .phone {
+    width: min(430px, 100%);
+    height: 860px;
+    border: 10px solid #111217;
+    border-radius: 42px;
+    overflow: hidden;
+    background: #050608;
+    box-shadow: 0 18px 56px rgba(0,0,0,.52);
+  }
+
+  .phone .app { min-height: 100%; }
+  .phone .top {
+    height: 86px;
+    padding: 22px 16px 0;
+  }
+
+  .phone .brand { font-size: 18px; }
+  .phone .topActions .chip { display: none; }
+  .phone .content { display: block; }
+  .phone .side { display: none; }
+  .phone .main { height: calc(100% - 86px); }
+  .phone .exposeHeader {
+    height: 90px;
+    align-items: center;
+    padding: 10px 14px;
+  }
+  .phone .filters {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    top: 154px;
+    margin: 0;
+  }
+  .phone .seg { width: 100%; }
+  .phone .seg span { flex: 1; justify-content: center; padding: 0 4px; }
+  .phone .tiles {
+    height: calc(100% - 122px);
+    margin-top: 44px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    overflow: auto;
+  }
+  .phone .tile {
+    flex: none;
+    height: 198px;
+    border-radius: 8px;
+  }
+  .phone .tileTop { height: 35px; }
+  .phone .metaLine { min-height: 25px; }
+  .phone .preview { font-size: 11.5px; line-height: 1.35; padding: 9px 10px; }
+  .phone .tileFoot { height: 29px; }
+  .phone .densityNote { display: none; }
+
+  .caption {
+    color: var(--muted);
+    margin: 10px 0 0;
+    font-size: 13px;
+  }
+
+  @media (max-width: 900px) {
+    .page { padding: 16px; }
+    .pageHeader { align-items: start; flex-direction: column; }
+    .browser .side { display: none; }
+    .browser .tiles {
+      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      grid-auto-rows: 230px;
+    }
+    .filters .chip { display: none; }
+  }
+
+  @media (max-width: 560px) {
+    .browser .topActions .chip { display: none; }
+    .browser .exposeHeader { align-items: start; flex-wrap: wrap; }
+    .browser .filters { margin-left: 0; width: 100%; }
+    .browser .seg { width: 100%; }
+    .browser .seg span { flex: 1; justify-content: center; }
+    .browser .tiles {
+      display: flex;
+      flex-direction: column;
+      grid-auto-rows: auto;
+    }
+    .browser .tile { height: 205px; flex: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <header class="pageHeader">
+      <div>
+        <h1>aimux gui expose v1</h1>
+        <p>Flat live-session tiles for web and native. Worktrees are represented as metadata inside each tile, so the layout preserves dashboard ordering without spending vertical space on section bands.</p>
+      </div>
+      <div class="chip"><span class="dot"></span> responsive mock</div>
+    </header>
+
+    <p class="note">Ordering rule shown here: projects keep their sidebar order, worktrees keep dashboard order inside each project, and agents keep rendered order inside each worktree. Global expose simply lays those ordered streams back to back as tiles.</p>
+
+    <h2 class="mockTitle">A. Desktop global expose</h2>
+    <section class="browser">
+      <div class="chrome">
+        <span class="light"></span><span class="light"></span><span class="light"></span>
+        <span class="url">aimux.app/expose?scope=global</span>
+      </div>
+      <div class="app">
+        <div class="top">
+          <div class="brand"><span class="bot">▣</span> aimux</div>
+          <div class="topActions">
+            <div class="chip"><span class="dot"></span> Remote</div>
+            <div class="iconBtn">□</div>
+            <div class="iconBtn">⌁</div>
+            <div class="iconBtn">S</div>
+          </div>
+        </div>
+        <div class="content">
+          <aside class="side">
+            <div class="sideProject active"><strong>Tealstreet</strong><span>master · ~/cs/tealstreet-next</span></div>
+            <div class="sideProject"><strong>Mobile</strong><span>master · ~/cs/tealstreet-mobile</span></div>
+            <div class="sideProject"><strong>Aimux</strong><span>master · ~/cs/aimux</span></div>
+            <div class="sideProject"><strong>Jiten</strong><span>master · ~/cs/jiten</span></div>
+          </aside>
+          <main class="main">
+            <div class="exposeHeader">
+              <div class="back">‹</div>
+              <div class="exposeTitle">
+                <h2>Expose · all projects</h2>
+                <p>23 agents · 9 working · 4 need input · global order</p>
+              </div>
+              <div class="filters">
+                <div class="seg"><span class="on">All</span><span>Working</span><span>Needs input</span><span>Ready</span></div>
+                <div class="chip">⌘K</div>
+              </div>
+            </div>
+            <div class="tiles">
+              <article class="tile selected">
+                <div class="tileTop"><span class="tileIndex">1</span><span class="tileName">codex-o6o4kf</span><span class="tool">codex</span><span class="state">working</span></div>
+                <div class="metaLine"><span class="projectTag">Tealstreet</span><span>·</span><span class="worktreeTag">Main Checkout / master</span></div>
+                <div class="preview">
+                  <p><span class="green">•</span> Polling Sentry every 5 minutes for Tealstreet reconnect-loop, CPU observability.</p>
+                  <p><span class="cyan">Explored</span><br>Read app/components/runtime/worker.ts</p>
+                  <p class="rule">────────────────────────────</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">gpt-5.5 high · ~/cs/tealstreet-next</span></div>
+              </article>
+
+              <article class="tile done">
+                <div class="tileTop"><span class="tileIndex">2</span><span class="tileName">codex-gtnbzl</span><span class="tool">codex</span><span class="state done">done</span></div>
+                <div class="metaLine"><span class="projectTag">Tealstreet</span><span>·</span><span class="worktreeTag">Main Checkout / master</span></div>
+                <div class="preview">
+                  <p>Checks are clean. I committed the navbar follow-up and pushed <span class="cyan">master</span>.</p>
+                  <p><span class="green">f108746c8a</span> is live in the branch log.</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">idle now · 1 unseen</span></div>
+              </article>
+
+              <article class="tile">
+                <div class="tileTop"><span class="tileIndex">3</span><span class="tileName">claude-e030jz</span><span class="tool">claude</span><span class="state offline">offline</span></div>
+                <div class="metaLine"><span class="projectTag">Tealstreet</span><span>·</span><span class="worktreeTag">Main Checkout / master</span></div>
+                <div class="preview">
+                  <p class="muted">Claude is waiting for your input.</p>
+                  <p><span class="gold">Needs input</span> · previous task thread preserved.</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">wake to open</span></div>
+              </article>
+
+              <article class="tile">
+                <div class="tileTop"><span class="tileIndex">4</span><span class="tileName">codex-eq9yaz</span><span class="tool">codex</span><span class="state">working</span></div>
+                <div class="metaLine"><span class="projectTag">Tealstreet</span><span>·</span><span class="worktreeTag">custom-modules-mcp / feat/module-sandbox-cutover</span></div>
+                <div class="preview">
+                  <p><span class="cyan">Ran</span> yarn workspace tealstreet-next typecheck</p>
+                  <p>Typecheck is clean. I’m adding focused regression tests around the migrated runtime mode.</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">gpt-5.5 high · custom-modules-mcp</span></div>
+              </article>
+
+              <article class="tile">
+                <div class="tileTop"><span class="tileIndex">5</span><span class="tileName">codex-vbuxpy</span><span class="tool">codex</span><span class="state">working</span></div>
+                <div class="metaLine"><span class="projectTag">Tealstreet</span><span>·</span><span class="worktreeTag">custom-modules-mcp / feat/module-sandbox-cutover</span></div>
+                <div class="preview">
+                  <p>The remaining callers look acceptable: modal rename spreads existing module shape now.</p>
+                  <p class="muted">Waiting for blocker review to complete.</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">Run /review on current changes</span></div>
+              </article>
+
+              <article class="tile done">
+                <div class="tileTop"><span class="tileIndex">6</span><span class="tileName">codex-tyf5bg</span><span class="tool">codex</span><span class="state done">done</span></div>
+                <div class="metaLine"><span class="projectTag">Tealstreet</span><span>·</span><span class="worktreeTag">e2e-audit / fix/e2e-followups</span></div>
+                <div class="preview">
+                  <p>Best next targets:</p>
+                  <p>1. Run full preview e2e matrix.<br>2. Phemex: one failing limit-order test.</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">worked for 1m 24s</span></div>
+              </article>
+
+              <article class="tile">
+                <div class="tileTop"><span class="tileIndex">7</span><span class="tileName">codex-mobile-7kp</span><span class="tool">codex</span><span class="state">working</span></div>
+                <div class="metaLine"><span class="projectTag">Mobile</span><span>·</span><span class="worktreeTag">Main Checkout / master</span></div>
+                <div class="preview">
+                  <p>Verifying TestFlight crash recovery and OTA runtime guard behavior.</p>
+                  <p><span class="red">Blocked</span> by missing crash symbolication in latest report.</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">~/cs/tealstreet-mobile</span></div>
+              </article>
+
+              <article class="tile">
+                <div class="tileTop"><span class="tileIndex">8</span><span class="tileName">codex-aimux-4xz</span><span class="tool">codex</span><span class="state">working</span></div>
+                <div class="metaLine"><span class="projectTag">Aimux</span><span>·</span><span class="worktreeTag">Main Checkout / master</span></div>
+                <div class="preview">
+                  <p>Designing GUI expose for web and mobile with flat responsive live tiles.</p>
+                  <p><span class="cyan">Focus</span> compact ordering, no per-worktree bands.</p>
+                </div>
+                <div class="tileFoot"><span class="prompt">current chat</span></div>
+              </article>
+            </div>
+            <div class="densityNote"><span>1-9 focus · enter open · / filter · esc close</span><span>projects are not globally resorted</span></div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <p class="caption">Global expose: no project headers in the tile stream. The project is a small breadcrumb inside the tile, which keeps space usage stable.</p>
+
+    <h2 class="mockTitle">B. Desktop project expose</h2>
+    <section class="browser">
+      <div class="chrome">
+        <span class="light"></span><span class="light"></span><span class="light"></span>
+        <span class="url">aimux.app/project/expose?project=tealstreet-next</span>
+      </div>
+      <div class="app">
+        <div class="top">
+          <div class="brand"><span class="bot">▣</span> aimux</div>
+          <div class="topActions">
+            <div class="chip"><span class="dot"></span> Remote</div>
+            <div class="iconBtn">□</div>
+            <div class="iconBtn">S</div>
+          </div>
+        </div>
+        <main class="main">
+          <div class="exposeHeader">
+            <div class="back">‹</div>
+            <div class="exposeTitle">
+              <h2>Expose · tealstreet-next</h2>
+              <p>Main Checkout, custom-modules-mcp, e2e-audit · dashboard order</p>
+            </div>
+            <div class="filters">
+              <div class="seg"><span class="on">All</span><span>Working</span><span>Done</span><span>Offline</span></div>
+            </div>
+          </div>
+          <div class="tiles">
+            <article class="tile selected">
+              <div class="tileTop"><span class="tileIndex">1</span><span class="tileName">codex-o6o4kf</span><span class="tool">codex</span><span class="state">working</span></div>
+              <div class="metaLine"><span class="worktreeTag">Main Checkout / master</span></div>
+              <div class="preview"><p>Polling Sentry every 5 minutes for reconnect-loop, CPU observability.</p><p class="rule">────────────────────────────</p></div>
+              <div class="tileFoot"><span class="prompt">output 39s ago</span></div>
+            </article>
+            <article class="tile done">
+              <div class="tileTop"><span class="tileIndex">2</span><span class="tileName">codex-gtnbzl</span><span class="tool">codex</span><span class="state done">done</span></div>
+              <div class="metaLine"><span class="worktreeTag">Main Checkout / master</span></div>
+              <div class="preview"><p>Working tree clean. Pushed master and verified the deployment alias.</p></div>
+              <div class="tileFoot"><span class="prompt">idle now</span></div>
+            </article>
+            <article class="tile">
+              <div class="tileTop"><span class="tileIndex">3</span><span class="tileName">codex-eq9yaz</span><span class="tool">codex</span><span class="state">working</span></div>
+              <div class="metaLine"><span class="worktreeTag">custom-modules-mcp / feat/module-sandbox-cutover</span></div>
+              <div class="preview"><p>Focused tests and typecheck pass. Restarting only the module frame preview.</p><p><span class="cyan">Interacted</span> with background terminal.</p></div>
+              <div class="tileFoot"><span class="prompt">output 11m ago</span></div>
+            </article>
+            <article class="tile">
+              <div class="tileTop"><span class="tileIndex">4</span><span class="tileName">codex-vbuxpy</span><span class="tool">codex</span><span class="state">working</span></div>
+              <div class="metaLine"><span class="worktreeTag">custom-modules-mcp / feat/module-sandbox-cutover</span></div>
+              <div class="preview"><p>The diff has no whitespace errors. Waiting for final blocker review.</p></div>
+              <div class="tileFoot"><span class="prompt">reviewing current changes</span></div>
+            </article>
+            <article class="tile done">
+              <div class="tileTop"><span class="tileIndex">5</span><span class="tileName">codex-tyf5bg</span><span class="tool">codex</span><span class="state done">done</span></div>
+              <div class="metaLine"><span class="worktreeTag">e2e-audit / fix/e2e-followups</span></div>
+              <div class="preview"><p>Preview now serves the fixed revision. No newer push has superseded it.</p></div>
+              <div class="tileFoot"><span class="prompt">worked for 1m 24s</span></div>
+            </article>
+          </div>
+          <div class="densityNote"><span>project-scoped expose keeps the dashboard worktree order</span><span>no worktree divider rows</span></div>
+        </main>
+      </div>
+    </section>
+
+    <p class="caption">Project expose: the tile order matches the dashboard exactly, but worktree grouping is conveyed by each tile breadcrumb instead of full-width separators.</p>
+
+    <h2 class="mockTitle">C. Native mobile expose</h2>
+    <section class="phoneWrap">
+      <div class="phone">
+        <div class="app">
+          <div class="top">
+            <div class="iconBtn">☰</div>
+            <div class="brand"><span class="bot">▣</span> aimux</div>
+            <div class="topActions">
+              <div class="chip"><span class="dot"></span> Remote</div>
+              <div class="iconBtn">□</div>
+              <div class="iconBtn">S</div>
+            </div>
+          </div>
+          <main class="main">
+            <div class="exposeHeader">
+              <div class="back">‹</div>
+              <div class="exposeTitle">
+                <h2>Expose</h2>
+                <p>tealstreet-next · 5 agents</p>
+              </div>
+              <div class="filters">
+                <div class="seg"><span class="on">All</span><span>Work</span><span>Input</span><span>Done</span></div>
+              </div>
+            </div>
+            <div class="tiles">
+              <article class="tile selected">
+                <div class="tileTop"><span class="tileIndex">1</span><span class="tileName">codex-o6o4kf</span><span class="tool">codex</span><span class="state">work</span></div>
+                <div class="metaLine"><span class="worktreeTag">Main Checkout · master</span></div>
+                <div class="preview"><p>Polling Sentry every 5 minutes for reconnect-loop, CPU observability.</p><p><span class="cyan">Explored</span> worker telemetry tags.</p></div>
+                <div class="tileFoot"><span class="prompt">tap to open · output 39s</span></div>
+              </article>
+              <article class="tile done">
+                <div class="tileTop"><span class="tileIndex">2</span><span class="tileName">codex-gtnbzl</span><span class="tool">codex</span><span class="state done">done</span></div>
+                <div class="metaLine"><span class="worktreeTag">Main Checkout · master</span></div>
+                <div class="preview"><p>Working tree clean. I did not push.</p><p class="rule">──────────────────────</p></div>
+                <div class="tileFoot"><span class="prompt">idle now</span></div>
+              </article>
+              <article class="tile">
+                <div class="tileTop"><span class="tileIndex">3</span><span class="tileName">codex-eq9yaz</span><span class="tool">codex</span><span class="state">work</span></div>
+                <div class="metaLine"><span class="worktreeTag">custom-modules-mcp · feat/module…</span></div>
+                <div class="preview"><p>Focused tests and typecheck pass. Restarting module-frame preview now.</p></div>
+                <div class="tileFoot"><span class="prompt">output 11m</span></div>
+              </article>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <p class="caption">Mobile expose: one-column tile feed, same ordered stream and same tile content model. Filters collapse into short labels; no side rail.</p>
+  </div>
+</body>
+</html>
