@@ -308,6 +308,7 @@ export default function ChatScreen() {
   const composerScrollReserve = useSharedValue(
     COMPOSER_FOOTER_ESTIMATED_HEIGHT + COMPOSER_SCROLL_SAFETY_PADDING,
   );
+  const chatKeyboardContentPadding = useSharedValue(0);
   const [composerInteractive, setComposerInteractive] = useState(true);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
@@ -1259,8 +1260,9 @@ export default function ChatScreen() {
   const chatScroller = serviceEndpoint ? (
     usesNativeKeyboardController ? (
       <MobileTranscriptList
+        composerEndPadding={visibleComposerScrollReserve}
         dividerWidth={chatDividerWidth}
-        extraContentPadding={composerScrollReserve}
+        extraContentPadding={chatKeyboardContentPadding}
         items={chatListItems}
         keyboardOffset={bottomInset}
         listRef={chatListRef}
@@ -1772,6 +1774,7 @@ function KeyboardManagedScrollView({
 }
 
 const MobileTranscriptList = React.memo(function MobileTranscriptList({
+  composerEndPadding,
   dividerWidth,
   extraContentPadding,
   items,
@@ -1781,6 +1784,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   onScrollBeginDrag,
   serviceEndpoint,
 }: {
+  composerEndPadding: number;
   dividerWidth: number;
   extraContentPadding: SharedValue<number>;
   items: ChatListItem[];
@@ -1847,7 +1851,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         flexGrow: 1,
         paddingBottom: 8,
         paddingHorizontal: 16,
-        paddingTop: 8,
+        paddingTop: composerEndPadding + 8,
       }}
       renderScrollComponent={renderScrollComponent}
       scrollEventThrottle={16}
