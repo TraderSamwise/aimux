@@ -21,7 +21,6 @@ import {
   KeyboardGestureArea,
   KeyboardStickyView,
 } from "react-native-keyboard-controller";
-import { useSharedValue, type SharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -293,12 +292,9 @@ export default function ChatScreen() {
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const sendBusyRef = useRef(false);
-  const composerExtraContentPadding = useSharedValue(0);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
-  const chatListPinnedRef = useRef(true);
-  const chatListUserScrollingRef = useRef(false);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
     terminal: createScrollPaneMetrics(),
@@ -378,13 +374,6 @@ export default function ChatScreen() {
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
-
-  useEffect(() => {
-    composerExtraContentPadding.value = Math.max(
-      0,
-      composerInputHeight - COMPOSER_INPUT_MIN_HEIGHT,
-    );
-  }, [composerExtraContentPadding, composerInputHeight]);
 
   const refreshOutputSnapshot = useCallback(async () => {
     if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
@@ -718,8 +707,6 @@ export default function ChatScreen() {
       chat: createUserScrollState(),
       terminal: createUserScrollState(),
     };
-    chatListPinnedRef.current = true;
-    chatListUserScrollingRef.current = false;
     requestAnimationFrame(() => {
       chatListRef.current?.scrollToOffset({ animated: false, offset: 0 });
       applyPaneScrollPosition("chat");
@@ -729,9 +716,6 @@ export default function ChatScreen() {
 
   useEffect(() => {
     requestAnimationFrame(() => {
-      if (chatListPinnedRef.current && !chatListUserScrollingRef.current) {
-        chatListRef.current?.scrollToOffset({ animated: false, offset: 0 });
-      }
       if (scrollMetricsRef.current.chat.pinnedToBottom && !isUserScrollActive("chat")) {
         applyPaneScrollPosition("chat");
       }
@@ -754,9 +738,10 @@ export default function ChatScreen() {
   }, [applyPaneScrollPosition, showSplit, showTerminalOnly, usesNativeKeyboardController]);
 
   useEffect(() => {
+    const idleTimers = userScrollIdleTimerRef.current;
     return () => {
       for (const pane of ["chat", "terminal"] as const) {
-        const idleTimer = userScrollIdleTimerRef.current[pane];
+        const idleTimer = idleTimers[pane];
         if (idleTimer) clearTimeout(idleTimer);
       }
     };
@@ -1138,16 +1123,9 @@ export default function ChatScreen() {
     usesNativeKeyboardController ? (
       <MobileTranscriptList
         dividerWidth={chatDividerWidth}
-        extraContentPadding={composerExtraContentPadding}
         items={chatListItems}
         keyboardOffset={bottomInset}
         listRef={chatListRef}
-        onPinnedChange={(pinned) => {
-          chatListPinnedRef.current = pinned;
-        }}
-        onScrollActivityChange={(active) => {
-          chatListUserScrollingRef.current = active;
-        }}
         serviceEndpoint={serviceEndpoint}
       />
     ) : (
@@ -1634,21 +1612,15 @@ function KeyboardManagedScrollView({
 
 const MobileTranscriptList = React.memo(function MobileTranscriptList({
   dividerWidth,
-  extraContentPadding,
   items,
   keyboardOffset,
   listRef,
-  onPinnedChange,
-  onScrollActivityChange,
   serviceEndpoint,
 }: {
   dividerWidth: number;
-  extraContentPadding: SharedValue<number>;
   items: ChatListItem[];
   keyboardOffset: number;
   listRef: React.RefObject<FlatList<ChatListItem> | null>;
-  onPinnedChange: (pinned: boolean) => void;
-  onScrollActivityChange: (active: boolean) => void;
   serviceEndpoint: ServiceEndpoint;
 }) {
   const renderItem = useCallback(
@@ -1684,14 +1656,13 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         applyWorkaroundForContentInsetHitTestBug
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
-        extraContentPadding={extraContentPadding}
         inverted
         keyboardDismissMode="interactive"
         keyboardLiftBehavior="whenAtEnd"
         offset={keyboardOffset}
       />
     ),
-    [extraContentPadding, keyboardOffset],
+    [keyboardOffset],
   );
 
   return (
@@ -1702,10 +1673,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
       keyExtractor={(item) => item.key}
       inverted
       keyboardShouldPersistTaps="handled"
-      maintainVisibleContentPosition={{
-        autoscrollToTopThreshold: SCROLL_BOTTOM_EPSILON,
-        minIndexForVisible: 0,
-      }}
       contentContainerStyle={{
         flexGrow: 1,
         paddingBottom: 8,
@@ -1713,13 +1680,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         paddingTop: 8,
       }}
       renderScrollComponent={renderScrollComponent}
-      onMomentumScrollBegin={() => onScrollActivityChange(true)}
-      onMomentumScrollEnd={() => onScrollActivityChange(false)}
-      onScrollBeginDrag={() => onScrollActivityChange(true)}
-      onScrollEndDrag={() => onScrollActivityChange(false)}
-      onScroll={(event) => {
-        onPinnedChange(event.nativeEvent.contentOffset.y <= SCROLL_BOTTOM_EPSILON);
-      }}
       scrollEventThrottle={16}
     />
   );
