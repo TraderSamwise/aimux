@@ -13,8 +13,12 @@ import {
   type TextInputContentSizeChangeEventData,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
-import { useSharedValue, type SharedValue } from "react-native-reanimated";
+import {
+  KeyboardChatScrollView,
+  KeyboardStickyView,
+  useReanimatedKeyboardAnimation,
+} from "react-native-keyboard-controller";
+import { useDerivedValue, useSharedValue, type SharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -221,6 +225,9 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
+  const [composerLayoutHeight, setComposerLayoutHeight] = useState(
+    COMPOSER_FOOTER_ESTIMATED_HEIGHT,
+  );
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -228,6 +235,7 @@ export default function ChatScreen() {
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const composerHeightShared = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
+  const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
@@ -397,6 +405,10 @@ export default function ChatScreen() {
 
   const canShowTerminal = Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
+  const composerOverlayPaddingShared = useDerivedValue(() => {
+    if (!usesNativeKeyboardController) return 0;
+    return keyboardProgress.value * composerHeightShared.value;
+  }, [usesNativeKeyboardController]);
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -913,6 +925,7 @@ export default function ChatScreen() {
       onLayout={(event: LayoutChangeEvent) => {
         const height = Math.ceil(event.nativeEvent.layout.height);
         composerHeightShared.value = height;
+        setComposerLayoutHeight((current) => (current === height ? current : height));
       }}
       className="border-t border-border bg-background px-3 py-3"
       style={{
@@ -1033,7 +1046,8 @@ export default function ChatScreen() {
   const terminalPane = (
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <KeyboardManagedScrollView
-        composerHeightShared={composerHeightShared}
+        composerOverlayPaddingShared={composerOverlayPaddingShared}
+        keyboardOffset={usesNativeKeyboardController ? composerLayoutHeight : 0}
         pane="terminal"
         scrollViewRef={terminalScrollRef}
         showLiveOutputLabel
@@ -1056,8 +1070,9 @@ export default function ChatScreen() {
 
   const chatScroller = serviceEndpoint ? (
     <KeyboardManagedScrollView
-      composerHeightShared={composerHeightShared}
+      composerOverlayPaddingShared={composerOverlayPaddingShared}
       contentContainerStyle={{ flexGrow: 1 }}
+      keyboardOffset={usesNativeKeyboardController ? composerLayoutHeight : 0}
       pane="chat"
       scrollViewRef={scrollRef}
       usesNativeKeyboardController={usesNativeKeyboardController}
@@ -1468,8 +1483,9 @@ function ComposerFocusShell({
 
 function KeyboardManagedScrollView({
   children,
-  composerHeightShared,
+  composerOverlayPaddingShared,
   contentContainerStyle,
+  keyboardOffset,
   onMomentumScrollBegin,
   onContentSizeChange,
   onLayout,
@@ -1482,8 +1498,9 @@ function KeyboardManagedScrollView({
   usesNativeKeyboardController,
 }: {
   children: React.ReactNode;
-  composerHeightShared: SharedValue<number>;
+  composerOverlayPaddingShared: SharedValue<number>;
   contentContainerStyle?: React.ComponentProps<typeof ScrollView>["contentContainerStyle"];
+  keyboardOffset: number;
   onMomentumScrollBegin: (pane: ScrollPaneKey) => void;
   onContentSizeChange: (pane: ScrollPaneKey, contentHeight: number) => void;
   onLayout: (pane: ScrollPaneKey, event: LayoutChangeEvent) => void;
@@ -1526,8 +1543,9 @@ function KeyboardManagedScrollView({
         ref={scrollViewRef as React.RefObject<React.ElementRef<typeof KeyboardChatScrollView>>}
         {...commonProps}
         applyWorkaroundForContentInsetHitTestBug
-        extraContentPadding={composerHeightShared}
+        extraContentPadding={composerOverlayPaddingShared}
         keyboardLiftBehavior="whenAtEnd"
+        offset={keyboardOffset}
       >
         {content}
       </KeyboardChatScrollView>
