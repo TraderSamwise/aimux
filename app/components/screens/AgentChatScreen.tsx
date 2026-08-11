@@ -21,7 +21,6 @@ import {
   KeyboardChatScrollView,
   KeyboardGestureArea,
   KeyboardStickyView,
-  useKeyboardState,
 } from "react-native-keyboard-controller";
 import { useSharedValue, withTiming, type SharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -474,7 +473,6 @@ export default function ChatScreen() {
   const canShowTerminal = Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
   const keyboardVisible = useKeyboardVisible(usesNativeKeyboardController);
-  const keyboardHeight = useKeyboardState((state) => state.height);
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -483,12 +481,6 @@ export default function ChatScreen() {
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const visibleComposerScrollReserve = composerHideDistance + COMPOSER_SCROLL_SAFETY_PADDING;
-  const terminalBottomPadding =
-    usesNativeKeyboardController && keyboardVisible
-      ? composerLayoutHeight + Math.max(0, keyboardHeight)
-      : usesNativeKeyboardController
-        ? composerLayoutHeight
-        : 0;
   const composerVisibilityStyle = useMemo(
     () => ({
       opacity: composerHideProgress.interpolate({
@@ -828,28 +820,6 @@ export default function ChatScreen() {
       applyPaneScrollPosition(showTerminalOnly ? "terminal" : "chat");
     });
   }, [applyPaneScrollPosition, showSplit, showTerminalOnly, usesNativeKeyboardController]);
-
-  useEffect(() => {
-    if (!usesNativeKeyboardController || !showTerminalOnly) return;
-    const settle = () => {
-      if (scrollMetricsRef.current.terminal.pinnedToBottom && !isUserScrollActive("terminal")) {
-        applyPaneScrollPosition("terminal");
-      }
-    };
-    const frame = requestAnimationFrame(settle);
-    const timers = [setTimeout(settle, 120), setTimeout(settle, 280)];
-    return () => {
-      cancelAnimationFrame(frame);
-      timers.forEach(clearTimeout);
-    };
-  }, [
-    applyPaneScrollPosition,
-    isUserScrollActive,
-    keyboardHeight,
-    keyboardVisible,
-    showTerminalOnly,
-    usesNativeKeyboardController,
-  ]);
 
   useEffect(() => {
     const idleTimers = userScrollIdleTimerRef.current;
@@ -1213,7 +1183,9 @@ export default function ChatScreen() {
   const terminalPane = (
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <KeyboardManagedScrollView
-        composerBottomPadding={terminalBottomPadding}
+        composerBottomPadding={0}
+        keyboardContentPadding={usesNativeKeyboardController ? composerScrollReserve : undefined}
+        keyboardOffset={bottomInset}
         pane="terminal"
         scrollViewRef={terminalScrollRef}
         showLiveOutputLabel
@@ -1682,6 +1654,8 @@ function KeyboardManagedScrollView({
   children,
   composerBottomPadding,
   contentContainerStyle,
+  keyboardContentPadding,
+  keyboardOffset = 0,
   onMomentumScrollBegin,
   onContentSizeChange,
   onLayout,
@@ -1695,6 +1669,8 @@ function KeyboardManagedScrollView({
   children: React.ReactNode;
   composerBottomPadding: number;
   contentContainerStyle?: React.ComponentProps<typeof ScrollView>["contentContainerStyle"];
+  keyboardContentPadding?: SharedValue<number>;
+  keyboardOffset?: number;
   onMomentumScrollBegin: (pane: ScrollPaneKey) => void;
   onContentSizeChange: (pane: ScrollPaneKey, contentHeight: number) => void;
   onLayout: (pane: ScrollPaneKey, event: LayoutChangeEvent) => void;
@@ -1734,6 +1710,21 @@ function KeyboardManagedScrollView({
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => onScroll(pane, event),
     scrollEventThrottle: 16,
   };
+
+  if (Platform.OS !== "web" && keyboardContentPadding) {
+    return (
+      <KeyboardChatScrollView
+        ref={scrollViewRef as React.RefObject<never>}
+        {...commonProps}
+        applyWorkaroundForContentInsetHitTestBug
+        extraContentPadding={keyboardContentPadding}
+        keyboardLiftBehavior="whenAtEnd"
+        offset={keyboardOffset}
+      >
+        {content}
+      </KeyboardChatScrollView>
+    );
+  }
 
   return (
     <ScrollView ref={scrollViewRef as React.RefObject<ScrollView>} {...commonProps}>
