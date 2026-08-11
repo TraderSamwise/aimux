@@ -7,7 +7,12 @@ vi.mock("react-native", () => ({
   View: "View",
 }));
 
-import { canRenderRichText, messageSpeakerLabel, resolveImageUrl } from "@/components/MessageBlock";
+import {
+  canRenderRichText,
+  messageSpeakerLabel,
+  resolveImageUrl,
+  shouldRenderRichTerminalText,
+} from "@/components/MessageBlock";
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
 const originalConnectionMode = process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
@@ -102,5 +107,24 @@ describe("MessageBlock rich text guard", () => {
     expect(canRenderRichText("red answer", [{ text: "red" }, { text: " answer" }])).toBe(true);
     expect(canRenderRichText("red answer", [{ text: "red" }])).toBe(false);
     expect(canRenderRichText("red answer", undefined)).toBe(false);
+  });
+
+  it("does not render terminal spans on user messages", () => {
+    expect(
+      shouldRenderRichTerminalText({
+        isUser: true,
+        enabled: true,
+        text: "check again",
+        spans: [{ text: "check again", background: { model: "rgb", value: "#ffffff" } }],
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderRichTerminalText({
+        isUser: false,
+        enabled: true,
+        text: "Building",
+        spans: [{ text: "Building", foreground: { model: "rgb", value: "#56b6c2" } }],
+      }),
+    ).toBe(true);
   });
 });

@@ -53,6 +53,20 @@ export function canRenderRichText(
   return Boolean(spans?.length) && spanText(spans ?? []) === text;
 }
 
+export function shouldRenderRichTerminalText(input: {
+  isUser: boolean;
+  enabled: boolean;
+  text: string;
+  spans: readonly HistoryTextSpan[] | undefined;
+}): input is {
+  isUser: false;
+  enabled: true;
+  text: string;
+  spans: readonly HistoryTextSpan[];
+} {
+  return !input.isUser && input.enabled && canRenderRichText(input.text, input.spans);
+}
+
 export function styleForRichTextSpan(span: HistoryTextSpan): TextStyle {
   const marks = new Set(span.marks ?? []);
   return {
@@ -177,11 +191,17 @@ export const MessageBlock = React.memo(function MessageBlock({
         message.parts.map((part, idx) => {
           if (part.type === "text") {
             const className = isUser ? "text-primary-foreground" : "text-secondary-foreground";
-            if (richTerminalColors && canRenderRichText(part.text, part.spans)) {
+            const richTextInput = {
+              isUser,
+              enabled: richTerminalColors,
+              text: part.text,
+              spans: part.spans,
+            };
+            if (shouldRenderRichTerminalText(richTextInput)) {
               return (
                 <RichText
                   key={idx}
-                  spans={part.spans}
+                  spans={richTextInput.spans}
                   className={className}
                   dividerWidth={dividerWidth}
                 />
