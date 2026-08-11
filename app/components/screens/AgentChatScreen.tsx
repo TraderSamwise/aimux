@@ -21,6 +21,7 @@ import {
   KeyboardChatScrollView,
   KeyboardGestureArea,
   KeyboardStickyView,
+  useKeyboardState,
 } from "react-native-keyboard-controller";
 import { useSharedValue, withTiming, type SharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -116,6 +117,7 @@ const COMPOSER_INPUT_MAX_HEIGHT =
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
+const COMPOSER_SCROLL_SAFETY_PADDING = 20;
 const COMPOSER_HIDE_ANIMATION_MS = 160;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
@@ -301,7 +303,9 @@ export default function ChatScreen() {
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
   const composerHiddenRef = useRef(false);
   const [composerHideProgress] = useState(() => new Animated.Value(0));
-  const composerScrollReserve = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
+  const composerScrollReserve = useSharedValue(
+    COMPOSER_FOOTER_ESTIMATED_HEIGHT + COMPOSER_SCROLL_SAFETY_PADDING,
+  );
   const [composerInteractive, setComposerInteractive] = useState(true);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
@@ -470,6 +474,7 @@ export default function ChatScreen() {
   const canShowTerminal = Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
   const keyboardVisible = useKeyboardVisible(usesNativeKeyboardController);
+  const keyboardHeight = useKeyboardState((state) => state.height);
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -477,6 +482,13 @@ export default function ChatScreen() {
   const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
+  const visibleComposerScrollReserve = composerHideDistance + COMPOSER_SCROLL_SAFETY_PADDING;
+  const terminalBottomPadding =
+    usesNativeKeyboardController && keyboardVisible
+      ? composerLayoutHeight + Math.max(0, keyboardHeight)
+      : usesNativeKeyboardController
+        ? composerLayoutHeight
+        : 0;
   const composerVisibilityStyle = useMemo(
     () => ({
       opacity: composerHideProgress.interpolate({
@@ -501,7 +513,7 @@ export default function ChatScreen() {
       if (!hidden) setComposerInteractive(true);
       composerHideProgress.stopAnimation();
       // eslint-disable-next-line react-hooks/immutability
-      composerScrollReserve.value = withTiming(hidden ? 0 : composerHideDistance, {
+      composerScrollReserve.value = withTiming(hidden ? 0 : visibleComposerScrollReserve, {
         duration: COMPOSER_HIDE_ANIMATION_MS,
       });
       Animated.timing(composerHideProgress, {
@@ -517,6 +529,7 @@ export default function ChatScreen() {
       composerHideProgress,
       composerScrollReserve,
       usesNativeKeyboardController,
+      visibleComposerScrollReserve,
     ],
   );
   const handleNativeChatEndVisible = useCallback(
@@ -532,10 +545,13 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!usesNativeKeyboardController) return;
     // eslint-disable-next-line react-hooks/immutability
-    composerScrollReserve.value = withTiming(composerHiddenRef.current ? 0 : composerHideDistance, {
-      duration: COMPOSER_HIDE_ANIMATION_MS,
-    });
-  }, [composerHideDistance, composerScrollReserve, usesNativeKeyboardController]);
+    composerScrollReserve.value = withTiming(
+      composerHiddenRef.current ? 0 : visibleComposerScrollReserve,
+      {
+        duration: COMPOSER_HIDE_ANIMATION_MS,
+      },
+    );
+  }, [composerScrollReserve, usesNativeKeyboardController, visibleComposerScrollReserve]);
   const terminalToggleLabel =
     showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
   const measuredDividerWidth = terminalPaneWidth
@@ -812,6 +828,28 @@ export default function ChatScreen() {
       applyPaneScrollPosition(showTerminalOnly ? "terminal" : "chat");
     });
   }, [applyPaneScrollPosition, showSplit, showTerminalOnly, usesNativeKeyboardController]);
+
+  useEffect(() => {
+    if (!usesNativeKeyboardController || !showTerminalOnly) return;
+    const settle = () => {
+      if (scrollMetricsRef.current.terminal.pinnedToBottom && !isUserScrollActive("terminal")) {
+        applyPaneScrollPosition("terminal");
+      }
+    };
+    const frame = requestAnimationFrame(settle);
+    const timers = [setTimeout(settle, 120), setTimeout(settle, 280)];
+    return () => {
+      cancelAnimationFrame(frame);
+      timers.forEach(clearTimeout);
+    };
+  }, [
+    applyPaneScrollPosition,
+    isUserScrollActive,
+    keyboardHeight,
+    keyboardVisible,
+    showTerminalOnly,
+    usesNativeKeyboardController,
+  ]);
 
   useEffect(() => {
     const idleTimers = userScrollIdleTimerRef.current;
@@ -1175,7 +1213,7 @@ export default function ChatScreen() {
   const terminalPane = (
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <KeyboardManagedScrollView
-        composerBottomPadding={usesNativeKeyboardController ? composerLayoutHeight : 0}
+        composerBottomPadding={terminalBottomPadding}
         pane="terminal"
         scrollViewRef={terminalScrollRef}
         showLiveOutputLabel
@@ -1676,7 +1714,7 @@ function KeyboardManagedScrollView({
     </>
   );
   const commonProps = {
-    automaticallyAdjustKeyboardInsets: Platform.OS === "ios",
+    automaticallyAdjustKeyboardInsets: false,
     className: showLiveOutputLabel ? "flex-1 px-4 py-3" : "flex-1 px-4 py-2",
     contentContainerStyle: [
       contentContainerStyle,
