@@ -13,12 +13,7 @@ import {
   type TextInputContentSizeChangeEventData,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-import {
-  KeyboardChatScrollView,
-  KeyboardStickyView,
-  useReanimatedKeyboardAnimation,
-} from "react-native-keyboard-controller";
-import { useDerivedValue, useSharedValue, type SharedValue } from "react-native-reanimated";
+import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -234,8 +229,6 @@ export default function ChatScreen() {
   const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
-  const composerHeightShared = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
-  const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
@@ -405,10 +398,6 @@ export default function ChatScreen() {
 
   const canShowTerminal = Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
-  const composerOverlayPaddingShared = useDerivedValue(() => {
-    if (!usesNativeKeyboardController) return 0;
-    return keyboardProgress.value * composerHeightShared.value;
-  }, [usesNativeKeyboardController]);
   const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -924,7 +913,6 @@ export default function ChatScreen() {
     <View
       onLayout={(event: LayoutChangeEvent) => {
         const height = Math.ceil(event.nativeEvent.layout.height);
-        composerHeightShared.value = height;
         setComposerLayoutHeight((current) => (current === height ? current : height));
       }}
       className="border-t border-border bg-background px-3 py-3"
@@ -1046,12 +1034,10 @@ export default function ChatScreen() {
   const terminalPane = (
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <KeyboardManagedScrollView
-        composerOverlayPaddingShared={composerOverlayPaddingShared}
-        keyboardOffset={usesNativeKeyboardController ? composerLayoutHeight : 0}
+        composerBottomPadding={usesNativeKeyboardController ? composerLayoutHeight : 0}
         pane="terminal"
         scrollViewRef={terminalScrollRef}
         showLiveOutputLabel
-        usesNativeKeyboardController={usesNativeKeyboardController}
         onMomentumScrollBegin={handleMomentumScrollBegin}
         onScrollBeginDrag={handleScrollBeginDrag}
         onScrollEnd={handleScrollEnd}
@@ -1070,12 +1056,10 @@ export default function ChatScreen() {
 
   const chatScroller = serviceEndpoint ? (
     <KeyboardManagedScrollView
-      composerOverlayPaddingShared={composerOverlayPaddingShared}
+      composerBottomPadding={usesNativeKeyboardController ? composerLayoutHeight : 0}
       contentContainerStyle={{ flexGrow: 1 }}
-      keyboardOffset={usesNativeKeyboardController ? composerLayoutHeight : 0}
       pane="chat"
       scrollViewRef={scrollRef}
-      usesNativeKeyboardController={usesNativeKeyboardController}
       onMomentumScrollBegin={handleMomentumScrollBegin}
       onScrollBeginDrag={handleScrollBeginDrag}
       onScrollEnd={handleScrollEnd}
@@ -1483,9 +1467,8 @@ function ComposerFocusShell({
 
 function KeyboardManagedScrollView({
   children,
-  composerOverlayPaddingShared,
+  composerBottomPadding,
   contentContainerStyle,
-  keyboardOffset,
   onMomentumScrollBegin,
   onContentSizeChange,
   onLayout,
@@ -1495,12 +1478,10 @@ function KeyboardManagedScrollView({
   pane,
   scrollViewRef,
   showLiveOutputLabel = false,
-  usesNativeKeyboardController,
 }: {
   children: React.ReactNode;
-  composerOverlayPaddingShared: SharedValue<number>;
+  composerBottomPadding: number;
   contentContainerStyle?: React.ComponentProps<typeof ScrollView>["contentContainerStyle"];
-  keyboardOffset: number;
   onMomentumScrollBegin: (pane: ScrollPaneKey) => void;
   onContentSizeChange: (pane: ScrollPaneKey, contentHeight: number) => void;
   onLayout: (pane: ScrollPaneKey, event: LayoutChangeEvent) => void;
@@ -1510,7 +1491,6 @@ function KeyboardManagedScrollView({
   pane: ScrollPaneKey;
   scrollViewRef: React.RefObject<ScrollToHandle | null>;
   showLiveOutputLabel?: boolean;
-  usesNativeKeyboardController: boolean;
 }) {
   const content = (
     <>
@@ -1521,8 +1501,13 @@ function KeyboardManagedScrollView({
     </>
   );
   const commonProps = {
+    automaticallyAdjustKeyboardInsets: Platform.OS === "ios",
     className: showLiveOutputLabel ? "flex-1 px-4 py-3" : "flex-1 px-4 py-2",
-    contentContainerStyle,
+    contentContainerStyle: [
+      contentContainerStyle,
+      composerBottomPadding > 0 ? { paddingBottom: composerBottomPadding } : null,
+    ],
+    contentInsetAdjustmentBehavior: "never" as const,
     horizontal: false,
     keyboardDismissMode: Platform.OS === "ios" ? ("interactive" as const) : ("none" as const),
     keyboardShouldPersistTaps: "handled" as const,
@@ -1536,21 +1521,6 @@ function KeyboardManagedScrollView({
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => onScroll(pane, event),
     scrollEventThrottle: 16,
   };
-
-  if (usesNativeKeyboardController) {
-    return (
-      <KeyboardChatScrollView
-        ref={scrollViewRef as React.RefObject<React.ElementRef<typeof KeyboardChatScrollView>>}
-        {...commonProps}
-        applyWorkaroundForContentInsetHitTestBug
-        extraContentPadding={composerOverlayPaddingShared}
-        keyboardLiftBehavior="whenAtEnd"
-        offset={keyboardOffset}
-      >
-        {content}
-      </KeyboardChatScrollView>
-    );
-  }
 
   return (
     <ScrollView ref={scrollViewRef as React.RefObject<ScrollView>} {...commonProps}>
