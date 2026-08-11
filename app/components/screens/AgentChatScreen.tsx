@@ -554,12 +554,9 @@ export default function ChatScreen() {
         if (state.dragging || state.momentum) return;
         userScrollStateRef.current[pane] = createUserScrollState();
         userScrollIdleTimerRef.current[pane] = null;
-
-        const peerPane: ScrollPaneKey = pane === "chat" ? "terminal" : "chat";
-        if (getScrollRef(peerPane).current) applyPaneScrollPosition(peerPane);
       }, SCROLL_GESTURE_IDLE_RELEASE_MS);
     },
-    [applyPaneScrollPosition, clearScrollIdleTimer, getScrollRef],
+    [clearScrollIdleTimer],
   );
 
   const markUserScrollActive = useCallback(
@@ -592,11 +589,6 @@ export default function ChatScreen() {
         programmaticScrollRef.current[pane] = false;
         return;
       }
-
-      const peerPane: ScrollPaneKey = pane === "chat" ? "terminal" : "chat";
-      const peerMetrics = scrollMetricsRef.current[peerPane];
-      peerMetrics.pinnedToBottom = metrics.pinnedToBottom;
-      peerMetrics.ratio = metrics.ratio;
 
       if (isUserScrollActive(pane)) scheduleScrollIdleRelease(pane);
     },
