@@ -303,6 +303,7 @@ export default function ChatScreen() {
   const [composerHideProgress] = useState(() => new Animated.Value(0));
   const composerScrollReserve = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const [composerInteractive, setComposerInteractive] = useState(true);
+  const [nativeStickyComposerReady, setNativeStickyComposerReady] = useState(Platform.OS === "web");
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
     terminal: createScrollPaneMetrics(),
@@ -529,6 +530,18 @@ export default function ChatScreen() {
     },
     [keyboardVisible, setNativeComposerHidden],
   );
+  useEffect(() => {
+    if (!usesNativeKeyboardController) return;
+    let secondFrame: number | null = null;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => setNativeStickyComposerReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
+    };
+  }, [usesNativeKeyboardController]);
+
   useEffect(() => {
     if (!usesNativeKeyboardController) return;
     // eslint-disable-next-line react-hooks/immutability
@@ -1193,6 +1206,7 @@ export default function ChatScreen() {
 
   const nativeStickyComposer = (
     <KeyboardStickyView
+      enabled={nativeStickyComposerReady}
       pointerEvents={composerInteractive ? "box-none" : "none"}
       style={{
         bottom: 0,
