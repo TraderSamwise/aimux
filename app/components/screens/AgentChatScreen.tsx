@@ -116,7 +116,6 @@ const COMPOSER_INPUT_MAX_HEIGHT =
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
-const COMPOSER_HIDE_BOTTOM_OFFSET = 56;
 const COMPOSER_HIDE_ANIMATION_MS = 160;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
@@ -520,18 +519,13 @@ export default function ChatScreen() {
       usesNativeKeyboardController,
     ],
   );
-  const handleNativeChatScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
-
-      if (keyboardVisible || offsetY <= SCROLL_BOTTOM_EPSILON) {
+  const handleNativeChatEndVisible = useCallback(
+    (visible: boolean) => {
+      if (keyboardVisible || visible) {
         setNativeComposerHidden(false);
         return;
       }
-
-      if (offsetY >= COMPOSER_HIDE_BOTTOM_OFFSET) {
-        setNativeComposerHidden(true);
-      }
+      setNativeComposerHidden(true);
     },
     [keyboardVisible, setNativeComposerHidden],
   );
@@ -1225,7 +1219,7 @@ export default function ChatScreen() {
         items={chatListItems}
         keyboardOffset={bottomInset}
         listRef={chatListRef}
-        onScroll={handleNativeChatScroll}
+        onEndVisible={handleNativeChatEndVisible}
         serviceEndpoint={serviceEndpoint}
       />
     ) : (
@@ -1716,7 +1710,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   items,
   keyboardOffset,
   listRef,
-  onScroll,
+  onEndVisible,
   serviceEndpoint,
 }: {
   dividerWidth: number;
@@ -1724,7 +1718,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   items: ChatListItem[];
   keyboardOffset: number;
   listRef: React.RefObject<FlatList<ChatListItem> | null>;
-  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onEndVisible: (visible: boolean) => void;
   serviceEndpoint: ServiceEndpoint;
 }) {
   const renderItem = useCallback(
@@ -1764,10 +1758,11 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         inverted
         keyboardDismissMode="interactive"
         keyboardLiftBehavior="whenAtEnd"
+        onEndVisible={onEndVisible}
         offset={keyboardOffset}
       />
     ),
-    [extraContentPadding, keyboardOffset],
+    [extraContentPadding, keyboardOffset, onEndVisible],
   );
 
   return (
@@ -1785,7 +1780,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         paddingTop: 8,
       }}
       renderScrollComponent={renderScrollComponent}
-      onScroll={onScroll}
       scrollEventThrottle={16}
     />
   );
