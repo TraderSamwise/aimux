@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ansiLineText } from "./ansi";
-import { formatPlainTextForDisplay, formatTerminalOutputForDisplay } from "./terminal-output";
+import {
+  formatPlainTextForDisplay,
+  formatRichTextSpansForDisplay,
+  formatTerminalOutputForDisplay,
+} from "./terminal-output";
 
 const plain = (output: string, dividerWidth?: number) =>
   formatTerminalOutputForDisplay(output, dividerWidth === undefined ? {} : { dividerWidth }).map(
@@ -63,5 +67,31 @@ describe("formatPlainTextForDisplay", () => {
 
   it("preserves short markdown separators in chat text", () => {
     expect(formatPlainTextForDisplay("front\n---\nmatter")).toBe("front\n---\nmatter");
+  });
+});
+
+describe("formatRichTextSpansForDisplay", () => {
+  it("caps and collapses divider spans without dropping nearby colour", () => {
+    const divider = "-".repeat(80);
+
+    expect(
+      formatRichTextSpansForDisplay(
+        [
+          { text: "done", foreground: { model: "rgb", value: "#98c379" } },
+          { text: "\n" },
+          { text: divider, foreground: { model: "rgb", value: "#808080" } },
+          { text: "\n" },
+          { text: divider, foreground: { model: "rgb", value: "#808080" } },
+          { text: "\nnext", marks: ["bold"] },
+        ],
+        { dividerWidth: 10 },
+      ),
+    ).toEqual([
+      { text: "done", foreground: { model: "rgb", value: "#98c379" } },
+      { text: "\n" },
+      { text: "-".repeat(10), foreground: { model: "rgb", value: "#808080" } },
+      { text: "\n" },
+      { text: "next", marks: ["bold"] },
+    ]);
   });
 });

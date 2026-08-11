@@ -1,4 +1,5 @@
 import { ansiLineText, parseAnsiLines, type AnsiSpan } from "@/lib/ansi";
+import type { HistoryTextSpan } from "@/lib/events";
 
 const DIVIDER_LINE_MIN_LENGTH = 24;
 const DIVIDER_LINE_MIN_RATIO = 0.9;
@@ -66,6 +67,61 @@ export function formatPlainTextForDisplay(
   }
 
   return formatted.join("\n");
+}
+
+export function formatRichTextSpansForDisplay(
+  spans: readonly HistoryTextSpan[],
+  { dividerWidth = DEFAULT_DIVIDER_WIDTH }: TerminalOutputDisplayOptions = {},
+): HistoryTextSpan[] {
+  const formatted: HistoryTextSpan[][] = [];
+  let previousWasDivider = false;
+
+  for (const lineSpans of splitRichTextLines(spans)) {
+    const line = richTextLineText(lineSpans);
+    if (isDividerLine(line)) {
+      if (previousWasDivider) continue;
+      const indent = line.match(/^\s*/)?.[0] ?? "";
+      formatted.push([
+        {
+          ...lineSpans[0],
+          text: `${indent}${line.trim().slice(0, dividerWidth)}`,
+        },
+      ]);
+      previousWasDivider = true;
+      continue;
+    }
+
+    formatted.push(lineSpans);
+    previousWasDivider = false;
+  }
+
+  return joinRichTextLines(formatted);
+}
+
+function splitRichTextLines(spans: readonly HistoryTextSpan[]): HistoryTextSpan[][] {
+  const lines: HistoryTextSpan[][] = [[]];
+  for (const span of spans) {
+    const chunks = span.text.split("\n");
+    for (let index = 0; index < chunks.length; index += 1) {
+      if (index > 0) lines.push([]);
+      const text = chunks[index] ?? "";
+      if (text) lines[lines.length - 1]!.push({ ...span, text });
+    }
+  }
+  return lines;
+}
+
+function joinRichTextLines(lines: readonly (readonly HistoryTextSpan[])[]): HistoryTextSpan[] {
+  const next: HistoryTextSpan[] = [];
+  lines.forEach((line, index) => {
+    if (index > 0) next.push({ text: "\n" });
+    next.push(...line);
+  });
+  return next;
+}
+
+function richTextLineText(spans: readonly HistoryTextSpan[]): string {
+  return spans.map((span) => span.text).join("");
 }
 
 function isDividerLine(line: string): boolean {

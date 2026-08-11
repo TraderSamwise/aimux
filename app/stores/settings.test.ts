@@ -40,6 +40,7 @@ describe("settings store", () => {
     expect(settingsModule.defaultSettings).toEqual({
       theme: "dark",
       chatTerminalSplit: false,
+      chatRichTerminalColors: false,
       activeShare: null,
       notifications: {
         enabled: false,
@@ -71,17 +72,21 @@ describe("settings store", () => {
 
     expect(store.get(settingsModule.themePreferenceAtom)).toBe("dark");
     expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(false);
+    expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(false);
     expect(store.get(settingsModule.activeSharedSessionAtom)).toBeNull();
     expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
     store.set(settingsModule.chatTerminalSplitAtom, true);
+    store.set(settingsModule.chatRichTerminalColorsAtom, true);
     store.set(settingsModule.notificationSettingsAtom, {
       ...store.get(settingsModule.notificationSettingsAtom),
       enabled: true,
     });
 
     expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(true);
+    expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
     expect(store.get(settingsModule.settingsAtom).chatTerminalSplit).toBe(true);
+    expect(store.get(settingsModule.settingsAtom).chatRichTerminalColors).toBe(true);
     expect(store.get(settingsModule.settingsAtom).notifications.enabled).toBe(true);
   });
 
@@ -95,6 +100,7 @@ describe("settings store", () => {
       ...settingsModule.defaultSettings,
       theme: "light",
       chatTerminalSplit: true,
+      chatRichTerminalColors: false,
       activeShare: null,
     });
   });
@@ -104,6 +110,7 @@ describe("settings store", () => {
 
     store.set(settingsModule.themePreferenceAtom, "light");
     store.set(settingsModule.chatTerminalSplitAtom, true);
+    store.set(settingsModule.chatRichTerminalColorsAtom, true);
     store.set(settingsModule.notificationSettingsAtom, {
       ...store.get(settingsModule.notificationSettingsAtom),
       enabled: true,
@@ -130,6 +137,7 @@ describe("settings store", () => {
       expect(JSON.parse(raw ?? "{}")).toEqual({
         theme: "light",
         chatTerminalSplit: true,
+        chatRichTerminalColors: true,
         activeShare: {
           shareId: "share_1",
           ownerUserId: "user_owner",

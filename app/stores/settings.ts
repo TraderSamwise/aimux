@@ -13,6 +13,7 @@ export type ThemePreference = "system" | "light" | "dark";
 export interface AppSettings {
   theme: ThemePreference;
   chatTerminalSplit: boolean;
+  chatRichTerminalColors: boolean;
   notifications: NotificationSettings;
   activeShare: ActiveSharedSession | null;
 }
@@ -29,6 +30,7 @@ export interface ActiveSharedSession {
 export const defaultSettings: AppSettings = Object.freeze({
   theme: "dark",
   chatTerminalSplit: false,
+  chatRichTerminalColors: false,
   notifications: defaultNotificationSettings,
   activeShare: null,
 });
@@ -60,6 +62,9 @@ export const settingsAtom = unwrap(asyncSettingsAtom, (previous) => previous ?? 
 export const themePreferenceAtom = focusAtom(settingsAtom, (optic) => optic.prop("theme"));
 export const chatTerminalSplitAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("chatTerminalSplit"),
+);
+export const chatRichTerminalColorsAtom = focusAtom(settingsAtom, (optic) =>
+  optic.prop("chatRichTerminalColors"),
 );
 export const notificationSettingsAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("notifications"),

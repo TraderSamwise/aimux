@@ -121,8 +121,22 @@ export interface HistoryImageReferencePart {
   contentUrl?: string;
 }
 
+export type HistoryTextMark = "bold" | "dim" | "italic" | "underline" | "strike";
+
+export interface HistoryTextColor {
+  model: "rgb";
+  value: string;
+}
+
+export interface HistoryTextSpan {
+  text: string;
+  marks?: HistoryTextMark[];
+  foreground?: HistoryTextColor;
+  background?: HistoryTextColor;
+}
+
 export type HistoryPart =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; spans?: HistoryTextSpan[] }
   | HistoryImagePart
   | HistoryImageReferencePart;
 

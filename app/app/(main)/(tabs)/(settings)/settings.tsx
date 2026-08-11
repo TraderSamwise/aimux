@@ -17,6 +17,7 @@ import { registerSecurityPushToken, sendSecurityTestPush } from "@/lib/push-regi
 import { getErrorMessage } from "@/lib/request-errors";
 import {
   activeSharedSessionAtom,
+  chatRichTerminalColorsAtom,
   chatTerminalSplitAtom,
   notificationSettingsAtom,
   themePreferenceAtom,
@@ -42,6 +43,7 @@ const ENABLED_OPTIONS = [
 export default function SettingsScreen() {
   const [themePreference, setThemePreference] = useAtom(themePreferenceAtom);
   const [chatTerminalSplit, setChatTerminalSplit] = useAtom(chatTerminalSplitAtom);
+  const [chatRichTerminalColors, setChatRichTerminalColors] = useAtom(chatRichTerminalColorsAtom);
   const [notificationSettings, setNotificationSettings] = useAtom(notificationSettingsAtom);
   const activeShare = useAtomValue(activeSharedSessionAtom);
   const { getToken } = useAuth();
@@ -207,6 +209,13 @@ export default function SettingsScreen() {
         onChange={(value) => setChatTerminalSplit(value === "on")}
         fullWidth
       />
+      <View className="mt-3 overflow-hidden rounded-lg border border-border">
+        <SettingToggle
+          label="Terminal colors"
+          value={chatRichTerminalColors}
+          onChange={setChatRichTerminalColors}
+        />
+      </View>
       <Text className="mb-2 mt-6 text-xs uppercase tracking-wider text-muted-foreground">
         Notifications
       </Text>

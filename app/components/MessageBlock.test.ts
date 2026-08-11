@@ -7,7 +7,7 @@ vi.mock("react-native", () => ({
   View: "View",
 }));
 
-import { messageSpeakerLabel, resolveImageUrl } from "@/components/MessageBlock";
+import { canRenderRichText, messageSpeakerLabel, resolveImageUrl } from "@/components/MessageBlock";
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
 const originalConnectionMode = process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
@@ -94,5 +94,13 @@ describe("MessageBlock speaker labels", () => {
 
   it("omits labels when history has no actor metadata", () => {
     expect(messageSpeakerLabel({})).toBeNull();
+  });
+});
+
+describe("MessageBlock rich text guard", () => {
+  it("only renders rich spans when they exactly cover the text", () => {
+    expect(canRenderRichText("red answer", [{ text: "red" }, { text: " answer" }])).toBe(true);
+    expect(canRenderRichText("red answer", [{ text: "red" }])).toBe(false);
+    expect(canRenderRichText("red answer", undefined)).toBe(false);
   });
 });

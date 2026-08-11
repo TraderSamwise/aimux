@@ -1,10 +1,17 @@
 import React from "react";
-import { Image, View } from "react-native";
+import { Image, Text as RNText, View, type TextStyle } from "react-native";
+import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
-import type { ChatMessage, HistoryImagePart, HistoryImageReferencePart } from "@/lib/events";
+import type {
+  ChatMessage,
+  HistoryImagePart,
+  HistoryImageReferencePart,
+  HistoryTextSpan,
+} from "@/lib/events";
 import { getRelayServiceUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import { env } from "@/lib/env";
-import { formatPlainTextForDisplay } from "@/lib/terminal-output";
+import { formatPlainTextForDisplay, formatRichTextSpansForDisplay } from "@/lib/terminal-output";
+import { chatRichTerminalColorsAtom } from "@/stores/settings";
 
 interface Props {
   message: ChatMessage;
@@ -33,6 +40,59 @@ export function messageSpeakerLabel(message: Pick<ChatMessage, "actor">): string
 function imagePartLabel(part: HistoryImagePart | HistoryImageReferencePart): string {
   if ("label" in part && part.label.trim()) return part.label;
   return "[image]";
+}
+
+function spanText(spans: readonly HistoryTextSpan[]): string {
+  return spans.map((span) => span.text).join("");
+}
+
+export function canRenderRichText(
+  text: string,
+  spans: readonly HistoryTextSpan[] | undefined,
+): spans is readonly HistoryTextSpan[] {
+  return Boolean(spans?.length) && spanText(spans ?? []) === text;
+}
+
+export function styleForRichTextSpan(span: HistoryTextSpan): TextStyle {
+  const marks = new Set(span.marks ?? []);
+  return {
+    ...(span.foreground?.model === "rgb" ? { color: span.foreground.value } : {}),
+    ...(span.background?.model === "rgb" ? { backgroundColor: span.background.value } : {}),
+    ...(marks.has("bold") ? { fontWeight: "700" as const } : {}),
+    ...(marks.has("italic") ? { fontStyle: "italic" as const } : {}),
+    ...(marks.has("dim") ? { opacity: 0.65 } : {}),
+    ...(marks.has("underline") && marks.has("strike")
+      ? { textDecorationLine: "underline line-through" as const }
+      : marks.has("underline")
+        ? { textDecorationLine: "underline" as const }
+        : marks.has("strike")
+          ? { textDecorationLine: "line-through" as const }
+          : {}),
+  };
+}
+
+function RichText({
+  spans,
+  className,
+  dividerWidth,
+}: {
+  spans: readonly HistoryTextSpan[];
+  className: string;
+  dividerWidth?: number;
+}) {
+  const displaySpans = React.useMemo(
+    () => formatRichTextSpansForDisplay(spans, { dividerWidth }),
+    [dividerWidth, spans],
+  );
+  return (
+    <Text className={className}>
+      {displaySpans.map((span, index) => (
+        <RNText key={index} style={styleForRichTextSpan(span)}>
+          {span.text}
+        </RNText>
+      ))}
+    </Text>
+  );
 }
 
 function ImageReferenceToken({
@@ -88,6 +148,7 @@ export const MessageBlock = React.memo(function MessageBlock({
   const role = message.role ?? "assistant";
   const isUser = role === "user";
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
+  const richTerminalColors = useAtomValue(chatRichTerminalColorsAtom);
   const formatMessageText = React.useCallback(
     (text: string) => formatPlainTextForDisplay(text, { dividerWidth }),
     [dividerWidth],
@@ -115,11 +176,19 @@ export const MessageBlock = React.memo(function MessageBlock({
       {Array.isArray(message.parts) && message.parts.length > 0 ? (
         message.parts.map((part, idx) => {
           if (part.type === "text") {
+            const className = isUser ? "text-primary-foreground" : "text-secondary-foreground";
+            if (richTerminalColors && canRenderRichText(part.text, part.spans)) {
+              return (
+                <RichText
+                  key={idx}
+                  spans={part.spans}
+                  className={className}
+                  dividerWidth={dividerWidth}
+                />
+              );
+            }
             return (
-              <Text
-                key={idx}
-                className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}
-              >
+              <Text key={idx} className={className}>
                 {formatMessageText(part.text)}
               </Text>
             );
