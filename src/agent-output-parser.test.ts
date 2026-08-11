@@ -271,6 +271,31 @@ describe("parseAgentOutput", () => {
     expect(messagesFromParsedAgentOutput(parsed).map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 
+  it("keeps indented Codex tool output that starts with > out of user messages", () => {
+    const raw = [
+      "• Ran vercel ls tealstreet-next --scope tealstreet-b565b19f 2>&1 | head -40",
+      "  ⎿ Fetching deployments in tealstreet-b565b19f",
+      "    > Deployments for tealstreet-b565b19f/tealstreet-next [260ms]",
+      "    … +36 lines (ctrl + t to view transcript)",
+      "    https://tealstreet-next-crsjkcxey-tealstreet-b565b19f.vercel.app",
+      "    https://tealstreet-next-4qa4yawie-tealstreet-b565b19f.vercel.app",
+      "",
+      "❯ We added navbar too?",
+      "",
+      "• Yes, navbar is added in code.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+    const messages = messagesFromParsedAgentOutput(parsed);
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["status", "prompt", "response"]);
+    expect(messages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "We added navbar too?"],
+      ["assistant", "Yes, navbar is added in code."],
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("Deployments for");
+  });
+
   it("keeps a genuinely new message sent mid-turn, which the echo rule must not eat", () => {
     // Same shape as the echo, minus the repeat: this one exists only at the bottom,
     // so it is the operator's next message and has to survive.

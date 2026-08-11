@@ -51,7 +51,7 @@ const looksLikeActivityProgressText = (text: string) => {
 const looksLikeRanCommandText = (text: string) => {
   const trimmed = text.trim();
   return (
-    /^Ran\s+(?:aimux|bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vitest|yarn)\b/i.test(
+    /^Ran\s+(?:aimux|bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vercel|vitest|yarn)\b/i.test(
       trimmed,
     ) && !/[.!?]$/.test(trimmed)
   );
@@ -289,8 +289,7 @@ export function parseAgentOutput(
     );
   };
   const isPromptLine = (line: string) => {
-    const trimmed = line.trimStart();
-    return /^›\s?/.test(trimmed) || /^>\s?/.test(trimmed) || /^❯\s?/.test(trimmed);
+    return /^›\s?/.test(line) || /^>\s?/.test(line) || /^❯\s?/.test(line);
   };
   /**
    * A tool result hanging off the line above it — the agent's own output, never
