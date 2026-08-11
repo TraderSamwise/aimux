@@ -108,6 +108,7 @@ const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
+const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
@@ -120,7 +121,6 @@ type ScrollPaneKey = "chat" | "terminal";
 
 type ScrollPaneMetrics = {
   contentHeight: number;
-  contentInsetBottom: number;
   initialized: boolean;
   offsetY: number;
   pinnedToBottom: boolean;
@@ -132,10 +132,15 @@ type ScrollToHandle = {
   scrollTo: (options: { animated?: boolean; x?: number; y?: number }) => void;
 };
 
+type UserScrollState = {
+  active: boolean;
+  dragging: boolean;
+  momentum: boolean;
+};
+
 function createScrollPaneMetrics(): ScrollPaneMetrics {
   return {
     contentHeight: 0,
-    contentInsetBottom: 0,
     initialized: false,
     offsetY: 0,
     pinnedToBottom: true,
@@ -144,8 +149,16 @@ function createScrollPaneMetrics(): ScrollPaneMetrics {
   };
 }
 
+function createUserScrollState(): UserScrollState {
+  return {
+    active: false,
+    dragging: false,
+    momentum: false,
+  };
+}
+
 function getScrollableHeight(metrics: ScrollPaneMetrics) {
-  return Math.max(0, metrics.contentHeight + metrics.contentInsetBottom - metrics.viewportHeight);
+  return Math.max(0, metrics.contentHeight - metrics.viewportHeight);
 }
 
 function getPinnedOffset(metrics: ScrollPaneMetrics) {
@@ -226,9 +239,15 @@ export default function ChatScreen() {
     chat: false,
     terminal: false,
   });
-  const initialContentInsetAppliedRef = useRef<Record<ScrollPaneKey, boolean>>({
-    chat: false,
-    terminal: false,
+  const userScrollStateRef = useRef<Record<ScrollPaneKey, UserScrollState>>({
+    chat: createUserScrollState(),
+    terminal: createUserScrollState(),
+  });
+  const userScrollIdleTimerRef = useRef<
+    Record<ScrollPaneKey, ReturnType<typeof setTimeout> | null>
+  >({
+    chat: null,
+    terminal: null,
   });
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
@@ -475,8 +494,13 @@ export default function ChatScreen() {
     [getScrollRef],
   );
 
+  const isUserScrollActive = useCallback((pane: ScrollPaneKey) => {
+    return userScrollStateRef.current[pane].active;
+  }, []);
+
   const applyPaneScrollPosition = useCallback(
     (pane: ScrollPaneKey) => {
+      if (isUserScrollActive(pane)) return;
       const metrics = scrollMetricsRef.current[pane];
       if (metrics.viewportHeight <= 0) return;
       const maxY = getScrollableHeight(metrics);
@@ -485,17 +509,18 @@ export default function ChatScreen() {
       metrics.initialized = true;
       scrollPaneToOffset(pane, offsetY);
     },
-    [scrollPaneToOffset],
+    [isUserScrollActive, scrollPaneToOffset],
   );
 
   const settlePaneAfterMetricChange = useCallback(
     (pane: ScrollPaneKey) => {
+      if (isUserScrollActive(pane)) return;
       const metrics = scrollMetricsRef.current[pane];
       const maxY = getScrollableHeight(metrics);
       if (metrics.initialized && !metrics.pinnedToBottom && metrics.offsetY <= maxY) return;
       requestAnimationFrame(() => applyPaneScrollPosition(pane));
     },
-    [applyPaneScrollPosition],
+    [applyPaneScrollPosition, isUserScrollActive],
   );
 
   const handleScrollLayout = useCallback(
@@ -514,16 +539,38 @@ export default function ChatScreen() {
     [settlePaneAfterMetricChange],
   );
 
-  const handleScrollContentInsetChange = useCallback(
-    (pane: ScrollPaneKey, insets: { bottom: number }) => {
-      const metrics = scrollMetricsRef.current[pane];
-      metrics.contentInsetBottom = Math.max(0, insets.bottom);
-      if (!initialContentInsetAppliedRef.current[pane] && insets.bottom > 0) {
-        initialContentInsetAppliedRef.current[pane] = true;
-        settlePaneAfterMetricChange(pane);
-      }
+  const clearScrollIdleTimer = useCallback((pane: ScrollPaneKey) => {
+    const idleTimer = userScrollIdleTimerRef.current[pane];
+    if (idleTimer) clearTimeout(idleTimer);
+    userScrollIdleTimerRef.current[pane] = null;
+  }, []);
+
+  const scheduleScrollIdleRelease = useCallback(
+    (pane: ScrollPaneKey) => {
+      clearScrollIdleTimer(pane);
+      userScrollIdleTimerRef.current[pane] = setTimeout(() => {
+        const state = userScrollStateRef.current[pane];
+        if (state.dragging || state.momentum) return;
+        userScrollStateRef.current[pane] = createUserScrollState();
+        userScrollIdleTimerRef.current[pane] = null;
+
+        const peerPane: ScrollPaneKey = pane === "chat" ? "terminal" : "chat";
+        if (getScrollRef(peerPane).current) applyPaneScrollPosition(peerPane);
+      }, SCROLL_GESTURE_IDLE_RELEASE_MS);
     },
-    [settlePaneAfterMetricChange],
+    [applyPaneScrollPosition, clearScrollIdleTimer, getScrollRef],
+  );
+
+  const markUserScrollActive = useCallback(
+    (pane: ScrollPaneKey, key: "dragging" | "momentum") => {
+      clearScrollIdleTimer(pane);
+      userScrollStateRef.current[pane] = {
+        ...userScrollStateRef.current[pane],
+        active: true,
+        [key]: true,
+      };
+    },
+    [clearScrollIdleTimer],
   );
 
   const handleScroll = useCallback(
@@ -532,9 +579,6 @@ export default function ChatScreen() {
       const offsetY = Math.max(0, contentOffset.y);
       const metrics = scrollMetricsRef.current[pane];
       metrics.contentHeight = Math.max(0, contentSize.height);
-      if (typeof event.nativeEvent.contentInset?.bottom === "number") {
-        metrics.contentInsetBottom = Math.max(0, event.nativeEvent.contentInset.bottom);
-      }
       metrics.viewportHeight = Math.max(0, layoutMeasurement.height);
       const maxY = getScrollableHeight(metrics);
       const distanceFromBottom = Math.max(0, maxY - offsetY);
@@ -552,12 +596,43 @@ export default function ChatScreen() {
       const peerMetrics = scrollMetricsRef.current[peerPane];
       peerMetrics.pinnedToBottom = metrics.pinnedToBottom;
       peerMetrics.ratio = metrics.ratio;
-      if (getScrollRef(peerPane).current) applyPaneScrollPosition(peerPane);
+
+      if (isUserScrollActive(pane)) scheduleScrollIdleRelease(pane);
     },
-    [applyPaneScrollPosition, getScrollRef],
+    [isUserScrollActive, scheduleScrollIdleRelease],
+  );
+
+  const handleScrollBeginDrag = useCallback(
+    (pane: ScrollPaneKey) => {
+      markUserScrollActive(pane, "dragging");
+    },
+    [markUserScrollActive],
+  );
+
+  const handleMomentumScrollBegin = useCallback(
+    (pane: ScrollPaneKey) => {
+      markUserScrollActive(pane, "momentum");
+    },
+    [markUserScrollActive],
+  );
+
+  const handleScrollEnd = useCallback(
+    (pane: ScrollPaneKey, key: "dragging" | "momentum") => {
+      userScrollStateRef.current[pane] = {
+        ...userScrollStateRef.current[pane],
+        [key]: false,
+      };
+      scheduleScrollIdleRelease(pane);
+    },
+    [scheduleScrollIdleRelease],
   );
 
   useEffect(() => {
+    for (const pane of ["chat", "terminal"] as const) {
+      const idleTimer = userScrollIdleTimerRef.current[pane];
+      if (idleTimer) clearTimeout(idleTimer);
+      userScrollIdleTimerRef.current[pane] = null;
+    }
     scrollMetricsRef.current = {
       chat: createScrollPaneMetrics(),
       terminal: createScrollPaneMetrics(),
@@ -566,9 +641,9 @@ export default function ChatScreen() {
       chat: false,
       terminal: false,
     };
-    initialContentInsetAppliedRef.current = {
-      chat: false,
-      terminal: false,
+    userScrollStateRef.current = {
+      chat: createUserScrollState(),
+      terminal: createUserScrollState(),
     };
     requestAnimationFrame(() => {
       applyPaneScrollPosition("chat");
@@ -578,10 +653,14 @@ export default function ChatScreen() {
 
   useEffect(() => {
     requestAnimationFrame(() => {
-      if (scrollMetricsRef.current.chat.pinnedToBottom) applyPaneScrollPosition("chat");
-      if (scrollMetricsRef.current.terminal.pinnedToBottom) applyPaneScrollPosition("terminal");
+      if (scrollMetricsRef.current.chat.pinnedToBottom && !isUserScrollActive("chat")) {
+        applyPaneScrollPosition("chat");
+      }
+      if (scrollMetricsRef.current.terminal.pinnedToBottom && !isUserScrollActive("terminal")) {
+        applyPaneScrollPosition("terminal");
+      }
     });
-  }, [allMessages.length, applyPaneScrollPosition, output]);
+  }, [allMessages.length, applyPaneScrollPosition, isUserScrollActive, output]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -593,6 +672,15 @@ export default function ChatScreen() {
       applyPaneScrollPosition(showTerminalOnly ? "terminal" : "chat");
     });
   }, [applyPaneScrollPosition, showSplit, showTerminalOnly]);
+
+  useEffect(() => {
+    return () => {
+      for (const pane of ["chat", "terminal"] as const) {
+        const idleTimer = userScrollIdleTimerRef.current[pane];
+        if (idleTimer) clearTimeout(idleTimer);
+      }
+    };
+  }, []);
 
   function handleTerminalPaneLayout(event: LayoutChangeEvent) {
     setTerminalPaneWidth(event.nativeEvent.layout.width);
@@ -950,7 +1038,9 @@ export default function ChatScreen() {
         scrollViewRef={terminalScrollRef}
         showLiveOutputLabel
         usesNativeKeyboardController={usesNativeKeyboardController}
-        onContentInsetChange={handleScrollContentInsetChange}
+        onMomentumScrollBegin={handleMomentumScrollBegin}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEnd={handleScrollEnd}
         onContentSizeChange={handleScrollContentSizeChange}
         onLayout={handleScrollLayout}
         onScroll={handleScroll}
@@ -971,7 +1061,9 @@ export default function ChatScreen() {
       pane="chat"
       scrollViewRef={scrollRef}
       usesNativeKeyboardController={usesNativeKeyboardController}
-      onContentInsetChange={handleScrollContentInsetChange}
+      onMomentumScrollBegin={handleMomentumScrollBegin}
+      onScrollBeginDrag={handleScrollBeginDrag}
+      onScrollEnd={handleScrollEnd}
       onContentSizeChange={handleScrollContentSizeChange}
       onLayout={handleScrollLayout}
       onScroll={handleScroll}
@@ -1378,10 +1470,12 @@ function KeyboardManagedScrollView({
   children,
   composerHeightShared,
   contentContainerStyle,
-  onContentInsetChange,
+  onMomentumScrollBegin,
   onContentSizeChange,
   onLayout,
   onScroll,
+  onScrollBeginDrag,
+  onScrollEnd,
   pane,
   scrollViewRef,
   showLiveOutputLabel = false,
@@ -1390,10 +1484,12 @@ function KeyboardManagedScrollView({
   children: React.ReactNode;
   composerHeightShared: SharedValue<number>;
   contentContainerStyle?: React.ComponentProps<typeof ScrollView>["contentContainerStyle"];
-  onContentInsetChange: (pane: ScrollPaneKey, insets: { bottom: number }) => void;
+  onMomentumScrollBegin: (pane: ScrollPaneKey) => void;
   onContentSizeChange: (pane: ScrollPaneKey, contentHeight: number) => void;
   onLayout: (pane: ScrollPaneKey, event: LayoutChangeEvent) => void;
   onScroll: (pane: ScrollPaneKey, event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onScrollBeginDrag: (pane: ScrollPaneKey) => void;
+  onScrollEnd: (pane: ScrollPaneKey, key: "dragging" | "momentum") => void;
   pane: ScrollPaneKey;
   scrollViewRef: React.RefObject<ScrollToHandle | null>;
   showLiveOutputLabel?: boolean;
@@ -1416,6 +1512,10 @@ function KeyboardManagedScrollView({
     onContentSizeChange: (_: number, contentHeight: number) =>
       onContentSizeChange(pane, contentHeight),
     onLayout: (event: LayoutChangeEvent) => onLayout(pane, event),
+    onMomentumScrollBegin: () => onMomentumScrollBegin(pane),
+    onMomentumScrollEnd: () => onScrollEnd(pane, "momentum"),
+    onScrollBeginDrag: () => onScrollBeginDrag(pane),
+    onScrollEndDrag: () => onScrollEnd(pane, "dragging"),
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => onScroll(pane, event),
     scrollEventThrottle: 16,
   };
@@ -1428,7 +1528,6 @@ function KeyboardManagedScrollView({
         applyWorkaroundForContentInsetHitTestBug
         extraContentPadding={composerHeightShared}
         keyboardLiftBehavior="whenAtEnd"
-        onContentInsetChange={(insets) => onContentInsetChange(pane, insets)}
       >
         {content}
       </KeyboardChatScrollView>
