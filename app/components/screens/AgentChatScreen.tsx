@@ -22,6 +22,7 @@ import {
   KeyboardGestureArea,
   KeyboardStickyView,
 } from "react-native-keyboard-controller";
+import { useSharedValue, withTiming, type SharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -303,6 +304,7 @@ export default function ChatScreen() {
   const composerHiddenRef = useRef(false);
   const nativeChatScrollOffsetRef = useRef(0);
   const [composerHideProgress] = useState(() => new Animated.Value(0));
+  const composerScrollReserve = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const [composerInteractive, setComposerInteractive] = useState(true);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
@@ -501,6 +503,10 @@ export default function ChatScreen() {
       composerHiddenRef.current = hidden;
       if (!hidden) setComposerInteractive(true);
       composerHideProgress.stopAnimation();
+      // eslint-disable-next-line react-hooks/immutability
+      composerScrollReserve.value = withTiming(hidden ? 0 : composerHideDistance, {
+        duration: COMPOSER_HIDE_ANIMATION_MS,
+      });
       Animated.timing(composerHideProgress, {
         duration: COMPOSER_HIDE_ANIMATION_MS,
         toValue: hidden ? 1 : 0,
@@ -509,7 +515,12 @@ export default function ChatScreen() {
         if (finished && hidden) setComposerInteractive(false);
       });
     },
-    [composerHideProgress, usesNativeKeyboardController],
+    [
+      composerHideDistance,
+      composerHideProgress,
+      composerScrollReserve,
+      usesNativeKeyboardController,
+    ],
   );
   const handleNativeChatScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -531,6 +542,13 @@ export default function ChatScreen() {
     },
     [keyboardVisible, setNativeComposerHidden],
   );
+  useEffect(() => {
+    if (!usesNativeKeyboardController) return;
+    // eslint-disable-next-line react-hooks/immutability
+    composerScrollReserve.value = withTiming(composerHiddenRef.current ? 0 : composerHideDistance, {
+      duration: COMPOSER_HIDE_ANIMATION_MS,
+    });
+  }, [composerHideDistance, composerScrollReserve, usesNativeKeyboardController]);
   const terminalToggleLabel =
     showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
   const measuredDividerWidth = terminalPaneWidth
@@ -1188,7 +1206,16 @@ export default function ChatScreen() {
   );
 
   const nativeStickyComposer = (
-    <KeyboardStickyView style={{ flexShrink: 0 }}>
+    <KeyboardStickyView
+      pointerEvents={composerInteractive ? "box-none" : "none"}
+      style={{
+        bottom: 0,
+        left: 0,
+        position: "absolute",
+        right: 0,
+        zIndex: 10,
+      }}
+    >
       <Animated.View
         pointerEvents={composerInteractive ? "auto" : "none"}
         style={composerVisibilityStyle}
@@ -1202,6 +1229,7 @@ export default function ChatScreen() {
     usesNativeKeyboardController ? (
       <MobileTranscriptList
         dividerWidth={chatDividerWidth}
+        extraContentPadding={composerScrollReserve}
         items={chatListItems}
         keyboardOffset={bottomInset}
         listRef={chatListRef}
@@ -1563,7 +1591,7 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-              <View className="flex-1">
+              <View className="flex-1" style={{ position: "relative" }}>
                 <KeyboardGestureArea
                   interpolator="ios"
                   style={{ flex: 1 }}
@@ -1692,6 +1720,7 @@ function KeyboardManagedScrollView({
 
 const MobileTranscriptList = React.memo(function MobileTranscriptList({
   dividerWidth,
+  extraContentPadding,
   items,
   keyboardOffset,
   listRef,
@@ -1699,6 +1728,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   serviceEndpoint,
 }: {
   dividerWidth: number;
+  extraContentPadding: SharedValue<number>;
   items: ChatListItem[];
   keyboardOffset: number;
   listRef: React.RefObject<FlatList<ChatListItem> | null>;
@@ -1738,13 +1768,14 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         applyWorkaroundForContentInsetHitTestBug
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
+        extraContentPadding={extraContentPadding}
         inverted
         keyboardDismissMode="interactive"
         keyboardLiftBehavior="whenAtEnd"
         offset={keyboardOffset}
       />
     ),
-    [keyboardOffset],
+    [extraContentPadding, keyboardOffset],
   );
 
   return (
