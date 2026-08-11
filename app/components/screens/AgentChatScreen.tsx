@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  FlatList,
   Image,
   Platform,
   Pressable,
@@ -8,6 +9,7 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type ListRenderItemInfo,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
   type TextInputContentSizeChangeEventData,
@@ -131,6 +133,18 @@ type ScrollToHandle = {
   scrollTo: (options: { animated?: boolean; x?: number; y?: number }) => void;
 };
 
+type ChatListItem =
+  | {
+      key: string;
+      message: ChatMessage;
+      type: "message";
+    }
+  | {
+      key: string;
+      text: string;
+      type: "restore-blocked" | "error";
+    };
+
 type UserScrollState = {
   active: boolean;
   dragging: boolean;
@@ -179,6 +193,48 @@ function estimateComposerInputContentHeight(draft: string, composerWidth: number
   }, 0);
 
   return lineCount * COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
+}
+
+function buildChatListItems({
+  messages,
+  restoreBlockedReason,
+  sendError,
+  visibleLastError,
+}: {
+  messages: ChatMessage[];
+  restoreBlockedReason: string | null;
+  sendError: string | null;
+  visibleLastError: string | null;
+}): ChatListItem[] {
+  const chronological: ChatListItem[] = messages.map((message, idx) => ({
+    key: message.id ?? message.clientMessageId ?? `idx-${idx}`,
+    message,
+    type: "message",
+  }));
+
+  if (restoreBlockedReason) {
+    chronological.push({
+      key: "restore-blocked",
+      text: restoreBlockedReason,
+      type: "restore-blocked",
+    });
+  }
+  if (visibleLastError) {
+    chronological.push({
+      key: "last-error",
+      text: visibleLastError,
+      type: "error",
+    });
+  }
+  if (sendError) {
+    chronological.push({
+      key: "send-error",
+      text: sendError,
+      type: "error",
+    });
+  }
+
+  return chronological.reverse();
 }
 
 export default function ChatScreen() {
@@ -232,6 +288,9 @@ export default function ChatScreen() {
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
+  const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
+  const chatListPinnedRef = useRef(true);
+  const chatListUserScrollingRef = useRef(false);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
     terminal: createScrollPaneMetrics(),
@@ -442,6 +501,12 @@ export default function ChatScreen() {
     session.restoreState === "blocked"
       ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
       : null;
+  const chatListItems = buildChatListItems({
+    messages: allMessages,
+    restoreBlockedReason,
+    sendError,
+    visibleLastError,
+  });
   // The worktree leads, as it does in Exposé: it is what the session is, where the
   // generated id is only how it is addressed. The tone comes from the project's
   // ordered worktree list so the colour agrees with the sidebar and the TUI.
@@ -638,7 +703,10 @@ export default function ChatScreen() {
       chat: createUserScrollState(),
       terminal: createUserScrollState(),
     };
+    chatListPinnedRef.current = true;
+    chatListUserScrollingRef.current = false;
     requestAnimationFrame(() => {
+      chatListRef.current?.scrollToOffset({ animated: false, offset: 0 });
       applyPaneScrollPosition("chat");
       applyPaneScrollPosition("terminal");
     });
@@ -646,6 +714,9 @@ export default function ChatScreen() {
 
   useEffect(() => {
     requestAnimationFrame(() => {
+      if (chatListPinnedRef.current && !chatListUserScrollingRef.current) {
+        chatListRef.current?.scrollToOffset({ animated: false, offset: 0 });
+      }
       if (scrollMetricsRef.current.chat.pinnedToBottom && !isUserScrollActive("chat")) {
         applyPaneScrollPosition("chat");
       }
@@ -656,6 +727,7 @@ export default function ChatScreen() {
   }, [allMessages.length, applyPaneScrollPosition, isUserScrollActive, output]);
 
   useEffect(() => {
+    if (usesNativeKeyboardController && !showTerminalOnly) return;
     requestAnimationFrame(() => {
       if (showSplit) {
         applyPaneScrollPosition("chat");
@@ -664,7 +736,7 @@ export default function ChatScreen() {
       }
       applyPaneScrollPosition(showTerminalOnly ? "terminal" : "chat");
     });
-  }, [applyPaneScrollPosition, showSplit, showTerminalOnly]);
+  }, [applyPaneScrollPosition, showSplit, showTerminalOnly, usesNativeKeyboardController]);
 
   useEffect(() => {
     return () => {
@@ -1047,27 +1119,43 @@ export default function ChatScreen() {
   );
 
   const chatScroller = serviceEndpoint ? (
-    <KeyboardManagedScrollView
-      composerBottomPadding={usesNativeKeyboardController ? composerLayoutHeight : 0}
-      contentContainerStyle={{ flexGrow: 1 }}
-      pane="chat"
-      scrollViewRef={scrollRef}
-      onMomentumScrollBegin={handleMomentumScrollBegin}
-      onScrollBeginDrag={handleScrollBeginDrag}
-      onScrollEnd={handleScrollEnd}
-      onContentSizeChange={handleScrollContentSizeChange}
-      onLayout={handleScrollLayout}
-      onScroll={handleScroll}
-    >
-      <TranscriptContent
+    usesNativeKeyboardController ? (
+      <MobileTranscriptList
         dividerWidth={chatDividerWidth}
-        messages={allMessages}
-        restoreBlockedReason={restoreBlockedReason}
-        sendError={sendError}
+        items={chatListItems}
+        listRef={chatListRef}
+        composerBottomPadding={composerLayoutHeight}
+        onPinnedChange={(pinned) => {
+          chatListPinnedRef.current = pinned;
+        }}
+        onScrollActivityChange={(active) => {
+          chatListUserScrollingRef.current = active;
+        }}
         serviceEndpoint={serviceEndpoint}
-        visibleLastError={visibleLastError}
       />
-    </KeyboardManagedScrollView>
+    ) : (
+      <KeyboardManagedScrollView
+        composerBottomPadding={0}
+        contentContainerStyle={{ flexGrow: 1 }}
+        pane="chat"
+        scrollViewRef={scrollRef}
+        onMomentumScrollBegin={handleMomentumScrollBegin}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEnd={handleScrollEnd}
+        onContentSizeChange={handleScrollContentSizeChange}
+        onLayout={handleScrollLayout}
+        onScroll={handleScroll}
+      >
+        <TranscriptContent
+          dividerWidth={chatDividerWidth}
+          messages={allMessages}
+          restoreBlockedReason={restoreBlockedReason}
+          sendError={sendError}
+          serviceEndpoint={serviceEndpoint}
+          visibleLastError={visibleLastError}
+        />
+      </KeyboardManagedScrollView>
+    )
   ) : null;
 
   return (
@@ -1520,6 +1608,80 @@ function KeyboardManagedScrollView({
     </ScrollView>
   );
 }
+
+const MobileTranscriptList = React.memo(function MobileTranscriptList({
+  composerBottomPadding,
+  dividerWidth,
+  items,
+  listRef,
+  onPinnedChange,
+  onScrollActivityChange,
+  serviceEndpoint,
+}: {
+  composerBottomPadding: number;
+  dividerWidth: number;
+  items: ChatListItem[];
+  listRef: React.RefObject<FlatList<ChatListItem> | null>;
+  onPinnedChange: (pinned: boolean) => void;
+  onScrollActivityChange: (active: boolean) => void;
+  serviceEndpoint: ServiceEndpoint;
+}) {
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<ChatListItem>) => {
+      if (item.type === "message") {
+        return (
+          <MessageBlock
+            dividerWidth={dividerWidth}
+            message={item.message}
+            serviceEndpoint={serviceEndpoint}
+          />
+        );
+      }
+      if (item.type === "restore-blocked") {
+        return (
+          <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
+            <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Resume unavailable
+            </Text>
+            <Text className="mt-1 text-sm text-card-foreground">{item.text}</Text>
+          </View>
+        );
+      }
+      return <Text className="text-xs text-destructive my-2">{item.text}</Text>;
+    },
+    [dividerWidth, serviceEndpoint],
+  );
+
+  return (
+    <FlatList
+      ref={listRef}
+      data={items}
+      renderItem={renderItem}
+      keyExtractor={(item) => item.key}
+      inverted
+      keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
+      maintainVisibleContentPosition={{
+        autoscrollToTopThreshold: SCROLL_BOTTOM_EPSILON,
+        minIndexForVisible: 0,
+      }}
+      contentContainerStyle={{
+        flexGrow: 1,
+        paddingBottom: 8,
+        paddingHorizontal: 16,
+        paddingTop: Math.max(8, composerBottomPadding + 8),
+      }}
+      onMomentumScrollBegin={() => onScrollActivityChange(true)}
+      onMomentumScrollEnd={() => onScrollActivityChange(false)}
+      onScrollBeginDrag={() => onScrollActivityChange(true)}
+      onScrollEndDrag={() => onScrollActivityChange(false)}
+      onScroll={(event) => {
+        onPinnedChange(event.nativeEvent.contentOffset.y <= SCROLL_BOTTOM_EPSILON);
+      }}
+      scrollEventThrottle={16}
+    />
+  );
+});
 
 const TerminalContent = React.memo(function TerminalContent({
   terminalLines,
