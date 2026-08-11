@@ -58,6 +58,9 @@ while [ "$#" -gt 0 ]; do
       shift
       write_status="$1"
       ;;
+    -X|--request)
+      shift
+      ;;
     --data-urlencode)
       pending_data=1
       ;;
