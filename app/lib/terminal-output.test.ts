@@ -19,6 +19,12 @@ describe("formatTerminalOutputForDisplay", () => {
     expect(plain(output, 20)).toEqual(["before", "────────────────────", "❯ write me a poem"]);
   });
 
+  it("drops short wrapped divider residue after a capped divider", () => {
+    const output = ["done", "─".repeat(80), "─".repeat(18), "next"].join("\n");
+
+    expect(plain(output, 24)).toEqual(["done", "─".repeat(24), "next"]);
+  });
+
   it("preserves normal terminal text and short separators", () => {
     const lines = ["❯ hi", "-----", "⏺ Hey! What would you like to work on?"];
 
@@ -65,6 +71,14 @@ describe("formatPlainTextForDisplay", () => {
     ).toBe(["done", "-".repeat(28), "next"].join("\n"));
   });
 
+  it("drops short wrapped divider residue in chat text", () => {
+    expect(
+      formatPlainTextForDisplay(["done", "-".repeat(80), "-".repeat(18), "next"].join("\n"), {
+        dividerWidth: 28,
+      }),
+    ).toBe(["done", "-".repeat(28), "next"].join("\n"));
+  });
+
   it("preserves short markdown separators in chat text", () => {
     expect(formatPlainTextForDisplay("front\n---\nmatter")).toBe("front\n---\nmatter");
   });
@@ -77,7 +91,7 @@ describe("formatPlainTextForDisplay", () => {
           softWrapColumn: 18,
         },
       ),
-    ).toBe("https://tealstreet-\u200Bnext-crsjkcxey-\u200Btealstreet-b565b19f\u200B.vercel.app");
+    ).toBe("https://tealstreet-\u200Bnext-crsjkcxey-\u200Btealstreet-b565b19f.\u200Bvercel.app");
   });
 });
 
@@ -106,6 +120,27 @@ describe("formatRichTextSpansForDisplay", () => {
     ]);
   });
 
+  it("drops short wrapped divider residue in rich chat text", () => {
+    expect(
+      formatRichTextSpansForDisplay(
+        [
+          { text: "done\n" },
+          { text: "-".repeat(80), foreground: { model: "rgb", value: "#808080" } },
+          { text: "\n" },
+          { text: "-".repeat(18), foreground: { model: "rgb", value: "#808080" } },
+          { text: "\nnext" },
+        ],
+        { dividerWidth: 10 },
+      ),
+    ).toEqual([
+      { text: "done" },
+      { text: "\n" },
+      { text: "-".repeat(10), foreground: { model: "rgb", value: "#808080" } },
+      { text: "\n" },
+      { text: "next" },
+    ]);
+  });
+
   it("adds invisible break opportunities without dropping rich span colours", () => {
     expect(
       formatRichTextSpansForDisplay(
@@ -119,7 +154,7 @@ describe("formatRichTextSpansForDisplay", () => {
       ),
     ).toEqual([
       {
-        text: "tealstreet-next-\u200Bcrsjkcxey-tealstreet\u200B-b565b19f.vercel\u200B.app",
+        text: "tealstreet-next-\u200Bcrsjkcxey-tealstreet-\u200Bb565b19f.vercel.\u200Bapp",
         foreground: { model: "rgb", value: "#56b6c2" },
       },
     ]);

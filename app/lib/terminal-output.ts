@@ -3,6 +3,7 @@ import type { HistoryTextSpan } from "@/lib/events";
 
 const DIVIDER_LINE_MIN_LENGTH = 24;
 const DIVIDER_LINE_MIN_RATIO = 0.9;
+const DIVIDER_CONTINUATION_MIN_LENGTH = 8;
 const DEFAULT_DIVIDER_WIDTH = 72;
 const DEFAULT_SOFT_WRAP_COLUMN = 28;
 const SOFT_WRAP_MIN_SEPARATOR_RUN = 12;
@@ -43,6 +44,7 @@ export function formatTerminalOutputForDisplay(
       previousWasDivider = true;
       continue;
     }
+    if (previousWasDivider && isDividerContinuationLine(line)) continue;
 
     formatted.push(spans);
     previousWasDivider = false;
@@ -69,6 +71,7 @@ export function formatPlainTextForDisplay(
       previousWasDivider = true;
       continue;
     }
+    if (previousWasDivider && isDividerContinuationLine(line)) continue;
 
     formatted.push(softWrapLongRuns(line, softWrapColumn).text);
     previousWasDivider = false;
@@ -101,6 +104,7 @@ export function formatRichTextSpansForDisplay(
       previousWasDivider = true;
       continue;
     }
+    if (previousWasDivider && isDividerContinuationLine(line)) continue;
 
     formatted.push(softWrapLongRunSpans(lineSpans, softWrapColumn));
     previousWasDivider = false;
@@ -156,8 +160,10 @@ function softWrapLongRuns(
   const maxRunLength = Math.max(8, softWrapColumn);
   let runLength = initialRunLength;
   let next = "";
+  const chars = Array.from(text);
 
-  for (const char of Array.from(text)) {
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index]!;
     next += char;
     if (/\s/.test(char)) {
       runLength = 0;
@@ -167,7 +173,10 @@ function softWrapLongRuns(
     runLength += 1;
     const separatorBreak =
       runLength >= SOFT_WRAP_MIN_SEPARATOR_RUN && SOFT_WRAP_SEPARATOR_CHARS.has(char);
-    if (separatorBreak || runLength >= maxRunLength) {
+    const upcomingSeparator = chars
+      .slice(index + 1, index + 5)
+      .some((nextChar) => SOFT_WRAP_SEPARATOR_CHARS.has(nextChar));
+    if (separatorBreak || (runLength >= maxRunLength && !upcomingSeparator)) {
       next += SOFT_BREAK;
       runLength = 0;
     }
@@ -179,7 +188,16 @@ function softWrapLongRuns(
 function isDividerLine(line: string): boolean {
   const trimmed = line.trim();
   if (trimmed.length < DIVIDER_LINE_MIN_LENGTH) return false;
+  return isDividerRun(trimmed, DIVIDER_LINE_MIN_LENGTH);
+}
 
+function isDividerContinuationLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length < DIVIDER_CONTINUATION_MIN_LENGTH) return false;
+  return isDividerRun(trimmed, DIVIDER_CONTINUATION_MIN_LENGTH);
+}
+
+function isDividerRun(trimmed: string, minLength: number): boolean {
   let dividerChars = 0;
   let otherChars = 0;
   for (const char of Array.from(trimmed)) {
@@ -192,7 +210,7 @@ function isDividerLine(line: string): boolean {
 
   const countedChars = dividerChars + otherChars;
   return (
-    dividerChars >= DIVIDER_LINE_MIN_LENGTH &&
+    dividerChars >= minLength &&
     countedChars > 0 &&
     dividerChars / countedChars >= DIVIDER_LINE_MIN_RATIO
   );

@@ -1,5 +1,12 @@
 import React from "react";
-import { Image, Text as RNText, View, type TextStyle, type ViewStyle } from "react-native";
+import {
+  Image,
+  Platform,
+  Text as RNText,
+  View,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import type {
@@ -34,6 +41,7 @@ const MESSAGE_USER_STYLE: ViewStyle = {
 const MESSAGE_TEXT_STYLE: TextStyle = {
   flexShrink: 1,
   flexWrap: "wrap",
+  ...(Platform.OS === "web" ? { fontSize: 15, lineHeight: 21 } : {}),
   maxWidth: "100%",
 };
 
