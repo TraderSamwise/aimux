@@ -8,6 +8,7 @@ export interface PickedImageAttachment {
 }
 
 const ACCEPTED_IMAGE_TYPES = "image/png,image/jpeg,image/webp,image/gif";
+const ACCEPTED_IMAGE_TYPE_SET = new Set(ACCEPTED_IMAGE_TYPES.split(","));
 
 function localId(): string {
   return `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
@@ -36,6 +37,21 @@ export async function pickImageAttachment(): Promise<PickedImageAttachment | nul
   });
   if (!file) return null;
 
+  return imageAttachmentFromFile(file);
+}
+
+export function isAcceptedImageFile(file: Pick<File, "type">): boolean {
+  return ACCEPTED_IMAGE_TYPE_SET.has(file.type);
+}
+
+export async function imageAttachmentsFromFiles(
+  files: Iterable<File>,
+): Promise<PickedImageAttachment[]> {
+  const images = Array.from(files).filter(isAcceptedImageFile);
+  return Promise.all(images.map(imageAttachmentFromFile));
+}
+
+async function imageAttachmentFromFile(file: File): Promise<PickedImageAttachment> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(reader.error ?? new Error("Could not read image."));

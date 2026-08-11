@@ -46,6 +46,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
+import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import { useAuth } from "@/lib/auth";
 import { agentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
@@ -61,7 +62,11 @@ import {
   uploadImageAttachment,
   type SharedSessionSummary,
 } from "@/lib/api";
-import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
+import {
+  imageAttachmentsFromFiles,
+  pickImageAttachment,
+  type PickedImageAttachment,
+} from "@/lib/image-picker";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { cn } from "@/lib/utils";
@@ -892,18 +897,45 @@ export default function ChatScreen() {
 
   async function handleAttachImage() {
     if (sendBusy || sendBusyRef.current) return;
-    if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
-      setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} images.`);
-      return;
-    }
     setSendError(null);
     try {
       const picked = await pickImageAttachment();
       if (!picked) return;
-      setPendingAttachments((current) => [...current, picked]);
+      appendPendingAttachments([picked]);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  async function handleDropFiles(files: File[]) {
+    if (sendBusy || sendBusyRef.current) return;
+    setSendError(null);
+    try {
+      const picked = await imageAttachmentsFromFiles(files);
+      if (files.length > 0 && picked.length === 0) {
+        setSendError("Drop image files only.");
+        return;
+      }
+      appendPendingAttachments(picked);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function appendPendingAttachments(attachments: PickedImageAttachment[]) {
+    if (attachments.length === 0) return;
+    const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
+    if (slots <= 0) {
+      setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} images.`);
+      return;
+    }
+    const accepted = attachments.slice(0, slots);
+    setPendingAttachments((current) => [...current, ...accepted]);
+    setSendError(
+      accepted.length < attachments.length
+        ? `Attach up to ${MAX_PENDING_ATTACHMENTS} images.`
+        : null,
+    );
   }
 
   function removePendingAttachment(id: string) {
@@ -1105,79 +1137,89 @@ export default function ChatScreen() {
       the width is: flanking them costs a third of a phone screen, and the text
       is the part that needs it.
     */}
-      <ComposerFocusShell
-        onLayout={(event: LayoutChangeEvent) => setComposerWidth(event.nativeEvent.layout.width)}
+      <AttachmentDropZone
+        disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+        onDropFiles={handleDropFiles}
       >
-        {({ onBlur, onFocus }) => (
-          <>
-            <TextInput
-              accessibilityLabel="Message the agent"
-              nativeID={CHAT_INPUT_NATIVE_ID}
-              onFocus={onFocus}
-              onBlur={onBlur}
-              value={draft}
-              onChangeText={handleDraftChange}
-              onKeyPress={handleComposerKeyPress}
-              onContentSizeChange={handleComposerContentSizeChange}
-              placeholder="Ask the agent…"
-              placeholderTextColor="#71717a"
-              multiline
-              editable={!sendBusy}
-              scrollEnabled={composerInputOverflowHeight > COMPOSER_INPUT_MAX_HEIGHT}
-              className="text-sm text-foreground"
-              style={{
-                height: composerInputHeight,
-                fontSize: COMPOSER_INPUT_FONT_SIZE,
-                lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-                paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
-                paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
-                paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
-              }}
-              textAlignVertical="top"
-            />
-            <View className="flex-row items-center gap-2">
-              <ComposerControl
-                wide={wideControls}
-                label="Attach"
-                accessibilityLabel="Attach an image"
-                icon={<Plus size={17} color={CONTROL_INK} />}
-                disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
-                onPress={handleAttachImage}
-              />
-              <View className="flex-1 px-1">
-                {activityLabel ? (
-                  <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
-                ) : null}
-              </View>
-              {/*
-              Always offered, never revealed only while we think the agent is
-              busy. Interrupt is a single ESC, which an idle tool ignores, so
-              gating it on that guess only makes it unavailable exactly when
-              the guess is wrong.
-            */}
-              <ComposerControl
-                wide={wideControls}
-                label="Stop"
-                accessibilityLabel="Interrupt the agent"
-                // Filled, because a stop is a stop and an outline reads as
-                // a checkbox at this size.
-                icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                disabled={interruptBusy}
-                onPress={handleInterrupt}
-              />
-              <ComposerControl
-                wide={wideControls}
-                brand
-                label="Send"
-                accessibilityLabel="Send the message"
-                icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
-                disabled={!canSendMessage}
-                onPress={handleSendMessage}
-              />
-            </View>
-          </>
+        {({ dragging }) => (
+          <ComposerFocusShell
+            dragging={dragging}
+            onLayout={(event: LayoutChangeEvent) =>
+              setComposerWidth(event.nativeEvent.layout.width)
+            }
+          >
+            {({ onBlur, onFocus }) => (
+              <>
+                <TextInput
+                  accessibilityLabel="Message the agent"
+                  nativeID={CHAT_INPUT_NATIVE_ID}
+                  onFocus={onFocus}
+                  onBlur={onBlur}
+                  value={draft}
+                  onChangeText={handleDraftChange}
+                  onKeyPress={handleComposerKeyPress}
+                  onContentSizeChange={handleComposerContentSizeChange}
+                  placeholder="Ask the agent…"
+                  placeholderTextColor="#71717a"
+                  multiline
+                  editable={!sendBusy}
+                  scrollEnabled={composerInputOverflowHeight > COMPOSER_INPUT_MAX_HEIGHT}
+                  className="text-sm text-foreground"
+                  style={{
+                    height: composerInputHeight,
+                    fontSize: COMPOSER_INPUT_FONT_SIZE,
+                    lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+                    paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
+                    paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
+                    paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
+                  }}
+                  textAlignVertical="top"
+                />
+                <View className="flex-row items-center gap-2">
+                  <ComposerControl
+                    wide={wideControls}
+                    label="Attach"
+                    accessibilityLabel="Attach an image"
+                    icon={<Plus size={17} color={CONTROL_INK} />}
+                    disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+                    onPress={handleAttachImage}
+                  />
+                  <View className="flex-1 px-1">
+                    {activityLabel ? (
+                      <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
+                    ) : null}
+                  </View>
+                  {/*
+                  Always offered, never revealed only while we think the agent is
+                  busy. Interrupt is a single ESC, which an idle tool ignores, so
+                  gating it on that guess only makes it unavailable exactly when
+                  the guess is wrong.
+                */}
+                  <ComposerControl
+                    wide={wideControls}
+                    label="Stop"
+                    accessibilityLabel="Interrupt the agent"
+                    // Filled, because a stop is a stop and an outline reads as
+                    // a checkbox at this size.
+                    icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                    disabled={interruptBusy}
+                    onPress={handleInterrupt}
+                  />
+                  <ComposerControl
+                    wide={wideControls}
+                    brand
+                    label="Send"
+                    accessibilityLabel="Send the message"
+                    icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+                    disabled={!canSendMessage}
+                    onPress={handleSendMessage}
+                  />
+                </View>
+              </>
+            )}
+          </ComposerFocusShell>
         )}
-      </ComposerFocusShell>
+      </AttachmentDropZone>
     </View>
   );
 
@@ -1627,9 +1669,11 @@ export default function ChatScreen() {
 
 function ComposerFocusShell({
   children,
+  dragging,
   onLayout,
 }: {
   children: (handlers: { onBlur: () => void; onFocus: () => void }) => React.ReactNode;
+  dragging?: boolean;
   onLayout: (event: LayoutChangeEvent) => void;
 }) {
   const [focused, setFocused] = useState(false);
@@ -1643,7 +1687,7 @@ function ComposerFocusShell({
         "gap-2 rounded-2xl border bg-card px-2.5 pb-2 pt-2.5",
         // The card is the object here, so the card shows focus. The field's own
         // ring would draw a second rounded rect inside it.
-        focused ? "border-ring" : "border-border",
+        dragging ? "border-primary bg-accent" : focused ? "border-ring" : "border-border",
       )}
     >
       {children({ onBlur, onFocus })}

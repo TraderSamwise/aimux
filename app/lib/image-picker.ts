@@ -10,3 +10,9 @@ export interface PickedImageAttachment {
 export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
   throw new Error("Image picker is not available for this platform.");
 }
+
+export async function imageAttachmentsFromFiles(
+  _files: Iterable<File>,
+): Promise<PickedImageAttachment[]> {
+  return [];
+}

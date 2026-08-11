@@ -50,3 +50,9 @@ export async function pickImageAttachment(): Promise<PickedImageAttachment | nul
     sizeBytes: asset.fileSize,
   };
 }
+
+export async function imageAttachmentsFromFiles(
+  _files: Iterable<File>,
+): Promise<PickedImageAttachment[]> {
+  return [];
+}
