@@ -303,6 +303,7 @@ export default function ChatScreen() {
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
   const composerHiddenRef = useRef(false);
+  const nativeChatUserTouchedRef = useRef(false);
   const [composerHideProgress] = useState(() => new Animated.Value(0));
   const composerScrollReserve = useSharedValue(
     COMPOSER_FOOTER_ESTIMATED_HEIGHT + COMPOSER_SCROLL_SAFETY_PADDING,
@@ -519,7 +520,6 @@ export default function ChatScreen() {
       });
     },
     [
-      composerHideDistance,
       composerHideProgress,
       composerScrollReserve,
       usesNativeKeyboardController,
@@ -532,10 +532,14 @@ export default function ChatScreen() {
         setNativeComposerHidden(false);
         return;
       }
+      if (!nativeChatUserTouchedRef.current) return;
       setNativeComposerHidden(true);
     },
     [keyboardVisible, setNativeComposerHidden],
   );
+  const handleNativeChatScrollBegin = useCallback(() => {
+    nativeChatUserTouchedRef.current = true;
+  }, []);
   useEffect(() => {
     if (!usesNativeKeyboardController) return;
     // eslint-disable-next-line react-hooks/immutability
@@ -782,13 +786,13 @@ export default function ChatScreen() {
       chat: false,
       terminal: false,
     };
+    nativeChatUserTouchedRef.current = false;
     userScrollStateRef.current = {
       chat: createUserScrollState(),
       terminal: createUserScrollState(),
     };
     requestAnimationFrame(() => {
       setNativeComposerHidden(false);
-      chatListRef.current?.scrollToOffset({ animated: false, offset: 0 });
       applyPaneScrollPosition("chat");
       applyPaneScrollPosition("terminal");
     });
@@ -1261,6 +1265,7 @@ export default function ChatScreen() {
         keyboardOffset={bottomInset}
         listRef={chatListRef}
         onEndVisible={handleNativeChatEndVisible}
+        onScrollBeginDrag={handleNativeChatScrollBegin}
         serviceEndpoint={serviceEndpoint}
       />
     ) : (
@@ -1773,6 +1778,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   keyboardOffset,
   listRef,
   onEndVisible,
+  onScrollBeginDrag,
   serviceEndpoint,
 }: {
   dividerWidth: number;
@@ -1781,6 +1787,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   keyboardOffset: number;
   listRef: React.RefObject<FlatList<ChatListItem> | null>;
   onEndVisible: (visible: boolean) => void;
+  onScrollBeginDrag: () => void;
   serviceEndpoint: ServiceEndpoint;
 }) {
   const renderItem = useCallback(
@@ -1835,6 +1842,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
       keyExtractor={(item) => item.key}
       inverted
       keyboardShouldPersistTaps="handled"
+      onScrollBeginDrag={onScrollBeginDrag}
       contentContainerStyle={{
         flexGrow: 1,
         paddingBottom: 8,
