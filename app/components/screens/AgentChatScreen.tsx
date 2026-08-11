@@ -191,6 +191,10 @@ function getPinnedOffset(metrics: ScrollPaneMetrics) {
   return getScrollableHeight(metrics);
 }
 
+function isOffsetPinnedToBottom(metrics: ScrollPaneMetrics, maxY = getScrollableHeight(metrics)) {
+  return Math.max(0, maxY - metrics.offsetY) <= SCROLL_BOTTOM_EPSILON;
+}
+
 function clampScrollRatio(ratio: number) {
   if (!Number.isFinite(ratio)) return 1;
   return Math.min(1, Math.max(0, ratio));
@@ -679,18 +683,32 @@ export default function ChatScreen() {
 
   const handleScrollLayout = useCallback(
     (pane: ScrollPaneKey, event: LayoutChangeEvent) => {
-      scrollMetricsRef.current[pane].viewportHeight = Math.max(0, event.nativeEvent.layout.height);
+      const metrics = scrollMetricsRef.current[pane];
+      const wasPinned =
+        !metrics.initialized || metrics.pinnedToBottom || isOffsetPinnedToBottom(metrics);
+      metrics.viewportHeight = Math.max(0, event.nativeEvent.layout.height);
+      if (wasPinned && !isUserScrollActive(pane)) {
+        metrics.pinnedToBottom = true;
+        metrics.ratio = 1;
+      }
       settlePaneAfterMetricChange(pane);
     },
-    [settlePaneAfterMetricChange],
+    [isUserScrollActive, settlePaneAfterMetricChange],
   );
 
   const handleScrollContentSizeChange = useCallback(
     (pane: ScrollPaneKey, contentHeight: number) => {
-      scrollMetricsRef.current[pane].contentHeight = Math.max(0, contentHeight);
+      const metrics = scrollMetricsRef.current[pane];
+      const wasPinned =
+        !metrics.initialized || metrics.pinnedToBottom || isOffsetPinnedToBottom(metrics);
+      metrics.contentHeight = Math.max(0, contentHeight);
+      if (wasPinned && !isUserScrollActive(pane)) {
+        metrics.pinnedToBottom = true;
+        metrics.ratio = 1;
+      }
       settlePaneAfterMetricChange(pane);
     },
-    [settlePaneAfterMetricChange],
+    [isUserScrollActive, settlePaneAfterMetricChange],
   );
 
   const clearScrollIdleTimer = useCallback((pane: ScrollPaneKey) => {
@@ -814,7 +832,7 @@ export default function ChatScreen() {
         applyPaneScrollPosition("terminal");
       }
     });
-  }, [allMessages.length, applyPaneScrollPosition, isUserScrollActive, output]);
+  }, [allMessages, applyPaneScrollPosition, isUserScrollActive, output]);
 
   useEffect(() => {
     if (usesNativeKeyboardController && !showTerminalOnly) return;
