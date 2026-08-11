@@ -12,10 +12,16 @@ import {
   type ListRenderItemInfo,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type ScrollViewProps,
   type TextInputContentSizeChangeEventData,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
+import {
+  KeyboardChatScrollView,
+  KeyboardGestureArea,
+  KeyboardStickyView,
+} from "react-native-keyboard-controller";
+import { useSharedValue, type SharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -110,6 +116,7 @@ const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
+const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
@@ -286,6 +293,7 @@ export default function ChatScreen() {
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const sendBusyRef = useRef(false);
+  const composerExtraContentPadding = useSharedValue(0);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
@@ -370,6 +378,13 @@ export default function ChatScreen() {
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
+
+  useEffect(() => {
+    composerExtraContentPadding.value = Math.max(
+      0,
+      composerInputHeight - COMPOSER_INPUT_MIN_HEIGHT,
+    );
+  }, [composerExtraContentPadding, composerInputHeight]);
 
   const refreshOutputSnapshot = useCallback(async () => {
     if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
@@ -1027,6 +1042,7 @@ export default function ChatScreen() {
           <>
             <TextInput
               accessibilityLabel="Message the agent"
+              nativeID={CHAT_INPUT_NATIVE_ID}
               onFocus={onFocus}
               onBlur={onBlur}
               value={draft}
@@ -1122,9 +1138,10 @@ export default function ChatScreen() {
     usesNativeKeyboardController ? (
       <MobileTranscriptList
         dividerWidth={chatDividerWidth}
+        extraContentPadding={composerExtraContentPadding}
         items={chatListItems}
+        keyboardOffset={bottomInset}
         listRef={chatListRef}
-        composerBottomPadding={composerLayoutHeight}
         onPinnedChange={(pinned) => {
           chatListPinnedRef.current = pinned;
         }}
@@ -1489,27 +1506,33 @@ export default function ChatScreen() {
               </View>
             ) : (
               <View className="flex-1">
-                <View
-                  className="flex-1"
-                  style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
+                <KeyboardGestureArea
+                  interpolator="ios"
+                  style={{ flex: 1 }}
+                  textInputNativeID={CHAT_INPUT_NATIVE_ID}
                 >
-                  {showSplit ? (
-                    <View className="flex-1 border-r border-border">{terminalPane}</View>
-                  ) : null}
-                  {showTerminalOnly ? (
-                    <View className="flex-1">{terminalPane}</View>
-                  ) : (
-                    <View
-                      className="flex-1"
-                      onLayout={(event: LayoutChangeEvent) =>
-                        setChatPaneWidth(event.nativeEvent.layout.width)
-                      }
-                    >
-                      {chatScroller}
-                    </View>
-                  )}
-                </View>
-                {usesNativeKeyboardController ? nativeStickyComposer : composerFooter}
+                  <View
+                    className="flex-1"
+                    style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
+                  >
+                    {showSplit ? (
+                      <View className="flex-1 border-r border-border">{terminalPane}</View>
+                    ) : null}
+                    {showTerminalOnly ? (
+                      <View className="flex-1">{terminalPane}</View>
+                    ) : (
+                      <View
+                        className="flex-1"
+                        onLayout={(event: LayoutChangeEvent) =>
+                          setChatPaneWidth(event.nativeEvent.layout.width)
+                        }
+                      >
+                        {chatScroller}
+                      </View>
+                    )}
+                  </View>
+                  {usesNativeKeyboardController ? nativeStickyComposer : composerFooter}
+                </KeyboardGestureArea>
               </View>
             )}
           </View>
@@ -1610,17 +1633,19 @@ function KeyboardManagedScrollView({
 }
 
 const MobileTranscriptList = React.memo(function MobileTranscriptList({
-  composerBottomPadding,
   dividerWidth,
+  extraContentPadding,
   items,
+  keyboardOffset,
   listRef,
   onPinnedChange,
   onScrollActivityChange,
   serviceEndpoint,
 }: {
-  composerBottomPadding: number;
   dividerWidth: number;
+  extraContentPadding: SharedValue<number>;
   items: ChatListItem[];
+  keyboardOffset: number;
   listRef: React.RefObject<FlatList<ChatListItem> | null>;
   onPinnedChange: (pinned: boolean) => void;
   onScrollActivityChange: (active: boolean) => void;
@@ -1652,6 +1677,23 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
     [dividerWidth, serviceEndpoint],
   );
 
+  const renderScrollComponent = useCallback(
+    (props: ScrollViewProps) => (
+      <KeyboardChatScrollView
+        {...props}
+        applyWorkaroundForContentInsetHitTestBug
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        extraContentPadding={extraContentPadding}
+        inverted
+        keyboardDismissMode="interactive"
+        keyboardLiftBehavior="whenAtEnd"
+        offset={keyboardOffset}
+      />
+    ),
+    [extraContentPadding, keyboardOffset],
+  );
+
   return (
     <FlatList
       ref={listRef}
@@ -1659,7 +1701,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
       renderItem={renderItem}
       keyExtractor={(item) => item.key}
       inverted
-      keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       maintainVisibleContentPosition={{
         autoscrollToTopThreshold: SCROLL_BOTTOM_EPSILON,
@@ -1669,8 +1710,9 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         flexGrow: 1,
         paddingBottom: 8,
         paddingHorizontal: 16,
-        paddingTop: Math.max(8, composerBottomPadding + 8),
+        paddingTop: 8,
       }}
+      renderScrollComponent={renderScrollComponent}
       onMomentumScrollBegin={() => onScrollActivityChange(true)}
       onMomentumScrollEnd={() => onScrollActivityChange(false)}
       onScrollBeginDrag={() => onScrollActivityChange(true)}
