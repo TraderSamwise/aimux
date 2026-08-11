@@ -26,6 +26,10 @@ describe("main tab navigation", () => {
       pathname: "/(main)/(tabs)/notifications",
       params: { project: "/Users/sam/cs/aimux" },
     });
+    expect(buildMainTabHref("settings", "/Users/sam/cs/aimux")).toEqual({
+      pathname: "/(main)/(tabs)/(settings)/settings",
+      params: { project: "/Users/sam/cs/aimux" },
+    });
   });
 
   it("keeps public routes separate from internal tab targets", () => {

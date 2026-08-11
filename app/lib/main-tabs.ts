@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { TabActions } from "@react-navigation/native";
-import { useGlobalSearchParams, useNavigation, type Href } from "expo-router";
+import { useGlobalSearchParams, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
 import { selectedProjectPathAtom } from "@/stores/projects";
 import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
@@ -114,7 +114,7 @@ export function mainTabForPath(pathname: string): MainTabId {
 }
 
 export function useMainTabNavigation() {
-  const navigation = useNavigation() as MainTabNavigation;
+  const router = useRouter();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
   const currentProjectPath =
@@ -122,9 +122,9 @@ export function useMainTabNavigation() {
 
   return useCallback(
     (tabId: MainTabId) => {
-      navigateMainTab(navigation, tabId, currentProjectPath);
+      router.navigate(buildMainTabHref(tabId, currentProjectPath));
     },
-    [currentProjectPath, navigation],
+    [currentProjectPath, router],
   );
 }
 

@@ -2,110 +2,136 @@
 
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("child_process");
 
-const root = path.join(__dirname, "..");
-const packageJsonPath = path.join(root, "package.json");
-const yarnLockPath = path.join(root, "yarn.lock");
-const versionPath = path.join(root, "lib", "version.ts");
-const nativeRuntimeBaselinePath = path.join(root, "native-runtime-baseline.json");
-
-const nativeDeps = [
-  {
-    packageName: "react-native-svg",
-  },
-  {
-    packageName: "react-native-keyboard-controller",
-  },
-];
+const appRoot = path.join(__dirname, "..");
+const versionCandidates = ["lib/version.ts", "src/mobile/config/version.ts"];
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function fail(lines) {
+  console.error("OTA native dependency check FAILED\n");
+  for (const line of lines) console.error(`  ${line}`);
+  process.exit(1);
 }
 
-function lockVersionFor(lockfile, packageName) {
-  const packagePattern = escapeRegExp(packageName);
-  const blockPattern = new RegExp(`(^|\\n)${packagePattern}@[^\\n]*:\\n(?:  .+\\n)+`, "g");
-  const versions = [];
-  let match;
-  while ((match = blockPattern.exec(lockfile))) {
-    const versionMatch = match[0].match(/\n  version "([^"]+)"/);
-    if (versionMatch) versions.push(versionMatch[1]);
+function git(args, cwd = appRoot) {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function findUp(relativePath) {
+  let current = appRoot;
+  for (;;) {
+    const candidate = path.join(current, relativePath);
+    if (fs.existsSync(candidate)) return candidate;
+    const next = path.dirname(current);
+    if (next === current) return null;
+    current = next;
+  }
+}
+
+function lockVersions(lockfile) {
+  const versions = new Map();
+  const blocks = lockfile.split(/\n(?=\S)/);
+  for (const block of blocks) {
+    const header = block.split("\n")[0];
+    const version = block.match(/\n {2}version "([^"]+)"/);
+    if (!version) continue;
+    for (const spec of header.split(",")) {
+      const name = spec
+        .trim()
+        .replace(/^"/, "")
+        .replace(/@[^@]*:?$/, "");
+      if (!name) continue;
+      if (!versions.has(name)) versions.set(name, new Set());
+      versions.get(name).add(version[1]);
+    }
   }
   return versions;
 }
 
-function fail(errors) {
-  console.error("OTA native dependency check failed");
-  for (const error of errors) console.error(`  - ${error}`);
-  process.exit(1);
+function packageDir(name) {
+  return findUp(path.join("node_modules", name));
 }
 
-function readAppVersion(filePath) {
-  const contents = fs.readFileSync(filePath, "utf8");
-  const buildNumber = contents.match(/buildNumber:\s*(\d+)/)?.[1];
-  const otaVersion = contents.match(/otaVersion:\s*(\d+)/)?.[1];
-  if (!buildNumber || !otaVersion) {
-    fail([`Could not read buildNumber/otaVersion from ${path.relative(root, filePath)}`]);
+function isNativePackage(name) {
+  const dir = packageDir(name);
+  if (!dir) return false;
+  if (fs.existsSync(path.join(dir, "expo-module.config.json"))) return true;
+  try {
+    return fs.readdirSync(dir).some((entry) => entry.endsWith(".podspec"));
+  } catch {
+    return false;
   }
-  return {
-    buildNumber: Number(buildNumber),
-    otaVersion: Number(otaVersion),
-  };
 }
 
-const packageJson = readJson(packageJsonPath);
-const appVersion = readAppVersion(versionPath);
-const nativeRuntimeBaseline = readJson(nativeRuntimeBaselinePath);
-const yarnLock = fs.readFileSync(yarnLockPath, "utf8");
-const errors = [];
+const gitRoot = git(["rev-parse", "--show-toplevel"]);
+const yarnLockPath = findUp("yarn.lock");
+if (!yarnLockPath) fail(["Missing yarn.lock"]);
 
-if (nativeRuntimeBaseline.buildNumber !== appVersion.buildNumber) {
-  errors.push(
-    `native-runtime-baseline.json is for build ${nativeRuntimeBaseline.buildNumber}; current app build is ${appVersion.buildNumber}. Update it only after the native build is submitted.`,
-  );
+const versionPath = versionCandidates.map((candidate) => path.join(appRoot, candidate)).find(fs.existsSync);
+if (!versionPath) fail([`Could not find version file (${versionCandidates.join(", ")})`]);
+
+const versionRel = path.relative(gitRoot, versionPath).replace(/\\/g, "/");
+const yarnLockRel = path.relative(gitRoot, yarnLockPath).replace(/\\/g, "/");
+const versionSource = fs.readFileSync(versionPath, "utf8");
+const buildNumber = Number(versionSource.match(/buildNumber:\s*(\d+)/)?.[1]);
+if (!Number.isFinite(buildNumber)) fail([`Could not read buildNumber from ${versionRel}`]);
+
+let releaseCommit;
+try {
+  const commits = git(
+    ["log", "-S", `buildNumber: ${buildNumber},`, "--format=%H", "--", versionRel],
+    gitRoot,
+  )
+    .split("\n")
+    .filter(Boolean);
+  releaseCommit = commits[commits.length - 1];
+} catch {
+  /* handled below */
 }
 
-for (const dep of nativeDeps) {
-  const expected = nativeRuntimeBaseline.nativeDependencies?.[dep.packageName];
-  const declared = packageJson.dependencies?.[dep.packageName];
+if (!releaseCommit) {
+  fail([
+    `No commit sets \`buildNumber: ${buildNumber}\` in ${versionRel}.`,
+    "An OTA can only be verified against a build that was cut from a commit.",
+    "Cut the native build first, or correct the version file.",
+  ]);
+}
 
-  if (!expected) {
-    if (declared) {
-      errors.push(
-        `${dep.packageName}@${declared} is declared but is not in native-runtime-baseline.json for build ${nativeRuntimeBaseline.buildNumber}`,
-      );
-    }
+const buildLock = lockVersions(git(["show", `${releaseCommit}:${yarnLockRel}`], gitRoot));
+const packageJson = readJson(path.join(appRoot, "package.json"));
+const drift = [];
+
+for (const name of Object.keys(packageJson.dependencies ?? {})) {
+  if (!isNativePackage(name)) continue;
+  const installedPath = path.join(packageDir(name), "package.json");
+  if (!fs.existsSync(installedPath)) continue;
+  const installed = readJson(installedPath).version;
+  const inBuild = buildLock.get(name);
+  if (!inBuild) {
+    drift.push(`${name}: not present in build ${buildNumber} - it has no native code on the device`);
     continue;
   }
-
-  if (declared !== expected) {
-    errors.push(
-      `${dep.packageName} must be pinned to ${expected} for OTA; package.json declares ${declared ?? "missing"}`,
-    );
-  }
-
-  const lockVersions = lockVersionFor(yarnLock, dep.packageName);
-  const unexpectedLockVersions = lockVersions.filter((version) => version !== expected);
-  if (!lockVersions.includes(expected)) {
-    errors.push(`${dep.packageName}@${expected} is missing from yarn.lock`);
-  }
-  for (const version of unexpectedLockVersions) {
-    errors.push(`${dep.packageName}@${version} is still present in yarn.lock`);
-  }
-
-  const installedPackageJsonPath = path.join(root, "node_modules", dep.packageName, "package.json");
-  if (fs.existsSync(installedPackageJsonPath)) {
-    const installed = readJson(installedPackageJsonPath).version;
-    if (installed !== expected) {
-      errors.push(`${dep.packageName} installed version is ${installed}; expected ${expected}`);
-    }
+  if (!inBuild.has(installed)) {
+    drift.push(`${name}: build ${buildNumber} has ${[...inBuild].join(", ")}, about to ship ${installed}`);
   }
 }
 
-if (errors.length) fail(errors);
+if (drift.length) {
+  fail([
+    `JS about to be shipped does not match the native code in build ${buildNumber}`,
+    `(build commit ${releaseCommit.slice(0, 8)}):`,
+    "",
+    ...drift,
+    "",
+    "An OTA cannot carry native code. Restore these to the build's versions,",
+    "or cut a new native build so the two sides match.",
+  ]);
+}
 
-console.log("OTA native dependency check passed");
+console.log(
+  `OTA native dependency check passed - native modules match build ${buildNumber} (${releaseCommit.slice(0, 8)})`,
+);
