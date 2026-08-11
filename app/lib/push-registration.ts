@@ -2,7 +2,10 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { getClientDeviceInfo } from "@/lib/client-device";
-import { buildSecurityPushRegistrationUrl } from "@/lib/push-registration-url";
+import {
+  buildSecurityPushRegistrationUrl,
+  buildSecurityPushTestUrl,
+} from "@/lib/push-registration-url";
 
 export type PushRegistrationResult =
   | { status: "unsupported" }
@@ -66,4 +69,30 @@ export async function registerSecurityPushToken(
     throw new Error(`Push token registration failed (${res.status})`);
   }
   return { status: "registered", deviceId: device.deviceId, token: expoToken.data };
+}
+
+export async function sendSecurityTestPush(
+  relayUrl: string,
+  getToken: () => Promise<string | null>,
+  options: Pick<PushRegistrationOptions, "ownerUserId" | "shareId"> = {},
+): Promise<void> {
+  if (Platform.OS === "web") return;
+  const token = await getToken();
+  if (!token) throw new Error("Sign in required");
+  const url = buildSecurityPushTestUrl(relayUrl, options);
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      detail = typeof body.error === "string" ? body.error : "";
+    } catch {}
+    throw new Error(detail || `Test push failed (${res.status})`);
+  }
 }

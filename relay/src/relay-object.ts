@@ -68,6 +68,10 @@ export class RelayObject extends DurableObject<Env> {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
       return this.registerPushToken(request);
     }
+    if (url.pathname === "/security/test-push" && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.sendTestPush(request);
+    }
     if (url.pathname === "/shares" && request.method === "GET") {
       return this.listShares(request);
     }
@@ -625,6 +629,30 @@ export class RelayObject extends DurableObject<Env> {
       updatedAt: now,
     };
     await saveSecurityState(this.ctx.storage, state);
+    return json({ ok: true }, 200);
+  }
+
+  private async sendTestPush(request: Request): Promise<Response> {
+    const userId = request.headers.get("X-Aimux-User-Id")?.trim();
+    if (!userId) return json({ ok: false, error: "Missing authorization" }, 401);
+    const state = await loadSecurityState(this.ctx.storage);
+    const pushTokens = Object.values(state.pushTokens).filter(
+      (record) =>
+        record.userId === userId &&
+        (record.platform === "ios" || record.platform === "android") &&
+        record.agentAlerts !== false,
+    );
+    if (pushTokens.length === 0) {
+      return json({ ok: false, error: "No enabled mobile push token registered" }, 404);
+    }
+    await deliverNotificationPush({
+      userId,
+      pushTokens,
+      title: "aimux test notification",
+      body: "Push notifications are working.",
+      kind: "test",
+      dedupeKey: `test:${Date.now()}`,
+    });
     return json({ ok: true }, 200);
   }
 

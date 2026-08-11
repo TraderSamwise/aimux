@@ -13,7 +13,7 @@ import {
 } from "@/lib/browser-notifications";
 import { env } from "@/lib/env";
 import type { NotificationSettings } from "@/lib/notification-settings";
-import { registerSecurityPushToken } from "@/lib/push-registration";
+import { registerSecurityPushToken, sendSecurityTestPush } from "@/lib/push-registration";
 import { getErrorMessage } from "@/lib/request-errors";
 import {
   activeSharedSessionAtom,
@@ -145,6 +145,49 @@ export default function SettingsScreen() {
     }
   }
 
+  async function sendTestPush() {
+    if (pushBusy) return;
+    const relayUrl = env.AIMUX_RELAY_URL;
+    if (!relayUrl) {
+      setPushStatus("Requires relay mode");
+      return;
+    }
+    setPushBusy(true);
+    setPushStatus("Registering");
+    try {
+      const context = {
+        ownerUserId: activeShare?.ownerUserId,
+        shareId: activeShare?.shareId,
+      };
+      const result = await registerSecurityPushToken(relayUrl, getToken, {
+        ...context,
+        agentAlerts: true,
+        requestPermission: true,
+      });
+      if (result.status !== "registered") {
+        setPushStatus(
+          result.status === "missing_auth" ? "Sign in required" : "Permission required",
+        );
+        return;
+      }
+      setPushStatus("Sending test");
+      await sendSecurityTestPush(relayUrl, getToken, context);
+      updateNotifications({
+        ...notificationSettings,
+        enabled: true,
+        channels: {
+          ...notificationSettings.channels,
+          push: true,
+        },
+      });
+      setPushStatus("Test sent");
+    } catch (err) {
+      setPushStatus(getErrorMessage(err));
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
   return (
     <Page>
       <PageHeader title="Settings" subtitle="Preferences for the app and agent alerts." />
@@ -220,8 +263,8 @@ export default function SettingsScreen() {
             <Button
               size="sm"
               variant="outline"
-              label="Retry"
-              onPress={() => void setPushChannel(true)}
+              label="Test"
+              onPress={() => void sendTestPush()}
               disabled={pushBusy}
             />
           )}

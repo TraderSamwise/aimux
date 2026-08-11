@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildSecurityPushRegistrationUrl } from "./push-registration-url";
+import {
+  buildSecurityPushRegistrationUrl,
+  buildSecurityPushTestUrl,
+} from "./push-registration-url";
 
 describe("push registration", () => {
   it("routes normal security push registration to the authenticated user's relay", () => {
@@ -24,5 +27,14 @@ describe("push registration", () => {
     expect(() =>
       buildSecurityPushRegistrationUrl("wss://relay.aimux.app", { shareId: "share_123" }),
     ).toThrow("ownerUserId and shareId must be provided together");
+  });
+
+  it("routes test pushes through the same relay context", () => {
+    expect(
+      buildSecurityPushTestUrl("wss://relay.aimux.app", {
+        ownerUserId: " user_owner ",
+        shareId: " share_123 ",
+      }).toString(),
+    ).toBe("https://relay.aimux.app/security/test-push?ownerUserId=user_owner&shareId=share_123");
   });
 });

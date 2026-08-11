@@ -77,7 +77,10 @@ export default {
       return stub.fetch(request);
     }
 
-    if (url.pathname === "/security/push-token" && request.method === "POST") {
+    if (
+      (url.pathname === "/security/push-token" || url.pathname === "/security/test-push") &&
+      request.method === "POST"
+    ) {
       const authHeader = request.headers.get("Authorization");
       const clerkToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
       if (!clerkToken) {
