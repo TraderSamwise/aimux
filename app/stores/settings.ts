@@ -30,7 +30,7 @@ export interface ActiveSharedSession {
 export const defaultSettings: AppSettings = Object.freeze({
   theme: "dark",
   chatTerminalSplit: false,
-  chatRichTerminalColors: false,
+  chatRichTerminalColors: true,
   notifications: defaultNotificationSettings,
   activeShare: null,
 });

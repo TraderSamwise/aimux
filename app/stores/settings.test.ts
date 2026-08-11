@@ -40,7 +40,7 @@ describe("settings store", () => {
     expect(settingsModule.defaultSettings).toEqual({
       theme: "dark",
       chatTerminalSplit: false,
-      chatRichTerminalColors: false,
+      chatRichTerminalColors: true,
       activeShare: null,
       notifications: {
         enabled: false,
@@ -72,7 +72,7 @@ describe("settings store", () => {
 
     expect(store.get(settingsModule.themePreferenceAtom)).toBe("dark");
     expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(false);
-    expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(false);
+    expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
     expect(store.get(settingsModule.activeSharedSessionAtom)).toBeNull();
     expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
@@ -100,7 +100,7 @@ describe("settings store", () => {
       ...settingsModule.defaultSettings,
       theme: "light",
       chatTerminalSplit: true,
-      chatRichTerminalColors: false,
+      chatRichTerminalColors: true,
       activeShare: null,
     });
   });
