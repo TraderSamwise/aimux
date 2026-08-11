@@ -5,7 +5,6 @@ export default function NotificationsStackLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
-      <Stack.Screen name="agent/[sessionId]/chat" />
       <Stack.Screen name="service/[serviceId]" />
     </Stack>
   );

@@ -2,7 +2,7 @@ import React from "react";
 import { Platform, Pressable, View, useWindowDimensions } from "react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { useGlobalSearchParams, usePathname } from "expo-router";
+import { useGlobalSearchParams } from "expo-router";
 import { useAtomValue } from "jotai";
 import { Bell, BookOpen, FolderKanban, Network } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,7 +30,6 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const collapses = Platform.OS === "ios";
   const keyboardVisible = useKeyboardVisible(!collapses);
   const keyboardInset = useKeyboardInset();
-  const pathname = usePathname();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
   const currentProjectPath =
@@ -44,11 +43,7 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const collapse = useAnimatedStyle(() => ({
     height: Math.max(0, barHeight - keyboardInset.value),
   }));
-  // Only where an inset exists to collapse against; elsewhere the keyboard is not
-  // measured here and the bar still hides outright.
-  const isAgentChatRoute = /\/agent\/[^/]+\/chat$/.test(pathname);
-
-  if (!isMobile || isAgentChatRoute || (!collapses && keyboardVisible)) return null;
+  if (!isMobile || (!collapses && keyboardVisible)) return null;
 
   return (
     // Animated.View carries plain styles only; NativeWind does not interop it. It

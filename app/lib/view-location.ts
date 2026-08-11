@@ -92,7 +92,7 @@ export function detailHrefForPath(
 ): Href {
   const tabPrefix = detailTabPrefix(pathname);
   const detailPath =
-    kind === "agent" ? `${tabPrefix}/agent/[sessionId]/chat` : `${tabPrefix}/service/[serviceId]`;
+    kind === "agent" ? "/agent/[sessionId]/chat" : `${tabPrefix}/service/[serviceId]`;
   const routeParam = kind === "agent" ? { sessionId: id } : { serviceId: id };
   return buildViewHrefObject(detailPath, { ...routeParam, project: projectPath });
 }
@@ -104,9 +104,10 @@ export function detailViewPathForPath(
   projectPath?: string | null,
 ): Href {
   const tabPrefix = detailTabPrefix(pathname);
-  const suffix =
-    kind === "agent" ? `agent/${encodeURIComponent(id)}/chat` : `service/${encodeURIComponent(id)}`;
-  return buildViewPath(`${tabPrefix}/${suffix}`, { project: projectPath });
+  if (kind === "agent") {
+    return buildViewPath(`/agent/${encodeURIComponent(id)}/chat`, { project: projectPath });
+  }
+  return buildViewPath(`${tabPrefix}/service/${encodeURIComponent(id)}`, { project: projectPath });
 }
 
 function buildViewHrefObject(pathname: string, params: Record<string, string | null | undefined>) {

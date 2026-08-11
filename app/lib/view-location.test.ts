@@ -45,9 +45,9 @@ describe("view location helpers", () => {
     });
   });
 
-  it("builds stack-local detail hrefs for the current tab", () => {
+  it("builds root agent hrefs and stack-local service hrefs", () => {
     expect(detailHrefForPath("/topology", "agent", "claude-1", "/p")).toEqual({
-      pathname: "/topology/agent/[sessionId]/chat",
+      pathname: "/agent/[sessionId]/chat",
       params: { sessionId: "claude-1", project: "/p" },
     });
     expect(detailHrefForPath("/notifications", "service", "svc/1", "/p")).toEqual({
@@ -62,7 +62,7 @@ describe("view location helpers", () => {
 
   it("builds encoded detail web paths for hard navigation", () => {
     expect(detailViewPathForPath("/project", "agent", "claude/1", "/p")).toBe(
-      "/project/agent/claude%2F1/chat?project=%2Fp",
+      "/agent/claude%2F1/chat?project=%2Fp",
     );
     expect(detailViewPathForPath("/notifications", "service", "svc/1", "/p")).toBe(
       "/notifications/service/svc%2F1?project=%2Fp",

@@ -480,6 +480,7 @@ export default function MainLayout() {
       <AppShell>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="agent/[sessionId]/chat" />
           <Stack.Screen name="global-notifications" />
           <Stack.Screen name="global-threads" />
         </Stack>
