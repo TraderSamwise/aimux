@@ -116,8 +116,7 @@ const COMPOSER_INPUT_MAX_HEIGHT =
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 98;
-const COMPOSER_HIDE_SCROLL_DELTA = 14;
-const COMPOSER_REVEAL_SCROLL_DELTA = 10;
+const COMPOSER_HIDE_BOTTOM_OFFSET = 56;
 const COMPOSER_HIDE_ANIMATION_MS = 160;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
@@ -302,7 +301,6 @@ export default function ChatScreen() {
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
   const composerHiddenRef = useRef(false);
-  const nativeChatScrollOffsetRef = useRef(0);
   const [composerHideProgress] = useState(() => new Animated.Value(0));
   const composerScrollReserve = useSharedValue(COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const [composerInteractive, setComposerInteractive] = useState(true);
@@ -525,19 +523,14 @@ export default function ChatScreen() {
   const handleNativeChatScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
-      const previousOffsetY = nativeChatScrollOffsetRef.current;
-      nativeChatScrollOffsetRef.current = offsetY;
 
       if (keyboardVisible || offsetY <= SCROLL_BOTTOM_EPSILON) {
         setNativeComposerHidden(false);
         return;
       }
 
-      const deltaY = offsetY - previousOffsetY;
-      if (deltaY > COMPOSER_HIDE_SCROLL_DELTA) {
+      if (offsetY >= COMPOSER_HIDE_BOTTOM_OFFSET) {
         setNativeComposerHidden(true);
-      } else if (deltaY < -COMPOSER_REVEAL_SCROLL_DELTA) {
-        setNativeComposerHidden(false);
       }
     },
     [keyboardVisible, setNativeComposerHidden],
@@ -789,7 +782,6 @@ export default function ChatScreen() {
       chat: createUserScrollState(),
       terminal: createUserScrollState(),
     };
-    nativeChatScrollOffsetRef.current = 0;
     requestAnimationFrame(() => {
       setNativeComposerHidden(false);
       chatListRef.current?.scrollToOffset({ animated: false, offset: 0 });
