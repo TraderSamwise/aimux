@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+import { parseAgentOutput } from "./agent-output-parser.js";
+import { parseSgrRichTextLines, richTextLineText, sliceRichTextSpans, type RichTextSpan } from "./rich-text.js";
+
 /**
  * The pane, projected into a conversation.
  *
@@ -24,7 +27,13 @@ export interface AgentTranscriptImagePart {
   mimeType?: string;
 }
 
-export type AgentTranscriptPart = { type: "text"; text: string } | AgentTranscriptImagePart;
+export interface AgentTranscriptTextPart {
+  type: "text";
+  text: string;
+  spans?: RichTextSpan[];
+}
+
+export type AgentTranscriptPart = AgentTranscriptTextPart | AgentTranscriptImagePart;
 
 export interface AgentTranscriptMessage {
   /**
@@ -60,6 +69,10 @@ interface TranscriptBlock {
   type?: string;
   kind?: string;
   text?: string;
+  sourceLines?: readonly {
+    lineIndex: number;
+    text: string;
+  }[];
 }
 
 export interface ParsedAgentOutputLike {
@@ -113,6 +126,53 @@ function flushText(parts: AgentTranscriptPart[], lines: string[]) {
   const text = lines.join("\n").trim();
   if (text) parts.push({ type: "text", text });
   lines.length = 0;
+}
+
+function richSpansFromSourceLines(
+  sourceLines: TranscriptBlock["sourceLines"],
+  richLines: readonly (readonly RichTextSpan[])[] | undefined,
+): RichTextSpan[] | undefined {
+  if (!sourceLines?.length || !richLines?.length) return undefined;
+  const spans: RichTextSpan[] = [];
+  for (const sourceLine of sourceLines) {
+    if (sourceLine.lineIndex < 0) {
+      if (spans.length > 0) spans.push({ text: "\n" });
+      continue;
+    }
+    const line = richLines[sourceLine.lineIndex];
+    if (!line) return undefined;
+    if (spans.length > 0) spans.push({ text: "\n" });
+    if (!sourceLine.text) continue;
+    const plain = richTextLineText(line).trimEnd();
+    const start = plain.indexOf(sourceLine.text);
+    if (start < 0) return undefined;
+    spans.push(...sliceRichTextSpans(line, start, start + sourceLine.text.length));
+  }
+  return spans.length > 0 ? spans : undefined;
+}
+
+function textFromRichSpans(spans: readonly RichTextSpan[]): string {
+  return spans.map((span) => span.text).join("");
+}
+
+function applyRichSpansToTextParts(
+  parts: AgentTranscriptPart[],
+  rawText: string,
+  richSpans: readonly RichTextSpan[] | undefined,
+): void {
+  if (!richSpans?.length) return;
+  const richText = textFromRichSpans(richSpans);
+  if (richText !== rawText) return;
+
+  let cursor = 0;
+  for (const part of parts) {
+    if (part.type !== "text") continue;
+    const start = rawText.indexOf(part.text, cursor);
+    if (start < 0) continue;
+    const spans = sliceRichTextSpans(richSpans, start, start + part.text.length);
+    if (spans.length > 0) part.spans = spans;
+    cursor = start + part.text.length;
+  }
 }
 
 /**
@@ -276,7 +336,10 @@ function contentId(role: string, text: string): string {
   return `${role}:${createHash("sha1").update(text).digest("hex").slice(0, 12)}`;
 }
 
-export function messagesFromParsedAgentOutput(parsed?: ParsedAgentOutputLike | null): AgentTranscriptMessage[] {
+export function messagesFromParsedAgentOutput(
+  parsed?: ParsedAgentOutputLike | null,
+  options: { richLines?: readonly (readonly RichTextSpan[])[] } = {},
+): AgentTranscriptMessage[] {
   const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
   const messages: AgentTranscriptMessage[] = [];
   const labels: ImageLabels = { byId: new Map(), next: 1 };
@@ -296,6 +359,7 @@ export function messagesFromParsedAgentOutput(parsed?: ParsedAgentOutputLike | n
     seen.set(base, count);
 
     const parts = partsFromText(raw, labels);
+    applyRichSpansToTextParts(parts, raw, richSpansFromSourceLines(block.sourceLines, options.richLines));
     messages.push({
       id: count === 1 ? base : `${base}#${count}`,
       role,
@@ -308,4 +372,20 @@ export function messagesFromParsedAgentOutput(parsed?: ParsedAgentOutputLike | n
   if (newest) newest.latest = true;
 
   return messages;
+}
+
+export function messagesFromAgentOutput(input: {
+  output: string;
+  outputAnsi?: string;
+  tool?: string;
+}): AgentTranscriptMessage[] {
+  const richLines =
+    input.outputAnsi && /\x1b\[[0-9;:]*m/.test(input.outputAnsi) ? parseSgrRichTextLines(input.outputAnsi) : undefined;
+  return messagesFromParsedAgentOutput(
+    parseAgentOutput(input.output, {
+      includeSource: Boolean(richLines),
+      tool: input.tool,
+    }),
+    { richLines },
+  );
 }

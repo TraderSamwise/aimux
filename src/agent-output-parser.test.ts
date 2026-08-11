@@ -3,6 +3,25 @@ import { parseAgentOutput } from "./agent-output-parser.js";
 import { messagesFromParsedAgentOutput } from "./agent-transcript.js";
 
 describe("parseAgentOutput", () => {
+  it("omits source metadata unless requested", () => {
+    const raw = ["❯ ask", "⏺ answer"].join("\n");
+
+    expect(parseAgentOutput(raw, { tool: "codex" }).blocks).toEqual([
+      { type: "prompt", text: "ask" },
+      { type: "response", text: "answer" },
+    ]);
+  });
+
+  it("can keep source lines for styled transcript projection", () => {
+    const raw = ["❯ ask", "⏺ answer"].join("\n");
+    const parsed = parseAgentOutput(raw, { includeSource: true, tool: "codex" });
+
+    expect(parsed.blocks.filter((block) => block.type === "prompt" || block.type === "response")).toEqual([
+      { type: "prompt", text: "ask", sourceLines: [{ lineIndex: 0, text: "ask" }] },
+      { type: "response", text: "answer", sourceLines: [{ lineIndex: 1, text: "answer" }] },
+    ]);
+  });
+
   it("keeps footer-only trailing Codex input out of chat prompts", () => {
     const raw = [
       "› write me a poem",

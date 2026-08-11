@@ -3,6 +3,12 @@ export type AgentOutputBlockType = "prompt" | "response" | "status" | "meta" | "
 export interface AgentOutputBlock {
   type: AgentOutputBlockType;
   text: string;
+  sourceLines?: AgentOutputBlockSourceLine[];
+}
+
+export interface AgentOutputBlockSourceLine {
+  lineIndex: number;
+  text: string;
 }
 
 export interface ParsedAgentOutput {
@@ -138,14 +144,18 @@ function isWrappedDividerFragment(line: string): boolean {
   return /^[\u2500-\u257f]{4,}\s*\S/.test(trimmed) || /\S\s*[\u2500-\u257f]{3,}$/.test(trimmed);
 }
 
-export function parseAgentOutput(raw: string, options: { tool?: string } = {}): ParsedAgentOutput {
+export function parseAgentOutput(
+  raw: string,
+  options: { tool?: string; includeSource?: boolean } = {},
+): ParsedAgentOutput {
   const requestedTool = (options.tool || "").trim();
   const tool = requestedTool && requestedTool !== "unknown" ? requestedTool : (inferAgentOutputTool(raw) ?? "unknown");
   const lines = String(raw || "")
     .replace(/\r/g, "")
     .split("\n");
   const blocks: AgentOutputBlock[] = [];
-  type ActiveBlock = { type: AgentOutputBlockType; lines: string[] };
+  type ActiveLine = { lineIndex: number; text: string };
+  type ActiveBlock = { type: AgentOutputBlockType; lines: ActiveLine[] };
   let current: ActiveBlock | null = null;
   let sawPrompt = false;
   let expectingResponse = false;
@@ -153,17 +163,32 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
 
   const flush = () => {
     if (!current) return;
-    const text = current.lines.join("\n").trimEnd();
-    if (text) blocks.push({ type: current.type, text });
+    const sourceLines = current.lines.slice();
+    while (sourceLines.length > 0 && !sourceLines[sourceLines.length - 1]!.text) sourceLines.pop();
+    const text = sourceLines
+      .map((line) => line.text)
+      .join("\n")
+      .trimEnd();
+    if (text) {
+      blocks.push({
+        type: current.type,
+        text,
+        ...(options.includeSource ? { sourceLines } : {}),
+      });
+    }
     current = null;
   };
 
-  const pushLine = (type: AgentOutputBlockType, line: string) => {
+  const pushLine = (type: AgentOutputBlockType, line: string, lineIndex: number) => {
     if (!current || current.type !== type) {
       flush();
       current = { type, lines: [] };
     }
-    current.lines.push(line);
+    current.lines.push({ lineIndex, text: line });
+  };
+
+  const appendLine = (block: ActiveBlock, line: string, lineIndex: number) => {
+    block.lines.push({ lineIndex, text: line });
   };
 
   const isDivider = (line: string) => {
@@ -281,7 +306,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✢✳✶✻✽·]\s+)\s?/, "");
   const isCodexPickerSelectionPrompt = (promptText: string) => {
     if (tool !== "codex" || sawPrompt || (current?.type !== "response" && current?.type !== "raw")) return false;
-    const activeText = current.lines.join("\n");
+    const activeText = current.lines.map((line) => line.text).join("\n");
     if (!/(?:Resume a previous session|Choose working directory to resume this session)/i.test(activeText)) {
       return false;
     }
@@ -323,12 +348,12 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       if (isDivider(trimmed) || isTitledDivider(trimmed) || isWrappedDividerFragment(trimmed)) {
         continue;
       }
-      pushLine("status", trimmed);
+      pushLine("status", trimmed, index);
       continue;
     }
     if (isCodexUiLine(trimmed)) {
       lastLineWasDivider = false;
-      pushLine(sawPrompt ? "status" : "meta", trimmed);
+      pushLine(sawPrompt ? "status" : "meta", trimmed, index);
       continue;
     }
     if (isDivider(trimmed)) {
@@ -346,19 +371,19 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);
       if (lastLineWasDivider) {
-        if (promptText.trim()) pushLine("status", promptText);
+        if (promptText.trim()) pushLine("status", promptText, index);
         lastLineWasDivider = false;
         expectingResponse = false;
         continue;
       }
       lastLineWasDivider = false;
       if (isCodexPickerSelectionPrompt(promptText)) {
-        if (promptText.trim()) pushLine("status", promptText);
+        if (promptText.trim()) pushLine("status", promptText, index);
         expectingResponse = false;
         continue;
       }
       if (isCodexStartupSuggestionPrompt(promptText)) {
-        if (promptText.trim()) pushLine("status", promptText);
+        if (promptText.trim()) pushLine("status", promptText, index);
         expectingResponse = false;
         continue;
       }
@@ -372,46 +397,46 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       // together — but two `❯` lines are two things the operator sent, and
       // appending the second to the first merged the queue into one bubble.
       flush();
-      pushLine("prompt", promptText);
+      pushLine("prompt", promptText, index);
       sawPrompt = true;
       expectingResponse = false;
       continue;
     }
     lastLineWasDivider = false;
     if (isCodexStartupNoticeLine(trimmed)) {
-      pushLine("status", trimmed);
+      pushLine("status", trimmed, index);
       expectingResponse = false;
       continue;
     }
     if (/^(•|⏺)\s?/.test(trimmed) && !isStatusLine(trimmed)) {
-      pushLine("response", stripResponseMarker(trimmed));
+      pushLine("response", stripResponseMarker(trimmed), index);
       sawPrompt = true;
       expectingResponse = false;
       continue;
     }
     if (isStatusLine(trimmed)) {
-      pushLine("status", stripStatusMarker(trimmed));
+      pushLine("status", stripStatusMarker(trimmed), index);
       expectingResponse = false;
       continue;
     }
     if (isClaudeStartupStatusLine(trimmed)) {
-      pushLine("status", trimmed.replace(/^▎\s?/, ""));
+      pushLine("status", trimmed.replace(/^▎\s?/, ""), index);
       expectingResponse = false;
       continue;
     }
     if (!sawPrompt && isClaudePreludeLine(trimmed)) {
-      pushLine("meta", trimmed);
+      pushLine("meta", trimmed, index);
       continue;
     }
     if (isFooterLine(trimmed)) {
-      pushLine("status", trimmed);
+      pushLine("status", trimmed, index);
       expectingResponse = false;
       continue;
     }
     if (!trimmed.trim()) {
       const active = current as ActiveBlock | null;
       if (active && active.type !== "raw") {
-        active.lines.push("");
+        appendLine(active, "", index);
         if (active.type === "prompt") expectingResponse = true;
         continue;
       }
@@ -425,28 +450,28 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     // is how `/compact` and the question after it ended up in one bubble.
     const continuesPrompt = promptBlock?.type === "prompt" && !isToolResultLine(trimmed);
     if (continuesPrompt && !expectingResponse) {
-      promptBlock.lines.push(trimmed);
+      appendLine(promptBlock, trimmed, index);
       continue;
     }
     if (continuesPrompt && expectingResponse && /^\s+\S/.test(trimmed)) {
-      promptBlock.lines.push(trimmed);
+      appendLine(promptBlock, trimmed, index);
       expectingResponse = false;
       continue;
     }
     if (expectingResponse || (current as ActiveBlock | null)?.type === "response") {
-      pushLine("response", trimmed);
+      pushLine("response", trimmed, index);
       continue;
     }
     const active = current as ActiveBlock | null;
     if (active?.type === "meta" && isClaudePreludeLine(trimmed)) {
-      active.lines.push(trimmed);
+      appendLine(active, trimmed, index);
       continue;
     }
     if (active?.type === "status") {
-      active.lines.push(trimmed);
+      appendLine(active, trimmed, index);
       continue;
     }
-    pushLine("raw", trimmed);
+    pushLine("raw", trimmed, index);
   }
 
   flush();
@@ -658,6 +683,13 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
     // merging them collapsed a queued pair into a single bubble.
     if (previous && previous.type === block.type && block.type !== "prompt") {
       previous.text = `${previous.text}\n\n${block.text}`.trim();
+      if (previous.sourceLines || block.sourceLines) {
+        previous.sourceLines = [
+          ...(previous.sourceLines ?? []),
+          { lineIndex: -1, text: "" },
+          ...(block.sourceLines ?? []),
+        ];
+      }
       continue;
     }
     merged.push(block);

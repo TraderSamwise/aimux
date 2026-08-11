@@ -22,14 +22,17 @@ vi.mock("../metadata-store.js", async (importOriginal) => {
 
 const { readAgentOutput } = await import("./session-runtime-core.js");
 
-function hostWithPane(text: string) {
+function hostWithPane(text: string, ansiText = text) {
   const target = { sessionName: "aimux-test", windowId: "@1" };
   return {
     projectRoot: "/tmp/aimux-liveness-test",
     sessions: [{ id: "codex-1", exited: false }],
     sessionTmuxTargets: new Map([["codex-1", target]]),
     sessionToolKeys: new Map([["codex-1", "codex"]]),
-    tmuxRuntimeManager: { captureTarget: () => text },
+    tmuxRuntimeManager: {
+      captureTarget: (_target: unknown, options: { includeEscapes?: boolean }) =>
+        options.includeEscapes ? ansiText : text,
+    },
   } as any;
 }
 
@@ -67,5 +70,22 @@ describe("readAgentOutput liveness", () => {
     const result = await readAgentOutput(host, "codex-1");
 
     expect(Array.isArray(result.messages)).toBe(true);
+  });
+
+  it("projects ANSI styling into cached messages", async () => {
+    const host = hostWithPane(
+      ["❯ ask", "⏺ red answer"].join("\n"),
+      ["❯ ask", "⏺ \x1b[31mred\x1b[0m answer"].join("\n"),
+    );
+    const result = await readAgentOutput(host, "codex-1");
+
+    expect(result.output).toBe(["❯ ask", "⏺ red answer"].join("\n"));
+    expect(result.messages[1]?.parts).toEqual([
+      {
+        type: "text",
+        text: "red answer",
+        spans: [{ text: "red", foreground: { model: "rgb", value: "#e06c75" } }, { text: " answer" }],
+      },
+    ]);
   });
 });

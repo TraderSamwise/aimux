@@ -156,3 +156,17 @@ export function richTextLineText(spans: readonly RichTextSpan[]): string {
 export function richTextText(lines: readonly (readonly RichTextSpan[])[]): string {
   return lines.map(richTextLineText).join("\n");
 }
+
+export function sliceRichTextSpans(spans: readonly RichTextSpan[], start: number, end: number): RichTextSpan[] {
+  const next: RichTextSpan[] = [];
+  let cursor = 0;
+  for (const span of spans) {
+    const spanStart = cursor;
+    const spanEnd = spanStart + span.text.length;
+    cursor = spanEnd;
+    if (spanEnd <= start || spanStart >= end) continue;
+    const text = span.text.slice(Math.max(0, start - spanStart), Math.max(0, end - spanStart));
+    if (text) next.push({ ...span, text });
+  }
+  return next;
+}

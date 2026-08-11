@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  messagesFromAgentOutput,
   messagesFromParsedAgentOutput,
   transcriptMessageText,
   type ParsedAgentOutputLike,
 } from "./agent-transcript.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
+import { parseSgrRichTextLines } from "./rich-text.js";
 import { getParserFixture } from "./agent-output-parser-test-utils.js";
 
 const parsed = (blocks: Array<{ type: string; text: string }>): ParsedAgentOutputLike => ({
@@ -129,6 +131,131 @@ describe("messagesFromParsedAgentOutput", () => {
 
     expect(JSON.stringify(messages)).not.toContain("contentUrl");
     expect(JSON.stringify(messages)).not.toContain("/attachments/att_z/content");
+  });
+
+  it("keeps ids and text stable while adding optional rich spans", () => {
+    const plain = messagesFromAgentOutput({
+      output: ["❯ ask", "⏺ red answer"].join("\n"),
+      tool: "codex",
+    });
+    const rich = messagesFromAgentOutput({
+      output: ["❯ ask", "⏺ red answer"].join("\n"),
+      outputAnsi: ["❯ ask", `⏺ \x1b[31mred\x1b[0m answer`].join("\n"),
+      tool: "codex",
+    });
+
+    expect(rich.map((message) => ({ id: message.id, text: message.text }))).toEqual(
+      plain.map((message) => ({ id: message.id, text: message.text })),
+    );
+    expect(rich[1]?.parts).toEqual([
+      {
+        type: "text",
+        text: "red answer",
+        spans: [{ text: "red", foreground: { model: "rgb", value: "#e06c75" } }, { text: " answer" }],
+      },
+    ]);
+  });
+
+  it("projects multiline rich spans for prompt and response blocks", () => {
+    const [prompt, response] = messagesFromAgentOutput({
+      output: ["❯ first", "  second", "⏺ ok"].join("\n"),
+      outputAnsi: [`❯ \x1b[1mfirst`, "  second\x1b[0m", `⏺ \x1b[32mok`].join("\n"),
+      tool: "codex",
+    });
+
+    expect(prompt?.parts).toEqual([
+      {
+        type: "text",
+        text: "first\n  second",
+        spans: [{ text: "first", marks: ["bold"] }, { text: "\n" }, { text: "  second", marks: ["bold"] }],
+      },
+    ]);
+    expect(response?.parts).toEqual([
+      {
+        type: "text",
+        text: "ok",
+        spans: [{ text: "ok", foreground: { model: "rgb", value: "#98c379" } }],
+      },
+    ]);
+  });
+
+  it("keeps rich spans when the source block had trailing blank lines", () => {
+    const [, response] = messagesFromAgentOutput({
+      output: ["❯ ask", "⏺ red", ""].join("\n"),
+      outputAnsi: ["❯ ask", `⏺ \x1b[31mred\x1b[0m`, ""].join("\n"),
+      tool: "codex",
+    });
+
+    expect(response?.parts).toEqual([
+      {
+        type: "text",
+        text: "red",
+        spans: [{ text: "red", foreground: { model: "rgb", value: "#e06c75" } }],
+      },
+    ]);
+  });
+
+  it("keeps rich spans across normalized response block separators", () => {
+    const [message] = messagesFromParsedAgentOutput(
+      {
+        blocks: [
+          {
+            type: "response",
+            text: "red\n\nblue",
+            sourceLines: [
+              { lineIndex: 0, text: "red" },
+              { lineIndex: -1, text: "" },
+              { lineIndex: 1, text: "blue" },
+            ],
+          },
+        ],
+      },
+      { richLines: parseSgrRichTextLines(`\x1b[31mred\x1b[0m\n\x1b[34mblue\x1b[0m`) },
+    );
+
+    expect(message?.parts).toEqual([
+      {
+        type: "text",
+        text: "red\n\nblue",
+        spans: [
+          { text: "red", foreground: { model: "rgb", value: "#e06c75" } },
+          { text: "\n" },
+          { text: "\n" },
+          { text: "blue", foreground: { model: "rgb", value: "#61afef" } },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps image references while applying matching spans to text parts", () => {
+    const [message] = messagesFromAgentOutput({
+      output: [
+        "❯ see this",
+        "Attached image files:",
+        "- shot.png (image/png, 1234 bytes): /srv/x/.aimux/attachments/att_rich.png",
+      ].join("\n"),
+      outputAnsi: [
+        `❯ \x1b[36msee this\x1b[0m`,
+        "Attached image files:",
+        "- shot.png (image/png, 1234 bytes): /srv/x/.aimux/attachments/att_rich.png",
+      ].join("\n"),
+      tool: "codex",
+    });
+
+    expect(message?.parts).toEqual([
+      {
+        type: "text",
+        text: "see this",
+        spans: [{ text: "see this", foreground: { model: "rgb", value: "#56b6c2" } }],
+      },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_rich",
+        filename: "shot.png",
+        mimeType: "image/png",
+      },
+    ]);
   });
 
   it("survives nothing at all", () => {

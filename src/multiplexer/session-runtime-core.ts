@@ -16,6 +16,7 @@ import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { activityTextFromParsedAgentOutput, parseAgentOutput } from "../agent-output-parser.js";
 import { messagesFromParsedAgentOutput, type AgentTranscriptMessage } from "../agent-transcript.js";
+import { parseSgrRichTextLines } from "../rich-text.js";
 import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
@@ -305,7 +306,7 @@ export async function sendAgentInput(
  */
 const transcriptCache = new Map<
   string,
-  { output: string; parsed: any; messages: AgentTranscriptMessage[]; activityText: string }
+  { output: string; outputAnsi: string; parsed: any; messages: AgentTranscriptMessage[]; activityText: string }
 >();
 
 /**
@@ -320,6 +321,18 @@ const SGR_SEQUENCE = /\x1b\[[0-9;:]*m/g;
 
 export function stripSgr(text: string): string {
   return text.replace(SGR_SEQUENCE, "");
+}
+
+function containsSgr(text: string): boolean {
+  return /\x1b\[[0-9;:]*m/.test(text);
+}
+
+function stripParsedSourceLines(parsed: any): any {
+  if (!Array.isArray(parsed?.blocks)) return parsed;
+  return {
+    ...parsed,
+    blocks: parsed.blocks.map(({ sourceLines: _sourceLines, ...block }: any) => block),
+  };
 }
 
 /**
@@ -433,7 +446,7 @@ export async function readAgentOutput(
 
   const cacheKey = `${sessionId}:${startLine ?? -120}`;
   const cached = transcriptCache.get(cacheKey);
-  if (cached && cached.output === output) {
+  if (cached && cached.output === output && cached.outputAnsi === outputAnsi) {
     return {
       sessionId,
       output,
@@ -446,18 +459,23 @@ export async function readAgentOutput(
     };
   }
 
-  const parsed = parseAgentOutput(output, {
+  const richLines = containsSgr(outputAnsi) ? parseSgrRichTextLines(outputAnsi) : undefined;
+  const parsedForMessages = parseAgentOutput(output, {
+    includeSource: Boolean(richLines),
     tool: host.sessionToolKeys.get(sessionId),
   });
+  const parsed = stripParsedSourceLines(parsedForMessages);
   // Projected here rather than in each client. Two of them had grown their own
   // copy of this mapping and the copies had already drifted.
-  const messages = messagesFromParsedAgentOutput(parsed);
+  const messages = messagesFromParsedAgentOutput(parsedForMessages, {
+    richLines,
+  });
   // Cached beside the transcript, not recomputed on the hit path: the verb lives
   // in the pane text this cache is keyed on, so identical output means an
   // identical verb — and recomputing only on a miss would blank it on every
   // unchanged poll.
   const activityText = activityTextFromParsedAgentOutput(parsed);
-  transcriptCache.set(cacheKey, { output, parsed, messages, activityText });
+  transcriptCache.set(cacheKey, { output, outputAnsi, parsed, messages, activityText });
 
   return {
     sessionId,
