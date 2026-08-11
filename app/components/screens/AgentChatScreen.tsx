@@ -63,6 +63,7 @@ import {
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
+import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { singleRouteParam } from "@/lib/route-params";
@@ -393,7 +394,7 @@ export default function ChatScreen() {
     const result = await getLivePaneOutput(
       { host: endpointHost, port: endpointPort },
       sessionId,
-      -120,
+      CHAT_OUTPUT_CAPTURE_START_LINE,
       { token },
     );
     if (!serviceProjectsTranscript(result.messages)) {

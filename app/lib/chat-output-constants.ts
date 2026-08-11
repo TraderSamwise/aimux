@@ -1,0 +1,1 @@
+export const CHAT_OUTPUT_CAPTURE_START_LINE = -600;

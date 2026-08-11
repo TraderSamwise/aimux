@@ -4,10 +4,15 @@ import type { HistoryTextSpan } from "@/lib/events";
 const DIVIDER_LINE_MIN_LENGTH = 24;
 const DIVIDER_LINE_MIN_RATIO = 0.9;
 const DEFAULT_DIVIDER_WIDTH = 72;
+const DEFAULT_SOFT_WRAP_COLUMN = 28;
+const SOFT_WRAP_MIN_SEPARATOR_RUN = 12;
+const SOFT_BREAK = "\u200B";
 const DIVIDER_CHARS = new Set(["─", "━", "═", "╌", "╍", "⎯", "-", "_", "="]);
+const SOFT_WRAP_SEPARATOR_CHARS = new Set(["/", "\\", ".", "-", "_", "=", ":", "?", "&", ",", ";"]);
 
 interface TerminalOutputDisplayOptions {
   dividerWidth?: number;
+  softWrapColumn?: number;
 }
 
 /**
@@ -48,7 +53,10 @@ export function formatTerminalOutputForDisplay(
 
 export function formatPlainTextForDisplay(
   text: string,
-  { dividerWidth = DEFAULT_DIVIDER_WIDTH }: TerminalOutputDisplayOptions = {},
+  {
+    dividerWidth = DEFAULT_DIVIDER_WIDTH,
+    softWrapColumn = DEFAULT_SOFT_WRAP_COLUMN,
+  }: TerminalOutputDisplayOptions = {},
 ): string {
   const formatted: string[] = [];
   let previousWasDivider = false;
@@ -62,7 +70,7 @@ export function formatPlainTextForDisplay(
       continue;
     }
 
-    formatted.push(line);
+    formatted.push(softWrapLongRuns(line, softWrapColumn).text);
     previousWasDivider = false;
   }
 
@@ -71,7 +79,10 @@ export function formatPlainTextForDisplay(
 
 export function formatRichTextSpansForDisplay(
   spans: readonly HistoryTextSpan[],
-  { dividerWidth = DEFAULT_DIVIDER_WIDTH }: TerminalOutputDisplayOptions = {},
+  {
+    dividerWidth = DEFAULT_DIVIDER_WIDTH,
+    softWrapColumn = DEFAULT_SOFT_WRAP_COLUMN,
+  }: TerminalOutputDisplayOptions = {},
 ): HistoryTextSpan[] {
   const formatted: HistoryTextSpan[][] = [];
   let previousWasDivider = false;
@@ -91,7 +102,7 @@ export function formatRichTextSpansForDisplay(
       continue;
     }
 
-    formatted.push(lineSpans);
+    formatted.push(softWrapLongRunSpans(lineSpans, softWrapColumn));
     previousWasDivider = false;
   }
 
@@ -122,6 +133,47 @@ function joinRichTextLines(lines: readonly (readonly HistoryTextSpan[])[]): Hist
 
 function richTextLineText(spans: readonly HistoryTextSpan[]): string {
   return spans.map((span) => span.text).join("");
+}
+
+function softWrapLongRunSpans(
+  spans: readonly HistoryTextSpan[],
+  softWrapColumn: number,
+): HistoryTextSpan[] {
+  let runLength = 0;
+
+  return spans.map((span) => {
+    const wrapped = softWrapLongRuns(span.text, softWrapColumn, runLength);
+    runLength = wrapped.trailingRunLength;
+    return { ...span, text: wrapped.text };
+  });
+}
+
+function softWrapLongRuns(
+  text: string,
+  softWrapColumn: number,
+  initialRunLength = 0,
+): { text: string; trailingRunLength: number } {
+  const maxRunLength = Math.max(8, softWrapColumn);
+  let runLength = initialRunLength;
+  let next = "";
+
+  for (const char of Array.from(text)) {
+    next += char;
+    if (/\s/.test(char)) {
+      runLength = 0;
+      continue;
+    }
+
+    runLength += 1;
+    const separatorBreak =
+      runLength >= SOFT_WRAP_MIN_SEPARATOR_RUN && SOFT_WRAP_SEPARATOR_CHARS.has(char);
+    if (separatorBreak || runLength >= maxRunLength) {
+      next += SOFT_BREAK;
+      runLength = 0;
+    }
+  }
+
+  return { text: next, trailingRunLength: runLength };
 }
 
 function isDividerLine(line: string): boolean {

@@ -68,6 +68,17 @@ describe("formatPlainTextForDisplay", () => {
   it("preserves short markdown separators in chat text", () => {
     expect(formatPlainTextForDisplay("front\n---\nmatter")).toBe("front\n---\nmatter");
   });
+
+  it("adds invisible break opportunities to long chat tokens", () => {
+    expect(
+      formatPlainTextForDisplay(
+        "https://tealstreet-next-crsjkcxey-tealstreet-b565b19f.vercel.app",
+        {
+          softWrapColumn: 18,
+        },
+      ),
+    ).toBe("https://tealstreet-\u200Bnext-crsjkcxey-\u200Btealstreet-b565b19f\u200B.vercel.app");
+  });
 });
 
 describe("formatRichTextSpansForDisplay", () => {
@@ -92,6 +103,25 @@ describe("formatRichTextSpansForDisplay", () => {
       { text: "-".repeat(10), foreground: { model: "rgb", value: "#808080" } },
       { text: "\n" },
       { text: "next", marks: ["bold"] },
+    ]);
+  });
+
+  it("adds invisible break opportunities without dropping rich span colours", () => {
+    expect(
+      formatRichTextSpansForDisplay(
+        [
+          {
+            text: "tealstreet-next-crsjkcxey-tealstreet-b565b19f.vercel.app",
+            foreground: { model: "rgb", value: "#56b6c2" },
+          },
+        ],
+        { softWrapColumn: 18 },
+      ),
+    ).toEqual([
+      {
+        text: "tealstreet-next-\u200Bcrsjkcxey-tealstreet\u200B-b565b19f.vercel\u200B.app",
+        foreground: { model: "rgb", value: "#56b6c2" },
+      },
     ]);
   });
 });

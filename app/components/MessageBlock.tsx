@@ -1,5 +1,5 @@
 import React from "react";
-import { Image, Text as RNText, View, type TextStyle } from "react-native";
+import { Image, Text as RNText, View, type TextStyle, type ViewStyle } from "react-native";
 import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import type {
@@ -18,6 +18,24 @@ interface Props {
   serviceEndpoint: ServiceEndpoint;
   dividerWidth?: number;
 }
+
+const MESSAGE_BASE_STYLE: ViewStyle = {
+  flexShrink: 1,
+  overflow: "hidden",
+};
+const MESSAGE_ASSISTANT_STYLE: ViewStyle = {
+  ...MESSAGE_BASE_STYLE,
+  maxWidth: "90%",
+};
+const MESSAGE_USER_STYLE: ViewStyle = {
+  ...MESSAGE_BASE_STYLE,
+  maxWidth: "80%",
+};
+const MESSAGE_TEXT_STYLE: TextStyle = {
+  flexShrink: 1,
+  flexWrap: "wrap",
+  maxWidth: "100%",
+};
 
 export function resolveImageUrl(
   part: HistoryImagePart | HistoryImageReferencePart,
@@ -99,7 +117,7 @@ function RichText({
     [dividerWidth, spans],
   );
   return (
-    <Text className={className}>
+    <Text className={className} style={MESSAGE_TEXT_STYLE}>
       {displaySpans.map((span, index) => (
         <RNText key={index} style={styleForRichTextSpan(span)}>
           {span.text}
@@ -170,10 +188,11 @@ export const MessageBlock = React.memo(function MessageBlock({
 
   return (
     <View
+      style={isUser ? MESSAGE_USER_STYLE : MESSAGE_ASSISTANT_STYLE}
       className={
         isUser
-          ? "self-end max-w-[80%] rounded-lg bg-primary px-3 py-2 my-1"
-          : "self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1"
+          ? "self-end rounded-lg bg-primary px-3 py-2 my-1"
+          : "self-start rounded-lg bg-secondary px-3 py-2 my-1"
       }
     >
       {speakerLabel ? (
@@ -208,7 +227,7 @@ export const MessageBlock = React.memo(function MessageBlock({
               );
             }
             return (
-              <Text key={idx} className={className}>
+              <Text key={idx} className={className} style={MESSAGE_TEXT_STYLE}>
                 {formatMessageText(part.text)}
               </Text>
             );
@@ -218,7 +237,10 @@ export const MessageBlock = React.memo(function MessageBlock({
           );
         })
       ) : (
-        <Text className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}>
+        <Text
+          className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}
+          style={MESSAGE_TEXT_STYLE}
+        >
           {formatMessageText(message.text ?? "")}
         </Text>
       )}

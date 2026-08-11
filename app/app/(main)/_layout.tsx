@@ -7,6 +7,7 @@ import { NotificationProvider } from "@/components/NotificationProvider";
 import { NativeNotificationRouter } from "@/components/NativeNotificationRouter";
 import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
 import { env } from "@/lib/env";
 import { startHeartbeat } from "@/lib/heartbeat";
@@ -399,6 +400,7 @@ export default function MainLayout() {
         handle = startHeartbeat({
           serviceEndpoint: endpoint!,
           sessionId: activeShare?.sessionId ?? null,
+          startLine: activeShare?.sessionId ? CHAT_OUTPUT_CAPTURE_START_LINE : undefined,
           token,
           onEvent: (event) => {
             if (event.type === PROJECT_API_EVENT_NAMES.ready) {
