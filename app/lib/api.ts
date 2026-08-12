@@ -109,6 +109,7 @@ import {
   type WorktreesResponse,
   type WorktreePathInput,
 } from "../../src/project-api-contract";
+import { CORE_API_ROUTES } from "../../src/core-command-contract";
 
 export type {
   CoordinationBucket,
@@ -334,6 +335,19 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
     opts,
   );
   return data.projects;
+}
+
+export async function listGlobalExposeItems(
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; items: unknown[] }> {
+  const path = `${CORE_API_ROUTES.exposeItems}?includePreview=1`;
+  if (shouldRouteViaRelay())
+    return callDaemonViaRelay<{ ok: boolean; items: unknown[] }>("GET", path);
+  return callJson<{ ok: boolean; items: unknown[] }>(
+    `${getDaemonUrl()}${path}`,
+    { method: "GET" },
+    opts,
+  );
 }
 
 export interface EnsureProjectResponse {

@@ -2288,6 +2288,13 @@ describe("MetadataServer threads API", () => {
       expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@9");
       expect(exposePreviewCache.start).toHaveBeenCalledTimes(1);
       expect(exposePaneOutputTap.start).toHaveBeenCalledTimes(1);
+
+      const exposeResponse = await fetch(`${base}?scope=all&labelFormat=raw&includePreview=1&expose=1`);
+      const exposeBody = (await exposeResponse.json()) as { ok: boolean; items: Array<Record<string, any>> };
+      expect(exposeResponse.status).toBe(200);
+      expect(exposeBody.items.map((item) => item.target.windowId)).toEqual(["@7", "@8", "@9"]);
+      expect(exposeBody.items[0]?.exposeContext).toEqual({ worktree: "main", tone: 0 });
+      expect(exposeBody.items[0]?.exposeStatus).toBeUndefined();
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;

@@ -1,16 +1,59 @@
 import type { DaemonProject } from "@/lib/api";
-import type { DesktopSession, DesktopService, WorktreeBucket } from "@/lib/desktop-state";
-import type { AgentTranscriptMessage } from "@/lib/events";
 import { firstTokenOf } from "@/lib/status-tone";
 import { formatTerminalOutputPlainLinesForDisplay } from "@/lib/terminal-output";
 import { WORKTREE_TONES } from "@/lib/worktree-tone";
+import type { ExposePreviewSnapshot } from "../../src/project-api-contract";
 
-export type ExposeFilter = "all" | "working" | "attention" | "ready" | "offline";
-export type ExposePreviewMode = "chat" | "terminal";
+export type ExposeFilter = "all" | "working" | "attention" | "ready";
 
-export interface ExposeProjectSource {
+export type ExposeStatusKind =
+  | "working"
+  | "ready"
+  | "idle"
+  | "offline"
+  | "needs"
+  | "error"
+  | "done"
+  | "blocked"
+  | "service"
+  | "serviceOff";
+
+export interface ExposeSourceItem {
+  id?: string;
+  target?: {
+    windowId?: string;
+    windowIndex?: number;
+    windowName?: string;
+    sessionName?: string;
+  };
+  metadata?: {
+    sessionId?: string;
+    kind?: string;
+    command?: string;
+    toolConfigKey?: string;
+    label?: string;
+    role?: string;
+    worktreePath?: string;
+  };
+  label?: string;
+  projectId?: string;
+  projectName?: string;
+  projectRoot?: string;
+  previewSnapshot?: ExposePreviewSnapshot;
+  exposeContext?: {
+    worktree?: string;
+    project?: string;
+    tone?: number;
+  };
+  exposeStatus?: {
+    kind?: string;
+    label?: string;
+  };
+}
+
+export interface ExposeSource {
   project: DaemonProject;
-  groups: WorktreeBucket[];
+  items: ExposeSourceItem[];
 }
 
 export interface ExposeTile {
@@ -25,26 +68,23 @@ export interface ExposeTile {
   tool: string;
   role?: string;
   kind: "agent" | "service";
-  status: string;
-  statusKind: "working" | "attention" | "ready" | "offline";
-  attention?: string;
+  status: string | null;
+  statusKind: ExposeStatusKind | null;
   worktreeName: string;
   worktreePath?: string;
-  branch?: string;
+  semanticTitle: string;
+  contextSubtitle: string;
+  sectionKey: string;
+  sectionLabel: string;
   tone: string;
-  previewMode: ExposePreviewMode;
   previewLines: string[];
-  chatPreviewMessages: ExposeChatPreviewMessage[];
 }
 
-export interface ExposeChatPreviewMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-}
-
-export interface BuildExposeTilesOptions {
-  previewMode?: ExposePreviewMode;
+export interface ExposeSection {
+  key: string;
+  label: string;
+  tone: string;
+  tiles: ExposeTile[];
 }
 
 export interface ExposeSummary {
@@ -52,7 +92,6 @@ export interface ExposeSummary {
   working: number;
   attention: number;
   ready: number;
-  offline: number;
 }
 
 const EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH = 48;
@@ -61,129 +100,80 @@ function cap(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
-function sessionStatusKind(session: DesktopSession): ExposeTile["statusKind"] {
-  if (
-    session.attention === "error" ||
-    session.attention === "blocked" ||
-    session.attention === "needs_input" ||
-    session.attention === "needs_response"
-  ) {
-    return "attention";
+function normalizeStatusKind(kind: string | undefined): ExposeStatusKind | null {
+  switch (kind) {
+    case "working":
+    case "ready":
+    case "idle":
+    case "needs":
+    case "done":
+    case "blocked":
+    case "error":
+    case "service":
+    case "serviceOff":
+    case "offline":
+      return kind;
+    default:
+      return null;
   }
-  if (session.status === "running" || session.status === "waiting") return "working";
-  if (session.status === "idle") return "ready";
-  return "offline";
 }
 
-function serviceStatusKind(service: DesktopService): ExposeTile["statusKind"] {
-  return service.status === "running" ? "working" : "offline";
-}
-
-function previewLinesFor(session: DesktopSession): string[] {
-  const output = session.previewSnapshot?.output ?? "";
-  const lines = output.trim()
-    ? formatTerminalOutputPlainLinesForDisplay(output.replace(/\r/g, ""), {
-        dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
-      })
-    : session.previewLine
-      ? formatTerminalOutputPlainLinesForDisplay(session.previewLine.replace(/\r/g, ""), {
-          dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
-        })
-      : [];
-  return lines
+function previewLinesFor(item: ExposeSourceItem): string[] {
+  const output = item.previewSnapshot?.output ?? "";
+  if (!output.trim()) return [];
+  return formatTerminalOutputPlainLinesForDisplay(output.replace(/\r/g, ""), {
+    dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
+  })
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0)
     .slice(-7);
 }
 
-function transcriptMessageText(message: AgentTranscriptMessage): string {
-  const parts = Array.isArray(message.parts) ? message.parts : [];
-  const text = parts
-    .map((part) => (part.type === "text" ? part.text : `[${part.label || "image"}]`))
-    .join("\n")
-    .trim();
-  return text || message.text?.trim() || "";
+function toneFor(item: ExposeSourceItem, fallbackIndex: number): string {
+  const tone = item.exposeContext?.tone ?? fallbackIndex;
+  return WORKTREE_TONES[Math.max(0, tone) % WORKTREE_TONES.length]!;
 }
 
-function chatPreviewMessagesFor(session: DesktopSession): ExposeChatPreviewMessage[] {
-  return (session.chatPreview?.messages ?? [])
-    .map((message) => ({
-      id: message.id,
-      role: message.role,
-      text: transcriptMessageText(message),
-    }))
-    .filter((message) => message.text.length > 0);
-}
-
-function sessionStatusLabel(session: DesktopSession): string {
-  if (session.pendingAction) return cap(session.pendingAction);
-  if (session.attention === "needs_input") return "Needs input";
-  if (session.attention === "needs_response") return "Needs reply";
-  if (session.attention === "blocked") return "Blocked";
-  if (session.attention === "error") return "Error";
-  return cap(session.status);
-}
-
-export function buildExposeTiles(
-  sources: ExposeProjectSource[],
-  options: BuildExposeTilesOptions = {},
-): ExposeTile[] {
+export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
   const tiles: ExposeTile[] = [];
-  const requestedPreviewMode = options.previewMode ?? "terminal";
   for (const source of sources) {
-    source.groups.forEach((group, groupIndex) => {
-      const tone = WORKTREE_TONES[groupIndex % WORKTREE_TONES.length]!;
-      for (const session of group.sessions) {
-        const chatPreviewMessages = chatPreviewMessagesFor(session);
-        const previewMode =
-          requestedPreviewMode === "chat" && chatPreviewMessages.length > 0 ? "chat" : "terminal";
-        tiles.push({
-          id: `${source.project.path}:agent:${session.id}`,
-          projectId: source.project.id,
-          projectName: source.project.name,
-          projectRoot: source.project.path,
-          sessionId: session.id,
-          windowId: session.tmuxWindowId,
-          windowIndex: session.tmuxWindowIndex,
-          label: session.label || session.id,
-          tool: session.toolConfigKey || firstTokenOf(session.command) || "agent",
-          role: session.role,
-          kind: "agent",
-          status: sessionStatusLabel(session),
-          statusKind: sessionStatusKind(session),
-          attention: session.attention,
-          worktreeName: group.name,
-          worktreePath: group.path ?? undefined,
-          branch: group.branch,
-          tone,
-          previewMode,
-          previewLines: previewLinesFor(session),
-          chatPreviewMessages,
-        });
-      }
-      for (const service of group.services) {
-        tiles.push({
-          id: `${source.project.path}:service:${service.id}`,
-          projectId: source.project.id,
-          projectName: source.project.name,
-          projectRoot: source.project.path,
-          sessionId: service.id,
-          windowId: service.tmuxWindowId,
-          windowIndex: service.tmuxWindowIndex,
-          label: service.label || service.id,
-          tool: "service",
-          kind: "service",
-          status: cap(service.pendingAction ?? service.status),
-          statusKind: serviceStatusKind(service),
-          worktreeName: group.name,
-          worktreePath: group.path ?? undefined,
-          branch: group.branch,
-          tone,
-          previewMode: "terminal",
-          previewLines: service.previewLine ? [service.previewLine] : [],
-          chatPreviewMessages: [],
-        });
-      }
+    source.items.forEach((item, index) => {
+      const metadata = item.metadata ?? {};
+      const context = item.exposeContext ?? {};
+      const projectName = context.project || item.projectName || source.project.name;
+      const projectRoot = item.projectRoot || source.project.path;
+      const worktreeName = context.worktree || "main";
+      const semanticTitle = context.project ? `${projectName} / ${worktreeName}` : worktreeName;
+      const statusKind = normalizeStatusKind(item.exposeStatus?.kind);
+      const label = item.label || metadata.label || item.id || "agent";
+      const tool =
+        metadata.toolConfigKey ||
+        firstTokenOf(metadata.command) ||
+        label.split(/[(-]/)[0] ||
+        "agent";
+      tiles.push({
+        id: `${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
+        projectId: item.projectId || source.project.id,
+        projectName,
+        projectRoot,
+        sessionId: metadata.sessionId || item.id || label,
+        windowId: item.target?.windowId,
+        windowIndex: item.target?.windowIndex,
+        label,
+        tool,
+        role: metadata.role,
+        kind: metadata.kind === "service" ? "service" : "agent",
+        status: item.exposeStatus?.label || (statusKind ? cap(statusKind) : null),
+        statusKind,
+        worktreeName,
+        worktreePath: metadata.worktreePath,
+        semanticTitle,
+        contextSubtitle: context.project ? projectName : source.project.name,
+        sectionKey: `${projectRoot}:${semanticTitle}`,
+        sectionLabel: semanticTitle,
+        tone: toneFor(item, index),
+        previewLines: previewLinesFor(item),
+      });
     });
   }
   return tiles;
@@ -191,7 +181,32 @@ export function buildExposeTiles(
 
 export function filterExposeTiles(tiles: ExposeTile[], filter: ExposeFilter): ExposeTile[] {
   if (filter === "all") return tiles;
+  if (filter === "attention")
+    return tiles.filter(
+      (tile) =>
+        tile.statusKind === "needs" || tile.statusKind === "blocked" || tile.statusKind === "error",
+    );
+  if (filter === "ready")
+    return tiles.filter(
+      (tile) =>
+        tile.statusKind === "ready" || tile.statusKind === "idle" || tile.statusKind === "done",
+    );
   return tiles.filter((tile) => tile.statusKind === filter);
+}
+
+export function groupExposeTiles(tiles: ExposeTile[]): ExposeSection[] {
+  const sections: ExposeSection[] = [];
+  const byKey = new Map<string, ExposeSection>();
+  for (const tile of tiles) {
+    let section = byKey.get(tile.sectionKey);
+    if (!section) {
+      section = { key: tile.sectionKey, label: tile.sectionLabel, tone: tile.tone, tiles: [] };
+      byKey.set(tile.sectionKey, section);
+      sections.push(section);
+    }
+    section.tiles.push(tile);
+  }
+  return sections;
 }
 
 export function summarizeExposeTiles(tiles: ExposeTile[]): ExposeSummary {
@@ -200,8 +215,21 @@ export function summarizeExposeTiles(tiles: ExposeTile[]): ExposeSummary {
     working: 0,
     attention: 0,
     ready: 0,
-    offline: 0,
   };
-  for (const tile of tiles) summary[tile.statusKind]++;
+  for (const tile of tiles) {
+    if (tile.statusKind === "working") summary.working++;
+    else if (
+      tile.statusKind === "needs" ||
+      tile.statusKind === "blocked" ||
+      tile.statusKind === "error"
+    )
+      summary.attention++;
+    else if (
+      tile.statusKind === "ready" ||
+      tile.statusKind === "idle" ||
+      tile.statusKind === "done"
+    )
+      summary.ready++;
+  }
   return summary;
 }

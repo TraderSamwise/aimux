@@ -9,25 +9,25 @@ import { Button } from "@/components/ui/button";
 import { PressableCard } from "@/components/ui/card";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Text } from "@/components/ui/text";
-import { getDesktopState } from "@/lib/api";
+import { listGlobalExposeItems, listSwitchableAgents } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
-import { groupByWorktree } from "@/lib/desktop-state";
 import {
   buildExposeTiles,
   filterExposeTiles,
+  groupExposeTiles,
   summarizeExposeTiles,
   type ExposeFilter,
+  type ExposeSection,
+  type ExposeSourceItem,
   type ExposeTile,
 } from "@/lib/expose-model";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { cn } from "@/lib/utils";
 import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
-import { worktreeGroupsFamily } from "@/stores/desktopState";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
-import { chatTerminalSplitAtom } from "@/stores/settings";
 
 type ExposeScope = "project" | "global";
 
@@ -41,7 +41,6 @@ const FILTER_OPTIONS: Array<{ value: ExposeFilter; label: string }> = [
   { value: "working", label: "Working" },
   { value: "attention", label: "Needs" },
   { value: "ready", label: "Ready" },
-  { value: "offline", label: "Offline" },
 ];
 
 function resolveScope(value: string | string[] | undefined): ExposeScope {
@@ -58,11 +57,20 @@ function statusBoxClass(kind: ExposeTile["statusKind"]): string {
   switch (kind) {
     case "working":
       return "border-emerald-500/30 bg-emerald-500/10";
-    case "attention":
+    case "needs":
+    case "blocked":
+    case "error":
       return "border-amber-500/30 bg-amber-500/10";
     case "ready":
+    case "idle":
+    case "done":
       return "border-sky-500/25 bg-sky-500/10";
+    case "service":
+      return "border-violet-500/25 bg-violet-500/10";
+    case "serviceOff":
     case "offline":
+      return "border-zinc-500/20 bg-zinc-500/10";
+    default:
       return "border-zinc-500/20 bg-zinc-500/10";
   }
 }
@@ -71,11 +79,20 @@ function statusTextClass(kind: ExposeTile["statusKind"]): string {
   switch (kind) {
     case "working":
       return "text-emerald-300";
-    case "attention":
+    case "needs":
+    case "blocked":
+    case "error":
       return "text-amber-300";
     case "ready":
+    case "idle":
+    case "done":
       return "text-sky-300";
+    case "service":
+      return "text-violet-300";
+    case "serviceOff":
     case "offline":
+      return "text-zinc-400";
+    default:
       return "text-zinc-400";
   }
 }
@@ -84,11 +101,20 @@ function dotClass(kind: ExposeTile["statusKind"]): string {
   switch (kind) {
     case "working":
       return "bg-emerald-400";
-    case "attention":
+    case "needs":
+    case "blocked":
+    case "error":
       return "bg-amber-400";
     case "ready":
+    case "idle":
+    case "done":
       return "bg-sky-400";
+    case "service":
+      return "bg-violet-400";
+    case "serviceOff":
     case "offline":
+      return "bg-zinc-600";
+    default:
       return "bg-zinc-600";
   }
 }
@@ -103,7 +129,6 @@ function ExposeTileCard({
   onPress: () => void;
 }) {
   const preview = tile.previewLines.length > 0 ? tile.previewLines : ["No recent pane output."];
-  const chatPreview = tile.chatPreviewMessages;
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
@@ -119,13 +144,15 @@ function ExposeTileCard({
             <View className="min-w-0 flex-1">
               <View className="flex-row items-baseline gap-2">
                 <Text
-                  className="min-w-0 shrink text-[15px] font-bold text-[#f4f4f5]"
+                  className="min-w-0 shrink text-[15px] font-bold"
+                  style={{ color: tile.tone }}
                   numberOfLines={1}
+                  ellipsizeMode="middle"
                 >
-                  {tile.label}
+                  {tile.semanticTitle || tile.label}
                 </Text>
                 <Text className="shrink-0 font-mono text-[11px] text-[#8b8d97]" numberOfLines={1}>
-                  {tile.tool}
+                  {tile.label}
                 </Text>
               </View>
               <Text
@@ -133,64 +160,79 @@ function ExposeTileCard({
                 numberOfLines={1}
                 ellipsizeMode="middle"
               >
-                {tile.projectName} · {tile.worktreeName}
-                {tile.branch ? ` · ${tile.branch}` : ""}
+                {tile.contextSubtitle} · {tile.tool}
               </Text>
             </View>
-            <View className={cn("rounded border px-2 py-0.5", statusBoxClass(tile.statusKind))}>
-              <Text
-                className={cn("text-[10px] font-bold uppercase", statusTextClass(tile.statusKind))}
-              >
-                {tile.status}
-              </Text>
-            </View>
+            {tile.status ? (
+              <View className={cn("rounded border px-2 py-0.5", statusBoxClass(tile.statusKind))}>
+                <Text
+                  className={cn(
+                    "text-[10px] font-bold uppercase",
+                    statusTextClass(tile.statusKind),
+                  )}
+                >
+                  {tile.status}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
-          {tile.previewMode === "chat" && chatPreview.length > 0 ? (
-            <View className="mt-3 border-t border-[#2a2b31] pt-3">
-              {chatPreview.map((message) => {
-                const isUser = message.role === "user";
-                return (
-                  <View
-                    key={`${tile.id}:${message.id}`}
-                    className={cn(
-                      "mb-1.5 max-w-[92%] rounded-md px-2 py-1.5",
-                      isUser ? "self-end bg-[#f4f4f5]" : "self-start bg-[#23242a]",
-                    )}
-                  >
-                    <Text
-                      className={cn(
-                        "text-[12px] leading-4",
-                        isUser ? "text-[#18181b]" : "text-[#e4e4e7]",
-                      )}
-                      numberOfLines={2}
-                      ellipsizeMode="tail"
-                    >
-                      {message.text}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          ) : (
-            <View className="mt-3 border-t border-[#2a2b31] pt-3">
-              {preview.map((line, index) => (
-                <Text
-                  key={`${tile.id}:${index}`}
-                  className={cn(
-                    "font-mono text-[11.5px] leading-5",
-                    tile.previewLines.length > 0 ? "text-[#d4d4d8]" : "text-[#666872]",
-                  )}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {line}
-                </Text>
-              ))}
-            </View>
-          )}
+          <View className="mt-3 border-t border-[#2a2b31] pt-3">
+            {preview.map((line, index) => (
+              <Text
+                key={`${tile.id}:${index}`}
+                className={cn(
+                  "font-mono text-[11.5px] leading-5",
+                  tile.previewLines.length > 0 ? "text-[#d4d4d8]" : "text-[#666872]",
+                )}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {line}
+              </Text>
+            ))}
+          </View>
         </View>
       </PressableCard>
+    </View>
+  );
+}
+
+function ExposeSectionGrid({
+  section,
+  tileWidth,
+  openTile,
+}: {
+  section: ExposeSection;
+  tileWidth: number;
+  openTile: (tile: ExposeTile) => void;
+}) {
+  return (
+    <View className="mb-4">
+      <View className="mb-1.5 flex-row items-center gap-2 px-2">
+        <View className="h-2 w-2 rounded-sm" style={{ backgroundColor: section.tone }} />
+        <Text
+          className="font-mono text-[12px] font-bold"
+          style={{ color: section.tone }}
+          numberOfLines={1}
+        >
+          {section.label}
+        </Text>
+        <View className="h-px min-w-0 flex-1 bg-border" />
+        <Text className="font-mono text-[11px] text-muted-foreground">
+          {section.tiles.length} agent{section.tiles.length === 1 ? "" : "s"}
+        </Text>
+      </View>
+      <View className="-m-2 flex-row flex-wrap">
+        {section.tiles.map((tile) => (
+          <ExposeTileCard
+            key={tile.id}
+            tile={tile}
+            tileWidth={tileWidth}
+            onPress={() => openTile(tile)}
+          />
+        ))}
+      </View>
     </View>
   );
 }
@@ -214,7 +256,6 @@ export default function ExposeScreen() {
   const projects = useAtomValue(projectsAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
-  const showTerminalSplit = useAtomValue(chatTerminalSplitAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const searchParams = useGlobalSearchParams<{
     project?: string | string[];
@@ -226,6 +267,7 @@ export default function ExposeScreen() {
   const activeControllerRef = useRef<AbortController | null>(null);
   const [tiles, setTiles] = useState<ExposeTile[]>([]);
   const [projectResults, setProjectResults] = useState<ExposeProjectResult[]>([]);
+  const [loadedViewKey, setLoadedViewKey] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   const routeProjectPath = projectPathFromSearchOrLocation(searchParams.project);
@@ -233,34 +275,25 @@ export default function ExposeScreen() {
   const filter = resolveFilter(searchParams.filter);
   const currentProjectPath = routeProjectPath ?? selectedProjectPath ?? projects[0]?.path ?? null;
   const currentProject = projects.find((project) => project.path === currentProjectPath) ?? null;
-  const cachedCurrentGroups = useAtomValue(worktreeGroupsFamily(currentProjectPath ?? ""));
-  const visibleProjects = useMemo(
-    () =>
-      scope === "global" ? projects : currentProject ? [currentProject] : projects.slice(0, 1),
-    [currentProject, projects, scope],
+  const viewKey = scope === "global" ? "global" : `project:${currentProjectPath ?? ""}`;
+  const currentTiles = useMemo(
+    () => (loadedViewKey === viewKey ? tiles : []),
+    [loadedViewKey, tiles, viewKey],
   );
-  const cachedProjectTiles = useMemo(
-    () =>
-      scope === "project" && currentProject && cachedCurrentGroups.length > 0
-        ? buildExposeTiles([{ project: currentProject, groups: cachedCurrentGroups }], {
-            previewMode: showTerminalSplit ? "terminal" : "chat",
-          })
-        : [],
-    [cachedCurrentGroups, currentProject, scope, showTerminalSplit],
+  const currentProjectResults = useMemo(
+    () => (loadedViewKey === viewKey ? projectResults : []),
+    [loadedViewKey, projectResults, viewKey],
   );
-  const displayTiles = tiles.length > 0 ? tiles : cachedProjectTiles;
-  const summary = useMemo(() => summarizeExposeTiles(displayTiles), [displayTiles]);
+  const summary = useMemo(() => summarizeExposeTiles(currentTiles), [currentTiles]);
   const visibleTiles = useMemo(
-    () => filterExposeTiles(displayTiles, filter),
-    [displayTiles, filter],
+    () => filterExposeTiles(currentTiles, filter),
+    [currentTiles, filter],
   );
+  const visibleSections = useMemo(() => groupExposeTiles(visibleTiles), [visibleTiles]);
   const columns = width >= 1440 ? 3 : width >= 900 ? 2 : 1;
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
-  const offlineProjects = projectResults.filter((result) => result.error);
+  const offlineProjects = currentProjectResults.filter((result) => result.error);
   const relayReadyForRequests = relayStatus !== "connecting";
-  const viewKey = `${scope === "global" ? "global" : `project:${currentProjectPath ?? ""}`}:${
-    showTerminalSplit ? "terminal" : "chat"
-  }`;
 
   const refresh = useCallback(async () => {
     const requestId = mountedRequestRef.current + 1;
@@ -272,53 +305,76 @@ export default function ExposeScreen() {
     setPending(true);
     try {
       const token = await getToken();
-      const fetched = await Promise.all(
-        visibleProjects.map(async (project) => {
-          const tilesForProject: ExposeTile[] = [];
-          const resultsForProject: ExposeProjectResult[] = [];
-          const endpoint = getProjectServiceEndpoint(project);
-          if (!endpoint) {
-            resultsForProject.push({
-              projectName: project.name,
-              error: "Project host offline",
-            });
-            return { tiles: tilesForProject, results: resultsForProject };
-          }
-          try {
-            const state = await getDesktopState(endpoint, {
-              token,
-              includePreview: true,
-              includeChatPreview: !showTerminalSplit,
-              signal: controller.signal,
-              timeoutMs: scope === "global" ? 5000 : 10000,
-            });
-            tilesForProject.push(
-              ...buildExposeTiles([{ project, groups: groupByWorktree(state) }], {
-                previewMode: showTerminalSplit ? "terminal" : "chat",
-              }),
-            );
-            resultsForProject.push({ projectName: project.name, error: null });
-          } catch (err) {
-            if (!controller.signal.aborted && !isTransientRequestError(err)) {
-              resultsForProject.push({
-                projectName: project.name,
-                error: getErrorMessage(err),
+      const fetched =
+        scope === "global"
+          ? await (async () => {
+              const response = await listGlobalExposeItems({
+                token,
+                signal: controller.signal,
+                timeoutMs: 5000,
               });
-            }
-          }
-          return { tiles: tilesForProject, results: resultsForProject };
-        }),
-      );
+              return {
+                tiles: buildExposeTiles([
+                  {
+                    project: {
+                      id: "global",
+                      name: "all projects",
+                      path: "/",
+                      dashboardSessionName: "global",
+                      service: null,
+                      serviceAlive: true,
+                      serviceEndpoint: null,
+                    },
+                    items: response.items as ExposeSourceItem[],
+                  },
+                ]),
+                results: [{ projectName: "all projects", error: null }],
+              };
+            })()
+          : await (async () => {
+              const project = currentProject ?? projects[0];
+              if (!project) return { tiles: [], results: [] };
+              const endpoint = getProjectServiceEndpoint(project);
+              if (!endpoint) {
+                return {
+                  tiles: [],
+                  results: [{ projectName: project.name, error: "Project host offline" }],
+                };
+              }
+              const response = await listSwitchableAgents(
+                endpoint,
+                { scope: "all", labelFormat: "raw", includePreview: "1", expose: "1" },
+                {
+                  token,
+                  signal: controller.signal,
+                  timeoutMs: 10000,
+                },
+              );
+              return {
+                tiles: buildExposeTiles([{ project, items: response.items as ExposeSourceItem[] }]),
+                results: [{ projectName: project.name, error: null }],
+              };
+            })();
       if (mountedRequestRef.current !== requestId) return;
-      const nextTiles = fetched.flatMap((item) => item.tiles);
-      const results = fetched.flatMap((item) => item.results);
-      setTiles(nextTiles);
-      setProjectResults(results);
+      setTiles(fetched.tiles);
+      setProjectResults(fetched.results);
+      setLoadedViewKey(viewKey);
+    } catch (err) {
+      if (!controller.signal.aborted && !isTransientRequestError(err)) {
+        setTiles([]);
+        setProjectResults([
+          {
+            projectName: scope === "global" ? "all projects" : (currentProject?.name ?? "project"),
+            error: getErrorMessage(err),
+          },
+        ]);
+        setLoadedViewKey(viewKey);
+      }
     } finally {
       if (mountedRequestRef.current === requestId) setPending(false);
       if (activeControllerRef.current === controller) activeControllerRef.current = null;
     }
-  }, [getToken, relayReadyForRequests, scope, showTerminalSplit, visibleProjects]);
+  }, [currentProject, getToken, projects, relayReadyForRequests, scope, viewKey]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -330,11 +386,6 @@ export default function ExposeScreen() {
       activeControllerRef.current?.abort();
     };
   }, [refresh]);
-
-  useEffect(() => {
-    setTiles([]);
-    setProjectResults([]);
-  }, [viewKey]);
 
   function setScope(nextScope: ExposeScope) {
     router.replace({
@@ -419,7 +470,6 @@ export default function ExposeScreen() {
           <SummaryPill label="Working" value={summary.working} />
           <SummaryPill label="Needs" value={summary.attention} />
           <SummaryPill label="Ready" value={summary.ready} />
-          <SummaryPill label="Offline" value={summary.offline} />
         </View>
 
         {offlineProjects.length > 0 ? (
@@ -445,13 +495,13 @@ export default function ExposeScreen() {
             }
           />
         ) : (
-          <View className="-m-2 flex-row flex-wrap">
-            {visibleTiles.map((tile) => (
-              <ExposeTileCard
-                key={tile.id}
-                tile={tile}
+          <View>
+            {visibleSections.map((section) => (
+              <ExposeSectionGrid
+                key={section.key}
+                section={section}
                 tileWidth={tileWidth}
-                onPress={() => openTile(tile)}
+                openTile={openTile}
               />
             ))}
           </View>

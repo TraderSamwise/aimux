@@ -8,8 +8,9 @@ import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestBinary, requestJson } from "./http-client.js";
 import { log } from "./debug.js";
-import { listAllProjectsExposeItems } from "./expose-control.js";
+import { listAllProjectsExposeItems, type GlobalExposeItem } from "./expose-control.js";
 import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
+import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from "./tmux/expose-ordering.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
@@ -26,6 +27,7 @@ import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
 import { countActiveHostedPrincipals } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
 import { serializeFastControlItem } from "./fast-control.js";
+import { agentStatusChip } from "./tui/render/agent-status.js";
 import {
   CORE_API_ROUTES,
   CORE_COMMAND_NAMES,
@@ -937,15 +939,25 @@ export class AimuxDaemon {
         trackExposePreviewItems(projectRoot, projectItems);
       }
     }
-    const items = rawItems.map((item) => {
-      const previewSnapshot = includePreview
-        ? getExposePreviewSnapshot(item.projectRoot, item.target.windowId)
-        : undefined;
+    const sublabel = "project-worktree";
+    const orderedItems = orderExposeItems(
+      { scope: "global", items: rawItems, scopeLabel: "all projects", sublabel },
+      "/",
+    ) as GlobalExposeItem[];
+    const exposeTones = assignWorktreeTones(orderedItems, "/");
+    const items = orderedItems.map((item) => {
+      const windowId = item.target.windowId;
+      const projectRoot = item.projectRoot;
+      const previewSnapshot = includePreview && windowId ? getExposePreviewSnapshot(projectRoot, windowId) : undefined;
+      const itemWithPreview = previewSnapshot ? { ...item, previewSnapshot } : item;
+      const chip = agentStatusChip(item.metadata);
       return {
-        ...serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item),
+        ...serializeFastControlItem(itemWithPreview),
         projectId: item.projectId,
         projectName: item.projectName,
-        projectRoot: item.projectRoot,
+        projectRoot,
+        exposeContext: exposeTileContextForItem(item, sublabel, "/", exposeTones),
+        exposeStatus: chip ?? undefined,
       };
     });
     return { status: 200, body: { ok: true, items } };

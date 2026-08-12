@@ -1255,6 +1255,8 @@ export interface SwitchableAgentsInput {
   scope?: "all" | "worktree";
   includePreview?: "1";
   includeChatPreview?: "1";
+  expose?: "1";
+  labelFormat?: "raw";
 }
 
 export type ExposePreviewSnapshotSource = "capture" | "tap";
@@ -1270,6 +1272,15 @@ export interface ExposePreviewSnapshot {
 
 export interface SwitchableAgentItem extends Record<string, unknown> {
   previewSnapshot?: ExposePreviewSnapshot;
+  exposeContext?: {
+    worktree: string;
+    project?: string;
+    tone?: number;
+  };
+  exposeStatus?: {
+    kind: string;
+    label: string;
+  };
 }
 
 export interface SwitchableAgentsResponse extends ProjectApiOk {

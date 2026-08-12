@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { dashboardWorktreeOrderPaths, groupItemsByProject, groupItemsByWorktree, orderExposeItems } from "./expose.js";
+import {
+  dashboardWorktreeOrderPaths,
+  groupItemsByProject,
+  groupItemsByWorktree,
+  orderExposeItems,
+} from "./expose-ordering.js";
 import type { ExposeScopeItem, ExposeScopeView } from "./expose-model.js";
 
 function item(id: string, options: { projectName?: string; projectRoot?: string; worktreePath?: string } = {}) {

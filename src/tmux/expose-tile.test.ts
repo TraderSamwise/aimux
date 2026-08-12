@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
-import {
-  assignWorktreeTones,
-  buildTileHeader,
-  drawTile,
-  fitHeaderRows,
-  matchClientSize,
-  type TileContext,
-} from "./expose.js";
+import { assignWorktreeTones, type ExposeTileContext } from "./expose-ordering.js";
+import { buildTileHeader, drawTile, fitHeaderRows, matchClientSize } from "./expose.js";
 
 const PILL = "[PILL]";
 
@@ -56,13 +50,13 @@ describe("fitHeaderRows", () => {
   });
 });
 
-const ctx = (project: string, worktree: string, tone = 0): TileContext => ({ project, worktree, tone });
+const ctx = (project: string, worktree: string, tone = 0): ExposeTileContext => ({ project, worktree, tone });
 
 function renderTile(
   width: number,
   selected: boolean,
   meta: Record<string, unknown>,
-  context: TileContext,
+  context: ExposeTileContext,
   tileHeight = 6,
   preview: string[] = ["* Worked for 41s", "recap", "next"],
 ): string {

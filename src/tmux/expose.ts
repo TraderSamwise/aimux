@@ -3,9 +3,8 @@ import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { basename, resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
-import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 import { log } from "../debug.js";
-import { resolveScopedWorktreePath, type FastControlContext, type FastControlItem } from "../fast-control.js";
+import { resolveScopedWorktreePath, type FastControlContext } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { formatRelativeRecency } from "../recency.js";
 import { TerminalHost } from "../terminal-host.js";
@@ -23,10 +22,15 @@ import {
   type ExposeScopeView,
   type ExposeSublabel,
 } from "./expose-model.js";
+import {
+  assignWorktreeTones,
+  exposeTileContextForItem,
+  orderExposeItems,
+  type ExposeTileContext,
+} from "./expose-ordering.js";
 import { readHotExposeScopeView, writeHotExposeScopeView, type HotExposeScopeKey } from "./expose-hot-snapshot.js";
 import { sanitizeExposePreviewOutput } from "./expose-preview-sanitize.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
-import { listWorktrees, type WorktreeInfo } from "../worktree.js";
 
 export interface TmuxExposeOptions {
   projectRoot: string;
@@ -150,12 +154,6 @@ function writeSelectedWindow(options: TmuxExposeOptions, item: ExposeScopeItem):
   }
 }
 
-function shortWorktree(item: FastControlItem, projectRoot: string): string {
-  const wt = item.metadata.worktreePath;
-  if (!wt || pathResolve(wt) === pathResolve(projectRoot)) return "main";
-  return basename(wt);
-}
-
 function tilePreview(raw: string, count: number): string[] {
   const lines = sanitizeExposePreviewOutput(raw);
   const tail = lines.slice(-count);
@@ -204,108 +202,6 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   };
 }
 
-export interface ExposeOrderingOptions {
-  worktreeOrderByProjectRoot?: Record<string, string[]>;
-}
-
-export function orderExposeItems(
-  view: ExposeScopeView,
-  projectRoot = "/",
-  options: ExposeOrderingOptions = {},
-): ExposeScopeItem[] {
-  if (view.sublabel === "none") return view.items;
-  if (view.sublabel === "worktree") {
-    const groups = groupItemsByWorktree(view.items, projectRoot, options);
-    return groups.length < 2 ? view.items : groups.flatMap((group) => group.items);
-  }
-  const groups = groupItemsByProject(view.items);
-  if (groups.length < 2) {
-    const root = view.items[0]?.projectRoot ?? projectRoot;
-    const worktreeGroups = groupItemsByWorktree(view.items, root, options);
-    return worktreeGroups.length < 2 ? view.items : worktreeGroups.flatMap((group) => group.items);
-  }
-  return groups.flatMap((project) => {
-    const root = project.items[0]?.projectRoot ?? projectRoot;
-    const worktreeGroups = groupItemsByWorktree(project.items, root, options);
-    return worktreeGroups.length < 2 ? project.items : worktreeGroups.flatMap((group) => group.items);
-  });
-}
-
-/** Ordered project groups, preserving first-seen project order and item order within one. */
-export function groupItemsByProject(items: ExposeScopeItem[]): Array<{ label: string; items: ExposeScopeItem[] }> {
-  const order: string[] = [];
-  const buckets = new Map<string, ExposeScopeItem[]>();
-  for (const item of items) {
-    const label = item.projectName?.trim() || "unknown project";
-    let bucket = buckets.get(label);
-    if (!bucket) {
-      bucket = [];
-      buckets.set(label, bucket);
-      order.push(label);
-    }
-    bucket.push(item);
-  }
-  return order.map((label) => ({ label, items: buckets.get(label)! }));
-}
-
-/** Ordered worktree groups, matching dashboard worktree order and item order within one. */
-export function groupItemsByWorktree(
-  items: ExposeScopeItem[],
-  projectRoot: string,
-  options: ExposeOrderingOptions = {},
-): Array<{ label: string; items: ExposeScopeItem[] }> {
-  const order: string[] = [];
-  const labels = new Map<string, string>();
-  const buckets = new Map<string, ExposeScopeItem[]>();
-  for (const item of items) {
-    const root = item.projectRoot ?? projectRoot;
-    const key = worktreeToneKey(item, root);
-    let bucket = buckets.get(key);
-    if (!bucket) {
-      bucket = [];
-      buckets.set(key, bucket);
-      labels.set(key, shortWorktree(item, root));
-      order.push(key);
-    }
-    bucket.push(item);
-  }
-  if (order.length < 2) return order.map((key) => ({ label: labels.get(key) ?? "main", items: buckets.get(key)! }));
-  const ranks = worktreeOrderRanks(projectRoot, options);
-  const firstSeen = new Map(order.map((key, index) => [key, index]));
-  const fallbackRank = ranks.size;
-  const sorted = [...order].sort((a, b) => {
-    const aRank = ranks.get(a) ?? fallbackRank + (firstSeen.get(a) ?? 0);
-    const bRank = ranks.get(b) ?? fallbackRank + (firstSeen.get(b) ?? 0);
-    return aRank - bRank;
-  });
-  return sorted.map((key) => ({ label: labels.get(key) ?? "main", items: buckets.get(key)! }));
-}
-
-function worktreeOrderRanks(projectRoot: string, options: ExposeOrderingOptions): Map<string, number> {
-  const root = pathResolve(projectRoot);
-  const configured = options.worktreeOrderByProjectRoot?.[root];
-  const paths = configured ?? dashboardWorktreeOrderPaths(projectRoot);
-  const ranks = new Map<string, number>();
-  for (const path of paths) {
-    const key = pathResolve(path);
-    if (!ranks.has(key)) ranks.set(key, ranks.size);
-  }
-  if (!ranks.has(root)) {
-    const shifted = new Map<string, number>([[root, 0]]);
-    for (const [key, rank] of ranks) shifted.set(key, rank + 1);
-    return shifted;
-  }
-  return ranks;
-}
-
-export function dashboardWorktreeOrderPaths(projectRoot: string, worktrees = listWorktrees(projectRoot)): string[] {
-  const root = pathResolve(projectRoot);
-  const secondary = worktrees
-    .filter((worktree) => !worktree.isBare && pathResolve(worktree.path) !== root)
-    .sort((a: WorktreeInfo, b: WorktreeInfo) => dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a));
-  return [root, ...secondary.map((worktree) => worktree.path)];
-}
-
 // Tile titles tint their worktree from a small palette. These are deliberately distinct
 // from STATE_BORDER's meaning: a tone groups, it does not report state.
 const WORKTREE_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75", "38;5;209"];
@@ -314,30 +210,6 @@ const WORKTREE_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75",
 function toned(text: string, tone: number | undefined): string {
   if (tone === undefined) return style(text, "strong");
   return `\x1b[1;${WORKTREE_TONES[tone % WORKTREE_TONES.length]}m${text}${RESET}`;
-}
-
-function worktreeToneKey(item: ExposeScopeItem, projectRoot: string): string {
-  return pathResolve(item.metadata.worktreePath || projectRoot);
-}
-
-/**
- * A tint per worktree, assigned in render order.
- *
- * Order of first appearance rather than a hash of the path: it guarantees the first
- * six worktrees on screen are mutually distinct, which is the whole point. A hash is
- * stable across renders but lets two adjacent worktrees collide, and Exposé is a
- * popup — nothing survives long enough for cross-render stability to be worth that.
- *
- * Keyed by resolved path, not by the displayed name, because every project's main
- * checkout renders as "main" and the global scope puts several of them on one grid.
- */
-export function assignWorktreeTones(items: ExposeScopeItem[], projectRoot: string): Map<string, number> {
-  const tones = new Map<string, number>();
-  for (const item of items) {
-    const key = worktreeToneKey(item, item.projectRoot ?? projectRoot);
-    if (!tones.has(key)) tones.set(key, tones.size % WORKTREE_TONES.length);
-  }
-  return tones;
 }
 
 // 256-color tile borders tinted to the agent's state, matching the chip/pill tone from
@@ -404,13 +276,7 @@ export function fitHeaderRows(headerRows: string[], capacity: number, hasPill: b
  * project) this agent belongs to. `worktree` is empty in the worktree scope, where
  * every tile shares one and naming it says nothing.
  */
-export interface TileContext {
-  worktree: string;
-  /** Only in the global scope, where project and worktree both identify the tile. */
-  project?: string;
-  /** Index into WORKTREE_TONES; absent when there is no worktree to tint. */
-  tone?: number;
-}
+export type TileContext = ExposeTileContext;
 
 export function drawTile(
   item: ExposeScopeItem,
@@ -565,14 +431,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   };
 
   const tileContext = (item: ExposeScopeItem): TileContext => {
-    if (sublabel === "none") return { worktree: "" };
-    // `projectRoot` rides only on global-scope items, so this is the project root in
-    // every other scope — the same value the old per-scope branches resolved to.
-    const root = item.projectRoot ?? options.projectRoot;
-    const tone = worktreeTones().get(worktreeToneKey(item, root));
-    const worktree = shortWorktree(item, root);
-    if (sublabel === "project-worktree" && item.projectName) return { worktree, project: item.projectName, tone };
-    return { worktree, tone };
+    return exposeTileContextForItem(item, sublabel, options.projectRoot, worktreeTones());
   };
 
   const terminal = manageTerminal ? new TerminalHost() : null;

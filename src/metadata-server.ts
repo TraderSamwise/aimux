@@ -171,6 +171,8 @@ import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "./expose-pane
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
 import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
 import { runTmuxExpose } from "./tmux/expose.js";
+import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from "./tmux/expose-ordering.js";
+import { agentStatusChip } from "./tui/render/agent-status.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
   PROMPT_CONTEXT_MAX_BYTES,
@@ -2999,6 +3001,7 @@ export class MetadataServer {
       const scope = url.searchParams.get("scope") === "all" ? "all" : "worktree";
       const rawLabels = url.searchParams.get("labelFormat") === "raw";
       const includePreview = url.searchParams.get("includePreview") === "1";
+      const expose = url.searchParams.get("expose") === "1";
       const rawItems = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
@@ -3011,12 +3014,32 @@ export class MetadataServer {
         { scope },
       );
       const itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems) : rawItems;
-      const items = itemsWithPreview.map((item) => {
+      const sublabel = scope === "all" ? "worktree" : "none";
+      const exposeItems = expose
+        ? orderExposeItems(
+            {
+              scope: scope === "all" ? "project" : "worktree",
+              items: itemsWithPreview,
+              scopeLabel: scope === "all" ? "all worktrees" : "this worktree",
+              sublabel,
+            },
+            this.currentProjectRoot(),
+          )
+        : itemsWithPreview;
+      const exposeTones = expose ? assignWorktreeTones(exposeItems, this.currentProjectRoot()) : null;
+      const items = exposeItems.map((item) => {
         const serialized = serializeFastControlItem(item);
+        const chip = agentStatusChip(item.metadata);
         return {
           ...serialized,
           label:
             rawLabels || !item.lastUsedAt ? item.label : `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}`,
+          ...(expose && exposeTones
+            ? {
+                exposeContext: exposeTileContextForItem(item, sublabel, this.currentProjectRoot(), exposeTones),
+                exposeStatus: chip ?? undefined,
+              }
+            : {}),
         };
       });
       send(res, 200, { ok: true, items });
