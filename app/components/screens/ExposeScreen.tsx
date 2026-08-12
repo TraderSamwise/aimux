@@ -120,10 +120,12 @@ function dotClass(kind: ExposeTile["statusKind"]): string {
 function ExposeTileCard({
   tile,
   tileWidth,
+  tileHeight,
   onPress,
 }: {
   tile: ExposeTile;
   tileWidth: number;
+  tileHeight: number;
   onPress: () => void;
 }) {
   const preview = tile.previewLines.length > 0 ? tile.previewLines : ["No recent pane output."];
@@ -131,8 +133,9 @@ function ExposeTileCard({
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
         onPress={onPress}
+        style={{ minHeight: tileHeight }}
         className={cn(
-          "min-h-[210px] rounded-lg border bg-[#17181d] p-0 overflow-hidden hover:bg-[#1c1d23]",
+          "rounded-lg border bg-[#17181d] p-0 overflow-hidden hover:bg-[#1c1d23]",
           tile.statusKind === "offline" ? "border-[#2a2b31]" : "border-[#334155]",
         )}
       >
@@ -207,7 +210,7 @@ function SummaryPill({ label, value }: { label: string; value: number }) {
 }
 
 export default function ExposeScreen() {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const router = useRouter();
@@ -284,6 +287,14 @@ export default function ExposeScreen() {
   );
   const columns = width >= 1440 ? 3 : width >= 900 ? 2 : 1;
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
+  const tileRows = Math.max(1, Math.ceil(Math.max(visibleTiles.length, 1) / columns));
+  const exposeChromeHeight = width >= 900 ? 330 : 280;
+  const gridGapHeight = Math.max(0, tileRows - 1) * 16;
+  const targetGridHeight = Math.max(0, height - exposeChromeHeight);
+  const tileHeight = Math.max(
+    width >= 900 ? 260 : 240,
+    Math.min(420, Math.floor((targetGridHeight - gridGapHeight) / tileRows)),
+  );
   const offlineProjects = currentProjectResults.filter((result) => result.error);
   const relayReadyForRequests = relayStatus !== "connecting";
 
@@ -493,6 +504,7 @@ export default function ExposeScreen() {
                 key={tile.id}
                 tile={tile}
                 tileWidth={tileWidth}
+                tileHeight={tileHeight}
                 onPress={() => openTile(tile)}
               />
             ))}
