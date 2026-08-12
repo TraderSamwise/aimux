@@ -162,6 +162,7 @@ function ExposeTileCard({
       ? tile.terminalPreviewLines.slice(-previewLineCount)
       : [[{ text: "No recent pane output.", style: {} }]];
   const chatPreview = tile.chatPreviewMessages;
+  const chatPreviewTail = chatPreview.slice(-4);
   const hasPreview =
     previewMode === "terminal"
       ? tile.terminalPreviewLines.length > 0
@@ -239,14 +240,20 @@ function ExposeTileCard({
                 </Text>
               ))
             ) : hasPreview && chatEndpoint ? (
-              chatPreview.map((message, index) => (
-                <MessageBlock
-                  key={message.id ?? message.clientMessageId ?? `${tile.id}:${index}`}
-                  dividerWidth={chatDividerWidth}
-                  message={message}
-                  serviceEndpoint={chatEndpoint}
-                />
-              ))
+              <View className="min-h-full justify-end">
+                {chatPreviewTail.map((message, index) => (
+                  <View
+                    key={message.id ?? message.clientMessageId ?? `${tile.id}:${index}`}
+                    style={{ flexShrink: 0 }}
+                  >
+                    <MessageBlock
+                      dividerWidth={chatDividerWidth}
+                      message={message}
+                      serviceEndpoint={chatEndpoint}
+                    />
+                  </View>
+                ))}
+              </View>
             ) : (
               <Text className="text-[12px] leading-5 text-[#666872]" numberOfLines={1}>
                 No recent chat output.
@@ -263,7 +270,7 @@ function SummaryPill({ label, value }: { label: string; value: number }) {
   return (
     <View className="mr-2 mb-2 rounded-full border border-border bg-card px-3 py-1.5">
       <Text className="text-[12px] font-semibold text-foreground">
-        {label} <Text className="font-mono text-muted-foreground">{value}</Text>
+        {label} <Text className="text-muted-foreground">{value}</Text>
       </Text>
     </View>
   );
