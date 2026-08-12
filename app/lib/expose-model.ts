@@ -2,6 +2,7 @@ import type { DaemonProject } from "@/lib/api";
 import type { DesktopSession, DesktopService, WorktreeBucket } from "@/lib/desktop-state";
 import type { AgentTranscriptMessage } from "@/lib/events";
 import { firstTokenOf } from "@/lib/status-tone";
+import { formatTerminalOutputPlainLinesForDisplay } from "@/lib/terminal-output";
 import { WORKTREE_TONES } from "@/lib/worktree-tone";
 
 export type ExposeFilter = "all" | "working" | "attention" | "ready" | "offline";
@@ -54,6 +55,8 @@ export interface ExposeSummary {
   offline: number;
 }
 
+const EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH = 48;
+
 function cap(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
@@ -78,10 +81,16 @@ function serviceStatusKind(service: DesktopService): ExposeTile["statusKind"] {
 
 function previewLinesFor(session: DesktopSession): string[] {
   const output = session.previewSnapshot?.output ?? "";
-  if (!output.trim()) return session.previewLine ? [session.previewLine] : [];
-  return output
-    .replace(/\r/g, "")
-    .split("\n")
+  const lines = output.trim()
+    ? formatTerminalOutputPlainLinesForDisplay(output.replace(/\r/g, ""), {
+        dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
+      })
+    : session.previewLine
+      ? formatTerminalOutputPlainLinesForDisplay(session.previewLine.replace(/\r/g, ""), {
+          dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
+        })
+      : [];
+  return lines
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0)
     .slice(-7);

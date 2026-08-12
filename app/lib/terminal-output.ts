@@ -53,6 +53,13 @@ export function formatTerminalOutputForDisplay(
   return formatted;
 }
 
+export function formatTerminalOutputPlainLinesForDisplay(
+  output: string,
+  options: TerminalOutputDisplayOptions = {},
+): string[] {
+  return formatTerminalOutputForDisplay(output, options).map(ansiLineText);
+}
+
 export function formatPlainTextForDisplay(
   text: string,
   {

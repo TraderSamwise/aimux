@@ -115,6 +115,41 @@ describe("expose model", () => {
     expect(tile?.previewLines).toEqual(["two", "three", "four", "five", "six", "seven", "eight"]);
   });
 
+  it("formats terminal previews through the shared terminal display pipeline", () => {
+    const [tile] = buildExposeTiles([
+      {
+        project: tealstreet,
+        groups: [
+          group("Main Checkout", [
+            {
+              id: "a",
+              status: "running",
+              command: "codex",
+              previewSnapshot: {
+                source: "capture",
+                capturedAt: "2026-08-12T00:00:00.000Z",
+                output: [
+                  "\x1b[38;5;69mRun\x1b[0m yarn test",
+                  "────────────────────────────────────────────────────────────────",
+                  "──────────────────",
+                  "plain",
+                ].join("\n"),
+              },
+            },
+          ]),
+        ],
+      },
+    ]);
+
+    expect(tile?.previewLines).toEqual([
+      "Run yarn test",
+      "────────────────────────────────────────────────",
+      "plain",
+    ]);
+    expect(tile?.previewLines.join("\n")).not.toContain("[38;5");
+    expect(tile?.previewLines.join("\n")).not.toContain("\x1b");
+  });
+
   it("uses chat preview messages when chat previews are requested", () => {
     const [tile] = buildExposeTiles(
       [
