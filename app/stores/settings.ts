@@ -11,11 +11,13 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 export type ThemePreference = "system" | "light" | "dark";
 export type AgentOutputViewMode = "chat" | "split" | "terminal";
 export type ExposePreviewMode = "chat" | "terminal";
+export type DesktopAppZoom = 100 | 110 | 120;
 
 export interface AppSettings {
   theme: ThemePreference;
   agentOutputViewMode: AgentOutputViewMode;
   exposePreviewMode: ExposePreviewMode;
+  desktopAppZoom: DesktopAppZoom;
   chatRichTerminalColors: boolean;
   notifications: NotificationSettings;
   activeShare: ActiveSharedSession | null;
@@ -34,6 +36,7 @@ export const defaultSettings: AppSettings = Object.freeze({
   theme: "dark",
   agentOutputViewMode: "split",
   exposePreviewMode: "terminal",
+  desktopAppZoom: 110,
   chatRichTerminalColors: true,
   notifications: defaultNotificationSettings,
   activeShare: null,
@@ -43,6 +46,7 @@ export function normalizeAppSettings(input: AppSettings): AppSettings {
   return {
     ...defaultSettings,
     ...input,
+    desktopAppZoom: normalizeDesktopAppZoom(input.desktopAppZoom),
     notifications: normalizeNotificationSettings(input.notifications),
     activeShare: normalizeActiveShare(input.activeShare),
   };
@@ -70,6 +74,7 @@ export const agentOutputViewModeAtom = focusAtom(settingsAtom, (optic) =>
 export const exposePreviewModeAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("exposePreviewMode"),
 );
+export const desktopAppZoomAtom = focusAtom(settingsAtom, (optic) => optic.prop("desktopAppZoom"));
 export const chatRichTerminalColorsAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("chatRichTerminalColors"),
 );
@@ -79,6 +84,14 @@ export const notificationSettingsAtom = focusAtom(settingsAtom, (optic) =>
 export const activeSharedSessionAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("activeShare"),
 );
+
+export function desktopAppZoomScale(value: DesktopAppZoom) {
+  return value / 100;
+}
+
+function normalizeDesktopAppZoom(value: AppSettings["desktopAppZoom"]): DesktopAppZoom {
+  return value === 100 || value === 110 || value === 120 ? value : defaultSettings.desktopAppZoom;
+}
 
 function normalizeActiveShare(value: AppSettings["activeShare"]): ActiveSharedSession | null {
   if (!value?.shareId || !value.ownerUserId || !value.projectRoot || !value.sessionId) return null;

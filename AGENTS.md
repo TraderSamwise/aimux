@@ -101,6 +101,30 @@ presentation adapter unless there is a documented reason to create new semantics
 - If plain text is needed, derive it from the shared formatter/model layer rather
   than adding a second cleanup path.
 
+### App Runtime Tuning
+
+Treat Aimux app tuning as three product runtimes, even when Expo lets them share
+most code:
+
+- **Mobile app**: phone-sized native iOS/Android. Preserve native chat feel,
+  keyboard behavior, safe-area spacing, and tested mobile font scale.
+- **Web app**: browser-hosted React Native Web. Preserve browser layout density
+  and do not assume native APIs, keyboard timing, or browser zoom behavior.
+- **Desktop app**: native app running in a desktop-sized window, such as iPad on
+  Mac or Catalyst-style presentation. It may need different density, navigation,
+  and window behavior than both phone and browser.
+
+Before changing UI density, zoom, animation, keyboard behavior, breakpoints,
+or default view modes, state which runtime(s) the change targets and gate the
+implementation accordingly. Do not use `Platform.OS` alone for layout decisions
+when the actual product distinction is viewport size or desktop-style native
+presentation. Prefer small shared helpers for runtime classification so chat,
+Exposé, navigation, and settings do not drift.
+
+Durable runtime-specific preferences still belong in `app/stores/settings.ts`.
+Defaults must be explicit per runtime; do not let a desktop-app tuning change
+silently affect phone mobile or Chrome web.
+
 ### App State
 
 - Use Jotai for client state.
@@ -178,7 +202,7 @@ looked locally reasonable. Do not "simplify" it back.
 - With no second digit, the first digit stands alone: focus the worktree root.
 - An out-of-range second digit is a no-op that leaves the pointer on the worktree root.
 - The second digit must commit the selection (`level`, `sessionIndex`, preferred entry,
-  persist) *before* activating, so stepping back out of the agent or service returns the
+  persist) _before_ activating, so stepping back out of the agent or service returns the
   pointer to that row rather than the worktree header.
 
 The tempting regression is making a digit mean "row N of the worktree I am already in"

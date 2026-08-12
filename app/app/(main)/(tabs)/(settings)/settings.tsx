@@ -19,11 +19,14 @@ import {
   activeSharedSessionAtom,
   agentOutputViewModeAtom,
   chatRichTerminalColorsAtom,
+  desktopAppZoomAtom,
   notificationSettingsAtom,
+  type DesktopAppZoom,
   themePreferenceAtom,
   type AgentOutputViewMode,
   type ThemePreference,
 } from "@/stores/settings";
+import { useRuntimeTuning } from "@/lib/runtime-tuning";
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: "system", label: "System" },
@@ -37,6 +40,12 @@ const AGENT_OUTPUT_VIEW_OPTIONS: { value: AgentOutputViewMode; label: string }[]
   { value: "terminal", label: "Terminal" },
 ];
 
+const DESKTOP_APP_ZOOM_OPTIONS: { value: `${DesktopAppZoom}`; label: string }[] = [
+  { value: "100", label: "100%" },
+  { value: "110", label: "110%" },
+  { value: "120", label: "120%" },
+];
+
 const ENABLED_OPTIONS = [
   { value: "off", label: "Off" },
   { value: "on", label: "On" },
@@ -45,9 +54,11 @@ const ENABLED_OPTIONS = [
 export default function SettingsScreen() {
   const [themePreference, setThemePreference] = useAtom(themePreferenceAtom);
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
+  const [desktopAppZoom, setDesktopAppZoom] = useAtom(desktopAppZoomAtom);
   const [chatRichTerminalColors, setChatRichTerminalColors] = useAtom(chatRichTerminalColorsAtom);
   const [notificationSettings, setNotificationSettings] = useAtom(notificationSettingsAtom);
   const activeShare = useAtomValue(activeSharedSessionAtom);
+  const { isDesktopNative } = useRuntimeTuning();
   const { getToken } = useAuth();
   const [browserPermission, setBrowserPermission] = React.useState<BrowserNotificationPermission>(
     () => getBrowserNotificationPermission(),
@@ -211,6 +222,19 @@ export default function SettingsScreen() {
         onChange={setAgentOutputViewMode}
         fullWidth
       />
+      {isDesktopNative ? (
+        <>
+          <Text className="mb-2 mt-6 text-xs uppercase tracking-wider text-muted-foreground">
+            Desktop App Zoom
+          </Text>
+          <SegmentedControl<`${DesktopAppZoom}`>
+            options={DESKTOP_APP_ZOOM_OPTIONS}
+            value={`${desktopAppZoom}`}
+            onChange={(value) => setDesktopAppZoom(Number(value) as DesktopAppZoom)}
+            fullWidth
+          />
+        </>
+      ) : null}
       <View className="mt-3 overflow-hidden rounded-lg border border-border">
         <SettingToggle
           label="Terminal colors"

@@ -23,6 +23,7 @@ import {
 } from "@/lib/expose-model";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
+import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { cn } from "@/lib/utils";
 import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
@@ -149,14 +150,20 @@ function ExposeTileCard({
   tileHeight,
   previewMode,
   onPress,
+  textScale,
 }: {
   tile: ExposeTile;
   tileWidth: number;
   tileHeight: number;
   previewMode: ExposePreviewMode;
   onPress: () => void;
+  textScale: number;
 }) {
-  const previewLineCount = Math.max(6, Math.floor((tileHeight - 112) / 20));
+  const terminalLineHeight = 20 * textScale;
+  const previewLineCount = Math.max(
+    6,
+    Math.floor((tileHeight - 112 * textScale) / terminalLineHeight),
+  );
   const terminalPreview =
     tile.terminalPreviewLines.length > 0
       ? tile.terminalPreviewLines.slice(-previewLineCount)
@@ -167,8 +174,13 @@ function ExposeTileCard({
     previewMode === "terminal"
       ? tile.terminalPreviewLines.length > 0
       : tile.chatPreviewMessages.length > 0;
-  const chatDividerWidth = Math.max(24, Math.floor((tileWidth * 0.9 - 24) / 8.5) - 2);
+  const chatDividerWidth = Math.max(24, Math.floor((tileWidth * 0.9 - 24) / (8.5 * textScale)) - 2);
   const chatEndpoint = tile.serviceEndpoint;
+  const tileTitleStyle = { color: tile.tone, fontSize: 15 * textScale, lineHeight: 20 * textScale };
+  const tileLabelStyle = { fontSize: 11 * textScale, lineHeight: 16 * textScale };
+  const tileStatusStyle = { fontSize: 10 * textScale, lineHeight: 14 * textScale };
+  const tilePreviewStyle = { fontSize: 11.5 * textScale, lineHeight: terminalLineHeight };
+  const tileEmptyStyle = { fontSize: 12 * textScale, lineHeight: 20 * textScale };
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
@@ -186,18 +198,23 @@ function ExposeTileCard({
               <View className="flex-row items-baseline gap-2">
                 <Text
                   className="min-w-0 shrink text-[15px] font-bold"
-                  style={{ color: tile.tone }}
+                  style={tileTitleStyle}
                   numberOfLines={1}
                   ellipsizeMode="middle"
                 >
                   {tile.semanticTitle || tile.label}
                 </Text>
-                <Text className="shrink-0 font-mono text-[11px] text-[#8b8d97]" numberOfLines={1}>
+                <Text
+                  className="shrink-0 font-mono text-[#8b8d97]"
+                  style={tileLabelStyle}
+                  numberOfLines={1}
+                >
                   {tile.label}
                 </Text>
               </View>
               <Text
-                className="mt-1 font-mono text-[11px] text-[#7c7e88]"
+                className="mt-1 font-mono text-[#7c7e88]"
+                style={tileLabelStyle}
                 numberOfLines={1}
                 ellipsizeMode="middle"
               >
@@ -207,10 +224,8 @@ function ExposeTileCard({
             {tile.status ? (
               <View className={cn("rounded border px-2 py-0.5", statusBoxClass(tile.statusKind))}>
                 <Text
-                  className={cn(
-                    "text-[10px] font-bold uppercase",
-                    statusTextClass(tile.statusKind),
-                  )}
+                  className={cn("font-bold uppercase", statusTextClass(tile.statusKind))}
+                  style={tileStatusStyle}
                 >
                   {tile.status}
                 </Text>
@@ -223,10 +238,8 @@ function ExposeTileCard({
               terminalPreview.map((line, index) => (
                 <Text
                   key={`${tile.id}:${index}`}
-                  className={cn(
-                    "font-mono text-[11.5px] leading-5",
-                    hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
-                  )}
+                  className={cn("font-mono", hasPreview ? "text-[#d4d4d8]" : "text-[#666872]")}
+                  style={tilePreviewStyle}
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
@@ -250,12 +263,13 @@ function ExposeTileCard({
                       dividerWidth={chatDividerWidth}
                       message={message}
                       serviceEndpoint={chatEndpoint}
+                      textScale={textScale}
                     />
                   </View>
                 ))}
               </View>
             ) : (
-              <Text className="text-[12px] leading-5 text-[#666872]" numberOfLines={1}>
+              <Text className="text-[#666872]" style={tileEmptyStyle} numberOfLines={1}>
                 No recent chat output.
               </Text>
             )}
@@ -278,6 +292,7 @@ function SummaryPill({ label, value }: { label: string; value: number }) {
 
 export default function ExposeScreen() {
   const { width, height } = useWindowDimensions();
+  const { uiScale } = useRuntimeTuning();
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const router = useRouter();
@@ -590,6 +605,7 @@ export default function ExposeScreen() {
                 tileHeight={tileHeight}
                 previewMode={exposePreviewMode}
                 onPress={() => openTile(tile)}
+                textScale={uiScale}
               />
             ))}
           </View>
