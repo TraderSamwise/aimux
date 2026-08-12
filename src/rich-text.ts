@@ -1,16 +1,5 @@
-export type RichTextMark = "bold" | "dim" | "italic" | "underline" | "strike";
-
-export interface RichTextColor {
-  model: "rgb";
-  value: string;
-}
-
-export interface RichTextSpan {
-  text: string;
-  marks?: RichTextMark[];
-  foreground?: RichTextColor;
-  background?: RichTextColor;
-}
+import type { RichTextMark, RichTextSpan } from "./agent-transcript-contract.js";
+export type { RichTextColor, RichTextMark, RichTextSpan } from "./agent-transcript-contract.js";
 
 interface Attributes {
   fg?: string;

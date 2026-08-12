@@ -1,5 +1,5 @@
-import type { AgentTranscriptMessage } from "./agent-transcript.js";
-import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
+import type { AgentActivityState, AgentAttentionState } from "./agent-events-contract.js";
+import type { AgentTranscriptMessage } from "./agent-transcript-contract.js";
 
 export const PROJECT_API_ROUTES = {
   events: "/events",

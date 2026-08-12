@@ -1,5 +1,7 @@
 import type { AimuxDaemon } from "./daemon.js";
 import { notifyRemoteClientConnected } from "./notify.js";
+import type { RelayConnectionStatus, RelayStatusSnapshot } from "./relay-contract.js";
+export type { RelayConnectionStatus, RelayStatusSnapshot } from "./relay-contract.js";
 
 interface RelayRequest {
   id: string;
@@ -58,15 +60,6 @@ const MAX_RETRY_MS = 30_000;
 const MAX_HANDSHAKE_FAILURES = 5;
 const REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS = 5 * 60 * 1000;
 const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
-
-export type RelayConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected" | "auth_failed";
-
-export interface RelayStatusSnapshot {
-  status: RelayConnectionStatus;
-  relayUrl: string;
-  lastConnectedAt: string | null;
-  lastError: string | null;
-}
 
 export class RelayClient {
   private ws: WebSocket | null = null;

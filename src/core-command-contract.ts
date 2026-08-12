@@ -1,5 +1,4 @@
-import type { RelayStatusSnapshot } from "./relay-client.js";
-import type { RuntimeRestartResult } from "./runtime-restart.js";
+import type { RelayStatusSnapshot } from "./relay-contract.js";
 
 export const CORE_API_ROUTES = {
   commands: "/core/commands",
@@ -195,8 +194,23 @@ export interface CoreRelayResult {
   relay: CoreRelaySnapshot;
 }
 
+export interface CoreRuntimeRestartResult {
+  startedAt: string;
+  finishedAt: string;
+  summary: {
+    projects: number;
+    servicesEnsured: number;
+    runtimeRepairs: number;
+    dashboardsReloaded: number;
+    runtimeRebuildRequired: number;
+    orphanProcessesCleaned: number;
+    orphanTmuxSessionsCleaned: number;
+    failures: number;
+  };
+}
+
 export interface CoreRestartResult {
-  restart: RuntimeRestartResult;
+  restart: CoreRuntimeRestartResult;
   text: string;
 }
 

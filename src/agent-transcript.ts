@@ -1,7 +1,19 @@
 import { createHash } from "node:crypto";
 
 import { parseAgentOutput } from "./agent-output-parser.js";
-import { parseSgrRichTextLines, richTextLineText, sliceRichTextSpans, type RichTextSpan } from "./rich-text.js";
+import type {
+  AgentTranscriptImagePart,
+  AgentTranscriptMessage,
+  AgentTranscriptPart,
+  RichTextSpan,
+} from "./agent-transcript-contract.js";
+import { parseSgrRichTextLines, richTextLineText, sliceRichTextSpans } from "./rich-text.js";
+export type {
+  AgentTranscriptImagePart,
+  AgentTranscriptMessage,
+  AgentTranscriptPart,
+  AgentTranscriptTextPart,
+} from "./agent-transcript-contract.js";
 
 /**
  * The pane, projected into a conversation.
@@ -17,48 +29,6 @@ import { parseSgrRichTextLines, richTextLineText, sliceRichTextSpans, type RichT
  * the caller is local, on the relay, or behind somebody's own proxy — and the
  * server is not in a position to know which.
  */
-
-export interface AgentTranscriptImagePart {
-  type: "image_reference";
-  /** Stable within one projection: the same attachment keeps the same label. */
-  label: string;
-  attachmentId: string;
-  filename?: string;
-  mimeType?: string;
-}
-
-export interface AgentTranscriptTextPart {
-  type: "text";
-  text: string;
-  spans?: RichTextSpan[];
-}
-
-export type AgentTranscriptPart = AgentTranscriptTextPart | AgentTranscriptImagePart;
-
-export interface AgentTranscriptMessage {
-  /**
-   * Derived from content, never position.
-   *
-   * The pane is a sliding window, so a positional id changes under every
-   * message as output scrolls and a client keyed on it rebuilds the whole
-   * transcript on each poll.
-   */
-  id: string;
-  role: "user" | "assistant";
-  parts: AgentTranscriptPart[];
-  /** Plain text, for a client that does not want to walk parts. */
-  text: string;
-  /**
-   * The newest message, which is usually the one being written into.
-   *
-   * Its content changes on every read, so its content-derived id does too. A
-   * client that wants a stable key across polls should key this one by
-   * position and everything else by id. It is the last MESSAGE, not the last
-   * thing on screen — a trailing status row is not a message — so right after
-   * a send it is the prompt, and nothing is being written into it yet.
-   */
-  latest?: true;
-}
 
 /**
  * Structural on purpose: the parser's own block type, and any client's looser

@@ -1,10 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type {
+  AgentActivityState,
+  AgentAttentionState,
+  AgentEvent,
+  MetadataTone,
+  SessionDerivedState,
+} from "./agent-events-contract.js";
 import { quarantineCorruptFile, writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
 import { getProjectStateDir, getProjectStateDirById, getProjectStateDirFor } from "./paths.js";
-import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
-
-export type MetadataTone = "neutral" | "info" | "success" | "warn" | "error";
+export type { MetadataTone } from "./agent-events-contract.js";
 
 export interface SessionStatusMetadata {
   text: string;
