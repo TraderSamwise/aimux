@@ -225,6 +225,7 @@ export default function ExposeScreen() {
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
   const offlineProjects = projectResults.filter((result) => result.error);
   const relayReadyForRequests = relayStatus !== "connecting";
+  const viewKey = scope === "global" ? "global" : `project:${currentProjectPath ?? ""}`;
 
   const refresh = useCallback(async () => {
     const requestId = mountedRequestRef.current + 1;
@@ -291,6 +292,11 @@ export default function ExposeScreen() {
       activeControllerRef.current?.abort();
     };
   }, [refresh]);
+
+  useEffect(() => {
+    setTiles([]);
+    setProjectResults([]);
+  }, [viewKey]);
 
   function setScope(nextScope: ExposeScope) {
     router.replace({
