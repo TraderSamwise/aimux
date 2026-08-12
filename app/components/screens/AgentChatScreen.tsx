@@ -149,6 +149,7 @@ type ScrollPaneKey = "chat" | "terminal";
 
 type ScrollPaneMetrics = {
   contentHeight: number;
+  contentInsetBottom: number;
   initialized: boolean;
   offsetY: number;
   pinnedToBottom: boolean;
@@ -181,6 +182,7 @@ type UserScrollState = {
 function createScrollPaneMetrics(): ScrollPaneMetrics {
   return {
     contentHeight: 0,
+    contentInsetBottom: 0,
     initialized: false,
     offsetY: 0,
     pinnedToBottom: true,
@@ -198,7 +200,7 @@ function createUserScrollState(): UserScrollState {
 }
 
 function getScrollableHeight(metrics: ScrollPaneMetrics) {
-  return Math.max(0, metrics.contentHeight - metrics.viewportHeight);
+  return Math.max(0, metrics.contentHeight + metrics.contentInsetBottom - metrics.viewportHeight);
 }
 
 function getPinnedOffset(metrics: ScrollPaneMetrics) {
@@ -741,6 +743,22 @@ export default function ChatScreen() {
       const wasPinned =
         !metrics.initialized || metrics.pinnedToBottom || isOffsetPinnedToBottom(metrics);
       metrics.contentHeight = Math.max(0, contentHeight);
+      if (wasPinned && !isUserScrollActive(pane)) {
+        metrics.pinnedToBottom = true;
+        metrics.ratio = 1;
+        pendingBottomPinRef.current[pane] = true;
+      }
+      settlePaneAfterMetricChange(pane);
+    },
+    [isUserScrollActive, settlePaneAfterMetricChange],
+  );
+
+  const handleScrollContentInsetChange = useCallback(
+    (pane: ScrollPaneKey, contentInsetBottom: number) => {
+      const metrics = scrollMetricsRef.current[pane];
+      const wasPinned =
+        !metrics.initialized || metrics.pinnedToBottom || isOffsetPinnedToBottom(metrics);
+      metrics.contentInsetBottom = Math.max(0, contentInsetBottom);
       if (wasPinned && !isUserScrollActive(pane)) {
         metrics.pinnedToBottom = true;
         metrics.ratio = 1;
@@ -1294,6 +1312,7 @@ export default function ChatScreen() {
         onMomentumScrollBegin={handleMomentumScrollBegin}
         onScrollBeginDrag={handleScrollBeginDrag}
         onScrollEnd={handleScrollEnd}
+        onContentInsetChange={handleScrollContentInsetChange}
         onContentSizeChange={handleScrollContentSizeChange}
         onLayout={handleScrollLayout}
         onScroll={handleScroll}
@@ -1766,6 +1785,7 @@ function KeyboardManagedScrollView({
   keyboardOffset = 0,
   onMomentumScrollBegin,
   onContentSizeChange,
+  onContentInsetChange,
   onLayout,
   onScroll,
   onScrollBeginDrag,
@@ -1781,6 +1801,7 @@ function KeyboardManagedScrollView({
   keyboardOffset?: number;
   onMomentumScrollBegin: (pane: ScrollPaneKey) => void;
   onContentSizeChange: (pane: ScrollPaneKey, contentHeight: number) => void;
+  onContentInsetChange?: (pane: ScrollPaneKey, contentInsetBottom: number) => void;
   onLayout: (pane: ScrollPaneKey, event: LayoutChangeEvent) => void;
   onScroll: (pane: ScrollPaneKey, event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onScrollBeginDrag: (pane: ScrollPaneKey) => void;
@@ -1828,6 +1849,11 @@ function KeyboardManagedScrollView({
         extraContentPadding={keyboardContentPadding}
         keyboardLiftBehavior="whenAtEnd"
         offset={keyboardOffset}
+        onContentInsetChange={
+          onContentInsetChange
+            ? (insets: { bottom: number }) => onContentInsetChange(pane, insets.bottom)
+            : undefined
+        }
       >
         {content}
       </KeyboardChatScrollView>
