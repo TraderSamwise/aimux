@@ -11,7 +11,8 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 export type ThemePreference = "system" | "light" | "dark";
 export type AgentOutputViewMode = "chat" | "split" | "terminal";
 export type ExposePreviewMode = "chat" | "terminal";
-export type DesktopAppZoom = 100 | 110 | 120;
+export const DESKTOP_APP_ZOOM_VALUES = [80, 90, 100, 110, 120, 130, 140, 150] as const;
+export type DesktopAppZoom = (typeof DESKTOP_APP_ZOOM_VALUES)[number];
 
 export interface AppSettings {
   theme: ThemePreference;
@@ -89,8 +90,16 @@ export function desktopAppZoomScale(value: DesktopAppZoom) {
   return value / 100;
 }
 
+export function stepDesktopAppZoom(value: DesktopAppZoom, direction: -1 | 1): DesktopAppZoom {
+  const index = DESKTOP_APP_ZOOM_VALUES.indexOf(value);
+  const nextIndex = Math.min(DESKTOP_APP_ZOOM_VALUES.length - 1, Math.max(0, index + direction));
+  return DESKTOP_APP_ZOOM_VALUES[nextIndex] ?? defaultSettings.desktopAppZoom;
+}
+
 function normalizeDesktopAppZoom(value: AppSettings["desktopAppZoom"]): DesktopAppZoom {
-  return value === 100 || value === 110 || value === 120 ? value : defaultSettings.desktopAppZoom;
+  return DESKTOP_APP_ZOOM_VALUES.includes(value as DesktopAppZoom)
+    ? (value as DesktopAppZoom)
+    : defaultSettings.desktopAppZoom;
 }
 
 function normalizeActiveShare(value: AppSettings["activeShare"]): ActiveSharedSession | null {

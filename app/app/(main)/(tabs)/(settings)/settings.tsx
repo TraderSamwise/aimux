@@ -1,6 +1,7 @@
 import React from "react";
 import { Platform, Pressable, View, type ViewStyle } from "react-native";
 import { useAtom, useAtomValue } from "jotai";
+import { Minus, Plus, RotateCcw } from "lucide-react-native";
 import { Page, PageHeader } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
@@ -21,6 +22,7 @@ import {
   chatRichTerminalColorsAtom,
   desktopAppZoomAtom,
   notificationSettingsAtom,
+  stepDesktopAppZoom,
   type DesktopAppZoom,
   themePreferenceAtom,
   type AgentOutputViewMode,
@@ -40,13 +42,11 @@ const AGENT_OUTPUT_VIEW_OPTIONS: { value: AgentOutputViewMode; label: string }[]
   { value: "terminal", label: "Terminal" },
 ];
 
-const DESKTOP_APP_ZOOM_OPTIONS: { value: `${DesktopAppZoom}`; label: string }[] = [
-  { value: "100", label: "100%" },
-  { value: "110", label: "110%" },
-  { value: "120", label: "120%" },
-];
+const MIN_DESKTOP_APP_ZOOM: DesktopAppZoom = 80;
+const MAX_DESKTOP_APP_ZOOM: DesktopAppZoom = 150;
 
 const SETTINGS_CONTENT_STYLE: ViewStyle = {
+  alignSelf: "center",
   maxWidth: 900,
   width: "100%",
 };
@@ -209,7 +209,7 @@ export default function SettingsScreen() {
   }
 
   return (
-    <Page contentStyle={SETTINGS_CONTENT_STYLE}>
+    <Page contentClassName="items-center" contentStyle={SETTINGS_CONTENT_STYLE}>
       <PageHeader title="Settings" subtitle="Preferences for the app and agent alerts." />
       <Text className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
         Appearance
@@ -232,12 +232,39 @@ export default function SettingsScreen() {
           <Text className="mb-2 mt-6 text-xs uppercase tracking-wider text-muted-foreground">
             Desktop App Zoom
           </Text>
-          <SegmentedControl<`${DesktopAppZoom}`>
-            options={DESKTOP_APP_ZOOM_OPTIONS}
-            value={`${desktopAppZoom}`}
-            onChange={(value) => setDesktopAppZoom(Number(value) as DesktopAppZoom)}
-            fullWidth
-          />
+          <View className="flex-row items-center gap-2 rounded-lg border border-border bg-secondary/40 p-2">
+            <Button
+              variant="outline"
+              size="icon"
+              accessibilityLabel="Zoom out"
+              disabled={desktopAppZoom <= MIN_DESKTOP_APP_ZOOM}
+              onPress={() => setDesktopAppZoom((value) => stepDesktopAppZoom(value, -1))}
+            >
+              <Minus size={16} color="#a1a1aa" />
+            </Button>
+            <View className="min-w-0 flex-1 items-center">
+              <Text className="text-base font-semibold text-foreground">{desktopAppZoom}%</Text>
+              <Text className="mt-0.5 text-xs text-muted-foreground">Desktop app only</Text>
+            </View>
+            <Button
+              variant="outline"
+              size="icon"
+              accessibilityLabel="Reset zoom"
+              disabled={desktopAppZoom === 100}
+              onPress={() => setDesktopAppZoom(100)}
+            >
+              <RotateCcw size={16} color="#a1a1aa" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              accessibilityLabel="Zoom in"
+              disabled={desktopAppZoom >= MAX_DESKTOP_APP_ZOOM}
+              onPress={() => setDesktopAppZoom((value) => stepDesktopAppZoom(value, 1))}
+            >
+              <Plus size={16} color="#a1a1aa" />
+            </Button>
+          </View>
         </>
       ) : null}
       <View className="mt-3 overflow-hidden rounded-lg border border-border">

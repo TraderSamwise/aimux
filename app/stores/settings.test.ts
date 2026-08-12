@@ -41,6 +41,7 @@ describe("settings store", () => {
       theme: "dark",
       agentOutputViewMode: "split",
       exposePreviewMode: "terminal",
+      desktopAppZoom: 110,
       chatRichTerminalColors: true,
       activeShare: null,
       notifications: {
@@ -74,12 +75,14 @@ describe("settings store", () => {
     expect(store.get(settingsModule.themePreferenceAtom)).toBe("dark");
     expect(store.get(settingsModule.agentOutputViewModeAtom)).toBe("split");
     expect(store.get(settingsModule.exposePreviewModeAtom)).toBe("terminal");
+    expect(store.get(settingsModule.desktopAppZoomAtom)).toBe(110);
     expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
     expect(store.get(settingsModule.activeSharedSessionAtom)).toBeNull();
     expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
     store.set(settingsModule.agentOutputViewModeAtom, "terminal");
     store.set(settingsModule.exposePreviewModeAtom, "chat");
+    store.set(settingsModule.desktopAppZoomAtom, 130);
     store.set(settingsModule.chatRichTerminalColorsAtom, true);
     store.set(settingsModule.notificationSettingsAtom, {
       ...store.get(settingsModule.notificationSettingsAtom),
@@ -88,9 +91,11 @@ describe("settings store", () => {
 
     expect(store.get(settingsModule.agentOutputViewModeAtom)).toBe("terminal");
     expect(store.get(settingsModule.exposePreviewModeAtom)).toBe("chat");
+    expect(store.get(settingsModule.desktopAppZoomAtom)).toBe(130);
     expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
     expect(store.get(settingsModule.settingsAtom).agentOutputViewMode).toBe("terminal");
     expect(store.get(settingsModule.settingsAtom).exposePreviewMode).toBe("chat");
+    expect(store.get(settingsModule.settingsAtom).desktopAppZoom).toBe(130);
     expect(store.get(settingsModule.settingsAtom).chatRichTerminalColors).toBe(true);
     expect(store.get(settingsModule.settingsAtom).notifications.enabled).toBe(true);
   });
@@ -105,6 +110,7 @@ describe("settings store", () => {
       theme: "light",
       agentOutputViewMode: "split",
       exposePreviewMode: "terminal",
+      desktopAppZoom: 110,
       chatRichTerminalColors: true,
       activeShare: null,
     });
@@ -116,6 +122,7 @@ describe("settings store", () => {
     store.set(settingsModule.themePreferenceAtom, "light");
     store.set(settingsModule.agentOutputViewModeAtom, "terminal");
     store.set(settingsModule.exposePreviewModeAtom, "chat");
+    store.set(settingsModule.desktopAppZoomAtom, 150);
     store.set(settingsModule.chatRichTerminalColorsAtom, true);
     store.set(settingsModule.notificationSettingsAtom, {
       ...store.get(settingsModule.notificationSettingsAtom),
@@ -144,6 +151,7 @@ describe("settings store", () => {
         theme: "light",
         agentOutputViewMode: "terminal",
         exposePreviewMode: "chat",
+        desktopAppZoom: 150,
         chatRichTerminalColors: true,
         activeShare: {
           shareId: "share_1",

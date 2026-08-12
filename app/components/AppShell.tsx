@@ -8,12 +8,14 @@ import {
   type ViewStyle,
 } from "react-native";
 import { usePathname } from "expo-router";
-import { useAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import { Menu } from "lucide-react-native";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
+import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
+import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
 import { sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
@@ -26,6 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isMobile = width < 640;
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
+  const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
   const pathname = usePathname();
   const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
 
@@ -46,6 +49,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       useNativeDriver: true,
     }).start();
   }, [sidebarOpen, translateX]);
+
+  useEffect(() => {
+    if (!isDesktopNative) return undefined;
+    return subscribeNativeAppCommands((command) => {
+      if (command === "desktopZoomReset") {
+        setDesktopAppZoom(100);
+        return;
+      }
+      setDesktopAppZoom((value) => stepDesktopAppZoom(value, command === "desktopZoomIn" ? 1 : -1));
+    });
+  }, [isDesktopNative, setDesktopAppZoom]);
 
   const showHamburger = isTablet || isMobile;
   const shellZoomStyle = useMemo<ViewStyle>(

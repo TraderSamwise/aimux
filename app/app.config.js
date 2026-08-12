@@ -67,6 +67,7 @@ module.exports = {
         },
       ],
       "./plugins/withAimuxAttachmentDropView",
+      "./plugins/withAimuxNativeAppCommands",
       ...(HAS_REAL_EAS_PROJECT ? ["expo-updates"] : []),
     ],
     experiments: {
