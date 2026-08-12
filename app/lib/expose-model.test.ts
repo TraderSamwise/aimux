@@ -8,6 +8,10 @@ import {
   type ExposeSourceItem,
 } from "./expose-model";
 
+function previewText(lines: readonly (readonly { text: string }[])[]): string[] {
+  return lines.map((line) => line.map((span) => span.text).join(""));
+}
+
 const project: DaemonProject = {
   id: "teal",
   name: "tealstreet-next",
@@ -138,12 +142,13 @@ describe("expose model", () => {
       },
     ]);
 
-    expect(tile?.previewLines).toEqual([
+    expect(previewText(tile?.previewLines ?? [])).toEqual([
       "Run yarn test",
       "────────────────────────────────────────────────",
       "plain",
     ]);
-    expect(tile?.previewLines.join("\n")).not.toContain("[38;5");
-    expect(tile?.previewLines.join("\n")).not.toContain("\x1b");
+    expect(tile?.previewLines[0]?.[0]?.style.color).toBe("#5f87ff");
+    expect(previewText(tile?.previewLines ?? []).join("\n")).not.toContain("[38;5");
+    expect(previewText(tile?.previewLines ?? []).join("\n")).not.toContain("\x1b");
   });
 });

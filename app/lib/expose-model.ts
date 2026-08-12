@@ -1,6 +1,7 @@
 import type { DaemonProject } from "@/lib/api";
+import type { AnsiSpan } from "@/lib/ansi";
 import { firstTokenOf } from "@/lib/status-tone";
-import { formatTerminalOutputPlainLinesForDisplay } from "@/lib/terminal-output";
+import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { WORKTREE_TONES } from "@/lib/worktree-tone";
 import type { ExposePreviewSnapshot } from "../../src/project-api-contract";
 
@@ -77,7 +78,7 @@ export interface ExposeTile {
   sectionKey: string;
   sectionLabel: string;
   tone: string;
-  previewLines: string[];
+  previewLines: AnsiSpan[][];
 }
 
 export interface ExposeSection {
@@ -118,14 +119,33 @@ function normalizeStatusKind(kind: string | undefined): ExposeStatusKind | null 
   }
 }
 
-function previewLinesFor(item: ExposeSourceItem): string[] {
+function previewLinesFor(item: ExposeSourceItem): AnsiSpan[][] {
   const output = item.previewSnapshot?.output ?? "";
   if (!output.trim()) return [];
-  return formatTerminalOutputPlainLinesForDisplay(output.replace(/\r/g, ""), {
+  return formatTerminalOutputForDisplay(output.replace(/\r/g, ""), {
     dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
   })
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0);
+    .map((line) => trimAnsiLineEnd(line))
+    .filter((line) => ansiLineText(line).trim().length > 0);
+}
+
+function ansiLineText(line: readonly AnsiSpan[]): string {
+  return line.map((span) => span.text).join("");
+}
+
+function trimAnsiLineEnd(line: readonly AnsiSpan[]): AnsiSpan[] {
+  let trimRemaining = ansiLineText(line).length - ansiLineText(line).trimEnd().length;
+  if (trimRemaining <= 0) return [...line];
+  const next = [...line];
+  for (let index = next.length - 1; index >= 0 && trimRemaining > 0; index -= 1) {
+    const span = next[index]!;
+    const trimCount = Math.min(trimRemaining, span.text.length);
+    const text = span.text.slice(0, span.text.length - trimCount);
+    trimRemaining -= trimCount;
+    if (text) next[index] = { ...span, text };
+    else next.splice(index, 1);
+  }
+  return next;
 }
 
 function toneFor(item: ExposeSourceItem, fallbackIndex: number): string {

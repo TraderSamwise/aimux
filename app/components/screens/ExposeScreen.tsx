@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ScrollView, View, useWindowDimensions } from "react-native";
+import { ScrollView, Text as RNText, View, useWindowDimensions } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { CheckCircle2, RefreshCw } from "lucide-react-native";
@@ -132,7 +132,8 @@ function ExposeTileCard({
   const preview =
     tile.previewLines.length > 0
       ? tile.previewLines.slice(-previewLineCount)
-      : ["No recent pane output."];
+      : [[{ text: "No recent pane output.", style: {} }]];
+  const hasPreview = tile.previewLines.length > 0;
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
@@ -188,12 +189,18 @@ function ExposeTileCard({
                 key={`${tile.id}:${index}`}
                 className={cn(
                   "font-mono text-[11.5px] leading-5",
-                  tile.previewLines.length > 0 ? "text-[#d4d4d8]" : "text-[#666872]",
+                  hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
                 )}
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
-                {line}
+                {line.length === 0
+                  ? " "
+                  : line.map((span, spanIndex) => (
+                      <RNText key={`${tile.id}:${index}:${spanIndex}`} style={span.style}>
+                        {span.text}
+                      </RNText>
+                    ))}
               </Text>
             ))}
           </View>
