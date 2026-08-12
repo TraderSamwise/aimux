@@ -16,6 +16,7 @@ import {
   getProjectServiceEndpoint,
   isProjectHostOfflineError,
 } from "@/lib/project-connection-display";
+import { useAppStackScreenOptions } from "@/lib/navigation";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
@@ -99,6 +100,7 @@ export default function MainLayout() {
   const store = useStore();
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
+  const stackScreenOptions = useAppStackScreenOptions();
   const pathname = usePathname();
   const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
@@ -480,7 +482,7 @@ export default function MainLayout() {
       <NotificationProvider />
       <NativeNotificationRouter />
       <AppShell>
-        <Stack screenOptions={{ headerShown: false }}>
+        <Stack screenOptions={stackScreenOptions}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="agent/[sessionId]/chat" />
           <Stack.Screen name="global-notifications" />

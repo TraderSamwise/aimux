@@ -7,6 +7,7 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AuthProvider, LOCAL_MODE, useAuth } from "@/lib/auth";
+import { useAppStackScreenOptions } from "@/lib/navigation";
 import { useThemeEffect } from "@/lib/theme-effect";
 
 import "../global.css";
@@ -37,6 +38,7 @@ export default function RootLayout() {
   useThemeEffect();
   const { colorScheme } = useColorScheme();
   const navTheme = colorScheme === "dark" ? DarkTheme : DefaultTheme;
+  const stackScreenOptions = useAppStackScreenOptions();
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -59,15 +61,12 @@ export default function RootLayout() {
           <AuthProvider>
             <AuthGate>
               <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-              <Stack>
-                <Stack.Screen name="(main)" options={{ headerShown: false }} />
-                <Stack.Screen name="inbox" options={{ headerShown: false }} />
-                <Stack.Screen name="auth" options={{ headerShown: false }} />
-                <Stack.Screen
-                  name="shares/invite/[ownerUserId]/[token]/accept"
-                  options={{ headerShown: false }}
-                />
-                <Stack.Screen name="cli-auth" options={{ headerShown: false }} />
+              <Stack screenOptions={stackScreenOptions}>
+                <Stack.Screen name="(main)" />
+                <Stack.Screen name="inbox" />
+                <Stack.Screen name="auth" />
+                <Stack.Screen name="shares/invite/[ownerUserId]/[token]/accept" />
+                <Stack.Screen name="cli-auth" />
               </Stack>
             </AuthGate>
           </AuthProvider>
