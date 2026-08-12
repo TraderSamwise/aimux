@@ -1681,6 +1681,46 @@ export class MetadataServer {
     });
   }
 
+  private async readAgentChatPreviews(
+    sessionIds: readonly string[],
+  ): Promise<Map<string, NonNullable<FastControlItem["chatPreview"]>>> {
+    const previewsBySessionId = new Map<string, NonNullable<FastControlItem["chatPreview"]>>();
+    if (!this.options.lifecycle?.readAgentOutput) return previewsBySessionId;
+    await Promise.all(
+      sessionIds.map(async (sessionId) => {
+        try {
+          const result = await this.options.lifecycle!.readAgentOutput!({
+            sessionId,
+            startLine: DESKTOP_STATE_CHAT_PREVIEW_START_LINE,
+          });
+          const messages = (result.messages ?? []).slice(-DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES);
+          if (messages.length === 0) return;
+          previewsBySessionId.set(sessionId, {
+            messages,
+            capturedAt: new Date().toISOString(),
+            source: "readAgentOutput",
+          });
+        } catch (error) {
+          log.debug?.("agent chat preview failed", "api", {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }),
+    );
+    return previewsBySessionId;
+  }
+
+  private async attachExposeChatPreviews(rawItems: FastControlItem[]): Promise<FastControlItem[]> {
+    const sessionIds = rawItems.map((item) => item.metadata.sessionId).filter((id): id is string => Boolean(id));
+    const chatPreviewsBySessionId = await this.readAgentChatPreviews(sessionIds);
+    if (chatPreviewsBySessionId.size === 0) return rawItems;
+    return rawItems.map((item) => {
+      const chatPreview = item.metadata.sessionId ? chatPreviewsBySessionId.get(item.metadata.sessionId) : undefined;
+      return chatPreview ? { ...item, chatPreview } : item;
+    });
+  }
+
   private async attachDesktopStatePreviews(
     state: Record<string, unknown>,
     options: { includeChatPreview?: boolean } = {},
@@ -1720,36 +1760,11 @@ export class MetadataServer {
           )
         : new Map<string, FastControlItem["previewSnapshot"]>();
 
-    const chatPreviewsBySessionId = new Map<
-      string,
-      { messages: AgentTranscriptMessage[]; capturedAt: string; source: "readAgentOutput" }
-    >();
-    if (options.includeChatPreview && this.options.lifecycle?.readAgentOutput) {
-      await Promise.all(
-        sessions
-          .filter((session: any) => typeof session?.id === "string")
-          .map(async (session: any) => {
-            try {
-              const result = await this.options.lifecycle!.readAgentOutput!({
-                sessionId: session.id,
-                startLine: DESKTOP_STATE_CHAT_PREVIEW_START_LINE,
-              });
-              const messages = (result.messages ?? []).slice(-DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES);
-              if (messages.length === 0) return;
-              chatPreviewsBySessionId.set(session.id, {
-                messages,
-                capturedAt: new Date().toISOString(),
-                source: "readAgentOutput",
-              });
-            } catch (error) {
-              log.debug?.("desktop-state chat preview failed", "api", {
-                sessionId: session.id,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-          }),
-      );
-    }
+    const chatPreviewsBySessionId = options.includeChatPreview
+      ? await this.readAgentChatPreviews(
+          sessions.map((session: any) => session?.id).filter((id: unknown): id is string => typeof id === "string"),
+        )
+      : new Map<string, NonNullable<FastControlItem["chatPreview"]>>();
 
     if (snapshotsBySessionId.size === 0 && chatPreviewsBySessionId.size === 0) return state;
 
@@ -3001,6 +3016,7 @@ export class MetadataServer {
       const scope = url.searchParams.get("scope") === "all" ? "all" : "worktree";
       const rawLabels = url.searchParams.get("labelFormat") === "raw";
       const includePreview = url.searchParams.get("includePreview") === "1";
+      const includeChatPreview = url.searchParams.get("includeChatPreview") === "1";
       const expose = url.searchParams.get("expose") === "1";
       const rawItems = listSwitchableAgentItems(
         {
@@ -3013,7 +3029,8 @@ export class MetadataServer {
         new TmuxRuntimeManager(),
         { scope },
       );
-      const itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems) : rawItems;
+      let itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems) : rawItems;
+      if (includeChatPreview) itemsWithPreview = await this.attachExposeChatPreviews(itemsWithPreview);
       const sublabel = scope === "all" ? "worktree" : "none";
       const exposeItems = expose
         ? orderExposeItems(

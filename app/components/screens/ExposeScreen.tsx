@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text as RNText, View, useWindowDimensions } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { CheckCircle2, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { PageHeader, PageStateCard } from "@/components/PageLayout";
@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
+import { exposePreviewModeAtom, type ExposePreviewMode } from "@/stores/settings";
 
 type ExposeScope = "project" | "global";
 
@@ -39,6 +40,11 @@ const FILTER_OPTIONS: Array<{ value: ExposeFilter; label: string }> = [
   { value: "working", label: "Working" },
   { value: "attention", label: "Needs" },
   { value: "ready", label: "Ready" },
+];
+
+const PREVIEW_MODE_OPTIONS: Array<{ value: ExposePreviewMode; label: string }> = [
+  { value: "chat", label: "Chat" },
+  { value: "terminal", label: "Terminal" },
 ];
 
 function resolveScope(value: string | string[] | undefined): ExposeScope {
@@ -121,19 +127,28 @@ function ExposeTileCard({
   tile,
   tileWidth,
   tileHeight,
+  previewMode,
   onPress,
 }: {
   tile: ExposeTile;
   tileWidth: number;
   tileHeight: number;
+  previewMode: ExposePreviewMode;
   onPress: () => void;
 }) {
   const previewLineCount = Math.max(6, Math.floor((tileHeight - 112) / 20));
-  const preview =
-    tile.previewLines.length > 0
-      ? tile.previewLines.slice(-previewLineCount)
+  const terminalPreview =
+    tile.terminalPreviewLines.length > 0
+      ? tile.terminalPreviewLines.slice(-previewLineCount)
       : [[{ text: "No recent pane output.", style: {} }]];
-  const hasPreview = tile.previewLines.length > 0;
+  const chatPreview =
+    tile.chatPreviewLines.length > 0
+      ? tile.chatPreviewLines.slice(-previewLineCount)
+      : [{ role: "assistant" as const, text: "No recent chat output." }];
+  const hasPreview =
+    previewMode === "terminal"
+      ? tile.terminalPreviewLines.length > 0
+      : tile.chatPreviewLines.length > 0;
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
@@ -184,25 +199,40 @@ function ExposeTileCard({
           </View>
 
           <View className="mt-3 flex-1 justify-end border-t border-[#2a2b31] pt-3">
-            {preview.map((line, index) => (
-              <Text
-                key={`${tile.id}:${index}`}
-                className={cn(
-                  "font-mono text-[11.5px] leading-5",
-                  hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
-                )}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {line.length === 0
-                  ? " "
-                  : line.map((span, spanIndex) => (
-                      <RNText key={`${tile.id}:${index}:${spanIndex}`} style={span.style}>
-                        {span.text}
-                      </RNText>
-                    ))}
-              </Text>
-            ))}
+            {previewMode === "terminal"
+              ? terminalPreview.map((line, index) => (
+                  <Text
+                    key={`${tile.id}:${index}`}
+                    className={cn(
+                      "font-mono text-[11.5px] leading-5",
+                      hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
+                    )}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {line.length === 0
+                      ? " "
+                      : line.map((span, spanIndex) => (
+                          <RNText key={`${tile.id}:${index}:${spanIndex}`} style={span.style}>
+                            {span.text}
+                          </RNText>
+                        ))}
+                  </Text>
+                ))
+              : chatPreview.map((line, index) => (
+                  <Text
+                    key={`${tile.id}:${index}`}
+                    className={cn(
+                      "text-[12px] leading-5",
+                      hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
+                      line.role === "user" ? "font-semibold" : "",
+                    )}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {line.text}
+                  </Text>
+                ))}
           </View>
         </View>
       </PressableCard>
@@ -227,6 +257,7 @@ export default function ExposeScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const projects = useAtomValue(projectsAtom);
+  const [exposePreviewMode, setExposePreviewMode] = useAtom(exposePreviewModeAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
@@ -282,7 +313,10 @@ export default function ExposeScreen() {
       projectRequestServiceAlive,
     ],
   );
-  const viewKey = scope === "global" ? "global" : `project:${currentProjectPath ?? ""}`;
+  const viewKey =
+    scope === "global"
+      ? `global:${exposePreviewMode}`
+      : `project:${currentProjectPath ?? ""}:${exposePreviewMode}`;
   const currentTiles = useMemo(
     () => (loadedViewKey === viewKey ? tiles : []),
     [loadedViewKey, tiles, viewKey],
@@ -355,9 +389,15 @@ export default function ExposeScreen() {
                   results: [{ projectName: project.name, error: "Project host offline" }],
                 };
               }
+              const input = {
+                scope: "all",
+                labelFormat: "raw",
+                includePreview: "1",
+                expose: "1",
+              } as const;
               const response = await listSwitchableAgents(
                 endpoint,
-                { scope: "all", labelFormat: "raw", includePreview: "1", expose: "1" },
+                exposePreviewMode === "chat" ? { ...input, includeChatPreview: "1" } : input,
                 {
                   token,
                   signal: controller.signal,
@@ -388,7 +428,7 @@ export default function ExposeScreen() {
       if (mountedRequestRef.current === requestId) setPending(false);
       if (activeControllerRef.current === controller) activeControllerRef.current = null;
     }
-  }, [getToken, projectRequest, relayReadyForRequests, scope, viewKey]);
+  }, [exposePreviewMode, getToken, projectRequest, relayReadyForRequests, scope, viewKey]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -462,15 +502,23 @@ export default function ExposeScreen() {
         />
 
         <View className="mb-4 gap-3 md:flex-row md:items-center md:justify-between">
-          <SegmentedControl
-            options={[
-              { value: "project", label: "Project" },
-              { value: "global", label: "Global" },
-            ]}
-            value={scope}
-            onChange={setScope}
-            className="bg-card"
-          />
+          <View className="gap-3 sm:flex-row sm:items-center">
+            <SegmentedControl
+              options={[
+                { value: "project", label: "Project" },
+                { value: "global", label: "Global" },
+              ]}
+              value={scope}
+              onChange={setScope}
+              className="bg-card"
+            />
+            <SegmentedControl
+              options={PREVIEW_MODE_OPTIONS}
+              value={exposePreviewMode}
+              onChange={setExposePreviewMode}
+              className="bg-card"
+            />
+          </View>
           <SegmentedControl
             options={FILTER_OPTIONS}
             value={filter}
@@ -516,6 +564,7 @@ export default function ExposeScreen() {
                 tile={tile}
                 tileWidth={tileWidth}
                 tileHeight={tileHeight}
+                previewMode={exposePreviewMode}
                 onPress={() => openTile(tile)}
               />
             ))}

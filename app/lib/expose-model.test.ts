@@ -142,13 +142,55 @@ describe("expose model", () => {
       },
     ]);
 
-    expect(previewText(tile?.previewLines ?? [])).toEqual([
+    expect(previewText(tile?.terminalPreviewLines ?? [])).toEqual([
       "Run yarn test",
       "────────────────────────────────────────────────",
       "plain",
     ]);
-    expect(tile?.previewLines[0]?.[0]?.style.color).toBe("#5f87ff");
-    expect(previewText(tile?.previewLines ?? []).join("\n")).not.toContain("[38;5");
-    expect(previewText(tile?.previewLines ?? []).join("\n")).not.toContain("\x1b");
+    expect(tile?.terminalPreviewLines[0]?.[0]?.style.color).toBe("#5f87ff");
+    expect(previewText(tile?.terminalPreviewLines ?? []).join("\n")).not.toContain("[38;5");
+    expect(previewText(tile?.terminalPreviewLines ?? []).join("\n")).not.toContain("\x1b");
+  });
+
+  it("formats chat previews through the shared transcript display pipeline", () => {
+    const [tile] = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("1", "main", 0),
+            chatPreview: {
+              source: "readAgentOutput",
+              capturedAt: "2026-08-12T00:00:00.000Z",
+              messages: [
+                {
+                  id: "a1",
+                  role: "assistant",
+                  text: "Confirmed.\n────────────────────────────────────────────────────────────────",
+                  parts: [
+                    {
+                      type: "text",
+                      text: "Confirmed.\n────────────────────────────────────────────────────────────────",
+                    },
+                  ],
+                },
+                {
+                  id: "u1",
+                  role: "user",
+                  text: "check again",
+                  parts: [{ type: "text", text: "check again" }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(tile?.chatPreviewLines).toEqual([
+      { role: "assistant", text: "Confirmed." },
+      { role: "assistant", text: "────────────────────────────────────────────────────────" },
+      { role: "user", text: "check again" },
+    ]);
   });
 });

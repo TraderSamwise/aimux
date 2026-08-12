@@ -1,9 +1,11 @@
 import type { DaemonProject } from "@/lib/api";
 import type { AnsiSpan } from "@/lib/ansi";
+import type { AgentTranscriptMessage, ChatMessage, HistoryPart } from "@/lib/events";
 import { firstTokenOf } from "@/lib/status-tone";
-import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { formatPlainTextForDisplay, formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { toChatMessages } from "@/lib/transcript-view";
 import { WORKTREE_TONES } from "@/lib/worktree-tone";
-import type { ExposePreviewSnapshot } from "../../src/project-api-contract";
+import type { ExposeChatPreview, ExposePreviewSnapshot } from "../../src/project-api-contract";
 
 export type ExposeFilter = "all" | "working" | "attention" | "ready";
 
@@ -41,6 +43,7 @@ export interface ExposeSourceItem {
   projectName?: string;
   projectRoot?: string;
   previewSnapshot?: ExposePreviewSnapshot;
+  chatPreview?: ExposeChatPreview | { messages?: AgentTranscriptMessage[] };
   exposeContext?: {
     worktree?: string;
     project?: string;
@@ -78,7 +81,13 @@ export interface ExposeTile {
   sectionKey: string;
   sectionLabel: string;
   tone: string;
-  previewLines: AnsiSpan[][];
+  terminalPreviewLines: AnsiSpan[][];
+  chatPreviewLines: ExposeChatPreviewLine[];
+}
+
+export interface ExposeChatPreviewLine {
+  role: ChatMessage["role"];
+  text: string;
 }
 
 export interface ExposeSection {
@@ -96,6 +105,7 @@ export interface ExposeSummary {
 }
 
 const EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH = 48;
+const EXPOSE_CHAT_PREVIEW_DIVIDER_WIDTH = 56;
 
 function cap(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
@@ -127,6 +137,36 @@ function previewLinesFor(item: ExposeSourceItem): AnsiSpan[][] {
   })
     .map((line) => trimAnsiLineEnd(line))
     .filter((line) => ansiLineText(line).trim().length > 0);
+}
+
+function chatPreviewLinesFor(item: ExposeSourceItem, sessionId: string): ExposeChatPreviewLine[] {
+  const messages = item.chatPreview?.messages ?? [];
+  if (messages.length === 0) return [];
+  return toChatMessages(messages, sessionId)
+    .flatMap((message) =>
+      textFromChatMessage(message)
+        .split("\n")
+        .flatMap((line) =>
+          formatPlainTextForDisplay(line, {
+            dividerWidth: EXPOSE_CHAT_PREVIEW_DIVIDER_WIDTH,
+          }),
+        )
+        .map((line) => line.trimEnd())
+        .filter((line) => line.trim().length > 0)
+        .map((text) => ({ role: message.role, text })),
+    )
+    .slice(-16);
+}
+
+function textFromChatMessage(message: ChatMessage): string {
+  return (message.parts ?? []).map(textFromHistoryPart).filter(Boolean).join("\n");
+}
+
+function textFromHistoryPart(part: HistoryPart): string {
+  if (part.type === "text") return part.text;
+  if (part.type === "image") return part.filename ? `[Image: ${part.filename}]` : "[Image]";
+  if (part.type === "image_reference") return `[${part.label}]`;
+  return "";
 }
 
 function ansiLineText(line: readonly AnsiSpan[]): string {
@@ -165,6 +205,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       const semanticTitle = context.project ? `${projectName} / ${worktreeName}` : worktreeName;
       const statusKind = normalizeStatusKind(item.exposeStatus?.kind);
       const label = item.label || metadata.label || item.id || "agent";
+      const sessionId = metadata.sessionId || item.id || label;
       const tool =
         metadata.toolConfigKey ||
         firstTokenOf(metadata.command) ||
@@ -175,7 +216,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         projectId: item.projectId || source.project.id,
         projectName,
         projectRoot,
-        sessionId: metadata.sessionId || item.id || label,
+        sessionId,
         windowId: item.target?.windowId,
         windowIndex: item.target?.windowIndex,
         label,
@@ -191,7 +232,8 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         sectionKey: `${projectRoot}:${semanticTitle}`,
         sectionLabel: semanticTitle,
         tone: toneFor(item, index),
-        previewLines: previewLinesFor(item),
+        terminalPreviewLines: previewLinesFor(item),
+        chatPreviewLines: chatPreviewLinesFor(item, sessionId),
       });
     });
   }

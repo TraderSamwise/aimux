@@ -17,10 +17,11 @@ import { registerSecurityPushToken, sendSecurityTestPush } from "@/lib/push-regi
 import { getErrorMessage } from "@/lib/request-errors";
 import {
   activeSharedSessionAtom,
+  agentOutputViewModeAtom,
   chatRichTerminalColorsAtom,
-  chatTerminalSplitAtom,
   notificationSettingsAtom,
   themePreferenceAtom,
+  type AgentOutputViewMode,
   type ThemePreference,
 } from "@/stores/settings";
 
@@ -30,10 +31,11 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: "dark", label: "Dark" },
 ];
 
-const CHAT_TERMINAL_OPTIONS = [
-  { value: "off", label: "Chat" },
-  { value: "on", label: "Split" },
-] as const;
+const AGENT_OUTPUT_VIEW_OPTIONS: { value: AgentOutputViewMode; label: string }[] = [
+  { value: "chat", label: "Chat" },
+  { value: "split", label: "Split" },
+  { value: "terminal", label: "Terminal" },
+];
 
 const ENABLED_OPTIONS = [
   { value: "off", label: "Off" },
@@ -42,7 +44,7 @@ const ENABLED_OPTIONS = [
 
 export default function SettingsScreen() {
   const [themePreference, setThemePreference] = useAtom(themePreferenceAtom);
-  const [chatTerminalSplit, setChatTerminalSplit] = useAtom(chatTerminalSplitAtom);
+  const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const [chatRichTerminalColors, setChatRichTerminalColors] = useAtom(chatRichTerminalColorsAtom);
   const [notificationSettings, setNotificationSettings] = useAtom(notificationSettingsAtom);
   const activeShare = useAtomValue(activeSharedSessionAtom);
@@ -203,10 +205,10 @@ export default function SettingsScreen() {
         fullWidth
       />
       <Text className="mb-2 mt-6 text-xs uppercase tracking-wider text-muted-foreground">Chat</Text>
-      <SegmentedControl<"off" | "on">
-        options={[...CHAT_TERMINAL_OPTIONS]}
-        value={chatTerminalSplit ? "on" : "off"}
-        onChange={(value) => setChatTerminalSplit(value === "on")}
+      <SegmentedControl<AgentOutputViewMode>
+        options={AGENT_OUTPUT_VIEW_OPTIONS}
+        value={agentOutputViewMode}
+        onChange={setAgentOutputViewMode}
         fullWidth
       />
       <View className="mt-3 overflow-hidden rounded-lg border border-border">

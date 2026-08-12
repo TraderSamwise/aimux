@@ -83,6 +83,24 @@ What triggers what:
 - `app/stores/`: Jotai stores.
 - `app/lib/image-picker.{web,native}.ts`: platform split. Web uses `<input type=file>`; native uses `expo-image-picker`.
 
+### App Surface Reuse
+
+Before adding or changing a GUI surface, find the existing source-of-truth
+pipeline for the same domain behavior and reuse it. Treat a new surface as a
+presentation adapter unless there is a documented reason to create new semantics.
+
+- Do not parse ANSI, terminal output, transcript text, divider lines, statuses,
+  ordering, or grouping ad hoc in screens.
+- Shared terminal/chat formatting lives in `app/lib/ansi.ts` and
+  `app/lib/terminal-output.ts`; GUI chat, terminal mode, Exposé tiles, and
+  previews should consume those helpers and render structured spans when style or
+  color matters.
+- TUI Exposé defines Exposé ordering, grouping, and status semantics. GUI Exposé
+  should match those semantics and only adapt layout, sizing, and responsive
+  behavior.
+- If plain text is needed, derive it from the shared formatter/model layer rather
+  than adding a second cleanup path.
+
 ### App State
 
 - Use Jotai for client state.

@@ -39,7 +39,8 @@ describe("settings store", () => {
   it("keeps durable UI settings in one persisted settings object", () => {
     expect(settingsModule.defaultSettings).toEqual({
       theme: "dark",
-      chatTerminalSplit: false,
+      agentOutputViewMode: "split",
+      exposePreviewMode: "terminal",
       chatRichTerminalColors: true,
       activeShare: null,
       notifications: {
@@ -71,21 +72,25 @@ describe("settings store", () => {
     const store = createStore();
 
     expect(store.get(settingsModule.themePreferenceAtom)).toBe("dark");
-    expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(false);
+    expect(store.get(settingsModule.agentOutputViewModeAtom)).toBe("split");
+    expect(store.get(settingsModule.exposePreviewModeAtom)).toBe("terminal");
     expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
     expect(store.get(settingsModule.activeSharedSessionAtom)).toBeNull();
     expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
-    store.set(settingsModule.chatTerminalSplitAtom, true);
+    store.set(settingsModule.agentOutputViewModeAtom, "terminal");
+    store.set(settingsModule.exposePreviewModeAtom, "chat");
     store.set(settingsModule.chatRichTerminalColorsAtom, true);
     store.set(settingsModule.notificationSettingsAtom, {
       ...store.get(settingsModule.notificationSettingsAtom),
       enabled: true,
     });
 
-    expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(true);
+    expect(store.get(settingsModule.agentOutputViewModeAtom)).toBe("terminal");
+    expect(store.get(settingsModule.exposePreviewModeAtom)).toBe("chat");
     expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
-    expect(store.get(settingsModule.settingsAtom).chatTerminalSplit).toBe(true);
+    expect(store.get(settingsModule.settingsAtom).agentOutputViewMode).toBe("terminal");
+    expect(store.get(settingsModule.settingsAtom).exposePreviewMode).toBe("chat");
     expect(store.get(settingsModule.settingsAtom).chatRichTerminalColors).toBe(true);
     expect(store.get(settingsModule.settingsAtom).notifications.enabled).toBe(true);
   });
@@ -94,12 +99,12 @@ describe("settings store", () => {
     expect(
       settingsModule.normalizeAppSettings({
         theme: "light",
-        chatTerminalSplit: true,
       } as import("./settings").AppSettings),
     ).toEqual({
       ...settingsModule.defaultSettings,
       theme: "light",
-      chatTerminalSplit: true,
+      agentOutputViewMode: "split",
+      exposePreviewMode: "terminal",
       chatRichTerminalColors: true,
       activeShare: null,
     });
@@ -109,7 +114,8 @@ describe("settings store", () => {
     const store = createStore();
 
     store.set(settingsModule.themePreferenceAtom, "light");
-    store.set(settingsModule.chatTerminalSplitAtom, true);
+    store.set(settingsModule.agentOutputViewModeAtom, "terminal");
+    store.set(settingsModule.exposePreviewModeAtom, "chat");
     store.set(settingsModule.chatRichTerminalColorsAtom, true);
     store.set(settingsModule.notificationSettingsAtom, {
       ...store.get(settingsModule.notificationSettingsAtom),
@@ -136,7 +142,8 @@ describe("settings store", () => {
       expect(raw).not.toBeNull();
       expect(JSON.parse(raw ?? "{}")).toEqual({
         theme: "light",
-        chatTerminalSplit: true,
+        agentOutputViewMode: "terminal",
+        exposePreviewMode: "chat",
         chatRichTerminalColors: true,
         activeShare: {
           shareId: "share_1",

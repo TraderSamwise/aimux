@@ -88,7 +88,11 @@ import {
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
-import { activeSharedSessionAtom, chatTerminalSplitAtom } from "@/stores/settings";
+import {
+  activeSharedSessionAtom,
+  agentOutputViewModeAtom,
+  type AgentOutputViewMode,
+} from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
 
 const SPLIT_VIEW_MIN_WIDTH = 900;
@@ -126,6 +130,16 @@ const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
+
+function nextAgentOutputViewMode(
+  current: AgentOutputViewMode,
+  canUseSplitView: boolean,
+): AgentOutputViewMode {
+  if (!canUseSplitView) return current === "terminal" ? "chat" : "terminal";
+  if (current === "chat") return "split";
+  if (current === "split") return "terminal";
+  return "chat";
+}
 
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
@@ -301,7 +315,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
-  const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
+  const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
@@ -485,8 +499,10 @@ export default function ChatScreen() {
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
   const canUseSplitView = Platform.OS === "web" && viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
-  const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
-  const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
+  const effectiveAgentOutputViewMode =
+    agentOutputViewMode === "split" && !canUseSplitView ? "chat" : agentOutputViewMode;
+  const showSplit = canUseSplitView && canShowTerminal && agentOutputViewMode === "split";
+  const showTerminalOnly = canShowTerminal && effectiveAgentOutputViewMode === "terminal";
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const visibleComposerScrollReserve = composerHideDistance + COMPOSER_SCROLL_SAFETY_PADDING;
   const composerVisibilityStyle = useMemo(
@@ -555,8 +571,12 @@ export default function ChatScreen() {
       },
     );
   }, [composerScrollReserve, usesNativeKeyboardController, visibleComposerScrollReserve]);
-  const terminalToggleLabel =
-    showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
+  const cycleAgentOutputViewMode = useCallback(() => {
+    setAgentOutputViewMode((current) => nextAgentOutputViewMode(current, canUseSplitView));
+  }, [canUseSplitView, setAgentOutputViewMode]);
+  const terminalToggleLabel = canUseSplitView
+    ? "Cycle chat, split, and terminal views"
+    : "Toggle chat and terminal views";
   const measuredDividerWidth = terminalPaneWidth
     ? Math.max(
         MIN_TERMINAL_DIVIDER_WIDTH,
@@ -1381,16 +1401,16 @@ export default function ChatScreen() {
                   </Pressable>
                   {canShowTerminal ? (
                     <Pressable
-                      onPress={() => setShowTerminalSplit((current) => !current)}
+                      onPress={cycleAgentOutputViewMode}
                       accessibilityLabel={terminalToggleLabel}
                       className="h-8 w-8 items-center justify-center rounded-md border border-border"
                     >
-                      {showSplit || showTerminalOnly ? (
-                        <MessageSquare size={15} color="#a1a1aa" />
-                      ) : canUseSplitView ? (
+                      {showSplit ? (
                         <Columns2 size={15} color="#a1a1aa" />
-                      ) : (
+                      ) : showTerminalOnly ? (
                         <SquareTerminal size={15} color="#a1a1aa" />
+                      ) : (
+                        <MessageSquare size={15} color="#a1a1aa" />
                       )}
                     </Pressable>
                   ) : null}
@@ -1437,17 +1457,17 @@ export default function ChatScreen() {
                       <Text className="text-xs text-foreground">Manage</Text>
                     </Pressable>
                     <Pressable
-                      onPress={() => setShowTerminalSplit((current) => !current)}
+                      onPress={cycleAgentOutputViewMode}
                       disabled={!canShowTerminal}
                       accessibilityLabel={terminalToggleLabel}
                       className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
                     >
-                      {showSplit || showTerminalOnly ? (
-                        <MessageSquare size={15} color="#a1a1aa" />
-                      ) : canUseSplitView ? (
+                      {showSplit ? (
                         <Columns2 size={15} color="#a1a1aa" />
-                      ) : (
+                      ) : showTerminalOnly ? (
                         <SquareTerminal size={15} color="#a1a1aa" />
+                      ) : (
+                        <MessageSquare size={15} color="#a1a1aa" />
                       )}
                     </Pressable>
                     <Pressable

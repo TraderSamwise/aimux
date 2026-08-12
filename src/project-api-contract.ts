@@ -1270,8 +1270,15 @@ export interface ExposePreviewSnapshot {
   lineCount?: number;
 }
 
+export interface ExposeChatPreview {
+  messages: AgentTranscriptMessage[];
+  capturedAt: string;
+  source: "readAgentOutput";
+}
+
 export interface SwitchableAgentItem extends Record<string, unknown> {
   previewSnapshot?: ExposePreviewSnapshot;
+  chatPreview?: ExposeChatPreview;
   exposeContext?: {
     worktree: string;
     project?: string;

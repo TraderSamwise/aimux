@@ -9,10 +9,13 @@ import {
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 
 export type ThemePreference = "system" | "light" | "dark";
+export type AgentOutputViewMode = "chat" | "split" | "terminal";
+export type ExposePreviewMode = "chat" | "terminal";
 
 export interface AppSettings {
   theme: ThemePreference;
-  chatTerminalSplit: boolean;
+  agentOutputViewMode: AgentOutputViewMode;
+  exposePreviewMode: ExposePreviewMode;
   chatRichTerminalColors: boolean;
   notifications: NotificationSettings;
   activeShare: ActiveSharedSession | null;
@@ -29,7 +32,8 @@ export interface ActiveSharedSession {
 
 export const defaultSettings: AppSettings = Object.freeze({
   theme: "dark",
-  chatTerminalSplit: false,
+  agentOutputViewMode: "split",
+  exposePreviewMode: "terminal",
   chatRichTerminalColors: true,
   notifications: defaultNotificationSettings,
   activeShare: null,
@@ -60,8 +64,11 @@ const asyncSettingsAtom = atomWithStorage<AppSettings>(
 export const settingsAtom = unwrap(asyncSettingsAtom, (previous) => previous ?? defaultSettings);
 
 export const themePreferenceAtom = focusAtom(settingsAtom, (optic) => optic.prop("theme"));
-export const chatTerminalSplitAtom = focusAtom(settingsAtom, (optic) =>
-  optic.prop("chatTerminalSplit"),
+export const agentOutputViewModeAtom = focusAtom(settingsAtom, (optic) =>
+  optic.prop("agentOutputViewMode"),
+);
+export const exposePreviewModeAtom = focusAtom(settingsAtom, (optic) =>
+  optic.prop("exposePreviewMode"),
 );
 export const chatRichTerminalColorsAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("chatRichTerminalColors"),
