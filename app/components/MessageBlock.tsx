@@ -24,7 +24,6 @@ interface Props {
   message: ChatMessage;
   serviceEndpoint: ServiceEndpoint;
   dividerWidth?: number;
-  textScale?: number;
 }
 
 const MESSAGE_BASE_STYLE: ViewStyle = {
@@ -187,7 +186,6 @@ export const MessageBlock = React.memo(function MessageBlock({
   message,
   serviceEndpoint,
   dividerWidth,
-  textScale = 1,
 }: Props) {
   const role = message.role ?? "assistant";
   const isUser = role === "user";
@@ -196,15 +194,6 @@ export const MessageBlock = React.memo(function MessageBlock({
   const formatMessageText = React.useCallback(
     (text: string) => formatPlainTextForDisplay(text, { dividerWidth }),
     [dividerWidth],
-  );
-  const messageTextStyle = React.useMemo<TextStyle>(
-    () => ({
-      ...MESSAGE_TEXT_STYLE,
-      ...(Platform.OS !== "web" && textScale !== 1
-        ? { fontSize: 16 * textScale, lineHeight: 22 * textScale }
-        : {}),
-    }),
-    [textScale],
   );
 
   return (
@@ -244,12 +233,12 @@ export const MessageBlock = React.memo(function MessageBlock({
                   spans={richTextInput.spans}
                   className={className}
                   dividerWidth={dividerWidth}
-                  textStyle={messageTextStyle}
+                  textStyle={MESSAGE_TEXT_STYLE}
                 />
               );
             }
             return (
-              <Text key={idx} className={className} style={messageTextStyle}>
+              <Text key={idx} className={className} style={MESSAGE_TEXT_STYLE}>
                 {formatMessageText(part.text)}
               </Text>
             );
@@ -261,7 +250,7 @@ export const MessageBlock = React.memo(function MessageBlock({
       ) : (
         <Text
           className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}
-          style={messageTextStyle}
+          style={MESSAGE_TEXT_STYLE}
         >
           {formatMessageText(message.text ?? "")}
         </Text>

@@ -1,17 +1,26 @@
-import React, { useEffect, useState } from "react";
-import { Animated, Platform, Pressable, View, useWindowDimensions } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Animated,
+  Platform,
+  Pressable,
+  View,
+  useWindowDimensions,
+  type ViewStyle,
+} from "react-native";
 import { usePathname } from "expo-router";
 import { useAtom } from "jotai";
 import { Menu } from "lucide-react-native";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
+import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const { isDesktopNative, uiScale } = useRuntimeTuning();
   const isDesktop = width >= 1024;
   const isTablet = width >= 640 && width < 1024;
   const isMobile = width < 640;
@@ -39,6 +48,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [sidebarOpen, translateX]);
 
   const showHamburger = isTablet || isMobile;
+  const shellZoomStyle = useMemo<ViewStyle>(
+    () =>
+      isDesktopNative && uiScale !== 1
+        ? {
+            height: height / uiScale,
+            transform: [{ scale: uiScale }],
+            transformOrigin: "top left",
+            width: width / uiScale,
+          }
+        : { flex: 1 },
+    [height, isDesktopNative, uiScale, width],
+  );
   const hamburger = showHamburger ? (
     <Button
       variant="ghost"
@@ -52,37 +73,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <View className="flex-1 bg-background">
-      <TopBar left={hamburger} />
-      <View className="flex-1 flex-row">
-        {isDesktop ? <ProjectSidebar /> : null}
-        {isTablet && sidebarOpen ? <ProjectSidebar /> : null}
-        <View className="flex-1">{children}</View>
+      <View style={shellZoomStyle}>
+        <TopBar left={hamburger} />
+        <View className="flex-1 flex-row">
+          {isDesktop ? <ProjectSidebar /> : null}
+          {isTablet && sidebarOpen ? <ProjectSidebar /> : null}
+          <View className="flex-1">{children}</View>
 
-        {isMobile && sidebarOpen ? (
-          <Pressable
-            onPress={() => setSidebarOpen(false)}
-            style={[
-              { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 },
-              Platform.OS === "web" ? ({ position: "fixed" } as object) : undefined,
-            ]}
-          />
-        ) : null}
-        {isMobile ? (
-          <Animated.View
-            pointerEvents={sidebarOpen ? "auto" : "none"}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              bottom: 0,
-              width: DRAWER_WIDTH,
-              zIndex: 50,
-              transform: [{ translateX }],
-            }}
-          >
-            <ProjectSidebar showPrimaryNav={false} />
-          </Animated.View>
-        ) : null}
+          {isMobile && sidebarOpen ? (
+            <Pressable
+              onPress={() => setSidebarOpen(false)}
+              style={[
+                { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 },
+                Platform.OS === "web" ? ({ position: "fixed" } as object) : undefined,
+              ]}
+            />
+          ) : null}
+          {isMobile ? (
+            <Animated.View
+              pointerEvents={sidebarOpen ? "auto" : "none"}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                bottom: 0,
+                width: DRAWER_WIDTH,
+                zIndex: 50,
+                transform: [{ translateX }],
+              }}
+            >
+              <ProjectSidebar showPrimaryNav={false} />
+            </Animated.View>
+          ) : null}
+        </View>
       </View>
     </View>
   );

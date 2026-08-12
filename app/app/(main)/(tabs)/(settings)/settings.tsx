@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View, type ViewStyle } from "react-native";
 import { useAtom, useAtomValue } from "jotai";
 import { Page, PageHeader } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,11 @@ const DESKTOP_APP_ZOOM_OPTIONS: { value: `${DesktopAppZoom}`; label: string }[] 
   { value: "110", label: "110%" },
   { value: "120", label: "120%" },
 ];
+
+const SETTINGS_CONTENT_STYLE: ViewStyle = {
+  maxWidth: 900,
+  width: "100%",
+};
 
 const ENABLED_OPTIONS = [
   { value: "off", label: "Off" },
@@ -204,7 +209,7 @@ export default function SettingsScreen() {
   }
 
   return (
-    <Page>
+    <Page contentStyle={SETTINGS_CONTENT_STYLE}>
       <PageHeader title="Settings" subtitle="Preferences for the app and agent alerts." />
       <Text className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
         Appearance

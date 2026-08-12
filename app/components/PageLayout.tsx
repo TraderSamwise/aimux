@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, View } from "react-native";
+import { ScrollView, View, type StyleProp, type ViewStyle } from "react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
@@ -8,17 +8,21 @@ export function Page({
   children,
   className,
   contentClassName,
+  contentStyle,
 }: {
   children: React.ReactNode;
   className?: string;
   contentClassName?: string;
+  contentStyle?: StyleProp<ViewStyle>;
 }) {
   return (
     <ScrollView
       className={cn("flex-1 bg-background", className)}
       contentContainerClassName={cn("px-4 py-5 md:px-8", contentClassName)}
     >
-      <View className="w-full">{children}</View>
+      <View className="w-full" style={contentStyle}>
+        {children}
+      </View>
     </ScrollView>
   );
 }

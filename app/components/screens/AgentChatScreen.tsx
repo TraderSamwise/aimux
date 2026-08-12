@@ -15,7 +15,6 @@ import {
   type NativeScrollEvent,
   type ScrollViewProps,
   type TextInputContentSizeChangeEventData,
-  type TextStyle,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import {
@@ -76,7 +75,6 @@ import { worktreeIdentity } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
-import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import {
   activityFamily,
@@ -294,7 +292,6 @@ export default function ChatScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const { width, height: windowHeight } = useWindowDimensions();
-  const { uiScale } = useRuntimeTuning();
   const safeAreaInsets = useSafeAreaInsets();
   const bottomInset = resolveChromeBottomInset(safeAreaInsets.bottom);
   const [token, setToken] = useState<string | null>(null);
@@ -597,20 +594,10 @@ export default function ChatScreen() {
   const terminalToggleLabel = canUseSplitView
     ? "Cycle chat, split, and terminal views"
     : "Toggle chat and terminal views";
-  const terminalTextStyle = useMemo<TextStyle>(
-    () => ({
-      fontSize: TERMINAL_FONT_SIZE * uiScale,
-      lineHeight: TERMINAL_LINE_HEIGHT * uiScale,
-    }),
-    [uiScale],
-  );
   const measuredDividerWidth = terminalPaneWidth
     ? Math.max(
         MIN_TERMINAL_DIVIDER_WIDTH,
-        Math.floor(
-          (terminalPaneWidth - TERMINAL_HORIZONTAL_PADDING) /
-            (APPROX_TERMINAL_CHAR_WIDTH * uiScale),
-        ),
+        Math.floor((terminalPaneWidth - TERMINAL_HORIZONTAL_PADDING) / APPROX_TERMINAL_CHAR_WIDTH),
       )
     : null;
   const terminalDividerWidth = Math.min(
@@ -628,8 +615,7 @@ export default function ChatScreen() {
   );
   const chatDividerWidth = Math.max(
     MIN_CHAT_DIVIDER_WIDTH,
-    Math.floor(chatBubbleTextWidth / (CHAT_DIVIDER_APPROX_CHAR_WIDTH * uiScale)) -
-      CHAT_DIVIDER_WIDTH_SAFETY,
+    Math.floor(chatBubbleTextWidth / CHAT_DIVIDER_APPROX_CHAR_WIDTH) - CHAT_DIVIDER_WIDTH_SAFETY,
   );
   const terminalLines = useMemo(
     () =>
@@ -1312,7 +1298,7 @@ export default function ChatScreen() {
         onLayout={handleScrollLayout}
         onScroll={handleScroll}
       >
-        <TerminalContent terminalLines={terminalLines} textStyle={terminalTextStyle} />
+        <TerminalContent terminalLines={terminalLines} />
       </KeyboardManagedScrollView>
     </View>
   );
@@ -1351,7 +1337,6 @@ export default function ChatScreen() {
         onScroll={handleNativeChatScroll}
         onScrollBeginDrag={handleNativeChatScrollBegin}
         serviceEndpoint={serviceEndpoint}
-        textScale={uiScale}
       />
     ) : (
       <KeyboardManagedScrollView
@@ -1372,7 +1357,6 @@ export default function ChatScreen() {
           restoreBlockedReason={restoreBlockedReason}
           sendError={sendError}
           serviceEndpoint={serviceEndpoint}
-          textScale={uiScale}
           visibleLastError={visibleLastError}
         />
       </KeyboardManagedScrollView>
@@ -1869,7 +1853,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   onScroll,
   onScrollBeginDrag,
   serviceEndpoint,
-  textScale,
 }: {
   composerEndPadding: number;
   dividerWidth: number;
@@ -1882,7 +1865,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onScrollBeginDrag: () => void;
   serviceEndpoint: ServiceEndpoint;
-  textScale: number;
 }) {
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<ChatListItem>) => {
@@ -1892,7 +1874,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
             dividerWidth={dividerWidth}
             message={item.message}
             serviceEndpoint={serviceEndpoint}
-            textScale={textScale}
           />
         );
       }
@@ -1908,7 +1889,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
       }
       return <Text className="text-xs text-destructive my-2">{item.text}</Text>;
     },
-    [dividerWidth, serviceEndpoint, textScale],
+    [dividerWidth, serviceEndpoint],
   );
 
   const renderScrollComponent = useCallback(
@@ -1954,10 +1935,8 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
 
 const TerminalContent = React.memo(function TerminalContent({
   terminalLines,
-  textStyle,
 }: {
   terminalLines: ReturnType<typeof formatTerminalOutputForDisplay>;
-  textStyle: TextStyle;
 }) {
   return (
     <>
@@ -1965,12 +1944,12 @@ const TerminalContent = React.memo(function TerminalContent({
         <Text
           key={`row-${index}`}
           className="text-secondary-foreground font-mono"
-          style={textStyle}
+          style={TERMINAL_TEXT_STYLE}
         >
           {spans.length === 0
             ? " "
             : spans.map((span, spanIndex) => (
-                <RNText key={`span-${spanIndex}`} style={[textStyle, span.style]}>
+                <RNText key={`span-${spanIndex}`} style={[TERMINAL_TEXT_STYLE, span.style]}>
                   {span.text}
                 </RNText>
               ))}
@@ -1986,7 +1965,6 @@ const TranscriptContent = React.memo(function TranscriptContent({
   restoreBlockedReason,
   sendError,
   serviceEndpoint,
-  textScale,
   visibleLastError,
 }: {
   messages: ChatMessage[];
@@ -1994,7 +1972,6 @@ const TranscriptContent = React.memo(function TranscriptContent({
   restoreBlockedReason: string | null;
   sendError: string | null;
   serviceEndpoint: ServiceEndpoint;
-  textScale: number;
   visibleLastError: string | null;
 }) {
   return (
@@ -2005,7 +1982,6 @@ const TranscriptContent = React.memo(function TranscriptContent({
           dividerWidth={dividerWidth}
           message={message}
           serviceEndpoint={serviceEndpoint}
-          textScale={textScale}
         />
       ))}
       {restoreBlockedReason ? (
