@@ -1,8 +1,9 @@
 import type { DaemonProject } from "@/lib/api";
 import type { AnsiSpan } from "@/lib/ansi";
-import type { AgentTranscriptMessage, ChatMessage, HistoryPart } from "@/lib/events";
+import type { AgentTranscriptMessage, ChatMessage } from "@/lib/events";
+import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { firstTokenOf } from "@/lib/status-tone";
-import { formatPlainTextForDisplay, formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { toChatMessages } from "@/lib/transcript-view";
 import { WORKTREE_TONES } from "@/lib/worktree-tone";
 import type { ExposeChatPreview, ExposePreviewSnapshot } from "../../src/project-api-contract";
@@ -65,6 +66,7 @@ export interface ExposeTile {
   projectId: string;
   projectName: string;
   projectRoot: string;
+  serviceEndpoint: ServiceEndpoint | null;
   sessionId: string;
   windowId?: string;
   windowIndex?: number;
@@ -82,12 +84,7 @@ export interface ExposeTile {
   sectionLabel: string;
   tone: string;
   terminalPreviewLines: AnsiSpan[][];
-  chatPreviewLines: ExposeChatPreviewLine[];
-}
-
-export interface ExposeChatPreviewLine {
-  role: ChatMessage["role"];
-  text: string;
+  chatPreviewMessages: ChatMessage[];
 }
 
 export interface ExposeSection {
@@ -105,7 +102,6 @@ export interface ExposeSummary {
 }
 
 const EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH = 48;
-const EXPOSE_CHAT_PREVIEW_DIVIDER_WIDTH = 56;
 
 function cap(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
@@ -139,34 +135,10 @@ function previewLinesFor(item: ExposeSourceItem): AnsiSpan[][] {
     .filter((line) => ansiLineText(line).trim().length > 0);
 }
 
-function chatPreviewLinesFor(item: ExposeSourceItem, sessionId: string): ExposeChatPreviewLine[] {
+function chatPreviewMessagesFor(item: ExposeSourceItem, sessionId: string): ChatMessage[] {
   const messages = item.chatPreview?.messages ?? [];
   if (messages.length === 0) return [];
-  return toChatMessages(messages, sessionId)
-    .flatMap((message) =>
-      textFromChatMessage(message)
-        .split("\n")
-        .flatMap((line) =>
-          formatPlainTextForDisplay(line, {
-            dividerWidth: EXPOSE_CHAT_PREVIEW_DIVIDER_WIDTH,
-          }),
-        )
-        .map((line) => line.trimEnd())
-        .filter((line) => line.trim().length > 0)
-        .map((text) => ({ role: message.role, text })),
-    )
-    .slice(-16);
-}
-
-function textFromChatMessage(message: ChatMessage): string {
-  return (message.parts ?? []).map(textFromHistoryPart).filter(Boolean).join("\n");
-}
-
-function textFromHistoryPart(part: HistoryPart): string {
-  if (part.type === "text") return part.text;
-  if (part.type === "image") return part.filename ? `[Image: ${part.filename}]` : "[Image]";
-  if (part.type === "image_reference") return `[${part.label}]`;
-  return "";
+  return toChatMessages(messages, sessionId).slice(-6);
 }
 
 function ansiLineText(line: readonly AnsiSpan[]): string {
@@ -216,6 +188,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         projectId: item.projectId || source.project.id,
         projectName,
         projectRoot,
+        serviceEndpoint: source.project.serviceEndpoint,
         sessionId,
         windowId: item.target?.windowId,
         windowIndex: item.target?.windowIndex,
@@ -233,7 +206,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         sectionLabel: semanticTitle,
         tone: toneFor(item, index),
         terminalPreviewLines: previewLinesFor(item),
-        chatPreviewLines: chatPreviewLinesFor(item, sessionId),
+        chatPreviewMessages: chatPreviewMessagesFor(item, sessionId),
       });
     });
   }

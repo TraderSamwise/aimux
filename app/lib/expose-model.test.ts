@@ -152,7 +152,7 @@ describe("expose model", () => {
     expect(previewText(tile?.terminalPreviewLines ?? []).join("\n")).not.toContain("\x1b");
   });
 
-  it("formats chat previews through the shared transcript display pipeline", () => {
+  it("preserves chat preview messages for the shared MessageBlock renderer", () => {
     const [tile] = buildExposeTiles([
       {
         project,
@@ -187,10 +187,21 @@ describe("expose model", () => {
       },
     ]);
 
-    expect(tile?.chatPreviewLines).toEqual([
-      { role: "assistant", text: "Confirmed." },
-      { role: "assistant", text: "────────────────────────────────────────────────────────" },
-      { role: "user", text: "check again" },
-    ]);
+    expect(tile?.chatPreviewMessages).toHaveLength(2);
+    expect(tile?.chatPreviewMessages[0]).toMatchObject({
+      id: "a1",
+      role: "assistant",
+      parts: [
+        {
+          type: "text",
+          text: "Confirmed.\n────────────────────────────────────────────────────────────────",
+        },
+      ],
+    });
+    expect(tile?.chatPreviewMessages[1]).toMatchObject({
+      id: "u1",
+      role: "user",
+      parts: [{ type: "text", text: "check again" }],
+    });
   });
 });

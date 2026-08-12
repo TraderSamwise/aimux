@@ -4,6 +4,7 @@ import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { CheckCircle2, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
+import { MessageBlock } from "@/components/MessageBlock";
 import { PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { PressableCard } from "@/components/ui/card";
@@ -123,6 +124,25 @@ function dotClass(kind: ExposeTile["statusKind"]): string {
   }
 }
 
+function sourcesForGlobalExposeItems(projects: DaemonProject[], items: ExposeSourceItem[]) {
+  const byProjectId = new Map(projects.map((project) => [project.id, project]));
+  const byProjectPath = new Map(projects.map((project) => [project.path, project]));
+  const grouped = new Map<string, { project: DaemonProject; items: ExposeSourceItem[] }>();
+  for (const item of items) {
+    const project =
+      (item.projectId ? byProjectId.get(item.projectId) : undefined) ??
+      (item.projectRoot ? byProjectPath.get(item.projectRoot) : undefined);
+    if (!project) continue;
+    let source = grouped.get(project.id);
+    if (!source) {
+      source = { project, items: [] };
+      grouped.set(project.id, source);
+    }
+    source.items.push(item);
+  }
+  return [...grouped.values()];
+}
+
 function ExposeTileCard({
   tile,
   tileWidth,
@@ -141,14 +161,13 @@ function ExposeTileCard({
     tile.terminalPreviewLines.length > 0
       ? tile.terminalPreviewLines.slice(-previewLineCount)
       : [[{ text: "No recent pane output.", style: {} }]];
-  const chatPreview =
-    tile.chatPreviewLines.length > 0
-      ? tile.chatPreviewLines.slice(-previewLineCount)
-      : [{ role: "assistant" as const, text: "No recent chat output." }];
+  const chatPreview = tile.chatPreviewMessages;
   const hasPreview =
     previewMode === "terminal"
       ? tile.terminalPreviewLines.length > 0
-      : tile.chatPreviewLines.length > 0;
+      : tile.chatPreviewMessages.length > 0;
+  const chatDividerWidth = Math.max(24, Math.floor((tileWidth * 0.9 - 24) / 8.5) - 2);
+  const chatEndpoint = tile.serviceEndpoint;
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
@@ -198,41 +217,41 @@ function ExposeTileCard({
             ) : null}
           </View>
 
-          <View className="mt-3 flex-1 justify-end border-t border-[#2a2b31] pt-3">
-            {previewMode === "terminal"
-              ? terminalPreview.map((line, index) => (
-                  <Text
-                    key={`${tile.id}:${index}`}
-                    className={cn(
-                      "font-mono text-[11.5px] leading-5",
-                      hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
-                    )}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {line.length === 0
-                      ? " "
-                      : line.map((span, spanIndex) => (
-                          <RNText key={`${tile.id}:${index}:${spanIndex}`} style={span.style}>
-                            {span.text}
-                          </RNText>
-                        ))}
-                  </Text>
-                ))
-              : chatPreview.map((line, index) => (
-                  <Text
-                    key={`${tile.id}:${index}`}
-                    className={cn(
-                      "text-[12px] leading-5",
-                      hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
-                      line.role === "user" ? "font-semibold" : "",
-                    )}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {line.text}
-                  </Text>
-                ))}
+          <View className="mt-3 flex-1 justify-end overflow-hidden border-t border-[#2a2b31] pt-3">
+            {previewMode === "terminal" ? (
+              terminalPreview.map((line, index) => (
+                <Text
+                  key={`${tile.id}:${index}`}
+                  className={cn(
+                    "font-mono text-[11.5px] leading-5",
+                    hasPreview ? "text-[#d4d4d8]" : "text-[#666872]",
+                  )}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {line.length === 0
+                    ? " "
+                    : line.map((span, spanIndex) => (
+                        <RNText key={`${tile.id}:${index}:${spanIndex}`} style={span.style}>
+                          {span.text}
+                        </RNText>
+                      ))}
+                </Text>
+              ))
+            ) : hasPreview && chatEndpoint ? (
+              chatPreview.map((message, index) => (
+                <MessageBlock
+                  key={message.id ?? message.clientMessageId ?? `${tile.id}:${index}`}
+                  dividerWidth={chatDividerWidth}
+                  message={message}
+                  serviceEndpoint={chatEndpoint}
+                />
+              ))
+            ) : (
+              <Text className="text-[12px] leading-5 text-[#666872]" numberOfLines={1}>
+                No recent chat output.
+              </Text>
+            )}
           </View>
         </View>
       </PressableCard>
@@ -358,24 +377,14 @@ export default function ExposeScreen() {
           ? await (async () => {
               const response = await listGlobalExposeItems({
                 token,
+                includeChatPreview: exposePreviewMode === "chat",
                 signal: controller.signal,
                 timeoutMs: 5000,
               });
               return {
-                tiles: buildExposeTiles([
-                  {
-                    project: {
-                      id: "global",
-                      name: "all projects",
-                      path: "/",
-                      dashboardSessionName: "global",
-                      service: null,
-                      serviceAlive: true,
-                      serviceEndpoint: null,
-                    },
-                    items: response.items as ExposeSourceItem[],
-                  },
-                ]),
+                tiles: buildExposeTiles(
+                  sourcesForGlobalExposeItems(projects, response.items as ExposeSourceItem[]),
+                ),
                 results: [{ projectName: "all projects", error: null }],
               };
             })()
@@ -428,7 +437,15 @@ export default function ExposeScreen() {
       if (mountedRequestRef.current === requestId) setPending(false);
       if (activeControllerRef.current === controller) activeControllerRef.current = null;
     }
-  }, [exposePreviewMode, getToken, projectRequest, relayReadyForRequests, scope, viewKey]);
+  }, [
+    exposePreviewMode,
+    getToken,
+    projectRequest,
+    projects,
+    relayReadyForRequests,
+    scope,
+    viewKey,
+  ]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
