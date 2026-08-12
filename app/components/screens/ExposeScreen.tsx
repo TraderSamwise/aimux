@@ -27,6 +27,7 @@ import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-l
 import { worktreeGroupsFamily } from "@/stores/desktopState";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
+import { chatTerminalSplitAtom } from "@/stores/settings";
 
 type ExposeScope = "project" | "global";
 
@@ -102,6 +103,7 @@ function ExposeTileCard({
   onPress: () => void;
 }) {
   const preview = tile.previewLines.length > 0 ? tile.previewLines : ["No recent pane output."];
+  const chatPreview = tile.chatPreviewMessages;
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
@@ -144,21 +146,49 @@ function ExposeTileCard({
             </View>
           </View>
 
-          <View className="mt-3 border-t border-[#2a2b31] pt-3">
-            {preview.map((line, index) => (
-              <Text
-                key={`${tile.id}:${index}`}
-                className={cn(
-                  "font-mono text-[11.5px] leading-5",
-                  tile.previewLines.length > 0 ? "text-[#d4d4d8]" : "text-[#666872]",
-                )}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {line}
-              </Text>
-            ))}
-          </View>
+          {tile.previewMode === "chat" && chatPreview.length > 0 ? (
+            <View className="mt-3 border-t border-[#2a2b31] pt-3">
+              {chatPreview.map((message) => {
+                const isUser = message.role === "user";
+                return (
+                  <View
+                    key={`${tile.id}:${message.id}`}
+                    className={cn(
+                      "mb-1.5 max-w-[92%] rounded-md px-2 py-1.5",
+                      isUser ? "self-end bg-[#f4f4f5]" : "self-start bg-[#23242a]",
+                    )}
+                  >
+                    <Text
+                      className={cn(
+                        "text-[12px] leading-4",
+                        isUser ? "text-[#18181b]" : "text-[#e4e4e7]",
+                      )}
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
+                    >
+                      {message.text}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <View className="mt-3 border-t border-[#2a2b31] pt-3">
+              {preview.map((line, index) => (
+                <Text
+                  key={`${tile.id}:${index}`}
+                  className={cn(
+                    "font-mono text-[11.5px] leading-5",
+                    tile.previewLines.length > 0 ? "text-[#d4d4d8]" : "text-[#666872]",
+                  )}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {line}
+                </Text>
+              ))}
+            </View>
+          )}
         </View>
       </PressableCard>
     </View>
@@ -184,6 +214,7 @@ export default function ExposeScreen() {
   const projects = useAtomValue(projectsAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  const showTerminalSplit = useAtomValue(chatTerminalSplitAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const searchParams = useGlobalSearchParams<{
     project?: string | string[];
@@ -211,9 +242,11 @@ export default function ExposeScreen() {
   const cachedProjectTiles = useMemo(
     () =>
       scope === "project" && currentProject && cachedCurrentGroups.length > 0
-        ? buildExposeTiles([{ project: currentProject, groups: cachedCurrentGroups }])
+        ? buildExposeTiles([{ project: currentProject, groups: cachedCurrentGroups }], {
+            previewMode: showTerminalSplit ? "terminal" : "chat",
+          })
         : [],
-    [cachedCurrentGroups, currentProject, scope],
+    [cachedCurrentGroups, currentProject, scope, showTerminalSplit],
   );
   const displayTiles = tiles.length > 0 ? tiles : cachedProjectTiles;
   const summary = useMemo(() => summarizeExposeTiles(displayTiles), [displayTiles]);
@@ -225,7 +258,9 @@ export default function ExposeScreen() {
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
   const offlineProjects = projectResults.filter((result) => result.error);
   const relayReadyForRequests = relayStatus !== "connecting";
-  const viewKey = scope === "global" ? "global" : `project:${currentProjectPath ?? ""}`;
+  const viewKey = `${scope === "global" ? "global" : `project:${currentProjectPath ?? ""}`}:${
+    showTerminalSplit ? "terminal" : "chat"
+  }`;
 
   const refresh = useCallback(async () => {
     const requestId = mountedRequestRef.current + 1;
@@ -253,11 +288,14 @@ export default function ExposeScreen() {
             const state = await getDesktopState(endpoint, {
               token,
               includePreview: true,
+              includeChatPreview: !showTerminalSplit,
               signal: controller.signal,
               timeoutMs: scope === "global" ? 5000 : 10000,
             });
             tilesForProject.push(
-              ...buildExposeTiles([{ project, groups: groupByWorktree(state) }]),
+              ...buildExposeTiles([{ project, groups: groupByWorktree(state) }], {
+                previewMode: showTerminalSplit ? "terminal" : "chat",
+              }),
             );
             resultsForProject.push({ projectName: project.name, error: null });
           } catch (err) {
@@ -280,7 +318,7 @@ export default function ExposeScreen() {
       if (mountedRequestRef.current === requestId) setPending(false);
       if (activeControllerRef.current === controller) activeControllerRef.current = null;
     }
-  }, [getToken, relayReadyForRequests, scope, visibleProjects]);
+  }, [getToken, relayReadyForRequests, scope, showTerminalSplit, visibleProjects]);
 
   useEffect(() => {
     const timer = setTimeout(() => {

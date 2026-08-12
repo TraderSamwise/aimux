@@ -114,4 +114,69 @@ describe("expose model", () => {
 
     expect(tile?.previewLines).toEqual(["two", "three", "four", "five", "six", "seven", "eight"]);
   });
+
+  it("uses chat preview messages when chat previews are requested", () => {
+    const [tile] = buildExposeTiles(
+      [
+        {
+          project: tealstreet,
+          groups: [
+            group("Main Checkout", [
+              {
+                id: "a",
+                status: "running",
+                command: "codex",
+                chatPreview: {
+                  source: "readAgentOutput",
+                  capturedAt: "2026-08-12T00:00:00.000Z",
+                  messages: [
+                    {
+                      id: "old",
+                      role: "assistant",
+                      text: "old",
+                      parts: [{ type: "text", text: "old" }],
+                    },
+                    {
+                      id: "u1",
+                      role: "user",
+                      text: "again",
+                      parts: [{ type: "text", text: "again" }],
+                    },
+                    {
+                      id: "a1",
+                      role: "assistant",
+                      text: "done",
+                      parts: [{ type: "text", text: "done" }],
+                    },
+                  ],
+                },
+              },
+            ]),
+          ],
+        },
+      ],
+      { previewMode: "chat" },
+    );
+
+    expect(tile?.previewMode).toBe("chat");
+    expect(tile?.chatPreviewMessages).toEqual([
+      { id: "old", role: "assistant", text: "old" },
+      { id: "u1", role: "user", text: "again" },
+      { id: "a1", role: "assistant", text: "done" },
+    ]);
+  });
+
+  it("falls back to terminal preview when chat preview is missing", () => {
+    const [tile] = buildExposeTiles(
+      [
+        {
+          project: tealstreet,
+          groups: [group("Main Checkout", [{ id: "a", status: "running", command: "codex" }])],
+        },
+      ],
+      { previewMode: "chat" },
+    );
+
+    expect(tile?.previewMode).toBe("terminal");
+  });
 });

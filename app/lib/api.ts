@@ -1089,11 +1089,15 @@ export async function putPlan(
 
 export async function getDesktopState(
   endpoint: ServiceEndpoint,
-  opts?: ApiOpts & { includePreview?: boolean },
+  opts?: ApiOpts & { includePreview?: boolean; includeChatPreview?: boolean },
 ): Promise<DesktopState> {
-  const { includePreview, ...apiOpts } = opts ?? {};
-  const path = includePreview
-    ? `${PROJECT_API_ROUTES.desktopState}?includePreview=1`
+  const { includePreview, includeChatPreview, ...apiOpts } = opts ?? {};
+  const params = new URLSearchParams();
+  if (includePreview) params.set("includePreview", "1");
+  if (includeChatPreview) params.set("includeChatPreview", "1");
+  const query = params.toString();
+  const path = query
+    ? `${PROJECT_API_ROUTES.desktopState}?${query}`
     : PROJECT_API_ROUTES.desktopState;
   return callProjectJson<DesktopState>(endpoint, "GET", path, apiOpts);
 }

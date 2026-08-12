@@ -1254,6 +1254,7 @@ export interface SwitchableAgentsInput {
   currentPath?: string;
   scope?: "all" | "worktree";
   includePreview?: "1";
+  includeChatPreview?: "1";
 }
 
 export type ExposePreviewSnapshotSource = "capture" | "tap";

@@ -932,6 +932,8 @@ const CORS_ALLOWED_ORIGINS = new Set([
 const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
 const DESKTOP_STATE_STALE_REFRESH_DELAY_MS = 1_000;
 const DESKTOP_STATE_PREVIEW_MAX_CHARS = 8_192;
+const DESKTOP_STATE_CHAT_PREVIEW_START_LINE = -80;
+const DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES = 3;
 /**
  * How long a forced rebuild answers for the forced rebuilds behind it.
  *
@@ -1677,7 +1679,10 @@ export class MetadataServer {
     });
   }
 
-  private attachDesktopStatePreviewSnapshots(state: Record<string, unknown>): Record<string, unknown> {
+  private async attachDesktopStatePreviews(
+    state: Record<string, unknown>,
+    options: { includeChatPreview?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
     const sessions = Array.isArray((state as any).sessions) ? (state as any).sessions : [];
     const previewItems: FastControlItem[] = sessions
       .filter((session: any) => typeof session?.id === "string" && typeof session?.tmuxWindowId === "string")
@@ -1703,18 +1708,54 @@ export class MetadataServer {
         lastUsedAt: session.lastUsedAt,
         recentRank: Number.MAX_SAFE_INTEGER,
       }));
-    if (previewItems.length === 0) return state;
 
-    const snapshotsBySessionId = new Map(
-      this.attachExposePreviewSnapshots(previewItems, { maxOutputChars: DESKTOP_STATE_PREVIEW_MAX_CHARS })
-        .filter((item) => item.previewSnapshot)
-        .map((item) => [item.id, item.previewSnapshot] as const),
-    );
-    if (snapshotsBySessionId.size === 0) return state;
+    const snapshotsBySessionId =
+      previewItems.length > 0
+        ? new Map(
+            this.attachExposePreviewSnapshots(previewItems, { maxOutputChars: DESKTOP_STATE_PREVIEW_MAX_CHARS })
+              .filter((item) => item.previewSnapshot)
+              .map((item) => [item.id, item.previewSnapshot] as const),
+          )
+        : new Map<string, FastControlItem["previewSnapshot"]>();
+
+    const chatPreviewsBySessionId = new Map<
+      string,
+      { messages: AgentTranscriptMessage[]; capturedAt: string; source: "readAgentOutput" }
+    >();
+    if (options.includeChatPreview && this.options.lifecycle?.readAgentOutput) {
+      await Promise.all(
+        sessions
+          .filter((session: any) => typeof session?.id === "string")
+          .map(async (session: any) => {
+            try {
+              const result = await this.options.lifecycle!.readAgentOutput!({
+                sessionId: session.id,
+                startLine: DESKTOP_STATE_CHAT_PREVIEW_START_LINE,
+              });
+              const messages = (result.messages ?? []).slice(-DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES);
+              if (messages.length === 0) return;
+              chatPreviewsBySessionId.set(session.id, {
+                messages,
+                capturedAt: new Date().toISOString(),
+                source: "readAgentOutput",
+              });
+            } catch (error) {
+              log.debug?.("desktop-state chat preview failed", "api", {
+                sessionId: session.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }),
+      );
+    }
+
+    if (snapshotsBySessionId.size === 0 && chatPreviewsBySessionId.size === 0) return state;
 
     const attachSessionSnapshot = (session: any) => {
       const previewSnapshot = typeof session?.id === "string" ? snapshotsBySessionId.get(session.id) : undefined;
-      return previewSnapshot ? { ...session, previewSnapshot } : session;
+      const chatPreview = typeof session?.id === "string" ? chatPreviewsBySessionId.get(session.id) : undefined;
+      if (!previewSnapshot && !chatPreview) return session;
+      return { ...session, previewSnapshot, chatPreview };
     };
     return {
       ...state,
@@ -2774,12 +2815,14 @@ export class MetadataServer {
       const force = url.searchParams.get("force") === "1" || url.searchParams.get("force") === "true";
       const includePreview =
         url.searchParams.get("includePreview") === "1" || url.searchParams.get("includePreview") === "true";
+      const includeChatPreview =
+        url.searchParams.get("includeChatPreview") === "1" || url.searchParams.get("includeChatPreview") === "true";
       const state = this.getDesktopStateSnapshot(force);
       send(res, 200, {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
-        ...(includePreview ? this.attachDesktopStatePreviewSnapshots(state) : state),
+        ...(includePreview ? await this.attachDesktopStatePreviews(state, { includeChatPreview }) : state),
       });
       return;
     }

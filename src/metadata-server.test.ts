@@ -2320,6 +2320,16 @@ describe("MetadataServer threads API", () => {
           : undefined,
       ),
     };
+    const readAgentOutput = vi.fn(({ sessionId, startLine }) => ({
+      sessionId,
+      startLine,
+      output: "ignored pane output",
+      messages: [
+        { id: "old", role: "assistant" as const, text: "old", parts: [{ type: "text" as const, text: "old" }] },
+        { id: "u1", role: "user" as const, text: "again", parts: [{ type: "text" as const, text: "again" }] },
+        { id: "a1", role: "assistant" as const, text: "done", parts: [{ type: "text" as const, text: "done" }] },
+      ],
+    }));
     const session = {
       index: 0,
       id: "agent-1",
@@ -2333,6 +2343,9 @@ describe("MetadataServer threads API", () => {
     server = new MetadataServer({
       exposePreviewCache,
       exposePaneOutputTap,
+      lifecycle: {
+        readAgentOutput,
+      },
       desktop: {
         getState: () => ({
           sessions: [session],
@@ -2364,7 +2377,19 @@ describe("MetadataServer threads API", () => {
     expect(withoutPreviewBody.sessions[0]?.previewSnapshot).toBeUndefined();
     expect(exposePaneOutputTap.trackItems).not.toHaveBeenCalled();
 
-    const response = await fetch(`${base}?includePreview=1`);
+    const terminalPreviewResponse = await fetch(`${base}?includePreview=1`);
+    const terminalPreviewBody = (await terminalPreviewResponse.json()) as { sessions: any[] };
+    expect(terminalPreviewResponse.status).toBe(200);
+    expect(terminalPreviewBody.sessions[0]?.previewSnapshot).toEqual({
+      output: "details pane preview\n",
+      capturedAt: "2026-08-10T09:00:00.000Z",
+      source: "tap",
+      windowId: "@7",
+    });
+    expect(terminalPreviewBody.sessions[0]?.chatPreview).toBeUndefined();
+    expect(readAgentOutput).not.toHaveBeenCalled();
+
+    const response = await fetch(`${base}?includePreview=1&includeChatPreview=1`);
     const body = (await response.json()) as { sessions: any[]; worktreeGroups: any[] };
 
     expect(response.status).toBe(200);
@@ -2374,7 +2399,18 @@ describe("MetadataServer threads API", () => {
       source: "tap",
       windowId: "@7",
     });
+    expect(body.sessions[0]?.chatPreview).toEqual({
+      messages: [
+        { id: "old", role: "assistant", text: "old", parts: [{ type: "text", text: "old" }] },
+        { id: "u1", role: "user", text: "again", parts: [{ type: "text", text: "again" }] },
+        { id: "a1", role: "assistant", text: "done", parts: [{ type: "text", text: "done" }] },
+      ],
+      capturedAt: expect.any(String),
+      source: "readAgentOutput",
+    });
     expect(body.worktreeGroups[0]?.sessions[0]?.previewSnapshot).toBeUndefined();
+    expect(body.worktreeGroups[0]?.sessions[0]?.chatPreview).toBeUndefined();
+    expect(readAgentOutput).toHaveBeenCalledWith({ sessionId: "agent-1", startLine: -80 });
     expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
       expect.objectContaining({ id: "agent-1", target: expect.objectContaining({ windowId: "@7" }) }),
     ]);

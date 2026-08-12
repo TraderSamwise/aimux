@@ -2,14 +2,23 @@
 // plus a lean group-by-worktree helper that mirrors the TUI's dashboard hierarchy.
 // Canonical server-side shapes live in src/dashboard/index.ts and src/multiplexer/dashboard-model.ts.
 
+import type { AgentTranscriptMessage } from "@/lib/events";
+
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
 export type DesktopServiceStatus = "running" | "exited" | "offline";
 export type ExposePreviewSnapshotSource = "capture" | "tap";
+export type ExposeChatPreviewSource = "readAgentOutput";
 
 export interface ExposePreviewSnapshot {
   output: string;
   capturedAt: string;
   source: ExposePreviewSnapshotSource;
+}
+
+export interface ExposeChatPreview {
+  messages: AgentTranscriptMessage[];
+  capturedAt: string;
+  source: ExposeChatPreviewSource;
 }
 
 export interface DesktopSession {
@@ -36,6 +45,7 @@ export interface DesktopSession {
   loop?: { active?: boolean; goal?: string; since?: string } | null;
   overseer?: boolean;
   previewSnapshot?: ExposePreviewSnapshot;
+  chatPreview?: ExposeChatPreview;
   optimistic?: boolean;
 }
 
