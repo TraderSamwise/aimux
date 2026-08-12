@@ -128,12 +128,16 @@ function ExposeTileCard({
   tileHeight: number;
   onPress: () => void;
 }) {
-  const preview = tile.previewLines.length > 0 ? tile.previewLines : ["No recent pane output."];
+  const previewLineCount = Math.max(6, Math.floor((tileHeight - 112) / 20));
+  const preview =
+    tile.previewLines.length > 0
+      ? tile.previewLines.slice(-previewLineCount)
+      : ["No recent pane output."];
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
         onPress={onPress}
-        style={{ minHeight: tileHeight }}
+        style={{ height: tileHeight }}
         className={cn(
           "rounded-lg border bg-[#17181d] p-0 overflow-hidden hover:bg-[#1c1d23]",
           tile.statusKind === "offline" ? "border-[#2a2b31]" : "border-[#334155]",
@@ -178,7 +182,7 @@ function ExposeTileCard({
             ) : null}
           </View>
 
-          <View className="mt-3 border-t border-[#2a2b31] pt-3">
+          <View className="mt-3 flex-1 justify-end border-t border-[#2a2b31] pt-3">
             {preview.map((line, index) => (
               <Text
                 key={`${tile.id}:${index}`}

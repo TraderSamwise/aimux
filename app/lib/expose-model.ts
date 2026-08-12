@@ -125,8 +125,7 @@ function previewLinesFor(item: ExposeSourceItem): string[] {
     dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
   })
     .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .slice(-7);
+    .filter((line) => line.trim().length > 0);
 }
 
 function toneFor(item: ExposeSourceItem, fallbackIndex: number): string {
