@@ -7,6 +7,7 @@ import {
   BookOpen,
   ChevronLeft,
   FolderKanban,
+  LayoutGrid,
   MessageSquare,
   Network,
 } from "lucide-react-native";
@@ -55,6 +56,7 @@ function routePrefersViews(tab: MainTabId): boolean {
   return (
     tab === "project" ||
     tab === "coordination" ||
+    tab === "expose" ||
     tab === "topology" ||
     tab === "library" ||
     tab === "inbox" ||
@@ -279,6 +281,7 @@ function WorktreeTree({
 const PRIMARY_NAV = [
   { id: "project", label: "Project", Icon: FolderKanban },
   { id: "coordination", label: "Coordination", Icon: Bell },
+  { id: "expose", label: "Exposé", Icon: LayoutGrid },
   { id: "topology", label: "Topology", Icon: Network },
   { id: "library", label: "Library", Icon: BookOpen },
   { id: "inbox", label: "Inbox", Icon: Bell },

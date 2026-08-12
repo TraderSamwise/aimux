@@ -19,6 +19,7 @@ export default function MainTabsLayout() {
     >
       <Tabs.Screen name="(dashboard)" />
       <Tabs.Screen name="coordination" />
+      <Tabs.Screen name="expose" />
       <Tabs.Screen name="topology" />
       <Tabs.Screen name="project" />
       <Tabs.Screen name="library" />

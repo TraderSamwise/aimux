@@ -122,6 +122,7 @@ function buildViewHrefObject(pathname: string, params: Record<string, string | n
 
 function detailTabPrefix(pathname: string): string {
   if (pathname.startsWith("/coordination")) return "/coordination";
+  if (pathname.startsWith("/expose")) return "/expose";
   if (pathname.startsWith("/topology")) return "/topology";
   if (pathname.startsWith("/project")) return "/project";
   if (pathname.startsWith("/library")) return "/library";

@@ -1091,10 +1091,11 @@ export async function getDesktopState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts & { includePreview?: boolean },
 ): Promise<DesktopState> {
-  const path = opts?.includePreview
+  const { includePreview, ...apiOpts } = opts ?? {};
+  const path = includePreview
     ? `${PROJECT_API_ROUTES.desktopState}?includePreview=1`
     : PROJECT_API_ROUTES.desktopState;
-  return callProjectJson<DesktopState>(endpoint, "GET", path, opts);
+  return callProjectJson<DesktopState>(endpoint, "GET", path, apiOpts);
 }
 
 // ── Notifications ────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-lo
 export type MainTabId =
   | "dashboard"
   | "coordination"
+  | "expose"
   | "topology"
   | "project"
   | "library"
@@ -20,6 +21,7 @@ export interface MainTabRoute {
   href:
     | "/"
     | "/coordination"
+    | "/expose"
     | "/topology"
     | "/project"
     | "/library"
@@ -30,6 +32,7 @@ export interface MainTabRoute {
   screen:
     | "(dashboard)"
     | "coordination"
+    | "expose"
     | "topology"
     | "project"
     | "library"
@@ -55,6 +58,12 @@ export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
     href: "/coordination",
     internalHref: "/(main)/(tabs)/coordination" as Href,
     screen: "coordination",
+  },
+  expose: {
+    id: "expose",
+    href: "/expose",
+    internalHref: "/(main)/(tabs)/expose" as Href,
+    screen: "expose",
   },
   topology: {
     id: "topology",
@@ -104,6 +113,7 @@ export function buildMainTabHref(tabId: MainTabId, projectPath?: string | null):
 
 export function mainTabForPath(pathname: string): MainTabId {
   if (pathname.startsWith("/coordination")) return "coordination";
+  if (pathname.startsWith("/expose")) return "expose";
   if (pathname.startsWith("/topology")) return "topology";
   if (pathname.startsWith("/project")) return "project";
   if (pathname.startsWith("/library")) return "library";
