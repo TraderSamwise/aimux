@@ -4,11 +4,20 @@
 
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
 export type DesktopServiceStatus = "running" | "exited" | "offline";
+export type ExposePreviewSnapshotSource = "capture" | "tap";
+
+export interface ExposePreviewSnapshot {
+  output: string;
+  capturedAt: string;
+  source: ExposePreviewSnapshotSource;
+}
 
 export interface DesktopSession {
   id: string;
   command?: string;
   toolConfigKey?: string;
+  tmuxWindowId?: string;
+  tmuxWindowIndex?: number;
   status: DesktopSessionStatus;
   active?: boolean;
   worktreePath?: string;
@@ -26,6 +35,7 @@ export interface DesktopSession {
   pendingAction?: string;
   loop?: { active?: boolean; goal?: string; since?: string } | null;
   overseer?: boolean;
+  previewSnapshot?: ExposePreviewSnapshot;
   optimistic?: boolean;
 }
 
@@ -33,6 +43,8 @@ export interface DesktopService {
   id: string;
   command?: string;
   args?: string[];
+  tmuxWindowId?: string;
+  tmuxWindowIndex?: number;
   worktreePath?: string;
   worktreeName?: string;
   worktreeBranch?: string;

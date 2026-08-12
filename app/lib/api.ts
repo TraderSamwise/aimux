@@ -1089,9 +1089,12 @@ export async function putPlan(
 
 export async function getDesktopState(
   endpoint: ServiceEndpoint,
-  opts?: ApiOpts,
+  opts?: ApiOpts & { includePreview?: boolean },
 ): Promise<DesktopState> {
-  return callProjectJson<DesktopState>(endpoint, "GET", PROJECT_API_ROUTES.desktopState, opts);
+  const path = opts?.includePreview
+    ? `${PROJECT_API_ROUTES.desktopState}?includePreview=1`
+    : PROJECT_API_ROUTES.desktopState;
+  return callProjectJson<DesktopState>(endpoint, "GET", path, opts);
 }
 
 // ── Notifications ────────────────────────────────────────────────────────
