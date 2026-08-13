@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtom } from "jotai";
@@ -15,15 +15,20 @@ import { acceptedSharedSessionsAtom, type ActiveSharedSession } from "@/stores/s
 export default function SharedChatsScreen() {
   const router = useRouter();
   const { getToken } = useAuth();
+  const getTokenRef = useRef(getToken);
   const [shares, setShares] = useAtom(acceptedSharedSessionsAtom);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getTokenRef.current = getToken;
+  }, [getToken]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       if (!token) throw new Error("Sign in is required.");
       const result = await listShares({ token });
       setShares(
@@ -43,7 +48,7 @@ export default function SharedChatsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, setShares]);
+  }, [setShares]);
 
   useEffect(() => {
     const timer = setTimeout(() => void refresh(), 0);
