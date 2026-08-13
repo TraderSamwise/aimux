@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatProjectEndpointLabel,
   getProjectServiceEndpoint,
+  isRelayUnavailableForProjectDiscovery,
   projectStateErrorCopy,
 } from "./project-connection-display";
 
@@ -68,8 +69,8 @@ describe("projectStateErrorCopy", () => {
 
   it("turns relay disconnection into reconnect guidance", () => {
     expect(projectStateErrorCopy("Relay not connected")).toEqual({
-      title: "Relay not connected.",
-      detail: "Reconnect the remote session, then refresh project state.",
+      title: "Remote unavailable.",
+      detail: "Aimux could not reach the remote control plane. Try again after it reconnects.",
     });
   });
 
@@ -78,5 +79,15 @@ describe("projectStateErrorCopy", () => {
       title: "Could not load project state.",
       detail: "Unexpected daemon timeout",
     });
+  });
+});
+
+describe("isRelayUnavailableForProjectDiscovery", () => {
+  it("only treats terminal relay states as discovery unavailable", () => {
+    expect(isRelayUnavailableForProjectDiscovery("daemon_offline")).toBe(true);
+    expect(isRelayUnavailableForProjectDiscovery("auth_failed")).toBe(true);
+    expect(isRelayUnavailableForProjectDiscovery("disconnected")).toBe(false);
+    expect(isRelayUnavailableForProjectDiscovery("connecting")).toBe(false);
+    expect(isRelayUnavailableForProjectDiscovery("connected")).toBe(false);
   });
 });

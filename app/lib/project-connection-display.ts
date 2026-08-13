@@ -1,6 +1,7 @@
 import type { AppConnectionMode } from "@/lib/connection-targets";
 import type { DaemonProject } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
+import type { RelayStatus } from "@/lib/relay-transport";
 
 export function getProjectServiceEndpoint(project: DaemonProject | null | undefined) {
   if (!project?.serviceAlive) return null;
@@ -34,8 +35,8 @@ export function projectStateErrorCopy(error: string): {
   }
   if (/relay not connected/i.test(error)) {
     return {
-      title: "Relay not connected.",
-      detail: "Reconnect the remote session, then refresh project state.",
+      title: "Remote unavailable.",
+      detail: "Aimux could not reach the remote control plane. Try again after it reconnects.",
     };
   }
   return {
@@ -46,4 +47,30 @@ export function projectStateErrorCopy(error: string): {
 
 export function isProjectHostOfflineError(error: string) {
   return /ECONNREFUSED|Failed to fetch|Network request failed|Load failed/i.test(error);
+}
+
+export function isRelayUnavailableForProjectDiscovery(status: RelayStatus): boolean {
+  return status === "daemon_offline" || status === "auth_failed";
+}
+
+export function relayUnavailableProjectCopy(status: RelayStatus): {
+  title: string;
+  detail: string;
+} {
+  if (status === "daemon_offline") {
+    return {
+      title: "Host offline.",
+      detail: "Start the Aimux host to see projects and sessions.",
+    };
+  }
+  if (status === "auth_failed") {
+    return {
+      title: "Remote access blocked.",
+      detail: "Open Inbox and approve this device, then refresh.",
+    };
+  }
+  return {
+    title: "Remote unavailable.",
+    detail: "Aimux could not reach the remote control plane. Try again after it reconnects.",
+  };
 }

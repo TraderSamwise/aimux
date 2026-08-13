@@ -21,6 +21,7 @@ import { startHeartbeat } from "@/lib/heartbeat";
 import { evaluateAlertEvent } from "@/lib/notification-policy";
 import {
   getProjectServiceEndpoint,
+  isRelayUnavailableForProjectDiscovery,
   isProjectHostOfflineError,
 } from "@/lib/project-connection-display";
 import { useAppStackScreenOptions } from "@/lib/navigation";
@@ -262,7 +263,7 @@ export default function MainLayout() {
         return;
       }
       if (!relayReadyForRequests) {
-        if (relayStatus === "daemon_offline") {
+        if (relayUrl && isRelayUnavailableForProjectDiscovery(relayStatus)) {
           reconcileProjects([]);
         }
         timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);

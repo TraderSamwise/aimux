@@ -14,6 +14,10 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
+import {
+  isRelayUnavailableForProjectDiscovery,
+  relayUnavailableProjectCopy,
+} from "@/lib/project-connection-display";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { createProjectResourceRequestTracker } from "@/lib/project-resource-request-tracker";
 import { useRouteProject } from "@/lib/use-route-project";
@@ -28,6 +32,7 @@ import {
   refreshProjectTasksResourceAtom,
 } from "@/stores/projectRefresh";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
+import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { TaskWorkflowActions } from "@/components/workflow-actions";
 
 type ProjectSection =
@@ -197,6 +202,8 @@ export default function ProjectScreen() {
   const tasksRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("tasks"));
   const projectResource = useAtomValue(projectObservabilityResourceFamily(projectPathKey));
   const tasksResource = useAtomValue(projectTasksResourceFamily(projectPathKey));
+  const relayConfigured = useAtomValue(relayConfiguredAtom);
+  const relayStatus = useAtomValue(relayStatusAtom);
   const refreshProjectObservabilityResource = useSetAtom(refreshProjectObservabilityResourceAtom);
   const refreshProjectTasksResource = useSetAtom(refreshProjectTasksResourceAtom);
   const { getToken } = useAuth();
@@ -285,13 +292,28 @@ export default function ProjectScreen() {
   const summaryValue = (value: number) => (projectModelReady ? value : "...");
   const visibleProjectError = projectResource.error;
   const visibleTaskError = tasksResource.error;
+  const showRelayUnavailable =
+    !project &&
+    Boolean(projectPath) &&
+    relayConfigured &&
+    isRelayUnavailableForProjectDiscovery(relayStatus);
+  const relayUnavailableCopy = relayUnavailableProjectCopy(relayStatus);
 
   return (
     <Page>
       <PageHeader
         eyebrow="Project"
-        title={project?.name ?? (projectLoading ? "Loading project..." : "No project selected")}
-        subtitle={project?.path ?? (projectLoading ? projectPath : undefined)}
+        title={
+          project?.name ??
+          (projectLoading
+            ? "Loading project..."
+            : showRelayUnavailable
+              ? relayUnavailableCopy.title.replace(/\.$/, "")
+              : "No project selected")
+        }
+        subtitle={
+          project?.path ?? (projectLoading || showRelayUnavailable ? projectPath : undefined)
+        }
         actions={
           <Button
             variant="outline"
@@ -307,7 +329,7 @@ export default function ProjectScreen() {
         }
       />
 
-      {!projectLoading ? (
+      {!projectLoading && !showRelayUnavailable ? (
         <>
           <View className="mb-5 flex-row flex-wrap">
             <SummaryTile label="Agents" value={summaryValue(agentCount)} />
@@ -337,7 +359,9 @@ export default function ProjectScreen() {
         </>
       ) : null}
 
-      {projectLoading ? (
+      {showRelayUnavailable ? (
+        <EmptyCard title={relayUnavailableCopy.title} body={relayUnavailableCopy.detail} />
+      ) : projectLoading ? (
         <EmptyCard title="Loading project..." body="Fetching project state from the daemon." />
       ) : !project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />

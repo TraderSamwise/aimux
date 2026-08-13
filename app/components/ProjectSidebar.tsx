@@ -42,7 +42,13 @@ import {
   selectProjectAtom,
 } from "@/stores/projects";
 import { sidebarModeAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
-import { getProjectServiceEndpoint, projectStateErrorCopy } from "@/lib/project-connection-display";
+import {
+  getProjectServiceEndpoint,
+  isRelayUnavailableForProjectDiscovery,
+  projectStateErrorCopy,
+  relayUnavailableProjectCopy,
+} from "@/lib/project-connection-display";
+import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 
 // Restyle palette (Linear-style lifted slate) — mirrors docs/mockups/project-view.html.
 //   sidebar bg #161719 · hairline #2a2b31 · press #232429 · selected #26272d
@@ -445,6 +451,13 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const desktopStateError = useAtomValue(
     desktopStateErrorFamily(routeProjectPath ?? EMPTY_PROJECT_PATH),
   );
+  const relayConfigured = useAtomValue(relayConfiguredAtom);
+  const relayStatus = useAtomValue(relayStatusAtom);
+  const routeRelayUnavailable =
+    Boolean(routeProjectPath) &&
+    !effectiveProject &&
+    relayConfigured &&
+    isRelayUnavailableForProjectDiscovery(relayStatus);
   const pickerMode = !effectiveProject || showPicker;
 
   function handlePickProject(path: string) {
@@ -480,7 +493,31 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
       style={{ width: SIDEBAR_WIDTH, height: "100%" }}
     >
       <ScrollView className="flex-1">
-        {pickerMode ? (
+        {routeRelayUnavailable && !showPicker ? (
+          <>
+            <View className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4">
+              <View className="flex-row items-center gap-1.5">
+                <ChevronLeft size={14} color="#787a83" />
+                <Text className="text-[12.5px] font-medium text-[#787a83]">All projects</Text>
+              </View>
+              <Text className="mt-2 text-[16px] font-semibold text-[#edeef0]">
+                Remote unavailable
+              </Text>
+              <Text
+                className="mt-0.5 font-mono text-[12px] text-[#787a83]"
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
+                {routeProjectPath}
+              </Text>
+            </View>
+            <SidebarStateCard
+              title={relayUnavailableProjectCopy(relayStatus).title}
+              detail={relayUnavailableProjectCopy(relayStatus).detail}
+              tone="warning"
+            />
+          </>
+        ) : pickerMode ? (
           <ProjectPicker
             projects={projects}
             selectedPath={effectiveProjectPath}

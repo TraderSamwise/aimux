@@ -169,8 +169,8 @@ export class RelayTransport {
       if (!opened) {
         this.consecutiveHandshakeFailures += 1;
         if (this.consecutiveHandshakeFailures >= HANDSHAKE_FAILURE_AUTH_THRESHOLD) {
-          this.stopped = true;
-          this.setStatus("auth_failed");
+          this.setStatus("disconnected");
+          this.scheduleRetry();
           return;
         }
       }

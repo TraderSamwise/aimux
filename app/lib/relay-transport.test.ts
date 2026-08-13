@@ -72,7 +72,7 @@ describe("RelayTransport remote security state", () => {
     }
   });
 
-  it("stops reconnecting after repeated failed WebSocket handshakes", async () => {
+  it("keeps reconnecting after repeated generic WebSocket handshake failures", async () => {
     vi.useFakeTimers();
     const originalWebSocket = globalThis.WebSocket;
     const sockets: MockWebSocket[] = [];
@@ -104,8 +104,9 @@ describe("RelayTransport remote security state", () => {
       await vi.advanceTimersByTimeAsync(3_500);
       await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(statuses).toContain("auth_failed");
-      expect(sockets).toHaveLength(3);
+      expect(statuses).not.toContain("auth_failed");
+      expect(statuses).toContain("disconnected");
+      expect(sockets.length).toBeGreaterThan(3);
     } finally {
       vi.stubGlobal("WebSocket", originalWebSocket);
       vi.useRealTimers();

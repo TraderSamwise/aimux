@@ -3,10 +3,14 @@ import { useGlobalSearchParams } from "expo-router";
 import { useAtomValue } from "jotai";
 import type { DaemonProject } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import {
+  getProjectServiceEndpoint,
+  isRelayUnavailableForProjectDiscovery,
+} from "@/lib/project-connection-display";
 import { useRouteShare } from "@/lib/use-route-share";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { lastSyncAtAtom, projectsAtom, selectedProjectAtom } from "@/stores/projects";
+import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import type { ActiveSharedSession } from "@/stores/settings";
 
 export interface RouteProject {
@@ -23,6 +27,8 @@ export function useRouteProject(): RouteProject {
   const lastSyncAt = useAtomValue(lastSyncAtAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const activeShare = useRouteShare();
+  const relayConfigured = useAtomValue(relayConfiguredAtom);
+  const relayStatus = useAtomValue(relayStatusAtom);
   const routeProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const sharedRouteProject = useMemo(
     () =>
@@ -41,7 +47,11 @@ export function useRouteProject(): RouteProject {
     [projects, routeProjectPath, sharedRouteProject],
   );
   const project = routeProjectPath ? routeProject : (sharedRouteProject ?? selectedProject);
-  const projectLoading = Boolean(routeProjectPath && !routeProject && !lastSyncAt);
+  const relayUnavailable =
+    !activeShare && relayConfigured && isRelayUnavailableForProjectDiscovery(relayStatus);
+  const projectLoading = Boolean(
+    routeProjectPath && !routeProject && !lastSyncAt && !relayUnavailable,
+  );
   const endpoint = useMemo(() => getProjectServiceEndpoint(project), [project]);
 
   return useMemo(
