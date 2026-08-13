@@ -276,7 +276,13 @@ export function isSharedRelayRequestAllowed(
   const sessionId = input.sessionId?.trim();
 
   if (!sessionId || sessionId !== share.sessionId) return false;
-  if (method === "GET" && (path === "/agents/history" || path === "/agents/output" || path === "/events")) return true;
+  if (
+    method === "GET" &&
+    (path === "/agents/history" || path === "/agents/output" || path === "/live-pane/output" || path === "/events")
+  ) {
+    return true;
+  }
+  if (method === "POST" && path === "/live-pane/input") return true;
   return false;
 }
 
