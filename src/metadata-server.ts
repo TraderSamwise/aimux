@@ -5449,9 +5449,13 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "sessionId is required" });
           return;
         }
-        setSessionOverseer(sessionId, Boolean(body.active));
+        if (typeof body.active !== "boolean") {
+          send(res, 400, { ok: false, error: "active (boolean) is required" });
+          return;
+        }
+        setSessionOverseer(sessionId, body.active);
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, sessionId, overseer: Boolean(body.active) });
+        send(res, 200, { ok: true, sessionId, overseer: body.active });
         return;
       }
 

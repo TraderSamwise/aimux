@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>aimux loop overseer ux v1</title>
+<style>
+  :root {
+    --page: #07080b;
+    --app: #101116;
+    --panel: #181a20;
+    --panel-2: #20222a;
+    --panel-3: #252832;
+    --line: #323541;
+    --line-2: #444856;
+    --fg: #f1f2f5;
+    --muted: #a1a6b2;
+    --faint: #6d7280;
+    --green: #53d18a;
+    --cyan: #56b6d4;
+    --gold: #e5c66d;
+    --red: #ef7d7d;
+    --blue: #7fb0ff;
+    --purple: #d486e8;
+    --orange: #f59f75;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); color: var(--fg); }
+  body { font: 14px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1580px; margin: 0 auto; padding: 28px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font: 760 26px/1.1 var(--mono); letter-spacing: 0; }
+  h2 {
+    margin-top: 34px;
+    margin-bottom: 12px;
+    font: 760 13px/1 var(--mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #d8dbe3;
+  }
+  h3 { font-size: 15px; }
+  .intro { color: var(--muted); max-width: 920px; margin-top: 10px; }
+  .rule {
+    margin-top: 18px;
+    border: 1px solid var(--line);
+    background: #12141a;
+    border-radius: 8px;
+    padding: 14px 16px;
+    color: var(--muted);
+  }
+  .rule strong { color: var(--fg); }
+
+  .browser, .phone, .terminalShell {
+    border: 1px solid #262a34;
+    background: #050608;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 20px 70px rgba(0,0,0,.42);
+  }
+  .chrome {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 14px;
+    background: #20232b;
+    border-bottom: 1px solid #303440;
+  }
+  .light { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+  .light:nth-child(2) { background: #febc2e; }
+  .light:nth-child(3) { background: #28c840; }
+  .url {
+    margin-left: 12px;
+    min-width: 0;
+    flex: 1;
+    color: #a7acb8;
+    font: 12px/1 var(--mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app {
+    min-height: 760px;
+    background: var(--app);
+    display: flex;
+    flex-direction: column;
+  }
+  .top {
+    height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: #14161c;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font: 760 16px/1 var(--mono); }
+  .bot {
+    width: 25px;
+    height: 25px;
+    border-radius: 7px;
+    background: #050608;
+    border: 1px solid #242833;
+    display: grid;
+    place-items: center;
+    color: #c8f7d1;
+    font-size: 15px;
+  }
+  .topActions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .pill, .iconBtn, .seg, .tag {
+    border: 1px solid var(--line);
+    background: #181a20;
+    color: var(--muted);
+    border-radius: 8px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 30px;
+    padding: 0 10px;
+    font: 700 12px/1 var(--sans);
+  }
+  .pill.active, .seg.active { background: #f4f5f7; color: #15171d; }
+  .iconBtn {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    font: 15px/1 var(--mono);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; flex: none; }
+  .dot.run { background: var(--green); }
+  .dot.watch { background: var(--gold); }
+  .dot.block { background: var(--red); }
+  .dot.blue { background: var(--cyan); }
+  .body { display: flex; min-height: 0; flex: 1; }
+  .side {
+    width: 286px;
+    flex: none;
+    border-right: 1px solid var(--line);
+    background: #15171c;
+    padding: 14px 10px;
+  }
+  .sideHead { padding: 8px 10px 14px; border-bottom: 1px solid #282b34; }
+  .back { color: var(--faint); font-size: 12px; font-weight: 650; }
+  .projectName { margin-top: 8px; font-weight: 760; font-size: 16px; }
+  .path { margin-top: 3px; color: var(--faint); font: 11px/1.2 var(--mono); }
+  .tabs { display: flex; gap: 18px; padding: 10px; border-bottom: 1px solid #282b34; }
+  .tab { color: var(--faint); font-weight: 720; }
+  .tab.on { color: var(--fg); border-bottom: 2px solid var(--fg); padding-bottom: 6px; }
+  .navItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 6px;
+    color: var(--muted);
+    font-weight: 650;
+  }
+  .navItem.on { background: #262932; color: var(--fg); }
+  .dashboardGroup {
+    margin: 10px 0;
+    border: 1px solid #2a2e38;
+    border-left: 3px solid var(--green);
+    border-radius: 8px;
+    padding: 10px;
+    background: #17191f;
+  }
+  .dashboardGroup.watch { border-left-color: var(--gold); }
+  .groupTitle { display: flex; align-items: center; gap: 8px; font-weight: 760; }
+  .agentRow {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 28px;
+    margin-left: 12px;
+    color: var(--muted);
+    font: 12px/1.1 var(--mono);
+  }
+  .agentRow strong { color: var(--fg); font-family: var(--sans); }
+  .agentRow .loop { color: var(--gold); font-weight: 800; }
+  .main { flex: 1; min-width: 0; padding: 18px 22px; overflow: auto; }
+  .pageHead {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 18px;
+  }
+  .eyebrow { color: var(--muted); font: 800 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .pageHead h3 { margin-top: 8px; font: 800 23px/1.05 var(--sans); }
+  .switcher, .filters { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #15171d; }
+  .seg { border: 0; border-radius: 0; padding: 8px 12px; font-weight: 760; background: transparent; }
+  .metrics { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+  .metric {
+    min-width: 122px;
+    border: 1px solid var(--line);
+    background: #181a20;
+    border-radius: 999px;
+    padding: 9px 13px;
+    font-weight: 760;
+  }
+  .metric span { color: var(--muted); margin-right: 8px; }
+
+  .overseerPanel {
+    display: grid;
+    grid-template-columns: minmax(280px, 380px) 1fr;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .subtitle { color: var(--muted); font-size: 12px; }
+  .statusBadge {
+    border: 1px solid rgba(83, 209, 138, .34);
+    background: rgba(83, 209, 138, .12);
+    color: #a7f3c8;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font: 800 11px/1 var(--mono);
+  }
+  .statusBadge.gold { border-color: rgba(229,198,109,.34); background: rgba(229,198,109,.12); color: #f8dfa2; }
+  .stack { display: grid; gap: 8px; }
+  .modelLine {
+    display: grid;
+    grid-template-columns: 118px 1fr;
+    gap: 10px;
+    color: var(--muted);
+    font: 12px/1.35 var(--mono);
+  }
+  .modelLine b { color: var(--fg); font-family: var(--sans); }
+  .commandBubble {
+    border: 1px solid #3f4350;
+    background: #20232b;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--fg);
+  }
+  .commandBubble small { display: block; color: var(--muted); margin-top: 5px; }
+
+  .loopTable {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .loopTable th, .loopTable td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #282b34;
+    text-align: left;
+    vertical-align: top;
+  }
+  .loopTable th {
+    color: var(--muted);
+    font: 800 11px/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    background: #15171d;
+  }
+  .loopTable td { color: #dfe2e8; }
+  .loopTable tr:last-child td { border-bottom: 0; }
+  .agentName { font-weight: 800; }
+  .meta { color: var(--muted); font: 12px/1.35 var(--mono); margin-top: 2px; }
+  .actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+  .button {
+    border: 1px solid var(--line-2);
+    background: #1b1e25;
+    color: var(--fg);
+    border-radius: 7px;
+    padding: 7px 9px;
+    font-weight: 760;
+    font-size: 12px;
+  }
+  .button.gold { border-color: rgba(229,198,109,.5); color: #f8dfa2; }
+  .button.red { border-color: rgba(239,125,125,.45); color: #ffb1b1; }
+
+  .wireframeGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .terminalShell { background: #252831; padding: 16px; }
+  .tui {
+    background: #272a33;
+    border: 1px solid #4a4f5d;
+    color: #e8e9ed;
+    border-radius: 8px;
+    padding: 12px;
+    font: 13px/1.35 var(--mono);
+    overflow: auto;
+  }
+  .tui .dim { color: #8d929f; }
+  .tui .green { color: #a7e6bd; }
+  .tui .cyan { color: #75d7f0; }
+  .tui .gold { color: #f2cf72; }
+  .tui .red { color: #ff8d8d; }
+  .tui .blue { color: #9bc3ff; }
+  .tuiBox { border: 1px solid #7c8497; padding: 8px 10px; margin: 8px 0; }
+  .tuiLine { white-space: pre; }
+
+  .phoneWrap { display: flex; justify-content: center; }
+  .phone {
+    width: 390px;
+    min-height: 780px;
+    border-radius: 34px;
+    background: #050608;
+    padding: 18px 12px;
+  }
+  .phoneScreen {
+    min-height: 740px;
+    background: #0f1014;
+    border-radius: 24px;
+    overflow: hidden;
+    border: 1px solid #262a34;
+  }
+  .phoneTop {
+    height: 74px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .phoneTitle { font: 800 18px/1.1 var(--sans); }
+  .phoneBody { padding: 14px; }
+  .mobileAgent {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--gold);
+    border-radius: 9px;
+    background: var(--panel);
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .bottomSheet {
+    margin-top: 18px;
+    border: 1px solid var(--line);
+    background: #181a20;
+    border-radius: 18px 18px 10px 10px;
+    padding: 14px;
+  }
+  .sheetHandle { width: 44px; height: 4px; background: #585d6a; border-radius: 999px; margin: 0 auto 14px; }
+  .sheetRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-top: 1px solid #2b2f39;
+    padding: 12px 0;
+  }
+  .sheetRow:first-of-type { border-top: 0; }
+
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .noteCard {
+    border: 1px solid var(--line);
+    background: #12141a;
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .noteCard h3 { margin-bottom: 8px; }
+  .noteCard ul { margin: 0; padding-left: 18px; color: var(--muted); }
+  .noteCard li { margin: 5px 0; }
+
+  @media (max-width: 980px) {
+    .page { padding: 18px; }
+    .side { display: none; }
+    .overseerPanel, .wireframeGrid, .notes { grid-template-columns: 1fr; }
+    .loopTable, .loopTable tbody, .loopTable tr, .loopTable td { display: block; width: 100%; }
+    .loopTable thead { display: none; }
+    .loopTable tr { border-bottom: 1px solid var(--line); }
+    .loopTable td { border-bottom: 0; padding: 8px 12px; }
+    .actions { justify-content: flex-start; }
+    .pageHead { align-items: start; flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Loop overseer UX v1</h1>
+  <p class="intro">One project overseer session manages any number of assigned agents. Assignment is explicit project state, not a prompt convention. The overseer may change that state through aimux commands, and every client must render the resulting model.</p>
+  <div class="rule"><strong>Core rule:</strong> chat can request "watch this agent" or "stop watching this agent", but the source of truth is `session.loop.active`, `session.loop.goal`, and `project.overseerSessionId`. The UI should never infer loop membership from conversation text.</div>
+
+  <h2>GUI desktop management surface</h2>
+  <div class="browser">
+    <div class="chrome"><span class="light"></span><span class="light"></span><span class="light"></span><div class="url">aimux.app/project/loop?project=/Users/sam/cs/tealstreet-next</div></div>
+    <div class="app">
+      <div class="top">
+        <div class="brand"><span class="bot">▣</span>aimux</div>
+        <div class="topActions">
+          <span class="pill"><span class="dot run"></span>Remote</span>
+          <span class="iconBtn">□</span>
+          <span class="iconBtn">!</span>
+          <span class="pill">S</span>
+        </div>
+      </div>
+      <div class="body">
+        <aside class="side">
+          <div class="sideHead">
+            <div class="back">&lt; All projects</div>
+            <div class="projectName">tealstreet-next</div>
+            <div class="path">/Users/sam/cs/tealstreet-next</div>
+          </div>
+          <div class="tabs"><div class="tab on">Dashboard</div><div class="tab">Views</div></div>
+          <div class="dashboardGroup watch">
+            <div class="groupTitle"><span class="dot watch"></span> Loop overseer</div>
+            <div class="agentRow"><span></span><strong>claude-qh01fj</strong><span class="loop">3 watched</span></div>
+          </div>
+          <div class="dashboardGroup">
+            <div class="groupTitle"><span class="dot run"></span> Main Checkout</div>
+            <div class="agentRow"><span class="dot run"></span><strong>codex-o6o4kf</strong><span></span></div>
+            <div class="agentRow"><span class="dot watch"></span><strong>claude-e030jz</strong><span class="loop">loop</span></div>
+          </div>
+          <div class="dashboardGroup">
+            <div class="groupTitle"><span class="dot run"></span> data-analytics</div>
+            <div class="agentRow"><span class="dot watch"></span><strong>claude-h4d1px</strong><span class="loop">loop</span></div>
+          </div>
+          <div class="navItem on">Loop</div>
+          <div class="navItem">Expose</div>
+          <div class="navItem">Threads</div>
+        </aside>
+        <main class="main">
+          <div class="pageHead">
+            <div>
+              <div class="eyebrow">Project loop</div>
+              <h3>Overseer</h3>
+              <p class="subtitle">claude-qh01fj watches assigned agents and nudges only explicit loop members.</p>
+            </div>
+            <div class="switcher"><button class="seg active">Assigned</button><button class="seg">Available</button><button class="seg">Events</button></div>
+          </div>
+
+          <div class="metrics">
+            <div class="metric"><span>Watched</span>3</div>
+            <div class="metric"><span>Needs action</span>1</div>
+            <div class="metric"><span>Idle done</span>2</div>
+            <div class="metric"><span>Cooldown</span>4m</div>
+          </div>
+
+          <section class="overseerPanel">
+            <div class="card">
+              <div class="cardHeader">
+                <div><h3>One overseer per project</h3><p class="subtitle">Owns loop review for tealstreet-next</p></div>
+                <span class="statusBadge">RUNNING</span>
+              </div>
+              <div class="stack">
+                <div class="modelLine"><span>overseer</span><b>claude-qh01fj</b></div>
+                <div class="modelLine"><span>mode</span><b>review and nudge</b></div>
+                <div class="modelLine"><span>managed</span><b>3 agents</b></div>
+                <div class="modelLine"><span>last action</span><b>nudged claude-h4d1px</b></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="cardHeader">
+                <div><h3>Conversational control</h3><p class="subtitle">The overseer can mutate explicit loop state with commands.</p></div>
+                <button class="button gold">Open overseer chat</button>
+              </div>
+              <div class="commandBubble">
+                Sam: "Watch the data-analytics Claude until it finishes the audit."
+                <small>Overseer runs: `aimux loop add claude-h4d1px --goal "finish data analytics audit"`</small>
+              </div>
+            </div>
+          </section>
+
+          <table class="loopTable">
+            <thead>
+              <tr><th>Agent</th><th>Loop state</th><th>Goal</th><th>Last overseer action</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><div class="agentName">claude-h4d1px</div><div class="meta">data-analytics · claude · waiting</div></td>
+                <td><span class="statusBadge gold">WATCHED</span></td>
+                <td>Finish audit, then report blockers only.</td>
+                <td>Nudged 4m ago after idle handoff.</td>
+                <td><div class="actions"><button class="button">Goal</button><button class="button red">Stop watching</button></div></td>
+              </tr>
+              <tr>
+                <td><div class="agentName">claude-e030jz</div><div class="meta">Main Checkout · claude · needs input</div></td>
+                <td><span class="statusBadge gold">WATCHED</span></td>
+                <td>Keep retrying Sentry poll until explicit failure or ready.</td>
+                <td>Paused. Waiting on human, no nudge.</td>
+                <td><div class="actions"><button class="button">Open</button><button class="button red">Stop watching</button></div></td>
+              </tr>
+              <tr>
+                <td><div class="agentName">codex-2mi0vp</div><div class="meta">paradex-bugs · codex · done</div></td>
+                <td><span class="statusBadge">DONE</span></td>
+                <td>Validate Paradex credential mapping.</td>
+                <td>Removed after loop done.</td>
+                <td><div class="actions"><button class="button gold">Watch again</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <h2>TUI dashboard and loop manager</h2>
+  <div class="wireframeGrid">
+    <div class="terminalShell">
+      <div class="tui">
+        <div class="tuiLine">aimux tealstreet-next · ctl ok · <span class="gold">loop overseer</span> claude-qh01fj · watching 3 · needs action 1</div>
+        <div class="tuiBox">
+          <div class="tuiLine"><span class="gold">[O] Loop Overseer</span> · claude-qh01fj · <span class="green">RUNNING</span> · watches 3 agents</div>
+          <div class="tuiLine">    last: nudged claude-h4d1px 4m ago · next scan in 56s</div>
+        </div>
+        <div class="tuiBox">
+          <div class="tuiLine"><span class="cyan">[1] Main Checkout</span> · master                                      1 running · 1 watched</div>
+          <div class="tuiLine">  [1] codex-o6o4kf          <span class="green">RUNNING</span>  output 3m ago</div>
+          <div class="tuiLine">  [2] claude-e030jz         <span class="gold">WATCHED</span>  needs input · no nudge</div>
+        </div>
+        <div class="tuiBox">
+          <div class="tuiLine"><span class="cyan">[2] data-analytics</span> · data-analytics                             1 running · 1 watched</div>
+          <div class="tuiLine">▶ [1] claude-h4d1px         <span class="gold">WATCHED</span>  waiting · goal: finish audit</div>
+        </div>
+        <div class="tuiLine"><span class="dim">↑↓/jk items  Enter focus  O overseer  L loop selected  M manage loop  g goal  r remove  ? help</span></div>
+      </div>
+    </div>
+    <div class="terminalShell">
+      <div class="tui">
+        <div class="tuiLine"><span class="gold">LOOP MANAGER</span> · tealstreet-next                         overseer: claude-qh01fj</div>
+        <div class="tuiBox">
+          <div class="tuiLine"><span class="green">●</span> claude-h4d1px  data-analytics  <span class="gold">WATCHED</span></div>
+          <div class="tuiLine">  goal: Finish audit, then report blockers only.</div>
+          <div class="tuiLine">  last overseer action: nudged 4m ago</div>
+        </div>
+        <div class="tuiBox">
+          <div class="tuiLine"><span class="green">●</span> claude-e030jz  Main Checkout   <span class="gold">WATCHED</span></div>
+          <div class="tuiLine">  goal: Keep retrying Sentry poll until terminal result.</div>
+          <div class="tuiLine">  state: human input pending · protected from auto-nudge</div>
+        </div>
+        <div class="tuiBox">
+          <div class="tuiLine"><span class="blue">○</span> codex-2mi0vp   paradex-bugs    available</div>
+          <div class="tuiLine">  press a to add selected agent, g to edit goal, r to stop watching</div>
+        </div>
+        <div class="tuiLine"><span class="dim">a add selected  r remove  g edit goal  o open overseer  enter open agent  esc dashboard</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Overseer chat shows model changes</h2>
+  <div class="browser">
+    <div class="chrome"><span class="light"></span><span class="light"></span><span class="light"></span><div class="url">aimux.app/agent/claude-qh01fj/chat</div></div>
+    <div class="app" style="min-height: 520px;">
+      <div class="top">
+        <div class="brand"><span class="bot">▣</span>Loop overseer</div>
+        <span class="pill"><span class="dot watch"></span>3 watched</span>
+      </div>
+      <main class="main" style="display:grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px;">
+        <section class="card">
+          <div class="stack">
+            <div class="commandBubble">Sam: Watch this data-analytics Claude. It keeps stopping before finishing the audit.</div>
+            <div class="commandBubble"><strong>claude-qh01fj:</strong> I added claude-h4d1px to the project loop with the goal "finish the data analytics audit and report only blockers."</div>
+            <div class="commandBubble" style="border-color: rgba(229,198,109,.5); background: rgba(229,198,109,.1);">
+              Model event: loop.added
+              <small>agent=claude-h4d1px · overseer=claude-qh01fj · goal="finish the data analytics audit"</small>
+            </div>
+            <div class="commandBubble">Sam: Ok, stop watching that one now.</div>
+            <div class="commandBubble" style="border-color: rgba(239,125,125,.45); background: rgba(239,125,125,.09);">
+              Model event: loop.removed
+              <small>agent=claude-h4d1px · reason="user asked overseer to stop"</small>
+            </div>
+          </div>
+        </section>
+        <aside class="card">
+          <div class="cardHeader"><h3>Live loop state</h3><span class="statusBadge">EXPLICIT</span></div>
+          <div class="stack">
+            <div class="modelLine"><span>claude-e030jz</span><b>watched</b></div>
+            <div class="modelLine"><span>claude-h4d1px</span><b>not watched</b></div>
+            <div class="modelLine"><span>codex-2mi0vp</span><b>done</b></div>
+          </div>
+        </aside>
+      </main>
+    </div>
+  </div>
+
+  <h2>Mobile agent manage sheet</h2>
+  <div class="phoneWrap">
+    <div class="phone">
+      <div class="phoneScreen">
+        <div class="phoneTop">
+          <span class="iconBtn">&lt;</span>
+          <div>
+            <div class="phoneTitle">claude-h4d1px</div>
+            <div class="subtitle">data-analytics · watched by claude-qh01fj</div>
+          </div>
+        </div>
+        <div class="phoneBody">
+          <div class="mobileAgent">
+            <div class="cardHeader">
+              <div><h3>Loop state</h3><p class="subtitle">Explicit project metadata</p></div>
+              <span class="statusBadge gold">WATCHED</span>
+            </div>
+            <p>Finish audit, then report blockers only.</p>
+          </div>
+          <div class="bottomSheet">
+            <div class="sheetHandle"></div>
+            <h3>Manage loop</h3>
+            <div class="sheetRow">
+              <div><strong>Overseer</strong><div class="subtitle">claude-qh01fj</div></div>
+              <button class="button">Open</button>
+            </div>
+            <div class="sheetRow">
+              <div><strong>Goal</strong><div class="subtitle">Visible to overseer and agent nudge only</div></div>
+              <button class="button">Edit</button>
+            </div>
+            <div class="sheetRow">
+              <div><strong>Watching</strong><div class="subtitle">Remove from the managed loop</div></div>
+              <button class="button red">Stop</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Implementation notes</h2>
+  <div class="notes">
+    <div class="noteCard">
+      <h3>State model</h3>
+      <ul>
+        <li>Session metadata owns `overseer`; the store enforces one active overseer per project.</li>
+        <li>Session metadata owns `loop.active`, `loop.goal`, and `loop.since` for watched agents.</li>
+        <li>Conversation requests are inputs, not state.</li>
+      </ul>
+    </div>
+    <div class="noteCard">
+      <h3>Overseer powers</h3>
+      <ul>
+        <li>Can call `aimux loop add/remove` for any project agent.</li>
+        <li>Can edit goals and mark done or blocked.</li>
+        <li>Must not nudge agents waiting on human input.</li>
+      </ul>
+    </div>
+    <div class="noteCard">
+      <h3>Client UX</h3>
+      <ul>
+        <li>TUI: badges plus a Loop Manager overlay.</li>
+        <li>GUI: project Loop screen plus agent manage sheet.</li>
+        <li>Mobile: same state, compact controls.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+</body>
+</html>

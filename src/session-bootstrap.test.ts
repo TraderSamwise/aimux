@@ -80,6 +80,9 @@ describe("SessionBootstrapService", () => {
     });
     expect(overseer).toContain("You are the OVERSEER for this aimux project");
     expect(overseer).toContain("[aimux loop check]");
+    expect(overseer).toContain('aimux loop add <id> --goal "…"');
+    expect(overseer).toContain("Do not keep");
+    expect(overseer).toContain("only in your chat context");
 
     const plain = service.buildSessionPreamble({
       sessionId: "claude-123",
