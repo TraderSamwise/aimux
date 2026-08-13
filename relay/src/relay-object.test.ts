@@ -24,6 +24,8 @@ class MemoryStorage {
   async put<T>(key: string, value: T): Promise<void> {
     this.values.set(key, value);
   }
+
+  setAlarm = vi.fn(async (_time: number) => undefined);
 }
 
 describe("RelayObject sharing index repair", () => {
@@ -32,6 +34,13 @@ describe("RelayObject sharing index repair", () => {
   let env: Env;
 
   beforeEach(() => {
+    vi.stubGlobal(
+      "WebSocketPair",
+      class TestWebSocketPair {
+        0 = fakeSocket([]);
+        1 = fakeSocket([]);
+      },
+    );
     storage = new MemoryStorage();
     receiverFetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     env = {
@@ -102,15 +111,121 @@ describe("RelayObject sharing index repair", () => {
   });
 });
 
-function createObject(storage: MemoryStorage, env: Env) {
+describe("RelayObject shared security delivery", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "WebSocketPair",
+      class TestWebSocketPair {
+        0 = fakeSocket([]);
+        1 = fakeSocket([]);
+      },
+    );
+  });
+
+  it("sends shared participant connection events to owner sockets, not sharee sockets", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(
+      storage,
+      {
+        RELAY: {
+          idFromName: vi.fn((name: string) => ({ name })),
+          get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+        },
+      } as unknown as Env,
+    );
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const ownerSocket = fakeSocket(["client", `share:${shareId}`, "user:user_owner"]);
+    const shareeSocket = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    const normalOwnerSocket = fakeSocket(["client", "user:user_owner"]);
+    storage.sockets = [ownerSocket, shareeSocket, normalOwnerSocket];
+
+    const response = await object.fetch(
+      new Request(`https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=${shareId}`, {
+        headers: {
+          Upgrade: "websocket",
+          "X-Aimux-Share-Owner-Id": "user_owner",
+          "X-Aimux-User-Id": "user_guest",
+        },
+      }),
+    ).catch((error) => error);
+
+    expect(response).toBeInstanceOf(RangeError);
+    expect(ownerSocket.send).toHaveBeenCalledWith(expect.stringContaining("shared_client_connected"));
+    expect(normalOwnerSocket.send).toHaveBeenCalledWith(expect.stringContaining("shared_client_connected"));
+    expect(shareeSocket.send).not.toHaveBeenCalled();
+  });
+
+  it("does not create emergency lockdown actions for shared participant connections", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const before = await storage.get<{ actions: Record<string, unknown> }>("security-state:v1");
+    const response = await object.fetch(
+      new Request(`https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=${shareId}`, {
+        headers: {
+          Upgrade: "websocket",
+          "X-Aimux-Share-Owner-Id": "user_owner",
+          "X-Aimux-User-Id": "user_guest",
+        },
+      }),
+    ).catch((error) => error);
+
+    expect(response).toBeInstanceOf(RangeError);
+    const security = await storage.get<{ actions: Record<string, unknown> }>("security-state:v1");
+    expect(Object.keys(security?.actions ?? {})).toEqual(Object.keys(before?.actions ?? {}));
+  });
+});
+
+function createObject(storage: MemoryStorage & { sockets?: Array<ReturnType<typeof fakeSocket>> }, env: Env) {
+  const tags = new Map<WebSocket, string[]>();
   return new RelayObject(
     {
       storage,
-      getWebSockets: () => [],
-      getTags: () => [],
+      getWebSockets: () => storage.sockets ?? [],
+      getTags: (ws: WebSocket) => tags.get(ws) ?? (ws as WebSocket & { tags?: string[] }).tags ?? [],
+      acceptWebSocket: (ws: WebSocket, acceptedTags: string[]) => {
+        tags.set(ws, acceptedTags);
+        storage.sockets = [...(storage.sockets ?? []), ws as ReturnType<typeof fakeSocket>];
+      },
     } as unknown as DurableObjectState,
     env,
   );
+}
+
+function storageWithSockets(sockets: Array<ReturnType<typeof fakeSocket>>) {
+  const storage = new MemoryStorage();
+  return Object.assign(storage, {
+    sockets,
+  });
+}
+
+function fakeSocket(tags: string[]) {
+  return {
+    tags,
+    send: vi.fn(),
+    close: vi.fn(),
+  } as unknown as WebSocket & { tags: string[]; send: ReturnType<typeof vi.fn> };
+}
+
+async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<string> {
+  const invite = await createInvite(object);
+  const accepted = await object.fetch(
+    request(`https://relay.aimux.app/shares/invite/user_owner/${invite.token}/accept`, {
+      method: "POST",
+      userId: "user_guest",
+      name: "Guest",
+      email: "guest@example.com",
+    }),
+  );
+  expect(accepted.status).toBe(200);
+  const body = (await accepted.json()) as { share: { id: string } };
+  return body.share.id;
 }
 
 async function createInvite(object: RelayObject): Promise<{ token: string }> {

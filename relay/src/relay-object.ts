@@ -554,11 +554,14 @@ export class RelayObject extends DurableObject<Env> {
     }
   }
 
-  private broadcastToOwnerClients(msg: RelayMessage, exclude?: WebSocket): void {
+  private broadcastToOwnerClients(msg: RelayMessage, ownerUserId?: string, exclude?: WebSocket): void {
     const data = JSON.stringify(msg);
     for (const client of this.clientSockets) {
       if (client === exclude) continue;
-      if (this.ctx.getTags(client).some((tag) => tag.startsWith("share:"))) continue;
+      const tags = this.ctx.getTags(client);
+      const shareTagged = tags.some((tag) => tag.startsWith("share:"));
+      const ownerTagged = ownerUserId ? tags.includes(`user:${ownerUserId}`) : false;
+      if (shareTagged && !ownerTagged) continue;
       try {
         client.send(data);
       } catch {
@@ -597,7 +600,7 @@ export class RelayObject extends DurableObject<Env> {
     };
     const result = recordClientConnection(state, device, context);
     let emergencyUrl: string | undefined;
-    if (result.firstSeen && securityRecipientUserId) {
+    if (result.firstSeen && securityRecipientUserId && !sharedClientAuth) {
       const action = await createSecurityActionToken("emergency_lockdown", { deviceId: result.device.id });
       result.state.actions[action.action.id] = action.action;
       emergencyUrl = `${this.securityActionBaseUrl(request)}/security/action/${encodeURIComponent(securityRecipientUserId)}/${encodeURIComponent(action.token)}`;
@@ -610,7 +613,7 @@ export class RelayObject extends DurableObject<Env> {
         } catch {}
       }
       if (event.kind === "new_client_detected" || event.kind === "shared_client_connected") {
-        this.broadcastToOwnerClients({ type: "security_event", event }, ws);
+        this.broadcastToOwnerClients({ type: "security_event", event }, securityRecipientUserId, ws);
         await deliverSecurityAlert({
           env: this.env,
           userId: securityRecipientUserId,
