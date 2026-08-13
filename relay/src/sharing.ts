@@ -243,6 +243,30 @@ export function removeShareParticipant(
   return { state: normalizeSharingState(current), share: current.shares[share.id] };
 }
 
+export function revokeShareInvite(
+  state: SharingState,
+  shareId: string,
+  inviteId: string,
+  now = new Date().toISOString(),
+): { state: SharingState; share?: SharedSessionRecord; invite?: ShareInviteRecord } {
+  const current = normalizeSharingState(state);
+  const share = current.shares[shareId];
+  if (!share) return { state: current };
+  const invite = share.invites[inviteId];
+  if (!invite) return { state: current, share };
+  if (invite.status === "revoked") return { state: current, share, invite };
+  share.invites[inviteId] = { ...invite, status: "revoked", revokedAt: now };
+  share.updatedAt = now;
+  share.version += 1;
+  current.shares[share.id] = normalizeShare(share);
+  const normalizedShare = current.shares[share.id];
+  return {
+    state: normalizeSharingState(current),
+    share: normalizedShare,
+    invite: normalizedShare?.invites[inviteId],
+  };
+}
+
 export function isSharedRelayRequestAllowed(
   input: { method: string; path: string; sessionId?: string },
   share: SharedSessionRecord,

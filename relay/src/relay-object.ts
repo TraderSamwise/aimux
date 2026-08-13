@@ -25,6 +25,7 @@ import {
   getShareChatMode,
   loadSharingState,
   removeShareParticipant,
+  revokeShareInvite,
   saveSharingState,
   sharedRelayRequestAccess,
   summarizeShare,
@@ -75,6 +76,10 @@ export class RelayObject extends DurableObject<Env> {
     if (url.pathname === "/shares" && request.method === "GET") {
       return this.listShares(request);
     }
+    if (url.pathname.startsWith("/shares/invite/") && url.pathname.endsWith("/accept")) {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.acceptShareInvite(request, url);
+    }
     if (url.pathname.startsWith("/shares/") && request.method === "GET") {
       return this.getShare(request, url);
     }
@@ -84,13 +89,12 @@ export class RelayObject extends DurableObject<Env> {
     if (url.pathname.startsWith("/shares/") && url.pathname.includes("/participants/") && request.method === "DELETE") {
       return this.removeShareParticipant(request, url);
     }
+    if (url.pathname.startsWith("/shares/") && url.pathname.includes("/invites/") && request.method === "DELETE") {
+      return this.revokeShareInvite(request, url);
+    }
     if (url.pathname === "/shares/invite" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
       return this.createShareInvite(request);
-    }
-    if (url.pathname.startsWith("/shares/invite/") && url.pathname.endsWith("/accept")) {
-      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
-      return this.acceptShareInvite(request, url);
     }
 
     const upgradeHeader = request.headers.get("Upgrade")?.toLowerCase();
@@ -800,6 +804,21 @@ export class RelayObject extends DurableObject<Env> {
     return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
   }
 
+  private async revokeShareInvite(request: Request, url: URL): Promise<Response> {
+    const actor = this.actorFromHeaders(request, "owner");
+    if (!actor) return json({ ok: false, error: "Missing user context" }, 401);
+    const parsed = parseInvitePath(url.pathname);
+    if (!parsed) return json({ ok: false, error: "Invalid invite URL" }, 400);
+    const state = await loadSharingState(this.ctx.storage);
+    const share = state.shares[parsed.shareId];
+    if (!share || share.ownerUserId !== parsed.ownerUserId) return json({ ok: false, error: "Share not found" }, 404);
+    if (share.ownerUserId !== actor.userId) return json({ ok: false, error: "Only the owner can revoke invites" }, 403);
+    if (!share.invites[parsed.inviteId]) return json({ ok: false, error: "Invite not found" }, 404);
+    const result = revokeShareInvite(state, share.id, parsed.inviteId);
+    await saveSharingState(this.ctx.storage, result.state);
+    return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
+  }
+
   private async createShareInvite(request: Request): Promise<Response> {
     const owner = this.actorFromHeaders(request, "owner");
     if (!owner) return json({ ok: false, error: "Missing owner context" }, 401);
@@ -1212,6 +1231,16 @@ function parseParticipantPath(pathname: string): {
     ownerUserId: decodeURIComponent(match[1]),
     shareId: decodeURIComponent(match[2]),
     participantUserId: decodeURIComponent(match[3]),
+  };
+}
+
+function parseInvitePath(pathname: string): { ownerUserId: string; shareId: string; inviteId: string } | null {
+  const match = pathname.match(/^\/shares\/([^/]+)\/([^/]+)\/invites\/([^/]+)$/);
+  if (!match) return null;
+  return {
+    ownerUserId: decodeURIComponent(match[1]),
+    shareId: decodeURIComponent(match[2]),
+    inviteId: decodeURIComponent(match[3]),
   };
 }
 

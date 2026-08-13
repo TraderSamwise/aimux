@@ -137,7 +137,7 @@ export default {
       return addCorsHeaders(await stub.fetch(new Request(request, { headers })));
     }
 
-    if (url.pathname === "/shares" || url.pathname === "/shares/invite" || url.pathname.startsWith("/shares/invite/")) {
+    if (url.pathname === "/shares" || url.pathname.startsWith("/shares/")) {
       const authHeader = request.headers.get("Authorization");
       const clerkToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
       if (!clerkToken) {

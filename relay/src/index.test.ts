@@ -130,4 +130,45 @@ describe("relay CORS", () => {
     expect(proxied.headers.get("X-Aimux-User-Name")).toBe("Sam");
     expect(proxied.headers.get("X-Aimux-User-Email")).toBe("sam@example.com");
   });
+
+  it("forwards owner-scoped sharing routes to the owner durable object", async () => {
+    authMocks.verifyWsToken.mockResolvedValueOnce("user_actor");
+    authMocks.fetchClerkUserProfile.mockResolvedValueOnce({
+      userId: "user_actor",
+      displayName: "Sam",
+      email: "sam@example.com",
+    });
+    const objectFetch = vi.fn(async (_request: Request) => {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const idFromName = vi.fn(() => ({ name: "user_owner" }));
+    const env = {
+      CLERK_SECRET_KEY: "sk_test",
+      RELAY: {
+        idFromName,
+        get: vi.fn(() => ({ fetch: objectFetch })),
+      },
+    } as unknown as Env;
+
+    const response = await relay.fetch(
+      new Request("https://relay.aimux.app/shares/user_owner/share_123/invites/invite_123", {
+        method: "DELETE",
+        headers: { Origin: "https://aimux.app", Authorization: "Bearer clerk-token" },
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(idFromName).toHaveBeenCalledWith("user_owner");
+    expect(objectFetch).toHaveBeenCalledTimes(1);
+    const proxied = objectFetch.mock.calls[0][0];
+    expect(proxied.headers.get("X-Aimux-User-Id")).toBe("user_actor");
+    expect(proxied.headers.get("X-Aimux-User-Name")).toBe("Sam");
+    expect(proxied.headers.get("X-Aimux-User-Email")).toBe("sam@example.com");
+    expect(proxied.headers.get("X-Aimux-Share-Owner-Id")).toBe("user_owner");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
 });

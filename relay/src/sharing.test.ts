@@ -7,6 +7,7 @@ import {
   getShareChatMode,
   isSharedRelayRequestAllowed,
   removeShareParticipant,
+  revokeShareInvite,
   sharedRelayRequestAccess,
   stripTrustedAimuxHeaders,
   summarizeShare,
@@ -207,6 +208,29 @@ describe("sharing state", () => {
         "X-Aimux-Share-Mode": "multi",
       }),
     ).toEqual({ "content-type": "application/json" });
+  });
+
+  it("revokes pending invites without exposing token hashes", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    const share = Object.values(created.state.shares)[0];
+    const invite = Object.values(share.invites)[0];
+
+    const revoked = revokeShareInvite(created.state, share.id, invite.id, "2099-05-24T00:02:00.000Z");
+
+    expect(revoked.invite).toMatchObject({
+      id: invite.id,
+      status: "revoked",
+      revokedAt: "2099-05-24T00:02:00.000Z",
+    });
+    const summary = summarizeShare(revoked.share!);
+    expect(summary.invites[0]).toMatchObject({ id: invite.id, status: "revoked" });
+    expect(summary.invites[0]).not.toHaveProperty("tokenHash");
   });
 
   it("redacts invite token hashes from public summaries", async () => {
