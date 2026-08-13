@@ -9,6 +9,7 @@ export type MainTabId =
   | "dashboard"
   | "coordination"
   | "expose"
+  | "loops"
   | "topology"
   | "project"
   | "library"
@@ -22,6 +23,7 @@ export interface MainTabRoute {
     | "/"
     | "/coordination"
     | "/expose"
+    | "/loops"
     | "/topology"
     | "/project"
     | "/library"
@@ -33,6 +35,7 @@ export interface MainTabRoute {
     | "(dashboard)"
     | "coordination"
     | "expose"
+    | "loops"
     | "topology"
     | "project"
     | "library"
@@ -64,6 +67,12 @@ export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
     href: "/expose",
     internalHref: "/(main)/(tabs)/expose" as Href,
     screen: "expose",
+  },
+  loops: {
+    id: "loops",
+    href: "/loops",
+    internalHref: "/(main)/(tabs)/loops" as Href,
+    screen: "loops",
   },
   topology: {
     id: "topology",
@@ -114,6 +123,7 @@ export function buildMainTabHref(tabId: MainTabId, projectPath?: string | null):
 export function mainTabForPath(pathname: string): MainTabId {
   if (pathname.startsWith("/coordination")) return "coordination";
   if (pathname.startsWith("/expose")) return "expose";
+  if (pathname.startsWith("/loops")) return "loops";
   if (pathname.startsWith("/topology")) return "topology";
   if (pathname.startsWith("/project")) return "project";
   if (pathname.startsWith("/library")) return "library";

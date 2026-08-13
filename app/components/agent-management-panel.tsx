@@ -149,8 +149,7 @@ export function AgentManagementPanel({
   const canRename = canAct && trimmedLabel !== (session.label || "");
   const canMigrate =
     canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
-  const canSaveLoop =
-    canAct && Boolean(trimmedGoal) && (!loopActive || trimmedGoal !== currentLoopGoal);
+  const canSaveLoop = canAct && (!loopActive || trimmedGoal !== currentLoopGoal);
   const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const visibleError = error && !isTransientRequestError(error) ? error : null;
 
@@ -277,7 +276,7 @@ export function AgentManagementPanel({
                 runAction("loop", () =>
                   setAgentLoop(
                     endpoint,
-                    { sessionId: session.id, active: true, goal: trimmedGoal },
+                    { sessionId: session.id, active: true, goal: trimmedGoal || undefined },
                     { token },
                   ),
                 )

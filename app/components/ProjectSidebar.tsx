@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   MessageSquare,
   Network,
+  Repeat2,
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { WorktreeList } from "@/components/WorktreeDashboard";
@@ -57,6 +58,7 @@ function routePrefersViews(tab: MainTabId): boolean {
     tab === "project" ||
     tab === "coordination" ||
     tab === "expose" ||
+    tab === "loops" ||
     tab === "topology" ||
     tab === "library" ||
     tab === "inbox" ||
@@ -282,6 +284,7 @@ const PRIMARY_NAV = [
   { id: "project", label: "Project", Icon: FolderKanban },
   { id: "coordination", label: "Coordination", Icon: Bell },
   { id: "expose", label: "Exposé", Icon: LayoutGrid },
+  { id: "loops", label: "Loop", Icon: Repeat2 },
   { id: "topology", label: "Topology", Icon: Network },
   { id: "library", label: "Library", Icon: BookOpen },
   { id: "inbox", label: "Inbox", Icon: Bell },
