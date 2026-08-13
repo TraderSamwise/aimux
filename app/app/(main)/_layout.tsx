@@ -240,7 +240,13 @@ export default function MainLayout() {
         timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
         return;
       }
-      if (!relayReadyForRequests) return;
+      if (!relayReadyForRequests) {
+        if (relayStatus === "daemon_offline") {
+          reconcileProjects([]);
+        }
+        timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
+        return;
+      }
       try {
         const token = await getTokenRef.current();
         const projects = await listProjects({ token });
@@ -266,7 +272,14 @@ export default function MainLayout() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeShare, applyDesktopStateSuccess, reconcileProjects, relayReadyForRequests, store]);
+  }, [
+    activeShare,
+    applyDesktopStateSuccess,
+    reconcileProjects,
+    relayReadyForRequests,
+    relayStatus,
+    store,
+  ]);
 
   useEffect(() => {
     if (!relayUrl) return;
