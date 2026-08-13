@@ -143,6 +143,23 @@ describe("api relay routing", () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("sends shared chat actor metadata only when provided", async () => {
+    const fetchMock = installFetchMock({ ok: true, sessionId: "agent-1", accepted: true });
+
+    await sendLivePaneInput(endpoint, "agent-1", "hello", {
+      sharedChatActor: { role: "owner", displayName: "Sam", email: "sam@example.com" },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:43210/live-pane/input");
+    expect(JSON.parse(String(init.body))).toEqual({
+      sessionId: "agent-1",
+      text: "hello",
+      sharedChatActor: { role: "owner", displayName: "Sam", email: "sam@example.com" },
+    });
+  });
+
   it("rejects ok-false direct HTTP responses", async () => {
     installFetchMock({ ok: false, error: "service stale" });
 

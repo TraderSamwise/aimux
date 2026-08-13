@@ -30,6 +30,17 @@ function operator(grants = [{ projectRoot: PROJECT_ROOT, sessionId: SESSION }]):
   return { role: "operator", principal: principal(grants) };
 }
 
+function guest(sessionId = SESSION): RemoteActor {
+  return {
+    role: "guest",
+    userId: "usr_guest",
+    shareId: "share-1",
+    shareSessionId: sessionId,
+    displayName: "Ada Guest",
+    email: "ada@example.com",
+  };
+}
+
 function allow(
   actor: RemoteActor | null,
   method: string,
@@ -305,16 +316,66 @@ describe("existing roles are unaffected", () => {
   });
 
   it("still scopes a shared guest to reads of its own session", () => {
-    const guest: RemoteActor = { role: "guest", shareId: "s1", shareSessionId: SESSION };
     expect(
-      allow(guest, "GET", PORT_PATH(PROJECT_API_ROUTES.agents.output), { query: `?sessionId=${SESSION}` }).ok,
+      allow(guest(), "GET", PORT_PATH(PROJECT_API_ROUTES.agents.output), { query: `?sessionId=${SESSION}` }).ok,
     ).toBe(true);
-    expect(allow(guest, "GET", PORT_PATH(PROJECT_API_ROUTES.agents.output), { query: "?sessionId=other" }).ok).toBe(
+    expect(allow(guest(), "GET", PORT_PATH(PROJECT_API_ROUTES.agents.output), { query: "?sessionId=other" }).ok).toBe(
       false,
     );
-    expect(allow(guest, "POST", PORT_PATH(PROJECT_API_ROUTES.agents.input), { body: { sessionId: SESSION } }).ok).toBe(
-      false,
-    );
+    expect(
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.agents.input), { body: { sessionId: SESSION } }).ok,
+    ).toBe(false);
+  });
+
+  it("lets a shared guest send text only to its own live pane", () => {
+    expect(
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
+        body: { sessionId: SESSION, text: "hello" },
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("rejects shared guest live-pane input without a real text message", () => {
+    expect(
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
+        body: { sessionId: SESSION, text: "  \n\t " },
+      }).ok,
+    ).toBe(false);
+    expect(
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
+        body: { sessionId: SESSION, attachmentIds: ["att_1"] },
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("rejects shared guest input for another session or conflicting session ids", () => {
+    expect(
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
+        body: { sessionId: "other", text: "hello" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
+        body: { sessionId: SESSION, text: "hello" },
+        query: "?sessionId=other",
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("keeps shared guests off owner/operator write routes", () => {
+    for (const route of [
+      PROJECT_API_ROUTES.agents.input,
+      PROJECT_API_ROUTES.agents.interrupt,
+      PROJECT_API_ROUTES.attachments,
+      PROJECT_API_ROUTES.agents.spawn,
+    ]) {
+      expect(
+        allow(guest(), "POST", PORT_PATH(route), {
+          body: { sessionId: SESSION, text: "hello" },
+        }).ok,
+        route,
+      ).toBe(false);
+    }
   });
 
   it("still denies an unknown role", () => {

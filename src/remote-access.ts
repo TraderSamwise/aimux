@@ -45,6 +45,7 @@ const SHARED_GUEST_SESSION_READ_ROUTES = new Set<string>([
   PROJECT_API_ROUTES.livePane.output,
   PROJECT_API_ROUTES.events,
 ]);
+const SHARED_GUEST_SESSION_WRITE_ROUTES = new Set<string>([PROJECT_API_ROUTES.livePane.input]);
 
 const PROXY_PATH_PATTERN = /^\/proxy\/[^/]+\/\d+(\/.*)$/;
 
@@ -111,6 +112,19 @@ function bodySessionId(body: unknown): string | null {
   return trimmedString((body as Record<string, unknown>).sessionId);
 }
 
+function bodyText(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  return trimmedString((body as Record<string, unknown>).text);
+}
+
+function bodyHasAttachments(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const attachmentIds = (body as Record<string, unknown>).attachmentIds;
+  return Array.isArray(attachmentIds)
+    ? attachmentIds.some((id) => (typeof id === "string" ? Boolean(id.trim()) : id != null))
+    : false;
+}
+
 /**
  * Authorize the session id the SERVICE will actually act on.
  *
@@ -124,17 +138,35 @@ function authorizedSessionId(
   method: "GET" | "POST",
   searchParams: URLSearchParams,
   body: unknown,
+  label = "operator route",
 ): { ok: true; sessionId: string } | { ok: false; error: string } {
   const fromBody = bodySessionId(body);
   const fromQuery = trimmedString(searchParams.get("sessionId"));
   const authoritative = method === "POST" ? fromBody : fromQuery;
   const other = method === "POST" ? fromQuery : fromBody;
 
-  if (!authoritative) return { ok: false, error: "operator route requires a session id" };
+  if (!authoritative) return { ok: false, error: `${label} requires a session id` };
   if (other && other !== authoritative) {
     return { ok: false, error: "conflicting session ids in request body and query" };
   }
   return { ok: true, sessionId: authoritative };
+}
+
+function assertSharedGuestSession(
+  actor: RemoteActor,
+  method: "GET" | "POST",
+  searchParams: URLSearchParams,
+  context: RemoteAccessContext,
+): RemoteAccessDecision {
+  if (!actor.shareSessionId) {
+    return { ok: false, status: 403, error: "shared guest route requires an authorized share session" };
+  }
+  const session = authorizedSessionId(method, searchParams, context.body, "shared session route");
+  if (!session.ok) return { ok: false, status: 403, error: session.error };
+  if (session.sessionId !== actor.shareSessionId) {
+    return { ok: false, status: 403, error: "shared guest cannot access another session" };
+  }
+  return { ok: true };
 }
 
 /**
@@ -299,26 +331,31 @@ export function assertRemoteAccessAllowed(
   if (!actor || actor.role === "owner") return { ok: true };
   if (actor.role === "operator") return assertOperatorAllowed(actor, method, pathname, searchParams, context);
   if (actor.role !== "guest") return { ok: false, status: 403, error: "remote actor role is not allowed" };
-  if (method !== "GET") return { ok: false, status: 403, error: "shared guests are read-only" };
-  if (pathname === "/health") return { ok: true };
+  const methodName = method.toUpperCase();
+  if (methodName === "GET" && pathname === "/health") return { ok: true };
 
-  const proxyMatch = pathname.match(/^\/proxy\/[^/]+\/\d+(\/.*)$/);
+  const proxyMatch = pathname.match(PROXY_PATH_PATTERN);
   if (!proxyMatch) return { ok: false, status: 403, error: "shared guests cannot access daemon routes" };
 
   const subPath = proxyMatch[1] || "/";
-  if (SHARED_GUEST_SESSION_READ_ROUTES.has(subPath)) {
-    if (!actor.shareSessionId) {
-      return { ok: false, status: 403, error: "shared guest route requires an authorized share session" };
+  if (methodName === "GET" && SHARED_GUEST_SESSION_READ_ROUTES.has(subPath)) {
+    return assertSharedGuestSession(actor, "GET", searchParams, context);
+  }
+
+  if (methodName === "POST" && SHARED_GUEST_SESSION_WRITE_ROUTES.has(subPath)) {
+    const sessionDecision = assertSharedGuestSession(actor, "POST", searchParams, context);
+    if (!sessionDecision.ok) return sessionDecision;
+    if (!bodyText(context.body)) {
+      return { ok: false, status: 403, error: "shared guest input requires text" };
     }
-    const requestedSessionId = searchParams.get("sessionId");
-    if (!requestedSessionId) {
-      return { ok: false, status: 403, error: "shared session route requires a session id" };
-    }
-    if (requestedSessionId !== actor.shareSessionId) {
-      return { ok: false, status: 403, error: "shared guest cannot access another session" };
+    if (bodyHasAttachments(context.body)) {
+      return { ok: false, status: 403, error: "shared guests cannot send attachments" };
     }
     return { ok: true };
   }
 
+  if (methodName !== "GET") {
+    return { ok: false, status: 403, error: "shared guests can only send text to their shared session" };
+  }
   return { ok: false, status: 403, error: "shared guests can only read shared session output" };
 }

@@ -47,7 +47,7 @@ import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
-import { useAuth } from "@/lib/auth";
+import { useAuth, useUser } from "@/lib/auth";
 import { agentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
@@ -60,6 +60,7 @@ import {
   interruptLivePane,
   sendLivePaneInput,
   uploadImageAttachment,
+  type SharedChatActorInput,
   type SharedSessionSummary,
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
@@ -179,6 +180,17 @@ type UserScrollState = {
   momentum: boolean;
 };
 
+function isMultiplexedShare(summary: SharedSessionSummary | null): boolean {
+  if (!summary) return false;
+  if (summary.mode === "multi") return true;
+  return (
+    summary.participants.some(
+      (participant) => participant.role !== "owner" && participant.status === "active",
+    ) ||
+    summary.invites.some((invite) => invite.status === "pending" || invite.status === "accepted")
+  );
+}
+
 function createScrollPaneMetrics(): ScrollPaneMetrics {
   return {
     contentHeight: 0,
@@ -291,6 +303,7 @@ export default function ChatScreen() {
   const relayStatus = useAtomValue(relayStatusAtom);
   const [activeShare, setActiveShare] = useAtom(activeSharedSessionAtom);
   const { getToken } = useAuth();
+  const { user } = useUser();
   const router = useRouter();
   const pathname = usePathname();
   const { width, height: windowHeight } = useWindowDimensions();
@@ -318,6 +331,39 @@ export default function ChatScreen() {
   const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
+  const isSharedSessionView = Boolean(activeShare);
+  const canUseOwnerControls = !isSharedSessionView;
+  const userEmail =
+    user?.primaryEmailAddress?.emailAddress?.trim() ||
+    user?.emailAddresses?.[0]?.emailAddress?.trim() ||
+    undefined;
+  const userName = user?.fullName?.trim() || user?.username?.trim() || userEmail || undefined;
+  const currentShareParticipant = useMemo(() => {
+    if (!shareSummary) return null;
+    return (
+      shareSummary.participants.find(
+        (participant) =>
+          participant.status === "active" &&
+          (participant.userId === user?.id ||
+            (userEmail ? participant.email === userEmail : false)),
+      ) ?? null
+    );
+  }, [shareSummary, user?.id, userEmail]);
+  const sharedChatActor = useMemo<SharedChatActorInput | undefined>(() => {
+    if (!shareSummary || !isMultiplexedShare(shareSummary)) return undefined;
+    if (activeShare) {
+      return {
+        role: "guest",
+        displayName: currentShareParticipant?.displayName ?? userName ?? "shared guest",
+        email: currentShareParticipant?.email ?? userEmail,
+      };
+    }
+    return {
+      role: "owner",
+      displayName: currentShareParticipant?.displayName ?? userName ?? "chat owner",
+      email: currentShareParticipant?.email ?? userEmail,
+    };
+  }, [activeShare, currentShareParticipant, shareSummary, userEmail, userName]);
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
@@ -358,7 +404,10 @@ export default function ChatScreen() {
     : null;
   const routeSessionMissing = Boolean(sessionId && desktopState && !session);
   const canManageTeammates =
-    session !== null && session.status !== "offline" && session.status !== "exited";
+    canUseOwnerControls &&
+    session !== null &&
+    session.status !== "offline" &&
+    session.status !== "exited";
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
@@ -380,6 +429,13 @@ export default function ChatScreen() {
       cancelled = true;
     };
   }, [getToken]);
+
+  useEffect(() => {
+    if (!isSharedSessionView) return;
+    setPendingAttachments([]);
+    setManagePanelOpen(false);
+    setSharePanelOpen(true);
+  }, [isSharedSessionView]);
 
   /**
    * Driven by the runtime's own activity state, not by whether bytes arrived.
@@ -502,7 +558,13 @@ export default function ChatScreen() {
   const canShowTerminal = Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
   const keyboardVisible = useKeyboardVisible(usesNativeKeyboardController);
-  const compactHeaderActionsWidth = canShowTerminal ? 76 : 32;
+  const compactHeaderActionsWidth = canShowTerminal
+    ? canUseOwnerControls
+      ? 76
+      : 32
+    : canUseOwnerControls
+      ? 32
+      : 0;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
   const canUseSplitView = viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
@@ -664,7 +726,7 @@ export default function ChatScreen() {
     hasSessionId: Boolean(sessionId && !routeSessionMissing),
     sendBusy,
   });
-  const hasPendingAttachments = pendingAttachments.length > 0;
+  const hasPendingAttachments = !isSharedSessionView && pendingAttachments.length > 0;
   const canSendMessage = Boolean(
     serviceEndpoint &&
     sessionId &&
@@ -928,7 +990,7 @@ export default function ChatScreen() {
 
   async function handleSendMessage() {
     const text = composerSendText ?? "";
-    const attachments = [...pendingAttachments];
+    const attachments = isSharedSessionView ? [] : [...pendingAttachments];
     if (
       !serviceEndpoint ||
       !sessionId ||
@@ -965,14 +1027,17 @@ export default function ChatScreen() {
       }
       await sendLivePaneInput(serviceEndpoint, sessionId, text, {
         token,
-        attachmentIds: attachments
-          .map((attachment) => attachment.uploadedAttachmentId)
-          .filter((id): id is string => Boolean(id)),
+        attachmentIds: isSharedSessionView
+          ? []
+          : attachments
+              .map((attachment) => attachment.uploadedAttachmentId)
+              .filter((id): id is string => Boolean(id)),
+        ...(sharedChatActor ? { sharedChatActor } : {}),
       });
       void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
       setDraft(text);
-      setPendingAttachments(attachments);
+      setPendingAttachments(isSharedSessionView ? [] : attachments);
       setSendError(err instanceof Error ? err.message : String(err));
     } finally {
       sendBusyRef.current = false;
@@ -982,6 +1047,11 @@ export default function ChatScreen() {
 
   async function handleAttachImage() {
     if (sendBusy || sendBusyRef.current) return;
+    if (isSharedSessionView) {
+      setPendingAttachments([]);
+      setSendError("Shared session chat is text-only.");
+      return;
+    }
     setSendError(null);
     try {
       const picked = await pickImageAttachment();
@@ -994,11 +1064,21 @@ export default function ChatScreen() {
 
   function handleDropAttachments(attachments: PickedImageAttachment[]) {
     if (sendBusy || sendBusyRef.current) return;
+    if (isSharedSessionView) {
+      setPendingAttachments([]);
+      setSendError("Shared session chat is text-only.");
+      return;
+    }
     setSendError(null);
     appendPendingAttachments(attachments);
   }
 
   function appendPendingAttachments(attachments: PickedImageAttachment[]) {
+    if (isSharedSessionView) {
+      setPendingAttachments([]);
+      setSendError("Shared session chat is text-only.");
+      return;
+    }
     if (attachments.length === 0) return;
     const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
     if (slots <= 0) {
@@ -1067,8 +1147,15 @@ export default function ChatScreen() {
     if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
   }
 
+  const shouldLoadShareSummary = Boolean(
+    token && sessionId && (activeShare || sharePanelOpen || (relayConfigured && project?.path)),
+  );
+
   useEffect(() => {
-    if (!sharePanelOpen) return;
+    if (!shouldLoadShareSummary) {
+      if (!activeShare && !sharePanelOpen) setShareSummary(null);
+      return;
+    }
     let cancelled = false;
     async function refreshShareSummary() {
       if (!token || !sessionId) return;
@@ -1088,16 +1175,18 @@ export default function ChatScreen() {
       }
     }
     void refreshShareSummary().catch((err) => {
-      if (!cancelled) setInviteStatus(err instanceof Error ? err.message : String(err));
+      if (!cancelled && sharePanelOpen) {
+        setInviteStatus(err instanceof Error ? err.message : String(err));
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [activeShare, project, sessionId, sharePanelOpen, token]);
+  }, [activeShare, project?.path, sessionId, sharePanelOpen, shouldLoadShareSummary, token]);
 
   async function handleSendInvite() {
     const email = inviteEmail.trim();
-    if (!project?.path || !sessionId || !email || inviteBusy) return;
+    if (activeShare || !project?.path || !sessionId || !email || inviteBusy) return;
     if (!token) {
       setInviteStatus("Sign in is required to send invites.");
       return;
@@ -1123,7 +1212,7 @@ export default function ChatScreen() {
   }
 
   async function handleRemoveParticipant(participantUserId: string) {
-    if (!token || !shareSummary || shareAction) return;
+    if (activeShare || !token || !shareSummary || shareAction) return;
     setShareAction(participantUserId);
     setInviteStatus(null);
     try {
@@ -1178,7 +1267,7 @@ export default function ChatScreen() {
         paddingBottom: usesNativeKeyboardController ? bottomInset : undefined,
       }}
     >
-      {pendingAttachments.length > 0 ? (
+      {!isSharedSessionView && pendingAttachments.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
           <View className="flex-row gap-2">
             {pendingAttachments.map((attachment) => (
@@ -1214,7 +1303,9 @@ export default function ChatScreen() {
       is the part that needs it.
     */}
       <AttachmentDropZone
-        disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+        disabled={
+          isSharedSessionView || sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+        }
         onDropAttachments={handleDropAttachments}
         onDropRejected={setSendError}
       >
@@ -1253,14 +1344,16 @@ export default function ChatScreen() {
                   textAlignVertical="top"
                 />
                 <View className="flex-row items-center gap-2">
-                  <ComposerControl
-                    wide={wideControls}
-                    label="Attach"
-                    accessibilityLabel="Attach an image"
-                    icon={<Plus size={17} color={CONTROL_INK} />}
-                    disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
-                    onPress={handleAttachImage}
-                  />
+                  {!isSharedSessionView ? (
+                    <ComposerControl
+                      wide={wideControls}
+                      label="Attach"
+                      accessibilityLabel="Attach an image"
+                      icon={<Plus size={17} color={CONTROL_INK} />}
+                      disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+                      onPress={handleAttachImage}
+                    />
+                  ) : null}
                   <View className="flex-1 px-1">
                     {activityLabel ? (
                       <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
@@ -1272,16 +1365,18 @@ export default function ChatScreen() {
                   gating it on that guess only makes it unavailable exactly when
                   the guess is wrong.
                 */}
-                  <ComposerControl
-                    wide={wideControls}
-                    label="Stop"
-                    accessibilityLabel="Interrupt the agent"
-                    // Filled, because a stop is a stop and an outline reads as
-                    // a checkbox at this size.
-                    icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                    disabled={interruptBusy}
-                    onPress={handleInterrupt}
-                  />
+                  {!isSharedSessionView ? (
+                    <ComposerControl
+                      wide={wideControls}
+                      label="Stop"
+                      accessibilityLabel="Interrupt the agent"
+                      // Filled, because a stop is a stop and an outline reads as
+                      // a checkbox at this size.
+                      icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                      disabled={interruptBusy}
+                      onPress={handleInterrupt}
+                    />
+                  ) : null}
                   <ComposerControl
                     wide={wideControls}
                     brand
@@ -1431,23 +1526,28 @@ export default function ChatScreen() {
                   {sessionSubtitle}
                 </Text>
               </View>
-              {session && compactHeaderActions ? (
+              {session && compactHeaderActions && (canUseOwnerControls || canShowTerminal) ? (
                 <View
                   className="ml-2 flex-row items-center justify-end"
                   style={{ flexShrink: 0, width: compactHeaderActionsWidth }}
                 >
-                  <Pressable
-                    onPress={() => setManagePanelOpen((open) => !open)}
-                    accessibilityLabel="Manage agent"
-                    accessibilityState={{ expanded: managePanelOpen }}
-                    className={cn(
-                      canShowTerminal ? "mr-2" : "",
-                      "h-8 w-8 items-center justify-center rounded-md border",
-                      managePanelOpen ? "border-primary bg-accent" : "border-border",
-                    )}
-                  >
-                    <SlidersHorizontal size={14} color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"} />
-                  </Pressable>
+                  {canUseOwnerControls ? (
+                    <Pressable
+                      onPress={() => setManagePanelOpen((open) => !open)}
+                      accessibilityLabel="Manage agent"
+                      accessibilityState={{ expanded: managePanelOpen }}
+                      className={cn(
+                        canShowTerminal ? "mr-2" : "",
+                        "h-8 w-8 items-center justify-center rounded-md border",
+                        managePanelOpen ? "border-primary bg-accent" : "border-border",
+                      )}
+                    >
+                      <SlidersHorizontal
+                        size={14}
+                        color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
+                      />
+                    </Pressable>
+                  ) : null}
                   {canShowTerminal ? (
                     <Pressable
                       onPress={cycleAgentOutputViewMode}
@@ -1472,39 +1572,43 @@ export default function ChatScreen() {
                   contentContainerStyle={{ alignItems: "center" }}
                 >
                   <View className="flex-row items-center">
-                    <View className="mr-2">
-                      <AgentActions
-                        session={session}
-                        projectPath={stateProjectPath}
-                        endpoint={serviceEndpoint}
-                        token={token}
-                        compact
-                        mainCheckoutPath={desktopState?.mainCheckoutPath}
-                        onKilled={goBack}
-                      />
-                    </View>
-                    <Pressable
-                      onPress={() => setSharePanelOpen((open) => !open)}
-                      accessibilityLabel="Invite collaborator"
-                      className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
-                    >
-                      <UserPlus size={15} color="#a1a1aa" />
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setManagePanelOpen((open) => !open)}
-                      accessibilityLabel="Manage agent"
-                      accessibilityState={{ expanded: managePanelOpen }}
-                      className={cn(
-                        "h-8 flex-row items-center gap-1.5 rounded-md border mr-2 px-2.5",
-                        managePanelOpen ? "border-primary bg-accent" : "border-border",
-                      )}
-                    >
-                      <SlidersHorizontal
-                        size={14}
-                        color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
-                      />
-                      <Text className="text-xs text-foreground">Manage</Text>
-                    </Pressable>
+                    {canUseOwnerControls ? (
+                      <>
+                        <View className="mr-2">
+                          <AgentActions
+                            session={session}
+                            projectPath={stateProjectPath}
+                            endpoint={serviceEndpoint}
+                            token={token}
+                            compact
+                            mainCheckoutPath={desktopState?.mainCheckoutPath}
+                            onKilled={goBack}
+                          />
+                        </View>
+                        <Pressable
+                          onPress={() => setSharePanelOpen((open) => !open)}
+                          accessibilityLabel="Invite collaborator"
+                          className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
+                        >
+                          <UserPlus size={15} color="#a1a1aa" />
+                        </Pressable>
+                        <Pressable
+                          onPress={() => setManagePanelOpen((open) => !open)}
+                          accessibilityLabel="Manage agent"
+                          accessibilityState={{ expanded: managePanelOpen }}
+                          className={cn(
+                            "h-8 flex-row items-center gap-1.5 rounded-md border mr-2 px-2.5",
+                            managePanelOpen ? "border-primary bg-accent" : "border-border",
+                          )}
+                        >
+                          <SlidersHorizontal
+                            size={14}
+                            color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
+                          />
+                          <Text className="text-xs text-foreground">Manage</Text>
+                        </Pressable>
+                      </>
+                    ) : null}
                     <Pressable
                       onPress={cycleAgentOutputViewMode}
                       disabled={!canShowTerminal}
@@ -1519,21 +1623,23 @@ export default function ChatScreen() {
                         <MessageSquare size={15} color="#a1a1aa" />
                       )}
                     </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        blurWebActiveElement();
-                        router.push({
-                          pathname: "/plans/[sessionId]",
-                          params: {
-                            sessionId: session.id,
-                            ...(projectPath ? { project: projectPath } : {}),
-                          },
-                        });
-                      }}
-                      className="h-8 justify-center px-1"
-                    >
-                      <Text className="text-sm text-primary">Plan</Text>
-                    </Pressable>
+                    {canUseOwnerControls ? (
+                      <Pressable
+                        onPress={() => {
+                          blurWebActiveElement();
+                          router.push({
+                            pathname: "/plans/[sessionId]",
+                            params: {
+                              sessionId: session.id,
+                              ...(projectPath ? { project: projectPath } : {}),
+                            },
+                          });
+                        }}
+                        className="h-8 justify-center px-1"
+                      >
+                        <Text className="text-sm text-primary">Plan</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 </ScrollView>
               ) : null}
@@ -1543,7 +1649,7 @@ export default function ChatScreen() {
             conversation cost the chat ~250px on every screen for controls with
             no recorded use.
           */}
-            {session && managePanelOpen ? (
+            {session && managePanelOpen && canUseOwnerControls ? (
               <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
                 <ScrollView>
                   {compactHeaderActions ? (

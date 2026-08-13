@@ -139,6 +139,7 @@ import {
   type SessionTeamMetadata,
 } from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
+import { parseRemoteActor } from "./remote-access.js";
 import {
   listSwitchableAgentItems,
   resolveAttentionAgent,
@@ -1046,6 +1047,53 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   }
   res.setHeader("connection", "close");
   res.end(payload);
+}
+
+function requestHeaderRecord(req: IncomingMessage): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") {
+      headers[name] = value;
+    } else if (Array.isArray(value) && value.length > 0) {
+      headers[name] = value.join(", ");
+    }
+  }
+  return headers;
+}
+
+type SharedChatActorRole = "owner" | "guest";
+
+interface SharedChatActorForPrompt {
+  role: SharedChatActorRole;
+  displayName?: string;
+  email?: string;
+}
+
+function trimmedBodyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function bodySharedChatActor(body: unknown): SharedChatActorForPrompt | null {
+  if (!body || typeof body !== "object") return null;
+  const raw = (body as Record<string, unknown>).sharedChatActor;
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const role = record.role;
+  if (role !== "owner" && role !== "guest") return null;
+  const displayName = trimmedBodyString(record.displayName);
+  const email = trimmedBodyString(record.email);
+  if (!displayName && !email) return null;
+  return { role, displayName, email };
+}
+
+function safeSharedChatActorName(actor: SharedChatActorForPrompt): string {
+  const fallback = actor.role === "owner" ? "chat owner" : "shared guest";
+  const raw = actor.displayName?.trim() || actor.email?.trim() || fallback;
+  return raw.replace(/\s+/g, " ").slice(0, 80) || fallback;
+}
+
+function formatSharedChatAgentInput(text: string, actor: SharedChatActorForPrompt): string {
+  return `Message from ${safeSharedChatActorName(actor)} via Aimux shared chat:\n\n${text.trim()}`;
 }
 
 function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: string): void {
@@ -5359,7 +5407,12 @@ export class MetadataServer {
         req.method === "POST" &&
         (url.pathname === PROJECT_API_ROUTES.agents.input || url.pathname === PROJECT_API_ROUTES.livePane.input)
       ) {
-        const body = (await readJson(req)) as { sessionId?: string; text?: string; attachmentIds?: unknown };
+        const body = (await readJson(req)) as {
+          sessionId?: string;
+          text?: string;
+          attachmentIds?: unknown;
+          sharedChatActor?: unknown;
+        };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
           send(res, 400, { ok: false, error: "sessionId is required" });
@@ -5372,7 +5425,34 @@ export class MetadataServer {
               .map((id) => id.trim())
               .filter(Boolean)
           : [];
-        if (!text.trim() && attachmentIds.length === 0) {
+        const remoteActor = parseRemoteActor(requestHeaderRecord(req));
+        if (remoteActor?.role === "guest") {
+          if (url.pathname !== PROJECT_API_ROUTES.livePane.input) {
+            send(res, 403, { ok: false, error: "shared guests can only send text to their shared session" });
+            return;
+          }
+          if (!remoteActor.shareSessionId || remoteActor.shareSessionId !== sessionId) {
+            send(res, 403, { ok: false, error: "shared guest cannot access another session" });
+            return;
+          }
+          if (!text.trim()) {
+            send(res, 403, { ok: false, error: "shared guest input requires text" });
+            return;
+          }
+          if (attachmentIds.length > 0) {
+            send(res, 403, { ok: false, error: "shared guests cannot send attachments" });
+            return;
+          }
+        }
+        const sharedChatActor =
+          remoteActor?.role === "guest"
+            ? {
+                role: "guest" as const,
+                displayName: remoteActor.displayName,
+                email: remoteActor.email,
+              }
+            : bodySharedChatActor(body);
+        if (remoteActor?.role !== "guest" && !text.trim() && attachmentIds.length === 0) {
           send(res, 400, { ok: false, error: "text is required" });
           return;
         }
@@ -5397,9 +5477,10 @@ export class MetadataServer {
         // older name, and it is what the app's own chat screen calls. Keying
         // the context off the path would have left aimux's chat the one client
         // that never carried it. Raw pane work is attach/output/resize.
+        const inputText = sharedChatActor && text.trim() ? formatSharedChatAgentInput(text, sharedChatActor) : text;
         const formattedText = composeWithPromptContext(
           formatAgentInputWithAttachments(
-            text,
+            inputText,
             attachments.filter((entry): entry is AttachmentRecord => !!entry),
           ),
           this.promptContexts.get(sessionId)?.text ?? null,

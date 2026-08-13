@@ -505,8 +505,15 @@ export function getAgentOutputStreamRoute(
 
 export type SendAgentInputResponse = LivePaneInputResponse;
 
+export interface SharedChatActorInput {
+  role: "owner" | "guest";
+  displayName?: string;
+  email?: string;
+}
+
 export interface SendAgentInputOptions extends ApiOpts {
   attachmentIds?: string[];
+  sharedChatActor?: SharedChatActorInput;
 }
 
 export async function sendLivePaneInput(
@@ -524,6 +531,7 @@ export async function sendLivePaneInput(
       sessionId,
       text,
       ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
+      ...(opts?.sharedChatActor ? { sharedChatActor: opts.sharedChatActor } : {}),
     },
   );
 }

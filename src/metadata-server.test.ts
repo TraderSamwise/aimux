@@ -4552,6 +4552,129 @@ describe("MetadataServer threads API", () => {
     expect(calls).toEqual([{ sessionId: "codex-1", text: "write me a poem", waitForSubmit: false }]);
   });
 
+  it("attributes multiplexed shared chat input without changing raw owner input", async () => {
+    const calls: Array<{ sessionId: string; text: string; waitForSubmit?: boolean }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: (input) => {
+          calls.push(input);
+          return { sessionId: input.sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const ownerRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "owner raw" }),
+    });
+    const ownerSharedRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        text: "owner shared",
+        sharedChatActor: {
+          role: "owner",
+          displayName: "Sam Owner",
+          email: "sam@example.com",
+        },
+      }),
+    });
+    const guestRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-aimux-actor-role": "guest",
+        "x-aimux-actor-user-id": "guest-1",
+        "x-aimux-actor-display-name": "Ada Guest",
+        "x-aimux-actor-email": "ada@example.com",
+        "x-aimux-share-id": "share-1",
+        "x-aimux-share-session-id": "codex-1",
+      },
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        text: "hello from share",
+        sharedChatActor: {
+          role: "guest",
+          displayName: "Mallory Forgery",
+          email: "mallory@example.com",
+        },
+      }),
+    });
+
+    expect(ownerRes.ok).toBe(true);
+    expect(ownerSharedRes.ok).toBe(true);
+    expect(guestRes.ok).toBe(true);
+    expect(calls).toEqual([
+      { sessionId: "codex-1", text: "owner raw", waitForSubmit: false },
+      {
+        sessionId: "codex-1",
+        text: "Message from Sam Owner via Aimux shared chat:\n\nowner shared",
+        waitForSubmit: false,
+      },
+      {
+        sessionId: "codex-1",
+        text: "Message from Ada Guest via Aimux shared chat:\n\nhello from share",
+        waitForSubmit: false,
+      },
+    ]);
+  });
+
+  it("rejects shared guest attachments and other-session input", async () => {
+    const calls: Array<{ sessionId: string; text: string; waitForSubmit?: boolean }> = [];
+    const guestHeaders = {
+      "content-type": "application/json",
+      "x-aimux-actor-role": "guest",
+      "x-aimux-actor-user-id": "guest-1",
+      "x-aimux-actor-display-name": "Ada Guest",
+      "x-aimux-actor-email": "ada@example.com",
+      "x-aimux-share-id": "share-1",
+      "x-aimux-share-session-id": "codex-1",
+    };
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: (input) => {
+          calls.push(input);
+          return { sessionId: input.sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const attachmentRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({ sessionId: "codex-1", text: "inspect", attachmentIds: ["att_1"] }),
+    });
+    const otherSessionRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({ sessionId: "codex-2", text: "hello" }),
+    });
+    const legacyRouteRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({ sessionId: "codex-1", text: "hello" }),
+    });
+
+    expect(attachmentRes.status).toBe(403);
+    expect(otherSessionRes.status).toBe(403);
+    expect(legacyRouteRes.status).toBe(403);
+    expect(calls).toEqual([]);
+  });
+
   it("rejects blank agent input over HTTP", async () => {
     const sent: Array<{ sessionId: string; text: string }> = [];
     server?.stop();
