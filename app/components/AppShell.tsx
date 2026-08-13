@@ -11,6 +11,7 @@ import { usePathname } from "expo-router";
 import { useAtom, useSetAtom } from "jotai";
 import { Menu } from "lucide-react-native";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
+import { SharedSidebar } from "@/components/SharedSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
@@ -30,7 +31,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
   const pathname = usePathname();
+  const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
   const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
+  const Sidebar = isSharedRoute ? SharedSidebar : ProjectSidebar;
 
   // Mobile drawer should start closed — users don't expect it open on load.
   useEffect(() => {
@@ -90,8 +93,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <View style={shellZoomStyle}>
         <TopBar left={hamburger} />
         <View className="flex-1 flex-row">
-          {isDesktop ? <ProjectSidebar /> : null}
-          {isTablet && sidebarOpen ? <ProjectSidebar /> : null}
+          {isDesktop ? <Sidebar /> : null}
+          {isTablet && sidebarOpen ? <Sidebar /> : null}
           <View className="flex-1">{children}</View>
 
           {isMobile && sidebarOpen ? (
@@ -116,7 +119,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 transform: [{ translateX }],
               }}
             >
-              <ProjectSidebar showPrimaryNav={false} />
+              {isSharedRoute ? <SharedSidebar /> : <ProjectSidebar showPrimaryNav={false} />}
             </Animated.View>
           ) : null}
         </View>

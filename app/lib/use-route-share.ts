@@ -47,7 +47,6 @@ export function sharedChatHref(share: ActiveSharedSession) {
       ownerUserId: share.ownerUserId,
       shareId: share.shareId,
       sessionId: share.sessionId,
-      project: share.projectRoot,
     },
   } as const;
 }

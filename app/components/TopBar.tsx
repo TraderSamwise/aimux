@@ -2,7 +2,7 @@ import React from "react";
 import { Image, Pressable, View } from "react-native";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
-import { Bell, MessageSquare } from "lucide-react-native";
+import { Bell, MessageSquare, Share2 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthMenu } from "@/components/AuthMenu";
 import { RelayIndicator } from "@/components/RelayIndicator";
@@ -68,6 +68,14 @@ export function TopBar({ left }: { left?: React.ReactNode }) {
           <RelayIndicator />
         </View>
       ) : null}
+      <View className="mr-2">
+        <TopBarRouteButton
+          href={"/shares" as Href}
+          activePrefix="/shares"
+          label="Shared chats"
+          icon={Share2}
+        />
+      </View>
       <View className="mr-2">
         <TopBarRouteButton
           href={"/global-threads" as Href}

@@ -31,18 +31,17 @@ export default function SharedChatsScreen() {
       const token = await getTokenRef.current();
       if (!token) throw new Error("Sign in is required.");
       const result = await listShares({ token });
-      setShares(
-        result.shares
-          .filter((share) => share.serviceEndpoint)
-          .map((share) => ({
-            shareId: share.id,
-            ownerUserId: share.ownerUserId,
-            projectRoot: share.projectRoot,
-            sessionId: share.sessionId,
-            serviceEndpoint: share.serviceEndpoint!,
-            acceptedAt: share.updatedAt || share.createdAt,
-          })),
-      );
+      const relayShares = result.shares
+        .filter((share) => share.serviceEndpoint)
+        .map((share) => ({
+          shareId: share.id,
+          ownerUserId: share.ownerUserId,
+          projectRoot: share.projectRoot,
+          sessionId: share.sessionId,
+          serviceEndpoint: share.serviceEndpoint!,
+          acceptedAt: share.updatedAt || share.createdAt,
+        }));
+      if (relayShares.length > 0) setShares(relayShares);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -103,13 +102,6 @@ function SharedChatRow({ share, onPress }: { share: ActiveSharedSession; onPress
           </View>
           <View className="min-w-0 flex-1">
             <Text className="text-[15px] font-semibold text-foreground">{projectName}</Text>
-            <Text
-              className="mt-1 font-mono text-[12px] text-muted-foreground"
-              numberOfLines={1}
-              ellipsizeMode="middle"
-            >
-              {share.projectRoot}
-            </Text>
             <Text className="mt-2 font-mono text-[12px] text-muted-foreground">
               {share.sessionId}
             </Text>

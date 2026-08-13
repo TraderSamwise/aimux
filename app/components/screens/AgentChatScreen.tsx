@@ -1792,7 +1792,7 @@ export default function ChatScreen() {
                 </Text>
                 <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
                   Replying as {currentShareParticipant?.displayName ?? userName ?? "guest"} in a
-                  session owned by {activeShare.ownerUserId}.
+                  shared session.
                 </Text>
               </View>
             ) : null}

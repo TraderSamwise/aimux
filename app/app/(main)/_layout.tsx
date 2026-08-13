@@ -300,7 +300,7 @@ export default function MainLayout() {
             serviceEndpoint: share.serviceEndpoint!,
             acceptedAt: share.updatedAt || share.createdAt,
           }));
-        setAcceptedShares(acceptedShares);
+        if (acceptedShares.length > 0) setAcceptedShares(acceptedShares);
         const stillActive = activeShare
           ? acceptedShares.some(
               (share) =>
