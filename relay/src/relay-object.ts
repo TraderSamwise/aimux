@@ -812,7 +812,15 @@ export class RelayObject extends DurableObject<Env> {
     if (!share || share.ownerUserId !== parsed.ownerUserId) return json({ ok: false, error: "Share not found" }, 404);
     if (!canReadShare(share, actor.userId))
       return json({ ok: false, error: "Not a participant in this shared chat" }, 403);
-    return json({ ok: true, share: summarizeShare(share) }, 200);
+    const summary = summarizeShare(share);
+    if (actor.userId !== share.ownerUserId) {
+      try {
+        await this.upsertShareInReceiverIndex(actor.userId, summary);
+      } catch (error) {
+        console.warn("accepted share index repair failed:", error);
+      }
+    }
+    return json({ ok: true, share: summary }, 200);
   }
 
   private async leaveShare(request: Request, url: URL): Promise<Response> {
@@ -1004,15 +1012,14 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   private async upsertShareInReceiverIndex(userId: string, share: SharedSessionSummary): Promise<void> {
-    try {
-      const relayId = this.env.RELAY.idFromName(userId);
-      const stub = this.env.RELAY.get(relayId);
-      await stub.fetch("https://internal.aimux.local/internal/accepted-shares/upsert", {
-        method: "POST",
-        body: JSON.stringify({ share }),
-      });
-    } catch {
-      // Canonical owner share already exists; listing can recover from a later owner-scoped get.
+    const relayId = this.env.RELAY.idFromName(userId);
+    const stub = this.env.RELAY.get(relayId);
+    const response = await stub.fetch("https://internal.aimux.local/internal/accepted-shares/upsert", {
+      method: "POST",
+      body: JSON.stringify({ share }),
+    });
+    if (!response.ok) {
+      throw new Error(`Accepted share index upsert failed with ${response.status}`);
     }
   }
 

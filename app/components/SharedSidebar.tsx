@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { ChevronLeft, MessageSquare } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { mergeActiveSharedSessions } from "@/lib/shared-sessions";
 import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
 import { cn } from "@/lib/utils";
 import { acceptedSharedSessionsAtom, type ActiveSharedSession } from "@/stores/settings";
@@ -19,6 +20,7 @@ export function SharedSidebar() {
   const pathname = usePathname();
   const shares = useAtomValue(acceptedSharedSessionsAtom);
   const activeShare = useRouteShare();
+  const displayedShares = mergeActiveSharedSessions(shares, activeShare);
   const onSharedIndex = pathname === "/shares";
 
   return (
@@ -45,13 +47,13 @@ export function SharedSidebar() {
           <Text className="mt-1 text-[12px] text-[#787a83]">Chats shared with this account</Text>
         </View>
 
-        {shares.length === 0 ? (
+        {displayedShares.length === 0 ? (
           <View className="px-4 py-4">
             <Text className="text-[13px] text-[#787a83]">No shared chats</Text>
           </View>
         ) : (
           <View className="py-2">
-            {shares.map((share) => {
+            {displayedShares.map((share) => {
               const selected =
                 activeShare?.ownerUserId === share.ownerUserId &&
                 activeShare.shareId === share.shareId;

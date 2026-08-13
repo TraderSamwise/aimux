@@ -9,8 +9,13 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { listShares } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { activeSessionsFromShareSummaries, sharedSessionsEqual } from "@/lib/shared-sessions";
-import { sharedChatHref } from "@/lib/use-route-share";
+import {
+  activeSessionsFromShareSummaries,
+  mergeActiveSharedSessions,
+  sharedSessionsEqual,
+  shouldApplySharedSessionHydrate,
+} from "@/lib/shared-sessions";
+import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
 import { acceptedSharedSessionsAtom, type ActiveSharedSession } from "@/stores/settings";
 
 export default function SharedChatsScreen() {
@@ -18,8 +23,12 @@ export default function SharedChatsScreen() {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
   const [shares, setShares] = useAtom(acceptedSharedSessionsAtom);
+  const activeShare = useRouteShare();
+  const displayedShares = mergeActiveSharedSessions(shares, activeShare);
   const setSharesRef = useRef(setShares);
-  const [loading, setLoading] = useState(false);
+  const preservedEmptyHydrateRef = useRef(false);
+  const [hasHydrated, setHasHydrated] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,9 +47,17 @@ export default function SharedChatsScreen() {
       if (!token) throw new Error("Sign in is required.");
       const result = await listShares({ token });
       const relayShares = activeSessionsFromShareSummaries(result.shares);
-      setSharesRef.current((current) =>
-        sharedSessionsEqual(current, relayShares) ? current : relayShares,
-      );
+      setSharesRef.current((current) => {
+        const preserveEmptyOnce =
+          relayShares.length === 0 && current.length > 0 && !preservedEmptyHydrateRef.current;
+        if (!shouldApplySharedSessionHydrate(current, relayShares, { preserveEmptyOnce })) {
+          preservedEmptyHydrateRef.current = true;
+          return current;
+        }
+        if (relayShares.length > 0) preservedEmptyHydrateRef.current = false;
+        return sharedSessionsEqual(current, relayShares) ? current : relayShares;
+      });
+      setHasHydrated(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -70,14 +87,19 @@ export default function SharedChatsScreen() {
         <PageStateCard className="mb-4" tone="warning" title="Shared chats failed" body={error} />
       ) : null}
 
-      {shares.length === 0 && !loading ? (
+      {displayedShares.length === 0 && !hasHydrated && loading ? (
+        <PageStateCard
+          title="Loading shared chats..."
+          body="Checking chats shared with this account."
+        />
+      ) : displayedShares.length === 0 && !loading && !error ? (
         <PageStateCard
           title="No shared chats"
           body="Accepted shared chat invites will appear here."
         />
       ) : (
         <View className="gap-3">
-          {shares.map((share) => (
+          {displayedShares.map((share) => (
             <SharedChatRow
               key={`${share.ownerUserId}:${share.shareId}`}
               share={share}

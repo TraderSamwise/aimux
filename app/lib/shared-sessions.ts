@@ -38,3 +38,26 @@ export function sharedSessionsEqual(
   }
   return true;
 }
+
+export function mergeActiveSharedSessions(
+  shares: readonly ActiveSharedSession[],
+  activeShare: ActiveSharedSession | null | undefined,
+): ActiveSharedSession[] {
+  if (!activeShare) return [...shares];
+  const byKey = new Map<string, ActiveSharedSession>();
+  for (const share of shares) byKey.set(sharedSessionKey(share), share);
+  byKey.set(sharedSessionKey(activeShare), activeShare);
+  return [...byKey.values()].sort((a, b) => b.acceptedAt.localeCompare(a.acceptedAt));
+}
+
+export function shouldApplySharedSessionHydrate(
+  current: readonly ActiveSharedSession[],
+  next: readonly ActiveSharedSession[],
+  opts?: { preserveEmptyOnce?: boolean },
+): boolean {
+  return !(opts?.preserveEmptyOnce && next.length === 0 && current.length > 0);
+}
+
+function sharedSessionKey(share: ActiveSharedSession) {
+  return `${share.ownerUserId}:${share.shareId}`;
+}

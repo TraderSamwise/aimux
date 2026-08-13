@@ -27,7 +27,11 @@ import { useAppStackScreenOptions } from "@/lib/navigation";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
-import { activeSessionsFromShareSummaries, sharedSessionsEqual } from "@/lib/shared-sessions";
+import {
+  activeSessionsFromShareSummaries,
+  sharedSessionsEqual,
+  shouldApplySharedSessionHydrate,
+} from "@/lib/shared-sessions";
 import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
@@ -111,6 +115,7 @@ export default function MainLayout() {
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedSharesRef = useRef(setAcceptedShares);
   const setLegacyActiveShareRef = useRef(setLegacyActiveShare);
+  const preservedEmptyShareHydrateRef = useRef(false);
   const store = useStore();
   const { getToken } = useAuth();
   const router = useRouter();
@@ -307,13 +312,18 @@ export default function MainLayout() {
         const result = await listShares({ token });
         if (cancelled) return;
         const acceptedShares = activeSessionsFromShareSummaries(result.shares);
-        setAcceptedSharesRef.current((current) =>
-          acceptedShares.length === 0 && current.length > 0
-            ? current
-            : sharedSessionsEqual(current, acceptedShares)
-              ? current
-              : acceptedShares,
-        );
+        setAcceptedSharesRef.current((current) => {
+          const preserveEmptyOnce =
+            acceptedShares.length === 0 &&
+            current.length > 0 &&
+            !preservedEmptyShareHydrateRef.current;
+          if (!shouldApplySharedSessionHydrate(current, acceptedShares, { preserveEmptyOnce })) {
+            preservedEmptyShareHydrateRef.current = true;
+            return current;
+          }
+          if (acceptedShares.length > 0) preservedEmptyShareHydrateRef.current = false;
+          return sharedSessionsEqual(current, acceptedShares) ? current : acceptedShares;
+        });
         const stillActive = activeShare
           ? acceptedShares.some(
               (share) =>
