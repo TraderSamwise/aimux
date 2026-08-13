@@ -594,8 +594,11 @@ export default function ChatScreen() {
   ]);
 
   const parsedMessages = useMemo<ChatMessage[]>(
-    () => toChatMessages(transcript, sessionKey),
-    [transcript, sessionKey],
+    () =>
+      toChatMessages(transcript, sessionKey, {
+        shared: Boolean(shareSummary && isMultiplexedShare(shareSummary)),
+      }),
+    [transcript, sessionKey, shareSummary],
   );
   const visibleLastError = lastError && !isTransientRequestError(lastError) ? lastError : null;
 

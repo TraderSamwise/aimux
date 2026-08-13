@@ -46,6 +46,7 @@ export function buildAimuxAgentInstructions(
     "- The user controls aimux from the dashboard and tmux status/footer UI.\n" +
     "- Agents are normal tool processes running inside aimux-managed tmux windows.\n" +
     "- Broad cross-agent coordination uses aimux task, handoff, and thread commands backed by the runtime exchange.\n" +
+    "- Chat messages prefixed like `[name]` are shared multi-human or multi-agent messages; treat the bracketed name as the speaker.\n" +
     teamCoordinationLine +
     "\n" +
     "## Shared Context Files\n" +

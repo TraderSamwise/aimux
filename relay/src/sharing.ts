@@ -330,7 +330,7 @@ export function sharedRelayRequestAccess(
 }
 
 export function actorDisplayPrefix(actor: ShareActor): string {
-  return `[${sanitizeDisplayName(actor.displayName)}]:`;
+  return `[${sanitizeDisplayName(actor.displayName)}]`;
 }
 
 export function stripTrustedAimuxHeaders(headers: Record<string, string> | undefined): Record<string, string> {

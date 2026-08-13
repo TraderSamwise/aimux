@@ -247,8 +247,8 @@ describe("sharing state", () => {
   });
 
   it("sanitizes actor display prefixes", () => {
-    expect(actorDisplayPrefix({ userId: "u", displayName: "  Sam   Teady  ", role: "owner" })).toBe("[Sam Teady]:");
-    expect(actorDisplayPrefix({ userId: "u", displayName: "", role: "guest" })).toBe("[User]:");
+    expect(actorDisplayPrefix({ userId: "u", displayName: "  Sam   Teady  ", role: "owner" })).toBe("[Sam Teady]");
+    expect(actorDisplayPrefix({ userId: "u", displayName: "", role: "guest" })).toBe("[User]");
   });
 
   it("strips client-provided trusted relay headers before injection", () => {

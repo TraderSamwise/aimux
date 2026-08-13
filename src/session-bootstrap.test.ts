@@ -17,6 +17,7 @@ describe("buildAimuxAgentInstructions", () => {
     expect(instructions).toContain("Claude, Codex, and shell sessions");
     expect(instructions).toContain("Your aimux session ID is codex-123");
     expect(instructions).toContain("runtime exchange");
+    expect(instructions).toContain("messages prefixed like `[name]`");
     expect(instructions).toContain("Do not directly spawn or control other agents");
     expect(instructions).toContain("Do not call aimux metadata APIs from inside an agent");
     expect(instructions).toContain("For generic delegation or handoff records");

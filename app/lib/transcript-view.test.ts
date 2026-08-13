@@ -49,6 +49,47 @@ describe("toChatMessages", () => {
     const [chat] = toChatMessages([message()], "codex-1");
     expect(chat!.parts).toEqual([{ type: "text", text: "hello" }]);
   });
+
+  it("normalizes legacy shared prompts for shared chat display", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          role: "user",
+          parts: [
+            { type: "text", text: "Message from Sam Owner via Aimux shared chat:\n\nowner shared" },
+          ],
+        }),
+      ],
+      "codex-1",
+      { shared: true },
+    );
+
+    expect(chat!.parts).toEqual([{ type: "text", text: "[Sam Owner] owner shared" }]);
+  });
+
+  it("leaves bracketed shared prompts and assistant messages alone", () => {
+    const [user, assistant] = toChatMessages(
+      [
+        message({ role: "user", parts: [{ type: "text", text: "[Ada Guest] hello from share" }] }),
+        message({
+          role: "assistant",
+          parts: [
+            {
+              type: "text",
+              text: "Message from Ada Guest via Aimux shared chat:\n\nhello from share",
+            },
+          ],
+        }),
+      ],
+      "codex-1",
+      { shared: true },
+    );
+
+    expect(user!.parts).toEqual([{ type: "text", text: "[Ada Guest] hello from share" }]);
+    expect(assistant!.parts).toEqual([
+      { type: "text", text: "Message from Ada Guest via Aimux shared chat:\n\nhello from share" },
+    ]);
+  });
 });
 
 describe("serviceProjectsTranscript", () => {

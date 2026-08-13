@@ -1093,7 +1093,7 @@ function safeSharedChatActorName(actor: SharedChatActorForPrompt): string {
 }
 
 function formatSharedChatAgentInput(text: string, actor: SharedChatActorForPrompt): string {
-  return `Message from ${safeSharedChatActorName(actor)} via Aimux shared chat:\n\n${text.trim()}`;
+  return `[${safeSharedChatActorName(actor)}] ${text.trim()}`;
 }
 
 function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: string): void {

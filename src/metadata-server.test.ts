@@ -4616,12 +4616,12 @@ describe("MetadataServer threads API", () => {
       { sessionId: "codex-1", text: "owner raw", waitForSubmit: false },
       {
         sessionId: "codex-1",
-        text: "Message from Sam Owner via Aimux shared chat:\n\nowner shared",
+        text: "[Sam Owner] owner shared",
         waitForSubmit: false,
       },
       {
         sessionId: "codex-1",
-        text: "Message from Ada Guest via Aimux shared chat:\n\nhello from share",
+        text: "[Ada Guest] hello from share",
         waitForSubmit: false,
       },
     ]);
