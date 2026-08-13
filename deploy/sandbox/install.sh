@@ -4,7 +4,7 @@
 #
 # This is invasive by nature: it takes over the host's DNS configuration, masks
 # systemd-resolved, replaces the tinyproxy config, and default-denies outbound
-# for one uid. Read docs/egress-sandbox.md before running it, and `uninstall.sh`
+# for one uid. Read docs/security.md before running it, and `uninstall.sh`
 # reverses every step in the right order if you decide against it.
 set -euo pipefail
 
@@ -35,7 +35,7 @@ SANDBOX_UID="$(id -u "$SANDBOX_USER" 2>/dev/null)" || die "no such user: $SANDBO
 
 for bin in nft dig flock tinyproxy systemctl; do
   command -v "$bin" >/dev/null 2>&1 ||
-    die "missing $bin — install the prerequisites first (see docs/egress-sandbox.md)"
+    die "missing $bin — install the prerequisites first (see docs/security.md)"
 done
 
 # The upstream resolvers are read before anything is changed, because

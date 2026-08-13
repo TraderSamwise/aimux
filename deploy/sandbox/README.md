@@ -4,8 +4,8 @@ Optional. Default-denies outbound network access for the uid that runs agent
 sessions, and permits it back through a domain allowlist. Linux + systemd +
 nftables only.
 
-Read [docs/egress-sandbox.md](../../docs/egress-sandbox.md) before running
-anything here — including the part about when *not* to install it.
+Read [docs/security.md](../../docs/security.md) before running anything here,
+including the part about when *not* to install it.
 
 ```bash
 cp sandbox.conf.example sandbox.conf   # edit

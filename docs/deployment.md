@@ -96,7 +96,7 @@ Production builds default `EXPO_PUBLIC_AIMUX_CONNECTION_MODE` to `relay`, so
 only set it when forcing a local build. Set `EXPO_PUBLIC_AIMUX_RELAY_URL` only
 when pointing the app at a staging or self-hosted relay.
 
-### Deploy to Vercel
+### Vercel
 
 Configure the Vercel project with:
 
@@ -109,10 +109,8 @@ The committed `app/vercel.json` mirrors those settings and rewrites all app
 routes back to `/`, which is required because Expo is configured with
 `web.output: "single"`.
 
-```bash
-cd app
-vercel deploy --prod
-```
+Production web deploys come from pushed commits through Vercel. Do not deploy
+the web app manually from a local working tree.
 
 ### DNS for aimux.app
 
@@ -192,8 +190,9 @@ aimux hosted grant prn_a1b2c3 --project /srv/project --session assistant
 aimux hosted lockdown on
 ```
 
-Keep the listener on loopback and put a tunnel in front of it — there is no TLS here, and binding
-off-loopback with no active principals is refused. Full guide: [hosted mode](hosted-mode.md).
+Keep the listener on loopback and put a tunnel in front of it. There is no TLS
+on the hosted listener itself, and binding off-loopback with no active
+principals is refused. See [Security](security.md).
 
 ## Security Notes
 

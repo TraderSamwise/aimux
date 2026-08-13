@@ -80,7 +80,7 @@ const CLOSE_GRACE_MS = 3_000;
  * A low ceiling is itself the denial of service: anyone who can reach the
  * listener holds every slot with silent sockets and no operator connects. The
  * control that actually works is an authenticating front door (Cloudflare
- * Access, mTLS) — see docs/hosted-mode.md. This only bounds memory.
+ * Access, mTLS) — see docs/security.md. This only bounds memory.
  */
 const MAX_CONNECTIONS = 512;
 const REQUEST_TIMEOUT_MS = 30_000;

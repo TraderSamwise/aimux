@@ -3,6 +3,7 @@ dist/
 dist-ui/
 release/
 .aimux/
+CODEX.md
 .claude/
 .env
 *.tsbuildinfo

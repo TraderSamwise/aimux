@@ -1,6 +1,6 @@
 [Unit]
 Description=Outbound policy for the aimux agent runtime uid
-Documentation=https://github.com/TraderSamwise/aimux/blob/master/docs/egress-sandbox.md
+Documentation=https://github.com/TraderSamwise/aimux/blob/master/docs/security.md
 DefaultDependencies=no
 Before=network-pre.target
 Wants=network-pre.target
