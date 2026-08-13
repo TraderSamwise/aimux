@@ -6,6 +6,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { lastSyncAtAtom, projectsAtom, selectedProjectAtom } from "@/stores/projects";
+import { activeSharedSessionAtom, type ActiveSharedSession } from "@/stores/settings";
 
 export interface RouteProject {
   project: DaemonProject | null;
@@ -20,15 +21,25 @@ export function useRouteProject(): RouteProject {
   const projects = useAtomValue(projectsAtom);
   const lastSyncAt = useAtomValue(lastSyncAtAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
+  const activeShare = useAtomValue(activeSharedSessionAtom);
   const routeProjectPath = projectPathFromSearchOrLocation(searchParams.project);
+  const sharedRouteProject = useMemo(
+    () =>
+      activeShare && (!routeProjectPath || routeProjectPath === activeShare.projectRoot)
+        ? projectFromActiveShare(activeShare)
+        : null,
+    [activeShare, routeProjectPath],
+  );
   const routeProject = useMemo(
     () =>
       routeProjectPath
-        ? (projects.find((project) => project.path === routeProjectPath) ?? null)
+        ? routeProjectPath === sharedRouteProject?.path
+          ? sharedRouteProject
+          : (projects.find((project) => project.path === routeProjectPath) ?? null)
         : null,
-    [projects, routeProjectPath],
+    [projects, routeProjectPath, sharedRouteProject],
   );
-  const project = routeProjectPath ? routeProject : selectedProject;
+  const project = routeProjectPath ? routeProject : (sharedRouteProject ?? selectedProject);
   const projectLoading = Boolean(routeProjectPath && !routeProject && !lastSyncAt);
   const endpoint = useMemo(() => getProjectServiceEndpoint(project), [project]);
 
@@ -42,4 +53,18 @@ export function useRouteProject(): RouteProject {
     }),
     [endpoint, project, projectLoading, routeProjectPath],
   );
+}
+
+function projectFromActiveShare(activeShare: ActiveSharedSession): DaemonProject {
+  const name = activeShare.projectRoot.split("/").filter(Boolean).pop() || "shared project";
+  return {
+    id: `shared:${activeShare.shareId}`,
+    name,
+    path: activeShare.projectRoot,
+    lastSeen: activeShare.acceptedAt,
+    dashboardSessionName: `shared:${activeShare.shareId}`,
+    service: null,
+    serviceAlive: true,
+    serviceEndpoint: activeShare.serviceEndpoint,
+  };
 }

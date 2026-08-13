@@ -6,6 +6,7 @@ import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
 import { NativeNotificationRouter } from "@/components/NativeNotificationRouter";
 import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@/lib/api";
+import type { DesktopState } from "@/lib/desktop-state";
 import { useAuth } from "@/lib/auth";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
@@ -104,13 +105,17 @@ export default function MainLayout() {
   const pathname = usePathname();
   const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
-  const effectiveProjectPath = urlProjectPath ?? selectedProjectPath;
-  const effectiveProject = projects.find((project) => project.path === effectiveProjectPath);
-  const endpoint = effectiveProject
-    ? getProjectServiceEndpoint(effectiveProject)
-    : urlProjectPath && urlProjectPath !== selectedProjectPath
-      ? null
-      : selectedProjectEndpoint;
+  const effectiveProjectPath = activeShare?.projectRoot ?? urlProjectPath ?? selectedProjectPath;
+  const effectiveProject = activeShare
+    ? projectFromActiveShare(activeShare)
+    : projects.find((project) => project.path === effectiveProjectPath);
+  const endpoint = activeShare
+    ? activeShare.serviceEndpoint
+    : effectiveProject
+      ? getProjectServiceEndpoint(effectiveProject)
+      : urlProjectPath && urlProjectPath !== selectedProjectPath
+        ? null
+        : selectedProjectEndpoint;
   const relayUrl = env.AIMUX_RELAY_URL;
   const relayReadyForRequests = !relayUrl || relayStatus === "connected";
   const activeShareOwnerUserId = activeShare?.ownerUserId;
@@ -221,6 +226,10 @@ export default function MainLayout() {
         reconcileProjects([projectFromActiveShare(activeShare)]);
         store.set(selectedProjectPathAtom, activeShare.projectRoot);
         store.set(selectedSessionIdAtom, activeShare.sessionId);
+        applyDesktopStateSuccess({
+          projectPath: activeShare.projectRoot,
+          state: desktopStateFromActiveShare(activeShare),
+        });
         timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
         return;
       }
@@ -245,7 +254,7 @@ export default function MainLayout() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeShare, reconcileProjects, relayReadyForRequests, store]);
+  }, [activeShare, applyDesktopStateSuccess, reconcileProjects, relayReadyForRequests, store]);
 
   // Poll /desktop-state for the selected project as an SSE fallback. Re-triggers on
   // selection change and on a refresh-nonce bump (from optimistic mutations).
@@ -378,7 +387,7 @@ export default function MainLayout() {
   // directly; in relay mode startHeartbeat uses the relay project-events channel.
   useEffect(() => {
     if (!effectiveProjectPath) return;
-    if (!relayReadyForRequests) return;
+    if (!activeShare && !relayReadyForRequests) return;
     if (!endpoint) return;
     const projectPath = effectiveProjectPath;
     let cancelled = false;
@@ -512,6 +521,28 @@ function projectFromActiveShare(activeShare: ActiveSharedSession) {
     service: null,
     serviceAlive: true,
     serviceEndpoint: activeShare.serviceEndpoint,
+  };
+}
+
+function desktopStateFromActiveShare(activeShare: ActiveSharedSession): DesktopState {
+  const name = activeShare.projectRoot.split("/").filter(Boolean).pop() || "Shared project";
+  return {
+    ok: true,
+    sessions: [
+      {
+        id: activeShare.sessionId,
+        command: "shared",
+        toolConfigKey: "shared",
+        status: "running",
+        worktreePath: activeShare.projectRoot,
+        worktreeName: name,
+        label: "Shared session",
+      },
+    ],
+    services: [],
+    worktrees: [],
+    mainCheckoutInfo: { name, branch: "" },
+    mainCheckoutPath: activeShare.projectRoot,
   };
 }
 

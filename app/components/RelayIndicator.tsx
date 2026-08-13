@@ -4,6 +4,7 @@ import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { activeSharedSessionAtom } from "@/stores/settings";
 import type { RelayStatus } from "@/lib/relay-transport";
 
 // Compact relay connection pill for the TopBar. Hidden entirely when no relay
@@ -21,9 +22,12 @@ const STATUS_META: Record<RelayStatus, { label: string; dot: string; text: strin
 export function RelayIndicator() {
   const configured = useAtomValue(relayConfiguredAtom);
   const status = useAtomValue(relayStatusAtom);
+  const activeShare = useAtomValue(activeSharedSessionAtom);
   if (!configured) return null;
 
-  const meta = STATUS_META[status];
+  const meta = activeShare
+    ? { label: "Shared", dot: "bg-sky-500", text: "text-sky-300" }
+    : STATUS_META[status];
 
   return (
     <View className="flex-row items-center px-2 py-1 rounded-md bg-secondary border border-border">

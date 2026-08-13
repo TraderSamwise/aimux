@@ -71,6 +71,7 @@ import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-pro
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
+import type { DesktopSession } from "@/lib/desktop-state";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
@@ -95,6 +96,7 @@ import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import {
   activeSharedSessionAtom,
   agentOutputViewModeAtom,
+  type ActiveSharedSession,
   type AgentOutputViewMode,
 } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
@@ -364,7 +366,9 @@ export default function ChatScreen() {
   const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
-  const isSharedSessionView = Boolean(activeShare);
+  const activeShareForRoute =
+    activeShare && activeShare.sessionId === sessionId ? activeShare : null;
+  const isSharedSessionView = Boolean(activeShareForRoute);
   const canUseOwnerControls = !isSharedSessionView;
   const userEmail =
     user?.primaryEmailAddress?.emailAddress?.trim() ||
@@ -384,7 +388,7 @@ export default function ChatScreen() {
   }, [shareSummary, user?.id, userEmail]);
   const sharedChatActor = useMemo<SharedChatActorInput | undefined>(() => {
     if (!shareSummary || !isMultiplexedShare(shareSummary)) return undefined;
-    if (activeShare) {
+    if (activeShareForRoute) {
       return {
         role: "guest",
         displayName: currentShareParticipant?.displayName ?? userName ?? "shared guest",
@@ -396,7 +400,7 @@ export default function ChatScreen() {
       displayName: currentShareParticipant?.displayName ?? userName ?? "chat owner",
       email: currentShareParticipant?.email ?? userEmail,
     };
-  }, [activeShare, currentShareParticipant, shareSummary, userEmail, userName]);
+  }, [activeShareForRoute, currentShareParticipant, shareSummary, userEmail, userName]);
   const visibleShareInvites = useMemo(
     () => shareSummary?.invites.filter((invite) => invite.status !== "accepted") ?? [],
     [shareSummary],
@@ -437,9 +441,12 @@ export default function ChatScreen() {
     terminal: null,
   });
   const session = sessionId
-    ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
+    ? (desktopState?.sessions.find((s) => s.id === sessionId) ??
+      (activeShareForRoute ? sessionFromActiveShare(activeShareForRoute) : null))
     : null;
-  const routeSessionMissing = Boolean(sessionId && desktopState && !session);
+  const routeSessionMissing = Boolean(
+    sessionId && desktopState && !session && !activeShareForRoute,
+  );
   const canManageTeammates =
     canUseOwnerControls &&
     session !== null &&
@@ -504,7 +511,7 @@ export default function ChatScreen() {
     composerInputContentHeight,
     estimatedComposerInputContentHeight,
   );
-  const heartbeatReady = !relayConfigured || relayStatus === "connected";
+  const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
 
@@ -1185,19 +1192,27 @@ export default function ChatScreen() {
   }
 
   const shouldLoadShareSummary = Boolean(
-    token && sessionId && (activeShare || sharePanelOpen || (relayConfigured && project?.path)),
+    token &&
+    sessionId &&
+    (activeShareForRoute || sharePanelOpen || (relayConfigured && project?.path)),
   );
 
   useEffect(() => {
     if (!shouldLoadShareSummary) {
-      if (!activeShare && !sharePanelOpen) setShareSummary(null);
+      if (!activeShareForRoute && !sharePanelOpen) setShareSummary(null);
       return;
     }
     let cancelled = false;
     async function refreshShareSummary() {
       if (!token || !sessionId) return;
-      if (activeShare?.sessionId === sessionId) {
-        const result = await getShare(activeShare.ownerUserId, activeShare.shareId, { token });
+      if (activeShareForRoute) {
+        const result = await getShare(
+          activeShareForRoute.ownerUserId,
+          activeShareForRoute.shareId,
+          {
+            token,
+          },
+        );
         if (!cancelled) setShareSummary(result.share);
         return;
       }
@@ -1219,7 +1234,14 @@ export default function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeShare, project?.path, sessionId, sharePanelOpen, shouldLoadShareSummary, token]);
+  }, [
+    activeShareForRoute,
+    project?.path,
+    sessionId,
+    sharePanelOpen,
+    shouldLoadShareSummary,
+    token,
+  ]);
 
   async function handleSendInvite() {
     const email = inviteEmail.trim();
@@ -2219,3 +2241,16 @@ const TranscriptContent = React.memo(function TranscriptContent({
     </>
   );
 });
+
+function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSession {
+  const worktreeName = activeShare.projectRoot.split("/").filter(Boolean).pop() || "Shared project";
+  return {
+    id: activeShare.sessionId,
+    command: "shared",
+    toolConfigKey: "shared",
+    status: "running",
+    worktreePath: activeShare.projectRoot,
+    worktreeName,
+    label: "Shared session",
+  };
+}

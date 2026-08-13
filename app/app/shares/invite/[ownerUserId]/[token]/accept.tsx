@@ -59,7 +59,7 @@ export default function AcceptShareInviteScreen() {
       setMessage("Invite accepted.");
       router.replace({
         pathname: "/agent/[sessionId]/chat",
-        params: { sessionId: activeShare.sessionId },
+        params: { sessionId: activeShare.sessionId, project: activeShare.projectRoot },
       });
     } catch (err) {
       setStatus("error");
