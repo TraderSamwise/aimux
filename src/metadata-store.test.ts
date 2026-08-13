@@ -93,7 +93,17 @@ describe("metadata store", () => {
     gitInit(repoRoot);
     await initPaths(repoRoot);
 
-    setSessionLoop("worker-1", { active: true, goal: "ship the feature", since: "2026-06-13T00:00:00.000Z" }, repoRoot);
+    setSessionLoop(
+      "worker-1",
+      {
+        active: true,
+        goal: "ship the feature",
+        since: "2026-06-13T00:00:00.000Z",
+        source: "dashboard",
+        updatedBy: "dashboard",
+      },
+      repoRoot,
+    );
     setSessionOverseer("boss", true, repoRoot);
 
     let state = loadMetadataState(repoRoot);
@@ -101,15 +111,35 @@ describe("metadata store", () => {
       active: true,
       goal: "ship the feature",
       since: "2026-06-13T00:00:00.000Z",
+      source: "dashboard",
+      updatedBy: "dashboard",
+    });
+    expect(state.sessions["worker-1"].loopLastAction).toEqual({
+      action: "add",
+      at: "2026-06-13T00:00:00.000Z",
+      goal: "ship the feature",
+      source: "dashboard",
+      updatedBy: "dashboard",
     });
     expect(state.sessions.boss.overseer).toBe(true);
     expect(findOverseerSessionId(state)).toBe("boss");
 
-    clearSessionLoop("worker-1", repoRoot);
+    clearSessionLoop("worker-1", repoRoot, {
+      action: "remove",
+      at: "2026-06-13T01:00:00.000Z",
+      source: "overseer",
+      updatedBySessionId: "boss",
+    });
     setSessionOverseer("boss", false, repoRoot);
 
     state = loadMetadataState(repoRoot);
     expect(state.sessions["worker-1"].loop).toBeUndefined();
+    expect(state.sessions["worker-1"].loopLastAction).toMatchObject({
+      action: "remove",
+      at: "2026-06-13T01:00:00.000Z",
+      source: "overseer",
+      updatedBySessionId: "boss",
+    });
     expect(state.sessions.boss.overseer).toBeUndefined();
     expect(findOverseerSessionId(state)).toBeUndefined();
 

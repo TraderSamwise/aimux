@@ -21,7 +21,7 @@ import {
   parseRemoteActor,
   type RemoteActor,
 } from "./remote-access.js";
-import { isBinaryProjectRoute, PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { isBinaryProjectRoute, PROJECT_API_ROUTES, type AgentLoopInput } from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
 import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
 import { countActiveHostedPrincipals } from "./hosted-principals.js";
@@ -2285,16 +2285,25 @@ export class AimuxDaemon {
   private async loopTextRoute(
     routeUrl: URL,
     body: unknown,
-    input: { active: boolean; render: (payload: CoreLoopTextPayload) => string[] },
+    input: { active: boolean; source?: AgentLoopInput["source"]; render: (payload: CoreLoopTextPayload) => string[] },
   ): Promise<DaemonRouteResponse> {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
     const sessionId = this.requiredParam(routeUrl, body, "sessionId");
     if (typeof sessionId !== "string") return sessionId;
     const goal = this.stringParam(routeUrl, body, "goal") || undefined;
+    const source = (this.stringParam(routeUrl, body, "source") || input.source || "human") as AgentLoopInput["source"];
+    const updatedBy = this.stringParam(routeUrl, body, "updatedBy") || undefined;
+    const updatedBySessionId = this.stringParam(routeUrl, body, "updatedBySessionId") || undefined;
+    const updatedByRole = this.stringParam(routeUrl, body, "updatedByRole") || undefined;
     const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.loop, {
       sessionId,
       active: input.active,
+      action: input.active ? "add" : "remove",
+      source,
+      ...(updatedBy ? { updatedBy } : {}),
+      ...(updatedBySessionId ? { updatedBySessionId } : {}),
+      ...(updatedByRole ? { updatedByRole } : {}),
       ...(goal ? { goal } : {}),
     });
     if (!result.ok) return result.response;
@@ -2324,9 +2333,21 @@ export class AimuxDaemon {
     const sessionId = this.requiredParam(routeUrl, body, "sessionId");
     if (typeof sessionId !== "string") return sessionId;
     const reason = this.stringParam(routeUrl, body, "reason") || undefined;
+    const event = input.event(reason ?? "");
+    const action = event.kind === "blocked" ? "block" : "done";
+    const source = (this.stringParam(routeUrl, body, "source") || "agent") as AgentLoopInput["source"];
+    const updatedBy = this.stringParam(routeUrl, body, "updatedBy") || undefined;
+    const updatedBySessionId = this.stringParam(routeUrl, body, "updatedBySessionId") || undefined;
+    const updatedByRole = this.stringParam(routeUrl, body, "updatedByRole") || undefined;
     const loopResult = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.loop, {
       sessionId,
       active: false,
+      action,
+      source,
+      ...(updatedBy ? { updatedBy } : {}),
+      ...(updatedBySessionId ? { updatedBySessionId } : {}),
+      ...(updatedByRole ? { updatedByRole } : {}),
+      ...(reason ? { reason } : {}),
     });
     if (!loopResult.ok) return loopResult.response;
     const returnedSessionId = this.requiredProjectServiceString(loopResult.json, "loop", "sessionId");
@@ -2335,7 +2356,7 @@ export class AimuxDaemon {
     const eventResult = await this.postProjectServiceJson(
       project,
       PROJECT_API_ROUTES.runtime.event,
-      { session: returnedSessionId, event: input.event(reason ?? "") },
+      { session: returnedSessionId, event },
       { ensureProject: false },
     );
     if (!eventResult.ok) {

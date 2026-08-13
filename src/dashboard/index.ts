@@ -1,5 +1,5 @@
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
-import type { SessionLoopMetadata, SessionServiceMetadata } from "../metadata-store.js";
+import type { SessionLoopActionMetadata, SessionLoopMetadata, SessionServiceMetadata } from "../metadata-store.js";
 import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "../pending-actions.js";
 import type { ExposePreviewSnapshot } from "../project-api-contract.js";
 import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
@@ -51,6 +51,7 @@ export interface DashboardSession {
   lastEvent?: AgentEvent;
   services?: SessionServiceMetadata[];
   loop?: SessionLoopMetadata;
+  loopLastAction?: SessionLoopActionMetadata;
   overseer?: boolean;
   foregroundCommand?: string;
   pid?: number;

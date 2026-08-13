@@ -1337,10 +1337,18 @@ describe("installed aimux shim", () => {
     expect(fixture.run(["loop", "add", "claude-1", "--goal", "keep going", "--project=/repo"]).stdout).toBe(
       "loop ok\n",
     );
-    expect(fixture.run(["loop", "remove", "claude-1", "--project", "/repo"]).stdout).toBe("loop ok\n");
     expect(
-      fixture.run(["loop", "done", "--reason", "done", "--project", "/repo"], { AIMUX_SESSION_ID: "claude-env" })
-        .stdout,
+      fixture.run(["loop", "remove", "claude-1", "--project", "/repo"], {
+        AIMUX_SESSION_ID: "boss",
+        AIMUX_TOOL: "claude",
+        AIMUX_OVERSEER: "1",
+      }).stdout,
+    ).toBe("loop ok\n");
+    expect(
+      fixture.run(["loop", "done", "--reason", "done", "--project", "/repo"], {
+        AIMUX_SESSION_ID: "claude-env",
+        AIMUX_TOOL: "claude",
+      }).stdout,
     ).toBe("loop ok\n");
     expect(fixture.run(["loop", "block", "--session=claude-1", "--reason=blocked", "--project=/repo"]).stdout).toBe(
       "loop ok\n",
@@ -1354,6 +1362,13 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("sessionId=claude-env\n");
     expect(curlLog).toContain("goal=keep going\n");
     expect(curlLog).toContain("reason=blocked\n");
+    expect(curlLog).toContain("source=human\n");
+    expect(curlLog).toContain("source=overseer\n");
+    expect(curlLog).toContain("updatedBySessionId=boss\n");
+    expect(curlLog).toContain("updatedByRole=overseer\n");
+    expect(curlLog).toContain("source=agent\n");
+    expect(curlLog).toContain("updatedBySessionId=claude-env\n");
+    expect(curlLog).toContain("updatedByRole=claude\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 

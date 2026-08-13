@@ -1,5 +1,5 @@
 import type { LoopConfig } from "./config.js";
-import { findOverseerSessionId, type MetadataState } from "./metadata-store.js";
+import { findOverseerSessionId, type MetadataState, type SessionLoopActionMetadata } from "./metadata-store.js";
 import { debug } from "./debug.js";
 
 /** Minimal session shape the watcher needs from the topology. */
@@ -15,6 +15,12 @@ export interface LoopCandidate {
   goal?: string;
   worktreePath?: string;
   tool?: string;
+  loopSince: string;
+  loopSource?: string;
+  loopUpdatedBy?: string;
+  loopUpdatedBySessionId?: string;
+  loopUpdatedByRole?: string;
+  loopLastAction?: SessionLoopActionMetadata;
 }
 
 /**
@@ -43,6 +49,12 @@ export function findLoopCandidates(
       goal: meta.loop.goal,
       worktreePath: session.worktreePath,
       tool: session.tool,
+      loopSince: meta.loop.since,
+      loopSource: meta.loop.source,
+      loopUpdatedBy: meta.loop.updatedBy,
+      loopUpdatedBySessionId: meta.loop.updatedBySessionId,
+      loopUpdatedByRole: meta.loop.updatedByRole,
+      loopLastAction: meta.loopLastAction,
     });
   }
   return candidates;
@@ -52,7 +64,21 @@ function describeCandidate(candidate: LoopCandidate): string {
   const tool = candidate.tool ? ` (${candidate.tool})` : "";
   const where = candidate.worktreePath ? ` @ ${candidate.worktreePath}` : "";
   const goal = candidate.goal ? ` — goal: ${candidate.goal}` : "";
-  return `- ${candidate.id}${tool}${where}${goal}`;
+  const actor = [
+    candidate.loopSource,
+    candidate.loopUpdatedBySessionId ?? candidate.loopUpdatedBy,
+    candidate.loopUpdatedByRole,
+  ]
+    .filter(Boolean)
+    .join("/");
+  const provenance = actor
+    ? ` — loop since ${candidate.loopSince} by ${actor}`
+    : ` — loop since ${candidate.loopSince}`;
+  const lastAction =
+    candidate.loopLastAction && candidate.loopLastAction.action !== "add"
+      ? ` — last loop action: ${candidate.loopLastAction.action} at ${candidate.loopLastAction.at}`
+      : "";
+  return `- ${candidate.id}${tool}${where}${provenance}${lastAction}${goal}`;
 }
 
 export function buildOverseerBriefing(candidates: LoopCandidate[]): string {
@@ -60,6 +86,7 @@ export function buildOverseerBriefing(candidates: LoopCandidate[]): string {
     "[aimux loop check] These agents are in a managed loop but appear to have stopped:",
     ...candidates.map(describeCandidate),
     "",
+    "Current loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.",
     "For each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.",
     'If it should keep going, send a specific next instruction with `aimux input <id> "…"`.',
     "If it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back.",

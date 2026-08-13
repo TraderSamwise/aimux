@@ -16,7 +16,7 @@ import {
   getRuntimeTopologyPath,
 } from "./paths.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
-import { PROJECT_API_ROUTES, type TeamConfig } from "./project-api-contract.js";
+import { PROJECT_API_ROUTES, type AgentLoopInput, type TeamConfig } from "./project-api-contract.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
@@ -2180,6 +2180,21 @@ program
 
 const loopCmd = program.command("loop").description("Manage agents in an overseer-managed loop");
 
+function loopMutationActor(
+  defaultSource: AgentLoopInput["source"],
+): Pick<AgentLoopInput, "source" | "updatedBy" | "updatedBySessionId" | "updatedByRole"> {
+  const sessionId = process.env.AIMUX_SESSION_ID?.trim();
+  const tool = process.env.AIMUX_TOOL?.trim();
+  const isOverseer = process.env.AIMUX_OVERSEER === "1";
+  if (!sessionId) return { source: defaultSource };
+  return {
+    source: isOverseer ? "overseer" : "agent",
+    updatedBy: sessionId,
+    updatedBySessionId: sessionId,
+    updatedByRole: isOverseer ? "overseer" : tool || undefined,
+  };
+}
+
 loopCmd
   .command("add")
   .description("Mark an agent as in a managed loop (keep it working until done/blocked)")
@@ -2187,7 +2202,12 @@ loopCmd
   .option("--goal <goal>", "What the agent should keep working toward")
   .action(async (sessionId: string, opts: { goal?: string }) => {
     await initPaths();
-    const result = await postProjectServiceJson("/agents/loop", { sessionId, active: true, goal: opts.goal });
+    const result = await postProjectServiceJson("/agents/loop", {
+      sessionId,
+      active: true,
+      goal: opts.goal,
+      ...loopMutationActor("human"),
+    });
     console.log(`loop on ${sessionId}${result.loop?.goal ? ` — ${result.loop.goal}` : ""}`);
   });
 
@@ -2197,7 +2217,12 @@ loopCmd
   .argument("<sessionId>", "Target agent session id")
   .action(async (sessionId: string) => {
     await initPaths();
-    await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+    await postProjectServiceJson("/agents/loop", {
+      sessionId,
+      active: false,
+      action: "remove",
+      ...loopMutationActor("human"),
+    });
     console.log(`loop off ${sessionId}`);
   });
 
@@ -2213,7 +2238,14 @@ function resolveOwnSessionId(explicit?: string): string {
 /** Exit a loop: clear the flag first (so the watcher stops nudging even if the
  * notification fails), then emit the status event best-effort. */
 async function exitLoop(sessionId: string, event: Record<string, unknown>): Promise<void> {
-  await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+  const action = event.kind === "blocked" ? "block" : "done";
+  await postProjectServiceJson("/agents/loop", {
+    sessionId,
+    active: false,
+    action,
+    reason: typeof event.message === "string" ? event.message : undefined,
+    ...loopMutationActor("agent"),
+  });
   try {
     await postProjectServiceJson("/event", { session: sessionId, event });
   } catch (err: unknown) {

@@ -757,6 +757,16 @@ export function renderDashboardFrame(
       if (selected.loop.since) {
         lines.push(...wrapKeyValue("Since", formatRelativeRecency(selected.loop.since) ?? selected.loop.since, width));
       }
+      if (selected.loop.source) lines.push(...wrapKeyValue("Loop source", selected.loop.source, width));
+      const loopActor = [selected.loop.updatedBySessionId ?? selected.loop.updatedBy, selected.loop.updatedByRole]
+        .filter(Boolean)
+        .join(" / ");
+      if (loopActor) lines.push(...wrapKeyValue("Loop actor", loopActor, width));
+    } else if (selected.loopLastAction) {
+      const action = `${selected.loopLastAction.action} ${formatRelativeRecency(selected.loopLastAction.at) ?? selected.loopLastAction.at}`;
+      lines.push(...wrapKeyValue("Loop last", action, width));
+      if (selected.loopLastAction.source)
+        lines.push(...wrapKeyValue("Loop source", selected.loopLastAction.source, width));
     }
     if (selected.previewLine) lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
     if (selected.pendingAction) {

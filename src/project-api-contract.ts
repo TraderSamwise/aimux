@@ -1114,6 +1114,7 @@ export interface AgentListItem {
   activity?: string;
   attention?: string;
   loop?: unknown;
+  loopLastAction?: unknown;
   overseer?: boolean;
   task?: { id: string; description?: string; status?: string };
   [k: string]: unknown;
@@ -1176,6 +1177,12 @@ export interface MigrateAgentResponse extends ProjectLifecycleTransitionResponse
 export interface AgentLoopInput extends AgentSessionInput {
   active: boolean;
   goal?: string;
+  action?: "add" | "remove" | "done" | "block";
+  source?: "human" | "dashboard" | "overseer" | "agent" | "task" | "system" | "unknown";
+  updatedBy?: string;
+  updatedBySessionId?: string;
+  updatedByRole?: string;
+  reason?: string;
 }
 
 export interface AgentLoopResponse extends ProjectApiOk {

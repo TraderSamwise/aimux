@@ -1142,6 +1142,9 @@ export const dashboardInteractionMethods = {
       void mutateDashboardApi(this, PROJECT_API_ROUTES.agents.loop, {
         sessionId: selected.id,
         active,
+        action: active ? "add" : "remove",
+        source: "dashboard",
+        updatedBy: "dashboard",
         goal: active ? selected.taskDescription || selected.headline || undefined : undefined,
       })
         .then(() => refreshDashboardModelThroughApi(this, { force: true, lifecycle }))

@@ -27,6 +27,11 @@ import {
   setSessionOverseer,
   type SessionLogEntry,
   type SessionContextMetadata,
+  type SessionLoopAction,
+  type SessionLoopActionMetadata,
+  type SessionLoopMetadata,
+  type SessionLoopProvenance,
+  type SessionLoopSource,
   type SessionServiceMetadata,
   type SessionStatuslineSegment,
   dropStatuslineSegment,
@@ -1443,6 +1448,43 @@ function teammateTaskPrompt(body: TeammateTaskBody): string | undefined {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+const SESSION_LOOP_SOURCES = new Set<SessionLoopSource>([
+  "human",
+  "dashboard",
+  "overseer",
+  "agent",
+  "task",
+  "system",
+  "unknown",
+]);
+
+const SESSION_LOOP_ACTIONS = new Set<SessionLoopAction>(["add", "remove", "done", "block"]);
+
+function boundedOptionalString(value: unknown, maxLength = 500): string | undefined {
+  const text = optionalString(value);
+  return text ? text.slice(0, maxLength) : undefined;
+}
+
+function sessionLoopSource(value: unknown): SessionLoopSource | undefined {
+  const text = optionalString(value);
+  return text && SESSION_LOOP_SOURCES.has(text as SessionLoopSource) ? (text as SessionLoopSource) : undefined;
+}
+
+function sessionLoopAction(value: unknown, fallback: SessionLoopAction): SessionLoopAction {
+  const text = optionalString(value);
+  return text && SESSION_LOOP_ACTIONS.has(text as SessionLoopAction) ? (text as SessionLoopAction) : fallback;
+}
+
+function sessionLoopProvenance(body: Record<string, unknown>): SessionLoopProvenance {
+  return {
+    source: sessionLoopSource(body.source),
+    updatedBy: boundedOptionalString(body.updatedBy),
+    updatedBySessionId: boundedOptionalString(body.updatedBySessionId),
+    updatedByRole: boundedOptionalString(body.updatedByRole),
+    reason: boundedOptionalString(body.reason, 2000),
+  };
 }
 
 function optionalStringOrFirst(value: unknown): string | undefined {
@@ -3016,6 +3058,7 @@ export class MetadataServer {
           activity: meta?.derived?.activity,
           attention: meta?.derived?.attention,
           loop: meta?.loop,
+          loopLastAction: meta?.loopLastAction,
           overseer: meta?.overseer ?? false,
           task: task ? { id: task.id, description: task.description, status: task.status } : undefined,
         };
@@ -5499,8 +5542,8 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.loop) {
-        const body = (await readJson(req)) as { sessionId?: string; active?: boolean; goal?: string };
-        const sessionId = body.sessionId?.trim() ?? "";
+        const body = (await readJson(req)) as Record<string, unknown>;
+        const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
         if (!sessionId) {
           send(res, 400, { ok: false, error: "sessionId is required" });
           return;
@@ -5511,14 +5554,26 @@ export class MetadataServer {
         }
         if (body.active) {
           const goal = typeof body.goal === "string" ? body.goal.trim() : "";
-          const loop = { active: true, goal: goal || undefined, since: new Date().toISOString() };
+          const loop: SessionLoopMetadata = {
+            active: true,
+            goal: goal || undefined,
+            since: new Date().toISOString(),
+            ...sessionLoopProvenance(body),
+          };
           setSessionLoop(sessionId, loop);
           notifyCurrentRouteChange();
           send(res, 200, { ok: true, sessionId, loop });
         } else {
-          clearSessionLoop(sessionId);
+          const goal = typeof body.goal === "string" ? body.goal.trim() : "";
+          const loopLastAction: SessionLoopActionMetadata = {
+            action: sessionLoopAction(body.action, "remove"),
+            at: new Date().toISOString(),
+            goal: goal || undefined,
+            ...sessionLoopProvenance(body),
+          };
+          clearSessionLoop(sessionId, undefined, loopLastAction);
           notifyCurrentRouteChange();
-          send(res, 200, { ok: true, sessionId, loop: null });
+          send(res, 200, { ok: true, sessionId, loop: null, loopLastAction });
         }
         return;
       }

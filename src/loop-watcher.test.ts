@@ -9,7 +9,16 @@ function meta(input: Partial<SessionMetadata> = {}): SessionMetadata {
 }
 
 function derived(activity?: AgentActivityState, attention: AgentAttentionState = "normal"): SessionMetadata {
-  return meta({ loop: { active: true, goal: "ship it", since: "x" }, derived: { activity, attention } });
+  return meta({
+    loop: {
+      active: true,
+      goal: "ship it",
+      since: "2026-06-13T00:00:00.000Z",
+      source: "dashboard",
+      updatedBy: "dashboard",
+    },
+    derived: { activity, attention },
+  });
 }
 
 function state(sessions: Record<string, SessionMetadata>): MetadataState {
@@ -22,7 +31,20 @@ const noPending = () => false;
 describe("findLoopCandidates", () => {
   it("flags an in-loop agent that stopped (idle) without waiting on a human", () => {
     const result = findLoopCandidates(sessions, state({ a: derived("idle") }), { hasPendingInteraction: noPending });
-    expect(result).toEqual([{ id: "a", goal: "ship it", worktreePath: "/wt/a", tool: "claude" }]);
+    expect(result).toEqual([
+      {
+        id: "a",
+        goal: "ship it",
+        worktreePath: "/wt/a",
+        tool: "claude",
+        loopSince: "2026-06-13T00:00:00.000Z",
+        loopSource: "dashboard",
+        loopUpdatedBy: "dashboard",
+        loopUpdatedByRole: undefined,
+        loopUpdatedBySessionId: undefined,
+        loopLastAction: undefined,
+      },
+    ]);
   });
 
   it("flags an in-loop agent in the done activity state", () => {
@@ -107,6 +129,8 @@ describe("LoopWatcher.scan", () => {
     expect(sendAgentInput.mock.calls[0][0]).toBe("boss");
     expect(sendAgentInput.mock.calls[0][1]).toContain("[aimux loop check]");
     expect(sendAgentInput.mock.calls[0][1]).toContain("- a");
+    expect(sendAgentInput.mock.calls[0][1]).toContain("loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard");
+    expect(sendAgentInput.mock.calls[0][1]).toContain("Current loop membership is authoritative");
 
     await watcher.scan(); // within cooldown
     expect(sendAgentInput).toHaveBeenCalledTimes(1);

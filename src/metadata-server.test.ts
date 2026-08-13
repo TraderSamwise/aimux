@@ -734,13 +734,26 @@ describe("MetadataServer threads API", () => {
     const onRes = await fetch(`${base}/agents/loop`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId: "codex-1", active: true, goal: "finish the parser" }),
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        active: true,
+        goal: "finish the parser",
+        source: "dashboard",
+        updatedBy: "dashboard",
+      }),
     });
-    const on = (await onRes.json()) as { ok: boolean; loop: { active: boolean; goal?: string } };
+    const on = (await onRes.json()) as { ok: boolean; loop: { active: boolean; goal?: string; source?: string } };
     expect(onRes.ok).toBe(true);
     expect(on.loop.active).toBe(true);
     expect(on.loop.goal).toBe("finish the parser");
+    expect(on.loop.source).toBe("dashboard");
     expect(loadMetadataState(repoRoot).sessions["codex-1"].loop?.goal).toBe("finish the parser");
+    expect(loadMetadataState(repoRoot).sessions["codex-1"].loopLastAction).toMatchObject({
+      action: "add",
+      goal: "finish the parser",
+      source: "dashboard",
+      updatedBy: "dashboard",
+    });
 
     const afterRes = await fetch(`${base}/agents`);
     const after = (await afterRes.json()) as { agents: Array<{ id: string; loop?: { active: boolean } }> };
@@ -749,10 +762,34 @@ describe("MetadataServer threads API", () => {
     const offRes = await fetch(`${base}/agents/loop`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId: "codex-1", active: false }),
+      body: JSON.stringify({ sessionId: "codex-1", active: false, action: "remove", source: "overseer" }),
     });
     expect(offRes.ok).toBe(true);
     expect(loadMetadataState(repoRoot).sessions["codex-1"].loop).toBeUndefined();
+    expect(loadMetadataState(repoRoot).sessions["codex-1"].loopLastAction).toMatchObject({
+      action: "remove",
+      source: "overseer",
+    });
+
+    const longReason = "x".repeat(2500);
+    const sanitizedRes = await fetch(`${base}/agents/loop`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        active: false,
+        action: "bogus",
+        source: "bogus",
+        reason: longReason,
+      }),
+    });
+    const sanitized = (await sanitizedRes.json()) as {
+      loopLastAction?: { action?: string; source?: string; reason?: string };
+    };
+    expect(sanitizedRes.ok).toBe(true);
+    expect(sanitized.loopLastAction?.action).toBe("remove");
+    expect(sanitized.loopLastAction?.source).toBeUndefined();
+    expect(sanitized.loopLastAction?.reason).toHaveLength(2000);
 
     const missingRes = await fetch(`${base}/agents/loop`, {
       method: "POST",

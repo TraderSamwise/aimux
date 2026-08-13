@@ -790,7 +790,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       sessionId,
       detached: !opts.open,
       team,
-      env: opts.launchOverride?.env,
+      env: opts.overseer ? { ...(opts.launchOverride?.env ?? {}), AIMUX_OVERSEER: "1" } : opts.launchOverride?.env,
       open: opts.open,
       overseer: opts.overseer,
     };

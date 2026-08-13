@@ -964,6 +964,7 @@ export function computeDashboardSessions(
       pid: runtimeInfo.pid,
       previewLine: runtimeInfo.previewLine,
       loop: sessionMetadata?.loop,
+      loopLastAction: sessionMetadata?.loopLastAction,
       overseer: sessionMetadata?.overseer ?? false,
       threadUnreadCount: stats?.unread ?? 0,
       threadWaitingCount: stats?.waiting ?? 0,

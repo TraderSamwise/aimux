@@ -115,7 +115,25 @@ export interface SessionDerivedMetadata extends SessionDerivedState {
   shellCommandState?: "running" | "prompt";
 }
 
-export interface SessionLoopMetadata {
+export type SessionLoopSource = "human" | "dashboard" | "overseer" | "agent" | "task" | "system" | "unknown";
+
+export type SessionLoopAction = "add" | "remove" | "done" | "block";
+
+export interface SessionLoopProvenance {
+  source?: SessionLoopSource;
+  updatedBy?: string;
+  updatedBySessionId?: string;
+  updatedByRole?: string;
+  reason?: string;
+}
+
+export interface SessionLoopActionMetadata extends SessionLoopProvenance {
+  action: SessionLoopAction;
+  at: string;
+  goal?: string;
+}
+
+export interface SessionLoopMetadata extends SessionLoopProvenance {
   active: boolean;
   goal?: string;
   since: string;
@@ -132,6 +150,8 @@ export interface SessionMetadata {
   overseer?: boolean;
   /** This session is in a managed loop the overseer keeps running. */
   loop?: SessionLoopMetadata;
+  /** Last explicit loop membership mutation, retained after loop removal. */
+  loopLastAction?: SessionLoopActionMetadata;
   updatedAt: string;
 }
 
@@ -377,15 +397,30 @@ export function clearSessionTranscriptPath(sessionId: string, projectRoot?: stri
 }
 
 export function setSessionLoop(sessionId: string, loop: SessionLoopMetadata, projectRoot?: string): MetadataState {
-  return updateSessionMetadata(sessionId, (current) => ({ ...current, loop }), projectRoot);
+  const loopLastAction: SessionLoopActionMetadata = {
+    action: "add",
+    at: loop.since,
+    goal: loop.goal,
+    source: loop.source,
+    updatedBy: loop.updatedBy,
+    updatedBySessionId: loop.updatedBySessionId,
+    updatedByRole: loop.updatedByRole,
+    reason: loop.reason,
+  };
+  return updateSessionMetadata(sessionId, (current) => ({ ...current, loop, loopLastAction }), projectRoot);
 }
 
-export function clearSessionLoop(sessionId: string, projectRoot?: string): MetadataState {
+export function clearSessionLoop(
+  sessionId: string,
+  projectRoot?: string,
+  loopLastAction?: SessionLoopActionMetadata,
+): MetadataState {
   return updateSessionMetadata(
     sessionId,
     (current) => {
       const next = { ...current };
       delete next.loop;
+      if (loopLastAction) next.loopLastAction = loopLastAction;
       return next;
     },
     projectRoot,

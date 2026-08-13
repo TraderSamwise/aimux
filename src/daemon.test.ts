@@ -2092,6 +2092,9 @@ describe("daemon supervision", () => {
       project: projectRoot,
       sessionId: "claude-1",
       reason: "done",
+      updatedBy: "claude-1",
+      updatedBySessionId: "claude-1",
+      updatedByRole: "claude",
     });
 
     expect(response.status).toBe(200);
@@ -2099,6 +2102,12 @@ describe("daemon supervision", () => {
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.loop))?.body).toEqual({
       sessionId: "claude-1",
       active: false,
+      action: "done",
+      source: "agent",
+      updatedBy: "claude-1",
+      updatedBySessionId: "claude-1",
+      updatedByRole: "claude",
+      reason: "done",
     });
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.runtime.event))?.body).toEqual({
       session: "claude-1",

@@ -1406,6 +1406,19 @@ aimux_try_loop() {
       esac
       [ "$json" -eq 1 ] && path="$path?json=1"
       set -- --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
+      if [ -n "${AIMUX_SESSION_ID:-}" ]; then
+        if [ "${AIMUX_OVERSEER:-}" = "1" ]; then
+          set -- "$@" --data-urlencode "source=overseer"
+          set -- "$@" --data-urlencode "updatedBy=$AIMUX_SESSION_ID" --data-urlencode "updatedBySessionId=$AIMUX_SESSION_ID"
+          set -- "$@" --data-urlencode "updatedByRole=overseer"
+        else
+          set -- "$@" --data-urlencode "source=agent"
+          set -- "$@" --data-urlencode "updatedBy=$AIMUX_SESSION_ID" --data-urlencode "updatedBySessionId=$AIMUX_SESSION_ID"
+          [ -n "${AIMUX_TOOL:-}" ] && set -- "$@" --data-urlencode "updatedByRole=$AIMUX_TOOL"
+        fi
+      else
+        set -- "$@" --data-urlencode "source=human"
+      fi
       [ -n "$goal" ] && set -- "$@" --data-urlencode "goal=$goal"
       aimux_post_query_text_route "$path" 120 "$@"
       ;;
@@ -1438,6 +1451,13 @@ aimux_try_loop() {
       esac
       [ "$json" -eq 1 ] && path="$path?json=1"
       set -- --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
+      set -- "$@" --data-urlencode "source=agent"
+      if [ -n "${AIMUX_SESSION_ID:-}" ]; then
+        set -- "$@" --data-urlencode "updatedBy=$AIMUX_SESSION_ID" --data-urlencode "updatedBySessionId=$AIMUX_SESSION_ID"
+      else
+        set -- "$@" --data-urlencode "updatedBy=$session_id" --data-urlencode "updatedBySessionId=$session_id"
+      fi
+      [ -n "${AIMUX_TOOL:-}" ] && set -- "$@" --data-urlencode "updatedByRole=$AIMUX_TOOL"
       [ -n "$reason" ] && set -- "$@" --data-urlencode "reason=$reason"
       aimux_post_query_text_route "$path" 120 "$@"
       ;;
