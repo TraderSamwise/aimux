@@ -23,15 +23,18 @@ import {
   acceptShareInvite,
   createShareInvite,
   getShareChatMode,
+  listAcceptedShares,
   loadSharingState,
+  removeAcceptedShare,
   removeShareParticipant,
   revokeShareInvite,
   saveSharingState,
   sharedRelayRequestAccess,
   summarizeShare,
   stripTrustedAimuxHeaders,
+  upsertAcceptedShare,
 } from "./sharing.js";
-import type { SharedSessionRecord } from "./sharing.js";
+import type { SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
 import type { SecurityEventRecord } from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -60,6 +63,12 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (url.pathname === "/security/unlock" && request.method === "POST") {
       return this.unlockSecurity();
+    }
+    if (url.pathname === "/internal/accepted-shares/upsert" && request.method === "POST") {
+      return this.upsertAcceptedShareIndex(request);
+    }
+    if (url.pathname === "/internal/accepted-shares/remove" && request.method === "POST") {
+      return this.removeAcceptedShareIndex(request);
     }
     if (url.pathname === "/security/status" && request.method === "GET") {
       const state = await loadSecurityState(this.ctx.storage);
@@ -722,10 +731,43 @@ export class RelayObject extends DurableObject<Env> {
     const userId = request.headers.get("X-Aimux-User-Id") ?? "";
     if (!userId) return json({ ok: false, error: "Missing user context" }, 401);
     const state = await loadSharingState(this.ctx.storage);
-    const shares = Object.values(state.shares)
+    const sharesByKey = new Map<string, SharedSessionSummary>();
+    for (const share of listAcceptedShares(state)) {
+      sharesByKey.set(`${share.ownerUserId}:${share.id}`, share);
+    }
+    for (const share of Object.values(state.shares)
       .filter((share) => share.ownerUserId === userId || share.participants[userId]?.status === "active")
-      .map(summarizeShare);
+      .map(summarizeShare)) {
+      sharesByKey.set(`${share.ownerUserId}:${share.id}`, share);
+    }
+    const shares = [...sharesByKey.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     return json({ ok: true, shares }, 200);
+  }
+
+  private async upsertAcceptedShareIndex(request: Request): Promise<Response> {
+    let body: { share?: SharedSessionSummary };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    if (!body.share) return json({ ok: false, error: "Missing share" }, 400);
+    const state = await loadSharingState(this.ctx.storage);
+    await saveSharingState(this.ctx.storage, upsertAcceptedShare(state, body.share));
+    return json({ ok: true }, 200);
+  }
+
+  private async removeAcceptedShareIndex(request: Request): Promise<Response> {
+    let body: { ownerUserId?: string; shareId?: string };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    if (!body.ownerUserId || !body.shareId) return json({ ok: false, error: "Missing share reference" }, 400);
+    const state = await loadSharingState(this.ctx.storage);
+    await saveSharingState(this.ctx.storage, removeAcceptedShare(state, body.ownerUserId, body.shareId));
+    return json({ ok: true }, 200);
   }
 
   private async getShare(request: Request, url: URL): Promise<Response> {
@@ -756,6 +798,7 @@ export class RelayObject extends DurableObject<Env> {
     }
     const result = removeShareParticipant(state, share.id, actor.userId);
     await saveSharingState(this.ctx.storage, result.state);
+    await this.removeShareFromReceiverIndex(actor.userId, share.ownerUserId, share.id);
     const event = createShareSecurityEvent({
       kind: "shared_participant_left",
       shareId: share.id,
@@ -787,6 +830,7 @@ export class RelayObject extends DurableObject<Env> {
     const target = share.participants[parsed.participantUserId]!;
     const result = removeShareParticipant(state, share.id, parsed.participantUserId);
     await saveSharingState(this.ctx.storage, result.state);
+    await this.removeShareFromReceiverIndex(target.userId, share.ownerUserId, share.id);
     const event = createShareSecurityEvent({
       kind: "shared_participant_removed",
       shareId: share.id,
@@ -892,6 +936,7 @@ export class RelayObject extends DurableObject<Env> {
         return json({ ok: false, error: "Invite owner mismatch" }, 403);
       }
       await saveSharingState(this.ctx.storage, result.state);
+      await this.upsertShareInReceiverIndex(actor.userId, summarizeShare(result.share));
       const event = createShareSecurityEvent({
         kind: "shared_invite_accepted",
         shareId: result.share.id,
@@ -924,6 +969,32 @@ export class RelayObject extends DurableObject<Env> {
 
   private shareInviteBaseUrl(request: Request): string {
     return (this.env.SHARE_INVITE_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
+  }
+
+  private async upsertShareInReceiverIndex(userId: string, share: SharedSessionSummary): Promise<void> {
+    try {
+      const relayId = this.env.RELAY.idFromName(userId);
+      const stub = this.env.RELAY.get(relayId);
+      await stub.fetch("https://internal.aimux.local/internal/accepted-shares/upsert", {
+        method: "POST",
+        body: JSON.stringify({ share }),
+      });
+    } catch {
+      // Canonical owner share already exists; listing can recover from a later owner-scoped get.
+    }
+  }
+
+  private async removeShareFromReceiverIndex(userId: string, ownerUserId: string, shareId: string): Promise<void> {
+    try {
+      const relayId = this.env.RELAY.idFromName(userId);
+      const stub = this.env.RELAY.get(relayId);
+      await stub.fetch("https://internal.aimux.local/internal/accepted-shares/remove", {
+        method: "POST",
+        body: JSON.stringify({ ownerUserId, shareId }),
+      });
+    } catch {
+      // Revocation is enforced by the canonical owner share even if a stale list row remains briefly.
+    }
   }
 
   private async isLockedDown(): Promise<boolean> {

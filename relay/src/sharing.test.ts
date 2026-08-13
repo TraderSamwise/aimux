@@ -6,11 +6,14 @@ import {
   emptySharingState,
   getShareChatMode,
   isSharedRelayRequestAllowed,
+  listAcceptedShares,
+  removeAcceptedShare,
   removeShareParticipant,
   revokeShareInvite,
   sharedRelayRequestAccess,
   stripTrustedAimuxHeaders,
   summarizeShare,
+  upsertAcceptedShare,
 } from "./sharing";
 
 const owner = {
@@ -54,6 +57,39 @@ describe("sharing state", () => {
     expect(accepted.participant.email).toBe("alex@example.com");
     expect(getShareChatMode(accepted.share)).toBe("multi");
     expect(Object.values(accepted.share.invites)[0].status).toBe("accepted");
+  });
+
+  it("indexes accepted shares outside the owner durable object", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    const accepted = await acceptShareInvite(created.state, {
+      token: created.token.token,
+      actor: {
+        userId: "user_guest",
+        displayName: "Alex",
+        email: "alex@example.com",
+        role: "guest",
+      },
+      now: activeInviteAcceptedAt,
+    });
+    const indexed = upsertAcceptedShare(emptySharingState(), summarizeShare(accepted.share));
+
+    expect(listAcceptedShares(indexed)).toHaveLength(1);
+    expect(listAcceptedShares(indexed)[0]).toMatchObject({
+      id: accepted.share.id,
+      ownerUserId: "user_owner",
+      serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+      sessionId: "claude-abc",
+    });
+
+    const removed = removeAcceptedShare(indexed, "user_owner", accepted.share.id);
+    expect(listAcceptedShares(removed)).toEqual([]);
   });
 
   it("rejects accepting an invite for a different authenticated email", async () => {

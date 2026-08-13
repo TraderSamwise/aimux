@@ -51,6 +51,7 @@ export interface SharedSessionRecord {
 export interface SharingState {
   version: 1;
   shares: Record<string, SharedSessionRecord>;
+  acceptedShares?: Record<string, SharedSessionSummary>;
 }
 
 export interface ShareInviteToken {
@@ -94,7 +95,7 @@ export interface AcceptShareInviteInput {
 }
 
 export function emptySharingState(): SharingState {
-  return { version: 1, shares: {} };
+  return { version: 1, shares: {}, acceptedShares: {} };
 }
 
 export async function loadSharingState(storage: DurableObjectStorage): Promise<SharingState> {
@@ -115,7 +116,15 @@ export function normalizeSharingState(state: SharingState): SharingState {
       .slice(0, MAX_SHARES)
       .map((share) => [share.id, share]),
   );
-  return { version: 1, shares };
+  const acceptedShares = Object.fromEntries(
+    Object.values(state.acceptedShares ?? {})
+      .map(normalizeAcceptedShare)
+      .filter((share): share is SharedSessionSummary => Boolean(share))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, MAX_SHARES)
+      .map((share) => [acceptedShareKey(share.ownerUserId, share.id), share]),
+  );
+  return { version: 1, shares, acceptedShares };
 }
 
 export function getShareChatMode(share: SharedSessionRecord): ShareChatMode {
@@ -136,6 +145,27 @@ export function summarizeShare(share: SharedSessionRecord): SharedSessionSummary
     participants: Object.values(share.participants),
     invites: Object.values(share.invites).map(({ tokenHash, ...invite }) => invite),
   };
+}
+
+export function upsertAcceptedShare(state: SharingState, share: SharedSessionSummary): SharingState {
+  const current = normalizeSharingState(state);
+  const normalized = normalizeAcceptedShare(share);
+  if (!normalized) return current;
+  current.acceptedShares = {
+    ...(current.acceptedShares ?? {}),
+    [acceptedShareKey(normalized.ownerUserId, normalized.id)]: normalized,
+  };
+  return normalizeSharingState(current);
+}
+
+export function removeAcceptedShare(state: SharingState, ownerUserId: string, shareId: string): SharingState {
+  const current = normalizeSharingState(state);
+  delete current.acceptedShares?.[acceptedShareKey(ownerUserId, shareId)];
+  return normalizeSharingState(current);
+}
+
+export function listAcceptedShares(state: SharingState): SharedSessionSummary[] {
+  return Object.values(normalizeSharingState(state).acceptedShares ?? {});
 }
 
 export function activeParticipants(share: SharedSessionRecord): ShareParticipantRecord[] {
@@ -361,6 +391,29 @@ function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
     participants: share.participants ?? {},
     invites,
   };
+}
+
+function normalizeAcceptedShare(share: SharedSessionSummary | undefined): SharedSessionSummary | undefined {
+  if (!share?.id || !share.ownerUserId || !share.sessionId || !share.projectRoot) return undefined;
+  const serviceEndpoint = sanitizeServiceEndpoint(share.serviceEndpoint);
+  if (!serviceEndpoint) return undefined;
+  return {
+    id: sanitizeRequiredText(share.id, 160, "shareId"),
+    ownerUserId: sanitizeRequiredText(share.ownerUserId, 160, "ownerUserId"),
+    projectRoot: sanitizeRequiredText(share.projectRoot, 600, "projectRoot"),
+    serviceEndpoint,
+    sessionId: sanitizeRequiredText(share.sessionId, 160, "sessionId"),
+    createdAt: sanitizeRequiredText(share.createdAt, 80, "createdAt"),
+    updatedAt: sanitizeRequiredText(share.updatedAt, 80, "updatedAt"),
+    version: Number.isFinite(share.version) ? share.version : 1,
+    mode: share.mode === "multi" ? "multi" : "single",
+    participants: Array.isArray(share.participants) ? share.participants : [],
+    invites: Array.isArray(share.invites) ? share.invites : [],
+  };
+}
+
+function acceptedShareKey(ownerUserId: string, shareId: string): string {
+  return `${ownerUserId}:${shareId}`;
 }
 
 function findInviteByTokenHash(
