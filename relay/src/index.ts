@@ -6,8 +6,19 @@ export { RelayObject } from "./relay-object.js";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": [
+    "Content-Type",
+    "Authorization",
+    "X-Aimux-Actor",
+    "X-Aimux-Actor-Role",
+    "X-Aimux-Actor-User-Id",
+    "X-Aimux-Actor-Display-Name",
+    "X-Aimux-Actor-Name",
+    "X-Aimux-Actor-Email",
+    "X-Aimux-Share-Id",
+    "X-Aimux-Share-Session-Id",
+  ].join(", "),
 };
 const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
