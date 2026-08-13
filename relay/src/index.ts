@@ -19,11 +19,24 @@ const CORS_HEADERS: Record<string, string> = {
     "X-Aimux-Share-Id",
     "X-Aimux-Share-Session-Id",
   ].join(", "),
+  "Access-Control-Expose-Headers": ["X-Aimux-Share-Id", "X-Aimux-Share-Session-Id", "X-Aimux-Share-Mode"].join(", "),
 };
 const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
 function corsResponse(body: string, status: number): Response {
   return new Response(body, { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
+}
+
+function addCorsHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    headers.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 // Restricted CORS for token issuance — echoes back the request Origin only
@@ -85,7 +98,7 @@ export default {
       if (!userId) return corsResponse(JSON.stringify({ ok: false, error: "Invalid security action URL" }), 400);
       const relayId = env.RELAY.idFromName(decodeURIComponent(userId));
       const stub = env.RELAY.get(relayId);
-      return stub.fetch(request);
+      return addCorsHeaders(await stub.fetch(request));
     }
 
     if (
@@ -121,7 +134,7 @@ export default {
       headers.set("X-Aimux-User-Id", userId);
       if (sharedOwnerUserId) headers.set("X-Aimux-Share-Owner-Id", sharedOwnerUserId);
       if (sharedShareId) headers.set("X-Aimux-Share-Id", sharedShareId);
-      return stub.fetch(new Request(request, { headers }));
+      return addCorsHeaders(await stub.fetch(new Request(request, { headers })));
     }
 
     if (url.pathname === "/shares" || url.pathname === "/shares/invite" || url.pathname.startsWith("/shares/invite/")) {
@@ -159,7 +172,7 @@ export default {
       headers.set("X-Aimux-User-Name", profile.displayName);
       if (profile.email) headers.set("X-Aimux-User-Email", profile.email);
       if (ownerUserId !== userId) headers.set("X-Aimux-Share-Owner-Id", ownerUserId);
-      return stub.fetch(new Request(request, { headers }));
+      return addCorsHeaders(await stub.fetch(new Request(request, { headers })));
     }
 
     // Mint a long-lived daemon token. The caller authenticates with a Clerk
