@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { listShares } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { activeSessionsFromShareSummaries, sharedSessionsEqual } from "@/lib/shared-sessions";
 import { sharedChatHref } from "@/lib/use-route-share";
 import { acceptedSharedSessionsAtom, type ActiveSharedSession } from "@/stores/settings";
 
@@ -17,12 +18,17 @@ export default function SharedChatsScreen() {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
   const [shares, setShares] = useAtom(acceptedSharedSessionsAtom);
+  const setSharesRef = useRef(setShares);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getTokenRef.current = getToken;
   }, [getToken]);
+
+  useEffect(() => {
+    setSharesRef.current = setShares;
+  }, [setShares]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -31,23 +37,16 @@ export default function SharedChatsScreen() {
       const token = await getTokenRef.current();
       if (!token) throw new Error("Sign in is required.");
       const result = await listShares({ token });
-      const relayShares = result.shares
-        .filter((share) => share.serviceEndpoint)
-        .map((share) => ({
-          shareId: share.id,
-          ownerUserId: share.ownerUserId,
-          projectRoot: share.projectRoot,
-          sessionId: share.sessionId,
-          serviceEndpoint: share.serviceEndpoint!,
-          acceptedAt: share.updatedAt || share.createdAt,
-        }));
-      if (relayShares.length > 0) setShares(relayShares);
+      const relayShares = activeSessionsFromShareSummaries(result.shares);
+      setSharesRef.current((current) =>
+        sharedSessionsEqual(current, relayShares) ? current : relayShares,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [setShares]);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => void refresh(), 0);

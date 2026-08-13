@@ -27,6 +27,7 @@ import { useAppStackScreenOptions } from "@/lib/navigation";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
+import { activeSessionsFromShareSummaries, sharedSessionsEqual } from "@/lib/shared-sessions";
 import { useRouteShare } from "@/lib/use-route-share";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
@@ -108,6 +109,8 @@ export default function MainLayout() {
   const markNotificationRecordsObserved = useSetAtom(markNotificationRecordsObservedAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
+  const setAcceptedSharesRef = useRef(setAcceptedShares);
+  const setLegacyActiveShareRef = useRef(setLegacyActiveShare);
   const store = useStore();
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -137,6 +140,11 @@ export default function MainLayout() {
   useEffect(() => {
     getTokenRef.current = getToken;
   }, [getToken]);
+
+  useEffect(() => {
+    setAcceptedSharesRef.current = setAcceptedShares;
+    setLegacyActiveShareRef.current = setLegacyActiveShare;
+  }, [setAcceptedShares, setLegacyActiveShare]);
 
   usePrePaintEffect(() => {
     if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;
@@ -290,17 +298,10 @@ export default function MainLayout() {
         if (!token) return;
         const result = await listShares({ token });
         if (cancelled) return;
-        const acceptedShares = result.shares
-          .filter((share) => share.serviceEndpoint)
-          .map((share) => ({
-            shareId: share.id,
-            ownerUserId: share.ownerUserId,
-            projectRoot: share.projectRoot,
-            sessionId: share.sessionId,
-            serviceEndpoint: share.serviceEndpoint!,
-            acceptedAt: share.updatedAt || share.createdAt,
-          }));
-        if (acceptedShares.length > 0) setAcceptedShares(acceptedShares);
+        const acceptedShares = activeSessionsFromShareSummaries(result.shares);
+        setAcceptedSharesRef.current((current) =>
+          sharedSessionsEqual(current, acceptedShares) ? current : acceptedShares,
+        );
         const stillActive = activeShare
           ? acceptedShares.some(
               (share) =>
@@ -308,7 +309,7 @@ export default function MainLayout() {
                 share.shareId === activeShare.shareId,
             )
           : false;
-        if (!stillActive) setLegacyActiveShare(null);
+        if (!stillActive) setLegacyActiveShareRef.current(null);
       } catch (err) {
         if (!cancelled && !isTransientRequestError(err)) {
           console.warn("shared chat list refresh failed:", err);
@@ -321,7 +322,7 @@ export default function MainLayout() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [activeShare, relayUrl, setAcceptedShares, setLegacyActiveShare]);
+  }, [activeShare, relayUrl]);
 
   // Poll /desktop-state for the selected project as an SSE fallback. Re-triggers on
   // selection change and on a refresh-nonce bump (from optimistic mutations).
