@@ -51,7 +51,7 @@ describe("toChatMessages", () => {
   });
 
   it("normalizes legacy shared prompts for shared chat display", () => {
-    const [chat] = toChatMessages(
+    const [spaced, inline] = toChatMessages(
       [
         message({
           role: "user",
@@ -59,12 +59,17 @@ describe("toChatMessages", () => {
             { type: "text", text: "Message from Sam Owner via Aimux shared chat:\n\nowner shared" },
           ],
         }),
+        message({
+          role: "user",
+          parts: [{ type: "text", text: "Message from Ada Guest via Aimux shared chat: hello" }],
+        }),
       ],
       "codex-1",
       { shared: true },
     );
 
-    expect(chat!.parts).toEqual([{ type: "text", text: "[Sam Owner] owner shared" }]);
+    expect(spaced!.parts).toEqual([{ type: "text", text: "[Sam Owner] owner shared" }]);
+    expect(inline!.parts).toEqual([{ type: "text", text: "[Ada Guest] hello" }]);
   });
 
   it("leaves bracketed shared prompts and assistant messages alone", () => {

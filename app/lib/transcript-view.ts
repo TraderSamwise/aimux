@@ -4,7 +4,7 @@ interface ChatMessageOptions {
   shared?: boolean;
 }
 
-const LEGACY_SHARED_MESSAGE_RE = /^Message from ([^\n]+?) via Aimux shared chat:\n\n([\s\S]*)$/;
+const LEGACY_SHARED_MESSAGE_RE = /^Message from ([^\n]+?) via Aimux shared chat:\s*([\s\S]*)$/;
 const BRACKETED_SHARED_MESSAGE_RE = /^\[[^\]\n]{1,120}\]\s+[\s\S]+$/;
 
 function normalizeSharedText(text: string): string {
