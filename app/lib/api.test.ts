@@ -58,6 +58,7 @@ import {
   removeService,
   removeWorktree,
   removeShareParticipant,
+  revokeShareInvite,
   putPlan,
   reopenTask,
   requestReviewChanges,
@@ -1063,6 +1064,23 @@ describe("api relay routing", () => {
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer clerk-token");
   });
 
+  it("wraps share invite network failures with endpoint context", async () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
+    process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay-preview.example.com/";
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      createShareInvite("/repo", "claude-1", "guest@example.com", endpoint, {
+        token: "clerk-token",
+      }),
+    ).rejects.toThrow(
+      "Network request failed (https://relay-preview.example.com/shares/invite): Failed to fetch",
+    );
+  });
+
   it("accepts share invites through relay HTTP with auth", async () => {
     process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
     process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay-preview.example.com/";
@@ -1111,16 +1129,19 @@ describe("api relay routing", () => {
     await removeShareParticipant("user/owner", "share/1", "user/guest", {
       token: "clerk-token",
     });
+    await revokeShareInvite("user/owner", "share/1", "invite/1", { token: "clerk-token" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "https://relay-preview.example.com/shares",
       "https://relay-preview.example.com/shares/user%2Fowner/share%2F1",
       "https://relay-preview.example.com/shares/user%2Fowner/share%2F1/leave",
       "https://relay-preview.example.com/shares/user%2Fowner/share%2F1/participants/user%2Fguest",
+      "https://relay-preview.example.com/shares/user%2Fowner/share%2F1/invites/invite%2F1",
     ]);
     expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe("POST");
     expect((fetchMock.mock.calls[3][1] as RequestInit).method).toBe("DELETE");
+    expect((fetchMock.mock.calls[4][1] as RequestInit).method).toBe("DELETE");
     for (const [, init] of fetchMock.mock.calls) {
       expect(new Headers((init as RequestInit).headers).get("authorization")).toBe(
         "Bearer clerk-token",

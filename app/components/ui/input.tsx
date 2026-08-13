@@ -12,7 +12,10 @@ import { cn } from "@/lib/utils";
  * `outlineStyle` is react-native-web's, and is dropped on native, where there is no
  * focus ring to begin with.
  */
-const NO_BROWSER_FOCUS_RING = { outlineStyle: "none" } as unknown as TextInputProps["style"];
+export const NO_BROWSER_FOCUS_RING = {
+  outlineStyle: "none",
+  outlineWidth: 0,
+} as unknown as TextInputProps["style"];
 
 const Input = React.forwardRef<TextInput, TextInputProps>(({ className, style, ...props }, ref) => {
   return (

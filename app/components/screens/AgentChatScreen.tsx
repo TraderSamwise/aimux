@@ -43,7 +43,7 @@ import { AgentActions } from "@/components/agent-actions";
 import { AgentManagementPanel } from "@/components/agent-management-panel";
 import { TeammatePanel } from "@/components/teammate-panel";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
@@ -57,9 +57,12 @@ import {
   leaveShare,
   listShares,
   removeShareParticipant,
+  revokeShareInvite,
   interruptLivePane,
   sendLivePaneInput,
   uploadImageAttachment,
+  type ShareInvite,
+  type ShareParticipant,
   type SharedChatActorInput,
   type SharedSessionSummary,
 } from "@/lib/api";
@@ -131,6 +134,36 @@ const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
+
+function formatRelativeShareTime(value?: string): string {
+  if (!value) return "not connected";
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return "seen";
+  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
+  if (seconds < 90) return "connected now";
+  if (seconds < 3600) return `last seen ${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `last seen ${Math.floor(seconds / 3600)}h ago`;
+  return `last seen ${Math.floor(seconds / 86400)}d ago`;
+}
+
+function formatShareParticipantStatus(participant: ShareParticipant): string {
+  if (participant.status === "removed") return "removed";
+  if (participant.role === "owner") return "owner";
+  return formatRelativeShareTime(participant.lastSeenAt ?? participant.joinedAt);
+}
+
+function formatShareInviteStatus(invite: ShareInvite): string {
+  if (invite.status === "pending") {
+    const expiryTime = Date.parse(invite.expiresAt);
+    const expiry = Number.isFinite(expiryTime)
+      ? new Date(expiryTime).toLocaleDateString()
+      : "unknown";
+    return `pending · expires ${expiry}`;
+  }
+  if (invite.status === "accepted") return "accepted";
+  if (invite.status === "revoked") return "revoked";
+  return invite.status;
+}
 
 function nextAgentOutputViewMode(
   current: AgentOutputViewMode,
@@ -364,6 +397,10 @@ export default function ChatScreen() {
       email: currentShareParticipant?.email ?? userEmail,
     };
   }, [activeShare, currentShareParticipant, shareSummary, userEmail, userName]);
+  const visibleShareInvites = useMemo(
+    () => shareSummary?.invites.filter((invite) => invite.status !== "accepted") ?? [],
+    [shareSummary],
+  );
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
@@ -1233,6 +1270,24 @@ export default function ChatScreen() {
     }
   }
 
+  async function handleRevokeInvite(inviteId: string, email: string) {
+    if (activeShare || !token || !shareSummary || shareAction) return;
+    const actionKey = `invite:${inviteId}`;
+    setShareAction(actionKey);
+    setInviteStatus(null);
+    try {
+      const result = await revokeShareInvite(shareSummary.ownerUserId, shareSummary.id, inviteId, {
+        token,
+      });
+      setShareSummary(result.share);
+      setInviteStatus(`Invite revoked for ${email}.`);
+    } catch (err) {
+      setInviteStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setShareAction(null);
+    }
+  }
+
   async function handleLeaveShare() {
     if (!token || !activeShare || shareAction) return;
     setShareAction(activeShare.shareId);
@@ -1321,6 +1376,9 @@ export default function ChatScreen() {
                 <TextInput
                   accessibilityLabel="Message the agent"
                   nativeID={CHAT_INPUT_NATIVE_ID}
+                  autoComplete="off"
+                  importantForAutofill="no"
+                  textContentType="none"
                   onFocus={onFocus}
                   onBlur={onBlur}
                   value={draft}
@@ -1333,14 +1391,17 @@ export default function ChatScreen() {
                   editable={!sendBusy}
                   scrollEnabled={composerInputOverflowHeight > COMPOSER_INPUT_MAX_HEIGHT}
                   className="text-sm text-foreground"
-                  style={{
-                    height: composerInputHeight,
-                    fontSize: COMPOSER_INPUT_FONT_SIZE,
-                    lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-                    paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
-                    paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
-                    paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
-                  }}
+                  style={[
+                    NO_BROWSER_FOCUS_RING,
+                    {
+                      height: composerInputHeight,
+                      fontSize: COMPOSER_INPUT_FONT_SIZE,
+                      lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+                      paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
+                      paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
+                      paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
+                    },
+                  ]}
                   textAlignVertical="top"
                 />
                 <View className="flex-row items-center gap-2">
@@ -1685,16 +1746,29 @@ export default function ChatScreen() {
                 </ScrollView>
               </View>
             ) : null}
+            {activeShare ? (
+              <View
+                className="border-b border-border bg-card/70 px-4 py-2"
+                style={{ flexShrink: 0 }}
+              >
+                <Text className="text-xs font-semibold uppercase tracking-widest text-foreground">
+                  Shared chat
+                </Text>
+                <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+                  Replying as {currentShareParticipant?.displayName ?? userName ?? "guest"} in a
+                  session owned by {activeShare.ownerUserId}.
+                </Text>
+              </View>
+            ) : null}
             {sharePanelOpen ? (
               <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
                 {activeShare ? (
                   <View className="flex-row items-center justify-between gap-3">
                     <View className="flex-1">
-                      <Text className="text-sm font-medium text-foreground">
-                        Shared session view
-                      </Text>
+                      <Text className="text-sm font-medium text-foreground">Shared chat</Text>
                       <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
-                        Connected to {activeShare.ownerUserId}
+                        Messages are identified as{" "}
+                        {currentShareParticipant?.displayName ?? userName ?? "guest"}.
                       </Text>
                     </View>
                     <Button
@@ -1746,7 +1820,7 @@ export default function ChatScreen() {
                             {participant.displayName}
                           </Text>
                           <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                            {participant.role} · {participant.status}
+                            {participant.role} · {formatShareParticipantStatus(participant)}
                             {participant.email ? ` · ${participant.email}` : ""}
                           </Text>
                         </View>
@@ -1763,23 +1837,37 @@ export default function ChatScreen() {
                         ) : null}
                       </View>
                     ))}
-                    {!activeShare &&
-                    shareSummary.invites.some((invite) => invite.status === "pending") ? (
+                    {!activeShare && visibleShareInvites.length > 0 ? (
                       <View className="mt-3">
                         <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                          Pending invites
+                          Invites
                         </Text>
-                        {shareSummary.invites
-                          .filter((invite) => invite.status === "pending")
-                          .map((invite) => (
-                            <Text
-                              key={invite.id}
-                              className="text-xs text-muted-foreground mt-2"
-                              numberOfLines={1}
-                            >
-                              {invite.email}
-                            </Text>
-                          ))}
+                        {visibleShareInvites.map((invite) => (
+                          <View
+                            key={invite.id}
+                            className="mt-2 flex-row items-center justify-between gap-3"
+                          >
+                            <View className="flex-1">
+                              <Text className="text-sm text-foreground" numberOfLines={1}>
+                                {invite.email}
+                              </Text>
+                              <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                                {formatShareInviteStatus(invite)}
+                              </Text>
+                            </View>
+                            {invite.status === "pending" ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                label={
+                                  shareAction === `invite:${invite.id}` ? "Revoking..." : "Revoke"
+                                }
+                                disabled={!token || Boolean(shareAction)}
+                                onPress={() => handleRevokeInvite(invite.id, invite.email)}
+                              />
+                            ) : null}
+                          </View>
+                        ))}
                       </View>
                     ) : null}
                   </View>

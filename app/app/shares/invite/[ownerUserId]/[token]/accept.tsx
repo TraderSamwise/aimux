@@ -8,7 +8,7 @@ import { acceptShareInvite } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { singleRouteParam } from "@/lib/route-params";
 import { selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
-import { activeSharedSessionAtom } from "@/stores/settings";
+import { activeSharedSessionAtom, agentOutputViewModeAtom } from "@/stores/settings";
 
 export default function AcceptShareInviteScreen() {
   const params = useLocalSearchParams<{
@@ -19,6 +19,7 @@ export default function AcceptShareInviteScreen() {
   const inviteToken = singleRouteParam(params.token);
   const { isSignedIn, isLoaded, getToken } = useAuth();
   const setActiveShare = useSetAtom(activeSharedSessionAtom);
+  const setAgentOutputViewMode = useSetAtom(agentOutputViewModeAtom);
   const setSelectedProject = useSetAtom(selectedProjectPathAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
@@ -53,6 +54,7 @@ export default function AcceptShareInviteScreen() {
       setActiveShare(activeShare);
       setSelectedProject(activeShare.projectRoot);
       setSelectedSession(activeShare.sessionId);
+      setAgentOutputViewMode("chat");
       setStatus("accepted");
       setMessage("Invite accepted.");
       router.replace({

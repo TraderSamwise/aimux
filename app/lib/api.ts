@@ -211,6 +211,13 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
       throw new ApiError(res.status, body, `${message} (${url})`);
     }
     return body as T;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    const message = signal.aborted
+      ? `Request timed out or was cancelled (${url})`
+      : `Network request failed (${url}): ${reason}`;
+    throw new ApiError(0, null, message);
   } finally {
     cleanup();
   }
@@ -1048,6 +1055,21 @@ export async function removeShareParticipant(
   return callJson<ShareResponse>(
     `${relayHttpUrl()}/shares/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(shareId)}/participants/${encodeURIComponent(
       participantUserId,
+    )}`,
+    { method: "DELETE" },
+    opts,
+  );
+}
+
+export async function revokeShareInvite(
+  ownerUserId: string,
+  shareId: string,
+  inviteId: string,
+  opts?: ApiOpts,
+): Promise<ShareResponse> {
+  return callJson<ShareResponse>(
+    `${relayHttpUrl()}/shares/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(shareId)}/invites/${encodeURIComponent(
+      inviteId,
     )}`,
     { method: "DELETE" },
     opts,

@@ -93,14 +93,21 @@ function StatusCell({ state }: { state: AgentState }) {
   if (state.pill) {
     return (
       <View className={cn("rounded-[5px] px-2 py-0.5", tone.bg)}>
-        <Text className={cn("text-[10.5px] font-bold uppercase tracking-wide", tone.text)}>
+        <Text
+          className={cn("text-[10.5px] font-bold uppercase tracking-wide", tone.text)}
+          style={{ color: tone.hex }}
+        >
           {state.label}
         </Text>
       </View>
     );
   }
   return (
-    <Text className={cn("font-mono text-[12px]", tone.text)} numberOfLines={1}>
+    <Text
+      className={cn("font-mono text-[12px]", tone.text)}
+      style={{ color: tone.hex }}
+      numberOfLines={1}
+    >
       {state.label}
     </Text>
   );
@@ -305,7 +312,11 @@ function ServiceRow({
         {identity}
       </Pressable>
       <View className="shrink-0 flex-row items-center gap-3 pl-2">
-        <Text className={cn("font-mono text-[12px]", tone.text)} numberOfLines={1}>
+        <Text
+          className={cn("font-mono text-[12px]", tone.text)}
+          style={{ color: tone.hex }}
+          numberOfLines={1}
+        >
           {service.pendingAction ?? service.status}
         </Text>
         <ServiceActions
@@ -441,16 +452,19 @@ function WorktreeCard({
           </Text>
         ) : null}
         <View className="ml-auto shrink-0 flex-row items-center gap-1.5 pl-3">
-          {chips.map((chip) => (
-            <View
-              key={chip.label}
-              className={cn("rounded-[5px] px-2 py-0.5", appStatusClasses(chip.kind).bg)}
-            >
-              <Text className={cn("font-mono text-[11px]", appStatusClasses(chip.kind).text)}>
-                {chip.label}
-              </Text>
-            </View>
-          ))}
+          {chips.map((chip) => {
+            const chipTone = appStatusClasses(chip.kind);
+            return (
+              <View key={chip.label} className={cn("rounded-[5px] px-2 py-0.5", chipTone.bg)}>
+                <Text
+                  className={cn("font-mono text-[11px]", chipTone.text)}
+                  style={{ color: chipTone.hex }}
+                >
+                  {chip.label}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       </View>
 
