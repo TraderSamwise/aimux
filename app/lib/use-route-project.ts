@@ -4,9 +4,10 @@ import { useAtomValue } from "jotai";
 import type { DaemonProject } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import { useRouteShare } from "@/lib/use-route-share";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { lastSyncAtAtom, projectsAtom, selectedProjectAtom } from "@/stores/projects";
-import { activeSharedSessionAtom, type ActiveSharedSession } from "@/stores/settings";
+import type { ActiveSharedSession } from "@/stores/settings";
 
 export interface RouteProject {
   project: DaemonProject | null;
@@ -21,7 +22,7 @@ export function useRouteProject(): RouteProject {
   const projects = useAtomValue(projectsAtom);
   const lastSyncAt = useAtomValue(lastSyncAtAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
-  const activeShare = useAtomValue(activeSharedSessionAtom);
+  const activeShare = useRouteShare();
   const routeProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const sharedRouteProject = useMemo(
     () =>

@@ -21,6 +21,7 @@ export interface AppSettings {
   desktopAppZoom: DesktopAppZoom;
   chatRichTerminalColors: boolean;
   notifications: NotificationSettings;
+  acceptedShares: ActiveSharedSession[];
   activeShare: ActiveSharedSession | null;
 }
 
@@ -40,6 +41,7 @@ export const defaultSettings: AppSettings = Object.freeze({
   desktopAppZoom: 110,
   chatRichTerminalColors: true,
   notifications: defaultNotificationSettings,
+  acceptedShares: [],
   activeShare: null,
 });
 
@@ -49,6 +51,7 @@ export function normalizeAppSettings(input: AppSettings): AppSettings {
     ...input,
     desktopAppZoom: normalizeDesktopAppZoom(input.desktopAppZoom),
     notifications: normalizeNotificationSettings(input.notifications),
+    acceptedShares: normalizeAcceptedShares(input.acceptedShares, input.activeShare),
     activeShare: normalizeActiveShare(input.activeShare),
   };
 }
@@ -81,6 +84,9 @@ export const chatRichTerminalColorsAtom = focusAtom(settingsAtom, (optic) =>
 );
 export const notificationSettingsAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("notifications"),
+);
+export const acceptedSharedSessionsAtom = focusAtom(settingsAtom, (optic) =>
+  optic.prop("acceptedShares"),
 );
 export const activeSharedSessionAtom = focusAtom(settingsAtom, (optic) =>
   optic.prop("activeShare"),
@@ -115,4 +121,22 @@ function normalizeActiveShare(value: AppSettings["activeShare"]): ActiveSharedSe
     serviceEndpoint: { host, port },
     acceptedAt: value.acceptedAt || new Date(0).toISOString(),
   };
+}
+
+function normalizeAcceptedShares(
+  value: AppSettings["acceptedShares"] | undefined,
+  legacyActiveShare: AppSettings["activeShare"],
+): ActiveSharedSession[] {
+  const byKey = new Map<string, ActiveSharedSession>();
+  for (const share of Array.isArray(value) ? value : []) {
+    const normalized = normalizeActiveShare(share);
+    if (normalized) byKey.set(shareKey(normalized), normalized);
+  }
+  const legacy = normalizeActiveShare(legacyActiveShare);
+  if (legacy) byKey.set(shareKey(legacy), legacy);
+  return [...byKey.values()].sort((a, b) => b.acceptedAt.localeCompare(a.acceptedAt));
+}
+
+function shareKey(share: ActiveSharedSession): string {
+  return `${share.ownerUserId}:${share.shareId}`;
 }

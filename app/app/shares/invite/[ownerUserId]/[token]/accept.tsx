@@ -7,8 +7,13 @@ import { Text } from "@/components/ui/text";
 import { acceptShareInvite } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { singleRouteParam } from "@/lib/route-params";
-import { selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
-import { activeSharedSessionAtom, agentOutputViewModeAtom } from "@/stores/settings";
+import { sharedChatHref } from "@/lib/use-route-share";
+import {
+  acceptedSharedSessionsAtom,
+  activeSharedSessionAtom,
+  agentOutputViewModeAtom,
+  type ActiveSharedSession,
+} from "@/stores/settings";
 
 export default function AcceptShareInviteScreen() {
   const params = useLocalSearchParams<{
@@ -19,9 +24,8 @@ export default function AcceptShareInviteScreen() {
   const inviteToken = singleRouteParam(params.token);
   const { isSignedIn, isLoaded, getToken } = useAuth();
   const setActiveShare = useSetAtom(activeSharedSessionAtom);
+  const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
   const setAgentOutputViewMode = useSetAtom(agentOutputViewModeAtom);
-  const setSelectedProject = useSetAtom(selectedProjectPathAtom);
-  const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "accepting" | "accepted" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -43,7 +47,7 @@ export default function AcceptShareInviteScreen() {
       const result = await acceptShareInvite(ownerUserId, inviteToken, { token });
       const endpoint = result.share.serviceEndpoint;
       if (!endpoint) throw new Error("Invite is missing project connection metadata.");
-      const activeShare = {
+      const activeShare: ActiveSharedSession = {
         shareId: result.share.id,
         ownerUserId: result.share.ownerUserId,
         projectRoot: result.share.projectRoot,
@@ -51,16 +55,18 @@ export default function AcceptShareInviteScreen() {
         serviceEndpoint: endpoint,
         acceptedAt: new Date().toISOString(),
       };
+      setAcceptedShares((shares) => [
+        activeShare,
+        ...shares.filter(
+          (share) =>
+            share.ownerUserId !== activeShare.ownerUserId || share.shareId !== activeShare.shareId,
+        ),
+      ]);
       setActiveShare(activeShare);
-      setSelectedProject(activeShare.projectRoot);
-      setSelectedSession(activeShare.sessionId);
       setAgentOutputViewMode("chat");
       setStatus("accepted");
       setMessage("Invite accepted.");
-      router.replace({
-        pathname: "/agent/[sessionId]/chat",
-        params: { sessionId: activeShare.sessionId, project: activeShare.projectRoot },
-      });
+      router.replace(sharedChatHref(activeShare));
     } catch (err) {
       setStatus("error");
       setMessage(err instanceof Error ? err.message : String(err));

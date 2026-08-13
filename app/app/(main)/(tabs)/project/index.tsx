@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { ClipboardList, FileText, MessageSquare, Network, RefreshCw } from "lucide-react-native";
+import { ClipboardList, FileText, Network, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,7 +29,6 @@ import {
 } from "@/stores/projectRefresh";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { TaskWorkflowActions } from "@/components/workflow-actions";
-import { activeSharedSessionAtom, type ActiveSharedSession } from "@/stores/settings";
 
 type ProjectSection =
   | "dashboard"
@@ -188,11 +187,6 @@ function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
 }
 
 export default function ProjectScreen() {
-  const activeShare = useAtomValue(activeSharedSessionAtom);
-  return activeShare ? <SharedProjectScreen activeShare={activeShare} /> : <LocalProjectScreen />;
-}
-
-function LocalProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
@@ -414,68 +408,6 @@ function LocalProjectScreen() {
           ) : null}
         </>
       ) : null}
-    </Page>
-  );
-}
-
-function SharedProjectScreen({ activeShare }: { activeShare: ActiveSharedSession }) {
-  const router = useRouter();
-  const projectName = activeShare.projectRoot.split("/").filter(Boolean).pop() || "Shared project";
-
-  return (
-    <Page>
-      <PageHeader
-        eyebrow="Shared"
-        title={projectName}
-        subtitle={activeShare.projectRoot}
-        actions={
-          <Button
-            variant="outline"
-            onPress={() =>
-              router.push({
-                pathname: "/agent/[sessionId]/chat",
-                params: { sessionId: activeShare.sessionId, project: activeShare.projectRoot },
-              })
-            }
-          >
-            <MessageSquare size={16} color="#fafafa" />
-            <Text className="ml-2 text-sm font-semibold text-foreground">Chat</Text>
-          </Button>
-        }
-      />
-
-      <View className="mb-5 flex-row flex-wrap">
-        <SummaryTile label="Sessions" value={1} />
-        <SummaryTile label="Mode" value="Shared" />
-        <SummaryTile label="Access" value="Guest" />
-      </View>
-
-      <Card className="rounded-lg p-4">
-        <View className="flex-row items-center">
-          <MessageSquare size={18} color="#38bdf8" />
-          <Text className="ml-2 text-[15px] font-semibold text-foreground">Shared session</Text>
-        </View>
-        <Text className="mt-3 font-mono text-[12px] text-muted-foreground">
-          {activeShare.sessionId}
-        </Text>
-        <Text className="mt-2 text-[12px] uppercase tracking-widest text-muted-foreground">
-          owner · {activeShare.ownerUserId}
-        </Text>
-        <View className="mt-4 flex-row">
-          <Button
-            size="sm"
-            onPress={() =>
-              router.push({
-                pathname: "/agent/[sessionId]/chat",
-                params: { sessionId: activeShare.sessionId, project: activeShare.projectRoot },
-              })
-            }
-          >
-            <MessageSquare size={14} color="#09090b" />
-            <Text className="ml-2 text-sm font-semibold text-primary-foreground">Open chat</Text>
-          </Button>
-        </View>
-      </Card>
     </Page>
   );
 }

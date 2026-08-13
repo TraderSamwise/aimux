@@ -43,6 +43,7 @@ describe("settings store", () => {
       exposePreviewMode: "terminal",
       desktopAppZoom: 110,
       chatRichTerminalColors: true,
+      acceptedShares: [],
       activeShare: null,
       notifications: {
         enabled: false,
@@ -77,6 +78,7 @@ describe("settings store", () => {
     expect(store.get(settingsModule.exposePreviewModeAtom)).toBe("terminal");
     expect(store.get(settingsModule.desktopAppZoomAtom)).toBe(110);
     expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
+    expect(store.get(settingsModule.acceptedSharedSessionsAtom)).toEqual([]);
     expect(store.get(settingsModule.activeSharedSessionAtom)).toBeNull();
     expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
@@ -112,6 +114,7 @@ describe("settings store", () => {
       exposePreviewMode: "terminal",
       desktopAppZoom: 110,
       chatRichTerminalColors: true,
+      acceptedShares: [],
       activeShare: null,
     });
   });
@@ -143,6 +146,16 @@ describe("settings store", () => {
       serviceEndpoint: { host: "127.0.0.1", port: 43192 },
       acceptedAt: "2026-05-24T00:00:00.000Z",
     });
+    store.set(settingsModule.acceptedSharedSessionsAtom, [
+      {
+        shareId: "share_1",
+        ownerUserId: "user_owner",
+        projectRoot: "/repo",
+        sessionId: "claude-1",
+        serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+        acceptedAt: "2026-05-24T00:00:00.000Z",
+      },
+    ]);
 
     await vi.waitFor(async () => {
       const raw = await AsyncStorage.getItem("aimux-settings");
@@ -153,6 +166,16 @@ describe("settings store", () => {
         exposePreviewMode: "chat",
         desktopAppZoom: 150,
         chatRichTerminalColors: true,
+        acceptedShares: [
+          {
+            shareId: "share_1",
+            ownerUserId: "user_owner",
+            projectRoot: "/repo",
+            sessionId: "claude-1",
+            serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+            acceptedAt: "2026-05-24T00:00:00.000Z",
+          },
+        ],
         activeShare: {
           shareId: "share_1",
           ownerUserId: "user_owner",

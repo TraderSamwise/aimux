@@ -5,7 +5,13 @@ import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
 import { NativeNotificationRouter } from "@/components/NativeNotificationRouter";
-import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@/lib/api";
+import {
+  getDesktopState,
+  listNotifications,
+  listProjects,
+  listShares,
+  setApiRelay,
+} from "@/lib/api";
 import type { DesktopState } from "@/lib/desktop-state";
 import { useAuth } from "@/lib/auth";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
@@ -21,6 +27,7 @@ import { useAppStackScreenOptions } from "@/lib/navigation";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
+import { useRouteShare } from "@/lib/use-route-share";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
   applyDesktopStateFailureAtom,
@@ -55,6 +62,7 @@ import {
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import {
   activeSharedSessionAtom,
+  acceptedSharedSessionsAtom,
   notificationSettingsAtom,
   type ActiveSharedSession,
 } from "@/stores/settings";
@@ -80,7 +88,7 @@ export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
   const projects = useAtomValue(projectsAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
-  const activeShare = useAtomValue(activeSharedSessionAtom);
+  const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
@@ -98,6 +106,8 @@ export default function MainLayout() {
   const applyNotificationFeedFailure = useSetAtom(applyNotificationFeedFailureAtom);
   const clearNotificationFeedResource = useSetAtom(clearNotificationFeedResourceAtom);
   const markNotificationRecordsObserved = useSetAtom(markNotificationRecordsObservedAtom);
+  const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
+  const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const store = useStore();
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -223,9 +233,6 @@ export default function MainLayout() {
     async function loop() {
       if (cancelled) return;
       if (activeShare) {
-        reconcileProjects([projectFromActiveShare(activeShare)]);
-        store.set(selectedProjectPathAtom, activeShare.projectRoot);
-        store.set(selectedSessionIdAtom, activeShare.sessionId);
         applyDesktopStateSuccess({
           projectPath: activeShare.projectRoot,
           state: desktopStateFromActiveShare(activeShare),
@@ -241,7 +248,12 @@ export default function MainLayout() {
       } catch (err) {
         // Failed fetches report inline per-operation; no global UI per task description.
         if (!cancelled && !isTransientRequestError(err)) {
-          console.warn("project list refresh failed:", err);
+          const msg = getErrorMessage(err);
+          if (isProjectHostOfflineError(msg)) {
+            reconcileProjects([]);
+          } else {
+            console.warn("project list refresh failed:", err);
+          }
         }
       }
       if (cancelled) return;
@@ -255,6 +267,48 @@ export default function MainLayout() {
       if (timer) clearTimeout(timer);
     };
   }, [activeShare, applyDesktopStateSuccess, reconcileProjects, relayReadyForRequests, store]);
+
+  useEffect(() => {
+    if (!relayUrl) return;
+    let cancelled = false;
+    async function refreshShares() {
+      try {
+        const token = await getTokenRef.current();
+        if (!token) return;
+        const result = await listShares({ token });
+        if (cancelled) return;
+        const acceptedShares = result.shares
+          .filter((share) => share.serviceEndpoint)
+          .map((share) => ({
+            shareId: share.id,
+            ownerUserId: share.ownerUserId,
+            projectRoot: share.projectRoot,
+            sessionId: share.sessionId,
+            serviceEndpoint: share.serviceEndpoint!,
+            acceptedAt: share.updatedAt || share.createdAt,
+          }));
+        setAcceptedShares(acceptedShares);
+        const stillActive = activeShare
+          ? acceptedShares.some(
+              (share) =>
+                share.ownerUserId === activeShare.ownerUserId &&
+                share.shareId === activeShare.shareId,
+            )
+          : false;
+        if (!stillActive) setLegacyActiveShare(null);
+      } catch (err) {
+        if (!cancelled && !isTransientRequestError(err)) {
+          console.warn("shared chat list refresh failed:", err);
+        }
+      }
+    }
+    void refreshShares();
+    const timer = setInterval(() => void refreshShares(), PROJECT_LIST_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeShare, relayUrl, setAcceptedShares, setLegacyActiveShare]);
 
   // Poll /desktop-state for the selected project as an SSE fallback. Re-triggers on
   // selection change and on a refresh-nonce bump (from optimistic mutations).
@@ -494,6 +548,8 @@ export default function MainLayout() {
         <Stack screenOptions={stackScreenOptions}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="agent/[sessionId]/chat" />
+          <Stack.Screen name="shares/index" />
+          <Stack.Screen name="shares/[ownerUserId]/[shareId]/agent/[sessionId]/chat" />
           <Stack.Screen name="global-notifications" />
           <Stack.Screen name="global-threads" />
         </Stack>

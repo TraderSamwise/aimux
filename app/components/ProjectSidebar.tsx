@@ -43,6 +43,8 @@ import {
 } from "@/stores/projects";
 import { sidebarModeAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
 import { getProjectServiceEndpoint, projectStateErrorCopy } from "@/lib/project-connection-display";
+import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
+import { acceptedSharedSessionsAtom, type ActiveSharedSession } from "@/stores/settings";
 
 // Restyle palette (Linear-style lifted slate) — mirrors docs/mockups/project-view.html.
 //   sidebar bg #161719 · hairline #2a2b31 · press #232429 · selected #26272d
@@ -135,6 +137,64 @@ function ProjectPicker({
           );
         })
       )}
+    </View>
+  );
+}
+
+function projectNameFromPath(path: string): string {
+  return path.split("/").filter(Boolean).pop() || "Shared project";
+}
+
+function SharedChatsSection({
+  shares,
+  activeShare,
+  onSelect,
+}: {
+  shares: ActiveSharedSession[];
+  activeShare: ActiveSharedSession | null;
+  onSelect: (share: ActiveSharedSession) => void;
+}) {
+  if (shares.length === 0) return null;
+  return (
+    <View className="border-t border-[#2a2b31] pt-4 pb-2">
+      <View className="px-3.5 pb-2">
+        <Text className="text-[10px] font-bold uppercase tracking-widest text-[#787a83]">
+          Shared chats
+        </Text>
+      </View>
+      {shares.map((share) => {
+        const isSelected =
+          activeShare?.ownerUserId === share.ownerUserId && activeShare.shareId === share.shareId;
+        return (
+          <Pressable
+            key={`${share.ownerUserId}:${share.shareId}`}
+            onPress={() => onSelect(share)}
+            className={cn(
+              "px-4 py-3",
+              isSelected ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",
+            )}
+          >
+            <View className="flex-row items-center gap-2.5">
+              <MessageSquare size={15} color={isSelected ? "#38bdf8" : "#787a83"} />
+              <Text
+                className="min-w-0 flex-1 text-[14px] font-medium text-[#edeef0]"
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {projectNameFromPath(share.projectRoot)}
+              </Text>
+              <Text className="font-mono text-[11px] text-[#38bdf8]">shared</Text>
+            </View>
+            <Text
+              className="ml-[25px] mt-0.5 font-mono text-[12px] text-[#787a83]"
+              numberOfLines={1}
+              ellipsizeMode="middle"
+            >
+              {share.sessionId}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -380,6 +440,8 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
+  const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
+  const activeShare = useRouteShare();
   const selectProject = useSetAtom(selectProjectAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const showPicker = useAtomValue(sidebarShowProjectPickerAtom);
@@ -455,6 +517,11 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     router.replace(buildViewHref("/project", { project: path }));
   }
 
+  function handlePickShare(share: ActiveSharedSession) {
+    blurWebActiveElement();
+    router.push(sharedChatHref(share));
+  }
+
   function handlePickSession(sessionId: string) {
     blurWebActiveElement();
     setSelectedSession(sessionId);
@@ -481,16 +548,28 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     >
       <ScrollView className="flex-1">
         {pickerMode ? (
-          <ProjectPicker
-            projects={projects}
-            selectedPath={effectiveProjectPath}
-            onSelect={handlePickProject}
-          />
+          <>
+            <ProjectPicker
+              projects={projects}
+              selectedPath={effectiveProjectPath}
+              onSelect={handlePickProject}
+            />
+            <SharedChatsSection
+              shares={acceptedShares}
+              activeShare={activeShare}
+              onSelect={handlePickShare}
+            />
+          </>
         ) : (
           <>
             <ProjectHeader
               project={effectiveProject!}
               onSwitchProject={() => setShowPicker(true)}
+            />
+            <SharedChatsSection
+              shares={acceptedShares}
+              activeShare={activeShare}
+              onSelect={handlePickShare}
             />
             {showPrimaryNav ? (
               <>

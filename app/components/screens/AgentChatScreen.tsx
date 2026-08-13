@@ -76,6 +76,7 @@ import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
+import { useRouteShare } from "@/lib/use-route-share";
 import { worktreeIdentity } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -94,6 +95,7 @@ import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState"
 import { selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import {
+  acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
   agentOutputViewModeAtom,
   type ActiveSharedSession,
@@ -336,7 +338,9 @@ export default function ChatScreen() {
   const setLastError = useSetAtom(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
-  const [activeShare, setActiveShare] = useAtom(activeSharedSessionAtom);
+  const activeShare = useRouteShare();
+  const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
+  const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
   const { getToken } = useAuth();
   const { user } = useUser();
   const router = useRouter();
@@ -1316,9 +1320,15 @@ export default function ChatScreen() {
     setInviteStatus(null);
     try {
       await leaveShare(activeShare.ownerUserId, activeShare.shareId, { token });
-      setActiveShare(null);
+      setAcceptedShares((shares) =>
+        shares.filter(
+          (share) =>
+            share.ownerUserId !== activeShare.ownerUserId || share.shareId !== activeShare.shareId,
+        ),
+      );
+      setLegacyActiveShare(null);
       setShareSummary(null);
-      router.replace("/");
+      router.replace("/shares");
     } catch (err) {
       setInviteStatus(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1328,6 +1338,10 @@ export default function ChatScreen() {
 
   function goBack() {
     blurWebActiveElement();
+    if (isSharedSessionView) {
+      router.replace("/shares");
+      return;
+    }
     if (router.canGoBack()) router.back();
     else router.replace(parentViewHrefForPath(pathname, projectPath));
   }
