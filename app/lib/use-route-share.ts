@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useGlobalSearchParams, usePathname } from "expo-router";
 import { useAtomValue } from "jotai";
+import { useAuth } from "@/lib/auth";
 import { singleRouteParam } from "@/lib/route-params";
 import { resolveRouteShare } from "@/lib/route-share-resolver";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
@@ -20,6 +21,7 @@ export function useRouteShare(): ActiveSharedSession | null {
   }>();
   const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
   const legacyActiveShare = useAtomValue(activeSharedSessionAtom);
+  const { userId } = useAuth();
   const ownerUserId = singleRouteParam(params.ownerUserId);
   const shareId = singleRouteParam(params.shareId);
   const sessionId = singleRouteParam(params.sessionId);
@@ -29,6 +31,7 @@ export function useRouteShare(): ActiveSharedSession | null {
   return useMemo(() => {
     return resolveRouteShare({
       acceptedShares,
+      currentUserId: userId,
       legacyActiveShare,
       ownerUserId,
       pathname,
@@ -41,6 +44,7 @@ export function useRouteShare(): ActiveSharedSession | null {
     acceptedShares,
     isShareRoute,
     legacyActiveShare,
+    userId,
     ownerUserId,
     pathname,
     routeProjectPath,

@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { LOCAL_MODE, useAuth, useUser } from "@/lib/auth";
 import { useMainTabNavigation } from "@/lib/main-tabs";
+import { primaryEmailFromUser } from "@/lib/user-display";
 import { APP_VERSION, getVersionString } from "@/lib/version";
 
 function initialsFromUser(user: ReturnType<typeof useUser>["user"]): string {
@@ -36,10 +37,20 @@ export function AuthMenu() {
   const versionLabel = `Version ${getVersionString()}`;
   const buildLabel = `Build ${APP_VERSION.buildNumber} · OTA ${APP_VERSION.otaVersion}`;
 
+  const signedInEmail = primaryEmailFromUser(user);
+
   const menu = (
-    <Card className="w-56 p-1">
+    <Card className="w-72 p-1">
+      <View className="border-b border-border px-3 py-2">
+        <Text className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          Signed in
+        </Text>
+        <Text className="mt-1 text-sm font-medium text-foreground" numberOfLines={1}>
+          {signedInEmail}
+        </Text>
+      </View>
       <Pressable
-        className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
+        className="mt-1 flex-row items-center rounded-md px-3 py-2 active:bg-accent"
         onPress={() => {
           close();
           navigateTab("settings");

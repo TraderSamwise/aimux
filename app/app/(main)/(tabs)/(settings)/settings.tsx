@@ -6,7 +6,7 @@ import { Page, PageHeader } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { useAuth } from "@/lib/auth";
+import { useAuth, useUser } from "@/lib/auth";
 import {
   getBrowserNotificationPermission,
   requestBrowserNotificationPermission,
@@ -29,6 +29,7 @@ import {
   type ThemePreference,
 } from "@/stores/settings";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
+import { primaryEmailFromUser } from "@/lib/user-display";
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: "system", label: "System" },
@@ -65,6 +66,8 @@ export default function SettingsScreen() {
   const activeShare = useAtomValue(activeSharedSessionAtom);
   const { isDesktopNative } = useRuntimeTuning();
   const { getToken } = useAuth();
+  const { user } = useUser();
+  const signedInEmail = primaryEmailFromUser(user);
   const [browserPermission, setBrowserPermission] = React.useState<BrowserNotificationPermission>(
     () => getBrowserNotificationPermission(),
   );
@@ -211,6 +214,11 @@ export default function SettingsScreen() {
   return (
     <Page contentClassName="items-center" contentStyle={SETTINGS_CONTENT_STYLE}>
       <PageHeader title="Settings" subtitle="Preferences for the app and agent alerts." />
+      <Text className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">Account</Text>
+      <View className="mb-6 w-full rounded-lg border border-border bg-secondary/40 px-3 py-3">
+        <Text className="text-sm font-medium text-foreground">{signedInEmail}</Text>
+        <Text className="mt-1 text-xs text-muted-foreground">Signed in account</Text>
+      </View>
       <Text className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
         Appearance
       </Text>

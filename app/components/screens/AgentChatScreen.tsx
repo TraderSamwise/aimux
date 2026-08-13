@@ -63,7 +63,6 @@ import {
   uploadImageAttachment,
   type ShareInvite,
   type ShareParticipant,
-  type SharedChatActorInput,
   type SharedSessionSummary,
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
@@ -82,6 +81,7 @@ import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
+import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -406,28 +406,27 @@ export default function ChatScreen() {
       ) ?? null
     );
   }, [shareSummary, user?.id, userEmail]);
-  const sharedChatActor = useMemo<SharedChatActorInput | undefined>(() => {
-    if (!isSharedConversation) return undefined;
-    if (activeShareForRoute || isCanonicalSharedRoute) {
-      return {
-        role: "guest",
-        displayName: currentShareParticipant?.displayName ?? userName ?? "shared guest",
-        email: currentShareParticipant?.email ?? userEmail,
-      };
-    }
-    return {
-      role: "owner",
-      displayName: currentShareParticipant?.displayName ?? userName ?? "chat owner",
-      email: currentShareParticipant?.email ?? userEmail,
-    };
-  }, [
-    activeShareForRoute,
-    currentShareParticipant,
-    isCanonicalSharedRoute,
-    isSharedConversation,
-    userEmail,
-    userName,
-  ]);
+  const sharedChatActor = useMemo(
+    () =>
+      resolveSharedChatActor({
+        currentParticipant: currentShareParticipant,
+        displayName: userName,
+        email: userEmail,
+        isCanonicalSharedRoute,
+        isSharedConversation,
+        routeOwnerUserId,
+        userId: user?.id,
+      }),
+    [
+      currentShareParticipant,
+      isCanonicalSharedRoute,
+      isSharedConversation,
+      routeOwnerUserId,
+      user?.id,
+      userEmail,
+      userName,
+    ],
+  );
   const visibleShareInvites = useMemo(
     () => shareSummary?.invites.filter((invite) => invite.status !== "accepted") ?? [],
     [shareSummary],

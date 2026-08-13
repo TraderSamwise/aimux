@@ -29,6 +29,7 @@ describe("resolveRouteShare", () => {
     expect(
       resolveRouteShare({
         acceptedShares: [share],
+        currentUserId: "user_guest",
         legacyActiveShare: null,
         pathname: "/agent/claude-k4lihz/chat",
         routeProjectPath: share.projectRoot,
@@ -37,10 +38,48 @@ describe("resolveRouteShare", () => {
     ).toEqual(share);
   });
 
+  it("waits for a current user before resolving legacy shared routes", () => {
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        legacyActiveShare: null,
+        pathname: "/agent/claude-k4lihz/chat",
+        routeProjectPath: share.projectRoot,
+        sessionId: share.sessionId,
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves owner project routes in the normal project experience", () => {
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        currentUserId: share.ownerUserId,
+        legacyActiveShare: null,
+        pathname: "/agent/claude-k4lihz/chat",
+        routeProjectPath: share.projectRoot,
+        sessionId: share.sessionId,
+      }),
+    ).toBeNull();
+
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        currentUserId: share.ownerUserId,
+        legacyActiveShare: null,
+        ownerUserId: share.ownerUserId,
+        pathname: "/shares/user_owner/share_123/agent/claude-k4lihz/chat",
+        sessionId: share.sessionId,
+        shareId: share.shareId,
+      }),
+    ).toEqual(share);
+  });
+
   it("resolves leaked project routes only when they match the active shared session", () => {
     expect(
       resolveRouteShare({
         acceptedShares: [],
+        currentUserId: "user_guest",
         legacyActiveShare: share,
         pathname: "/project",
         routeProjectPath: share.projectRoot,

@@ -8,10 +8,12 @@ export function resolveRouteShare({
   routeProjectPath,
   sessionId,
   shareId,
+  currentUserId,
   isShareRoute = pathname === "/shares" || pathname.startsWith("/shares/"),
 }: {
   acceptedShares: readonly ActiveSharedSession[];
   legacyActiveShare: ActiveSharedSession | null;
+  currentUserId?: string | null;
   ownerUserId?: string | null;
   pathname: string;
   routeProjectPath?: string | null;
@@ -32,12 +34,14 @@ export function resolveRouteShare({
 
   if (isShareRoute) return null;
   if (!isSharedLegacyCandidatePath(pathname)) return null;
+  if (!currentUserId) return null;
 
   const legacyMatch = findLegacyPathShare(legacyActiveShare, sessionId, routeProjectPath);
-  if (legacyMatch) return legacyMatch;
+  if (legacyMatch && legacyMatch.ownerUserId !== currentUserId) return legacyMatch;
 
   const acceptedMatch = acceptedShares.find(
     (share) =>
+      share.ownerUserId !== currentUserId &&
       (!sessionId || share.sessionId === sessionId) &&
       (!routeProjectPath || share.projectRoot === routeProjectPath),
   );
