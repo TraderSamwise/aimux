@@ -34,7 +34,7 @@ import {
   stripTrustedAimuxHeaders,
   upsertAcceptedShare,
 } from "./sharing.js";
-import type { SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
+import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
 import type { SecurityEventRecord } from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -45,6 +45,12 @@ const PENDING_REQUEST_TTL_MS = 60_000;
 
 interface ClientSocketAttachment {
   projectEventSubscriptions?: Record<string, string>;
+}
+
+interface SharedClientAuth {
+  userId: string;
+  share: SharedSessionRecord;
+  participant: ShareParticipantRecord;
 }
 
 export class RelayObject extends DurableObject<Env> {
@@ -125,6 +131,7 @@ export class RelayObject extends DurableObject<Env> {
 
     let clientDevice: ReturnType<typeof sanitizeDeviceInfo> | null = null;
     let sharedClientTags: string[] = [];
+    let sharedClientAuth: SharedClientAuth | undefined;
     if (role === "client") {
       try {
         clientDevice = sanitizeDeviceInfo({
@@ -142,6 +149,7 @@ export class RelayObject extends DurableObject<Env> {
         const sharedAuth = await this.authorizeSharedClientConnect(request, shareId);
         if (!sharedAuth.ok) return new Response(sharedAuth.error, { status: sharedAuth.status });
         sharedClientTags = [`share:${shareId}`, `user:${sharedAuth.userId}`];
+        sharedClientAuth = sharedAuth;
       }
     }
     const pair = new WebSocketPair();
@@ -175,7 +183,7 @@ export class RelayObject extends DurableObject<Env> {
       if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
       this.send(server, { type: "connected", role: "client" });
       this.send(server, { type: "daemon_status", online: this.daemonWs !== null });
-      await this.recordClientConnected(request, server, clientDevice!);
+      await this.recordClientConnected(request, server, clientDevice!, sharedClientAuth);
     }
 
     this.ensureHeartbeat();
@@ -546,6 +554,19 @@ export class RelayObject extends DurableObject<Env> {
     }
   }
 
+  private broadcastToOwnerClients(msg: RelayMessage, exclude?: WebSocket): void {
+    const data = JSON.stringify(msg);
+    for (const client of this.clientSockets) {
+      if (client === exclude) continue;
+      if (this.ctx.getTags(client).some((tag) => tag.startsWith("share:"))) continue;
+      try {
+        client.send(data);
+      } catch {
+        this.clientSockets.delete(client);
+      }
+    }
+  }
+
   private send(ws: WebSocket, msg: RelayMessage): void {
     ws.send(JSON.stringify(msg));
   }
@@ -554,21 +575,32 @@ export class RelayObject extends DurableObject<Env> {
     request: Request,
     ws: WebSocket,
     device: ReturnType<typeof sanitizeDeviceInfo>,
+    sharedClientAuth?: SharedClientAuth,
   ): Promise<void> {
-    const userId = request.headers.get("X-Aimux-User-Id") ?? "";
+    const connectingUserId = request.headers.get("X-Aimux-User-Id") ?? "";
+    const securityRecipientUserId = sharedClientAuth?.share.ownerUserId ?? connectingUserId;
     const state = await loadSecurityState(this.ctx.storage);
     const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"), this.env.SECURITY_IP_HASH_SECRET);
     const context = {
       ipHash,
       country: request.headers.get("CF-IPCountry") ?? undefined,
       userAgent: request.headers.get("User-Agent") ?? undefined,
+      shared: sharedClientAuth
+        ? {
+            shareId: sharedClientAuth.share.id,
+            sessionId: sharedClientAuth.share.sessionId,
+            actorUserId: sharedClientAuth.participant.userId,
+            actorName: sharedClientAuth.participant.displayName,
+            actorEmail: sharedClientAuth.participant.email,
+          }
+        : undefined,
     };
     const result = recordClientConnection(state, device, context);
     let emergencyUrl: string | undefined;
-    if (result.firstSeen && userId) {
+    if (result.firstSeen && securityRecipientUserId) {
       const action = await createSecurityActionToken("emergency_lockdown", { deviceId: result.device.id });
       result.state.actions[action.action.id] = action.action;
-      emergencyUrl = `${this.securityActionBaseUrl(request)}/security/action/${encodeURIComponent(userId)}/${encodeURIComponent(action.token)}`;
+      emergencyUrl = `${this.securityActionBaseUrl(request)}/security/action/${encodeURIComponent(securityRecipientUserId)}/${encodeURIComponent(action.token)}`;
     }
     await saveSecurityState(this.ctx.storage, result.state);
     for (const event of result.events) {
@@ -577,11 +609,11 @@ export class RelayObject extends DurableObject<Env> {
           this.send(this.daemonWs, { type: "security_event", event });
         } catch {}
       }
-      if (event.kind === "new_client_detected") {
-        this.broadcastToClients({ type: "security_event", event }, ws);
+      if (event.kind === "new_client_detected" || event.kind === "shared_client_connected") {
+        this.broadcastToOwnerClients({ type: "security_event", event }, ws);
         await deliverSecurityAlert({
           env: this.env,
-          userId,
+          userId: securityRecipientUserId,
           event,
           device: result.device,
           pushTokens: Object.values(result.state.pushTokens),
@@ -672,7 +704,7 @@ export class RelayObject extends DurableObject<Env> {
   private async authorizeSharedClientConnect(
     request: Request,
     shareId: string,
-  ): Promise<{ ok: true; userId: string } | { ok: false; status: number; error: string }> {
+  ): Promise<({ ok: true } & SharedClientAuth) | { ok: false; status: number; error: string }> {
     const userId = request.headers.get("X-Aimux-User-Id")?.trim();
     const ownerUserId = request.headers.get("X-Aimux-Share-Owner-Id")?.trim();
     if (!userId || !ownerUserId) return { ok: false, status: 401, error: "Missing share user context" };
@@ -685,7 +717,7 @@ export class RelayObject extends DurableObject<Env> {
     if (!participant || participant.status !== "active") {
       return { ok: false, status: 403, error: "Not a participant in this shared chat" };
     }
-    return { ok: true, userId };
+    return { ok: true, userId, share, participant };
   }
 
   private async prepareSharedClientRequest(

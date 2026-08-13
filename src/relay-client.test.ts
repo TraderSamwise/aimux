@@ -82,6 +82,32 @@ describe("RelayClient runtime compatibility", () => {
     expect(notifyRemoteClientConnected).toHaveBeenCalledTimes(2);
   });
 
+  it("turns shared participant security events into distinct local owner notifications", async () => {
+    const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
+    const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
+    const message = JSON.stringify({
+      type: "security_event",
+      event: {
+        kind: "shared_client_connected",
+        deviceId: "shared:share-1:user-guest:device-1",
+        shareId: "share-1",
+        sessionId: "claude-abc",
+        actorUserId: "user-guest",
+        actorName: "Alex",
+        title: "Shared chat participant connected",
+        body: "Alex connected to claude-abc from SG.",
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    await (client as unknown as { handleMessage(data: string): Promise<void> }).handleMessage(message);
+
+    expect(notifyRemoteClientConnected).toHaveBeenCalledWith({
+      title: "Shared chat participant connected",
+      body: "Alex connected to claude-abc from SG.",
+    });
+  });
+
   it("proxies project service SSE events over relay subscriptions", async () => {
     const originalFetch = globalThis.fetch;
     const originalWebSocket = globalThis.WebSocket;

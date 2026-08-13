@@ -18,6 +18,13 @@ export interface SecurityConnectionContext {
   ipHash?: string;
   country?: string;
   userAgent?: string;
+  shared?: {
+    shareId: string;
+    sessionId: string;
+    actorUserId: string;
+    actorName: string;
+    actorEmail?: string;
+  };
 }
 
 export interface SecurityDeviceRecord extends SecurityDeviceInfo {
@@ -34,6 +41,7 @@ export interface SecurityDeviceRecord extends SecurityDeviceInfo {
 export type SecurityEventKind =
   | "client_connected"
   | "new_client_detected"
+  | "shared_client_connected"
   | "shared_invite_accepted"
   | "shared_participant_left"
   | "shared_participant_removed"
@@ -193,12 +201,18 @@ export function recordClientConnection(
   now = new Date().toISOString(),
 ): { state: SecurityState; device: SecurityDeviceRecord; firstSeen: boolean; events: SecurityEventRecord[] } {
   const next = normalizeSecurityState(state);
-  const previous = next.devices[deviceInfo.deviceId];
+  const normalizedDeviceInfo = context.shared
+    ? {
+        ...deviceInfo,
+        deviceId: sharedDeviceId(context.shared, deviceInfo.deviceId),
+      }
+    : deviceInfo;
+  const previous = next.devices[normalizedDeviceInfo.deviceId];
   const firstSeen = !previous;
   const device: SecurityDeviceRecord = {
     ...previous,
-    ...deviceInfo,
-    id: deviceInfo.deviceId,
+    ...normalizedDeviceInfo,
+    id: normalizedDeviceInfo.deviceId,
     firstSeenAt: previous?.firstSeenAt ?? now,
     lastSeenAt: now,
     approvedAt: previous?.approvedAt,
@@ -209,10 +223,10 @@ export function recordClientConnection(
   };
   next.devices[device.id] = device;
 
-  const events: SecurityEventRecord[] = [buildSecurityEvent("client_connected", device, context, now)];
-  if (firstSeen) {
-    events.push(buildSecurityEvent("new_client_detected", device, context, now));
-  }
+  const events: SecurityEventRecord[] = context.shared
+    ? [buildSecurityEvent("shared_client_connected", device, context, now)]
+    : [buildSecurityEvent("client_connected", device, context, now)];
+  if (!context.shared && firstSeen) events.push(buildSecurityEvent("new_client_detected", device, context, now));
   for (const event of events) appendSecurityEvent(next, event);
   return { state: next, device, firstSeen, events };
 }
@@ -360,14 +374,33 @@ export function deactivateSecurityLockdown(
 }
 
 function buildSecurityEvent(
-  kind: "client_connected" | "new_client_detected",
+  kind: "client_connected" | "new_client_detected" | "shared_client_connected",
   device: SecurityDeviceRecord,
   context: SecurityConnectionContext,
   now: string,
 ): SecurityEventRecord {
   const name = device.name || device.platform || device.kind;
-  const title = kind === "new_client_detected" ? "New remote client detected" : "Remote client connected";
   const location = context.country ? ` from ${context.country}` : "";
+  if (context.shared) {
+    const actorName = sanitizeText(context.shared.actorName, 80) || context.shared.actorUserId;
+    const session = sanitizeText(context.shared.sessionId, 160) || "shared chat";
+    return {
+      id: randomBase64Url(16),
+      kind,
+      deviceId: device.id,
+      shareId: sanitizeText(context.shared.shareId, 160),
+      sessionId: session,
+      actorUserId: sanitizeText(context.shared.actorUserId, 160),
+      actorName,
+      actorEmail: sanitizeText(context.shared.actorEmail, 160),
+      title: kind === "shared_client_connected" ? "Shared chat participant connected" : "Remote client connected",
+      body: `${actorName} connected to ${session}${location}.`,
+      createdAt: now,
+      country: context.country,
+      userAgent: context.userAgent,
+    };
+  }
+  const title = kind === "new_client_detected" ? "New remote client detected" : "Remote client connected";
   return {
     id: randomBase64Url(16),
     kind,
@@ -384,6 +417,13 @@ function sanitizeId(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   return trimmed.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 120) || undefined;
+}
+
+function sharedDeviceId(shared: NonNullable<SecurityConnectionContext["shared"]>, deviceId: string): string {
+  const shareId = sanitizeId(shared.shareId) ?? "share";
+  const actorUserId = sanitizeId(shared.actorUserId) ?? "user";
+  const rawDeviceId = sanitizeId(deviceId) ?? "device";
+  return `shared:${shareId}:${actorUserId}:${rawDeviceId}`.slice(0, 120);
 }
 
 function sanitizeText(value: string | undefined, maxLength: number): string | undefined {
