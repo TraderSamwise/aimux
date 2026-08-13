@@ -39,6 +39,9 @@ contract, and dashboard windows without killing agent panes.
 
 ## App Loop
 
+The production browser app is [aimux.app](https://aimux.app). The same Expo
+client also targets the upcoming iOS and Android apps.
+
 Run the local web app with Expo HMR:
 
 ```bash

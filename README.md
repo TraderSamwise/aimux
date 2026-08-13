@@ -24,6 +24,15 @@ mobile app, and relay-backed shared chats.
 Execution stays local. Remote clients relay requests to the owner's running
 local daemon and project service.
 
+## App
+
+Aimux includes a browser app at [aimux.app](https://aimux.app). The app is for
+remote access to your own running Aimux daemon, shared chat invitations, and
+the web version of the project control plane.
+
+The iOS and Android apps use the same Expo client and are the upcoming native
+surfaces for the same workflows.
+
 ## Install
 
 ### Homebrew
@@ -87,10 +96,10 @@ aimux task assign "Audit the reconnect path" --project /path/to/repo
 aimux thread list --project /path/to/repo --json
 ```
 
-## Web, Mobile, And Sharing
+## Remote Access And Sharing
 
-The browser and native clients live at [aimux.app](https://aimux.app). They are
-clients of the same local control plane as the terminal dashboard.
+The web and native clients are clients of the same local control plane as the
+terminal dashboard.
 
 Owner remote access is opt-in:
 

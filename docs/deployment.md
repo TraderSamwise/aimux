@@ -79,6 +79,8 @@ bindings are not inherited from the top-level Worker config.
 
 ## 3. Web App
 
+The production browser app is [aimux.app](https://aimux.app).
+
 ### Environment Variables
 
 Set in your hosting platform (Vercel, etc.):
@@ -140,6 +142,9 @@ Clerk session during `aimux login`) and `RELAY_TOKEN_SECRET` (signs the
 HS256 daemon tokens it mints).
 
 ## 5. Mobile App (iOS/Android)
+
+The iOS and Android apps are built from the same Expo client as the web app.
+They use the same relay and Clerk configuration.
 
 Releases use the shared `@tradersamwise/eas-release` CLI. Pick the path by what
 changed, and always bump the version first.

@@ -11,9 +11,9 @@ Aimux separates local execution from a shared control plane.
    pane reads, and project events.
 3. **tmux runtime** - owns terminal execution: panes, windows, PTYs,
    scrollback, attach/detach, and same-machine focus behavior.
-4. **Clients** - terminal dashboard, CLI, Expo web/mobile app, scripts, and
-   plugins. Clients read and mutate shared state through daemon and project
-   service APIs.
+4. **Clients** - terminal dashboard, CLI, [aimux.app](https://aimux.app), the
+   upcoming iOS/Android apps, scripts, and plugins. Clients read and mutate
+   shared state through daemon and project service APIs.
 5. **Relay** - optional remote transport for owner devices and accepted shared
    chats. It forwards authorized requests to the owner's connected daemon.
 
@@ -52,8 +52,9 @@ runtime-private files directly.
 
 ## App Architecture
 
-The browser and native clients live in `app/` as a single Expo Router
-application for web, iOS, and Android.
+The browser app is [aimux.app](https://aimux.app). The browser and native
+clients live in `app/` as a single Expo Router application for web, iOS, and
+Android.
 
 - `app/app/` contains route screens.
 - `app/components/` contains shared UI.
