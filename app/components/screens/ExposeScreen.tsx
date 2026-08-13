@@ -23,6 +23,7 @@ import {
 } from "@/lib/expose-model";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
+import { appStatusClasses } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
@@ -56,72 +57,6 @@ function resolveScope(value: string | string[] | undefined): ExposeScope {
 function resolveFilter(value: string | string[] | undefined): ExposeFilter {
   const first = Array.isArray(value) ? value[0] : value;
   return FILTER_OPTIONS.some((option) => option.value === first) ? (first as ExposeFilter) : "all";
-}
-
-function statusBoxClass(kind: ExposeTile["statusKind"]): string {
-  switch (kind) {
-    case "working":
-      return "border-emerald-500/30 bg-emerald-500/10";
-    case "needs":
-    case "blocked":
-    case "error":
-      return "border-amber-500/30 bg-amber-500/10";
-    case "ready":
-    case "idle":
-    case "done":
-      return "border-sky-500/25 bg-sky-500/10";
-    case "service":
-      return "border-violet-500/25 bg-violet-500/10";
-    case "serviceOff":
-    case "offline":
-      return "border-zinc-500/20 bg-zinc-500/10";
-    default:
-      return "border-zinc-500/20 bg-zinc-500/10";
-  }
-}
-
-function statusTextClass(kind: ExposeTile["statusKind"]): string {
-  switch (kind) {
-    case "working":
-      return "text-emerald-300";
-    case "needs":
-    case "blocked":
-    case "error":
-      return "text-amber-300";
-    case "ready":
-    case "idle":
-    case "done":
-      return "text-sky-300";
-    case "service":
-      return "text-violet-300";
-    case "serviceOff":
-    case "offline":
-      return "text-zinc-400";
-    default:
-      return "text-zinc-400";
-  }
-}
-
-function dotClass(kind: ExposeTile["statusKind"]): string {
-  switch (kind) {
-    case "working":
-      return "bg-emerald-400";
-    case "needs":
-    case "blocked":
-    case "error":
-      return "bg-amber-400";
-    case "ready":
-    case "idle":
-    case "done":
-      return "bg-sky-400";
-    case "service":
-      return "bg-violet-400";
-    case "serviceOff":
-    case "offline":
-      return "bg-zinc-600";
-    default:
-      return "bg-zinc-600";
-  }
 }
 
 function sourcesForGlobalExposeItems(projects: DaemonProject[], items: ExposeSourceItem[]) {
@@ -170,6 +105,7 @@ function ExposeTileCard({
       : tile.chatPreviewMessages.length > 0;
   const chatDividerWidth = Math.max(24, Math.floor((tileWidth * 0.9 - 24) / 8.5) - 2);
   const chatEndpoint = tile.serviceEndpoint;
+  const statusTone = appStatusClasses(tile.statusKind);
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
@@ -177,12 +113,12 @@ function ExposeTileCard({
         style={{ height: tileHeight }}
         className={cn(
           "rounded-lg border bg-[#17181d] p-0 overflow-hidden hover:bg-[#1c1d23]",
-          tile.statusKind === "offline" ? "border-[#2a2b31]" : "border-[#334155]",
+          statusTone.cardBorder,
         )}
       >
         <View className="flex-1 border-l-4 p-3.5" style={{ borderLeftColor: tile.tone }}>
           <View className="flex-row items-start gap-2">
-            <View className={cn("mt-1 h-2 w-2 rounded-full", dotClass(tile.statusKind))} />
+            <View className={cn("mt-1 h-2 w-2 rounded-full", statusTone.dot)} />
             <View className="min-w-0 flex-1">
               <View className="flex-row items-baseline gap-2">
                 <Text
@@ -209,12 +145,9 @@ function ExposeTileCard({
               </Text>
             </View>
             {tile.status ? (
-              <View className={cn("rounded border px-2 py-0.5", statusBoxClass(tile.statusKind))}>
+              <View className={cn("rounded border px-2 py-0.5", statusTone.border, statusTone.bg)}>
                 <Text
-                  className={cn(
-                    "text-[10px] font-bold uppercase leading-[14px]",
-                    statusTextClass(tile.statusKind),
-                  )}
+                  className={cn("text-[10px] font-bold uppercase leading-[14px]", statusTone.text)}
                 >
                   {tile.status}
                 </Text>

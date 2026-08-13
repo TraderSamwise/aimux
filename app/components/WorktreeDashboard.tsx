@@ -13,7 +13,14 @@ import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
-import { firstTokenOf } from "@/lib/status-tone";
+import {
+  agentStatusKind,
+  aggregateStatusKind,
+  appStatusClasses,
+  firstTokenOf,
+  serviceStatusKind,
+  type AppStatusKind,
+} from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { useRouteProject } from "@/lib/use-route-project";
 import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
@@ -51,19 +58,9 @@ function cap(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
-type StateKind =
-  | "running"
-  | "waiting"
-  | "idle"
-  | "offline"
-  | "exited"
-  | "error"
-  | "needs"
-  | "blocked";
-
 interface AgentState {
   label: string;
-  kind: StateKind;
+  kind: AppStatusKind;
   pill: boolean;
 }
 
@@ -72,7 +69,7 @@ interface AgentState {
 // status. Pill states read as active; the rest are quiet words.
 function deriveAgentState(session: DesktopSession): AgentState {
   if (session.pendingAction)
-    return { label: cap(session.pendingAction), kind: "waiting", pill: false };
+    return { label: cap(session.pendingAction), kind: agentStatusKind(session), pill: false };
   switch (session.attention) {
     case "error":
       return { label: "Error", kind: "error", pill: true };
@@ -83,52 +80,27 @@ function deriveAgentState(session: DesktopSession): AgentState {
     case "needs_response":
       return { label: "Needs reply", kind: "needs", pill: true };
   }
-  if (session.status === "running") return { label: "Running", kind: "running", pill: true };
-  if (session.status === "waiting") return { label: "Waiting", kind: "waiting", pill: true };
+  const kind = agentStatusKind(session);
+  if (session.status === "running") return { label: "Running", kind, pill: true };
+  if (session.status === "waiting") return { label: "Waiting", kind, pill: true };
   if (session.status === "idle") return { label: "Idle", kind: "idle", pill: false };
-  if (session.status === "exited") return { label: "Exited", kind: "exited", pill: false };
+  if (session.status === "exited") return { label: "Exited", kind, pill: false };
   return { label: "Offline", kind: "offline", pill: false };
 }
 
-// Split bg/text so the background class lands only on the View and the text
-// color only on the Text — on native a Text background composites over the
-// parent's, which would darken the pill under the label.
-const PILL_BG: Record<StateKind, string> = {
-  running: "bg-emerald-500/15",
-  waiting: "bg-amber-500/15",
-  needs: "bg-amber-500/15",
-  error: "bg-red-500/15",
-  blocked: "bg-fuchsia-500/15",
-  idle: "bg-zinc-500/15",
-  offline: "bg-zinc-500/10",
-  exited: "bg-red-500/10",
-};
-
-const WORD_CLASS: Record<StateKind, string> = {
-  running: "text-emerald-400",
-  waiting: "text-amber-400",
-  needs: "text-amber-400",
-  error: "text-red-400",
-  blocked: "text-fuchsia-300",
-  idle: "text-[#7c7e88]",
-  offline: "text-[#7c7e88]",
-  exited: "text-red-400/80",
-};
-
 function StatusCell({ state }: { state: AgentState }) {
+  const tone = appStatusClasses(state.kind);
   if (state.pill) {
     return (
-      <View className={cn("rounded-[5px] px-2 py-0.5", PILL_BG[state.kind])}>
-        <Text
-          className={cn("text-[10.5px] font-bold uppercase tracking-wide", WORD_CLASS[state.kind])}
-        >
+      <View className={cn("rounded-[5px] px-2 py-0.5", tone.bg)}>
+        <Text className={cn("text-[10.5px] font-bold uppercase tracking-wide", tone.text)}>
           {state.label}
         </Text>
       </View>
     );
   }
   return (
-    <Text className={cn("font-mono text-[12px]", WORD_CLASS[state.kind])} numberOfLines={1}>
+    <Text className={cn("font-mono text-[12px]", tone.text)} numberOfLines={1}>
       {state.label}
     </Text>
   );
@@ -188,7 +160,7 @@ function AgentRow({
     <>
       <SelectMark selected={selected} />
       <View className="w-4 items-center justify-center">
-        <StatusDotMini status={session.status} />
+        <StatusDotMini status={state.kind} />
       </View>
       <IndexBadge digit={digit} />
       <View
@@ -282,17 +254,13 @@ function ServiceRow({
   onPress: () => void;
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
-  const word =
-    service.status === "running"
-      ? "text-emerald-400"
-      : service.status === "exited"
-        ? "text-red-400/80"
-        : "text-[#7c7e88]";
+  const stateKind = serviceStatusKind(service);
+  const tone = appStatusClasses(stateKind);
   const identity = (
     <>
       <SelectMark selected={false} />
       <View className="w-4 items-center justify-center">
-        <StatusDotMini status={service.status} shape="diamond" />
+        <StatusDotMini status={stateKind} shape="diamond" />
       </View>
       <IndexBadge digit={digit} />
       <View
@@ -337,7 +305,7 @@ function ServiceRow({
         {identity}
       </Pressable>
       <View className="shrink-0 flex-row items-center gap-3 pl-2">
-        <Text className={cn("font-mono text-[12px]", word)} numberOfLines={1}>
+        <Text className={cn("font-mono text-[12px]", tone.text)} numberOfLines={1}>
           {service.pendingAction ?? service.status}
         </Text>
         <ServiceActions
@@ -354,32 +322,54 @@ function ServiceRow({
 
 interface CountChip {
   label: string;
-  active: boolean;
+  kind: AppStatusKind;
 }
 
 function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
-  let running = 0;
-  let waiting = 0;
+  let working = 0;
+  let needs = 0;
+  let blocked = 0;
+  let error = 0;
+  let ready = 0;
+  let done = 0;
   let idle = 0;
   let offline = 0;
   for (const session of bucket.sessions) {
-    if (session.status === "running") running++;
-    else if (session.status === "waiting") waiting++;
-    else if (session.status === "idle") idle++;
-    else offline++; // offline + exited
+    const kind = agentStatusKind(session);
+    if (kind === "working") working++;
+    else if (kind === "needs") needs++;
+    else if (kind === "blocked") blocked++;
+    else if (kind === "error") error++;
+    else if (kind === "ready") ready++;
+    else if (kind === "done") done++;
+    else if (kind === "idle") idle++;
+    else offline++;
   }
   for (const service of bucket.services) {
-    if (service.status === "running") running++;
+    const kind = serviceStatusKind(service);
+    if (kind === "service") working++;
     else offline++;
   }
   const chips: CountChip[] = [];
-  if (running > 0) chips.push({ label: `${running} running`, active: true });
-  if (waiting > 0) chips.push({ label: `${waiting} waiting`, active: true });
-  if (idle > 0) chips.push({ label: `${idle} idle`, active: false });
-  if (offline > 0) chips.push({ label: `${offline} offline`, active: false });
-  if (bucket.pending) chips.push({ label: "pending", active: true });
-  if (bucket.removing) chips.push({ label: "removing", active: true });
+  if (error > 0) chips.push({ label: `${error} error`, kind: "error" });
+  if (needs > 0) chips.push({ label: `${needs} needs`, kind: "needs" });
+  if (blocked > 0) chips.push({ label: `${blocked} blocked`, kind: "blocked" });
+  if (working > 0) chips.push({ label: `${working} running`, kind: "working" });
+  if (ready > 0) chips.push({ label: `${ready} ready`, kind: "ready" });
+  if (done > 0) chips.push({ label: `${done} done`, kind: "done" });
+  if (idle > 0) chips.push({ label: `${idle} idle`, kind: "idle" });
+  if (offline > 0) chips.push({ label: `${offline} offline`, kind: "offline" });
+  if (bucket.pending) chips.push({ label: "pending", kind: "needs" });
+  if (bucket.removing) chips.push({ label: "removing", kind: "needs" });
   return chips;
+}
+
+function worktreeAggregateKind(bucket: WorktreeBucket): AppStatusKind | null {
+  return aggregateStatusKind([
+    ...bucket.sessions.map(agentStatusKind),
+    ...bucket.services.map(serviceStatusKind),
+    bucket.pending || bucket.removing ? "needs" : null,
+  ]);
 }
 
 function WorktreeCard({
@@ -403,16 +393,10 @@ function WorktreeCard({
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
 }) {
-  const anyRunning = [...bucket.sessions, ...bucket.services].some((x) => x.status === "running");
-  const isSettling = Boolean(bucket.pending || bucket.removing);
+  const aggregateKind = worktreeAggregateKind(bucket);
+  const aggregateTone = appStatusClasses(aggregateKind);
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
-  const barColor = containsSelected
-    ? "#e0b341"
-    : anyRunning
-      ? "#3f9c6d"
-      : isSettling
-        ? "#d4a62a"
-        : "#26272d";
+  const barColor = containsSelected ? "#e0b341" : aggregateKind ? aggregateTone.hex : "#26272d";
   const chips = worktreeCountChips(bucket);
 
   return (
@@ -433,8 +417,8 @@ function WorktreeCard({
         className={cn("flex-row items-center gap-2.5", compact ? "px-3 py-2" : "px-3.5 py-2.5")}
       >
         <StatusDotMini
-          status={anyRunning || isSettling ? "running" : undefined}
-          hollow={!anyRunning && !isSettling}
+          status={aggregateKind ?? undefined}
+          hollow={!aggregateKind || aggregateKind === "offline" || aggregateKind === "serviceOff"}
           shape="square"
           outline
         />
@@ -460,17 +444,9 @@ function WorktreeCard({
           {chips.map((chip) => (
             <View
               key={chip.label}
-              className={cn(
-                "rounded-[5px] px-2 py-0.5",
-                chip.active ? "bg-emerald-500/10" : "bg-[#202127]",
-              )}
+              className={cn("rounded-[5px] px-2 py-0.5", appStatusClasses(chip.kind).bg)}
             >
-              <Text
-                className={cn(
-                  "font-mono text-[11px]",
-                  chip.active ? "text-emerald-400" : "text-[#7c7e88]",
-                )}
-              >
+              <Text className={cn("font-mono text-[11px]", appStatusClasses(chip.kind).text)}>
                 {chip.label}
               </Text>
             </View>

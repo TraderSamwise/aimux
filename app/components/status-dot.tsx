@@ -2,6 +2,7 @@ import React from "react";
 import { View } from "react-native";
 import { GitBranch } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { appStatusClasses } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 
 // Visual status indicator used across the sidebar tree, main-panel cards, and
@@ -14,33 +15,9 @@ const SIZE_CLASS: Record<"sm" | "md" | "lg", string> = {
   lg: "w-3 h-3",
 };
 
-const TONE_BG: Record<string, string> = {
-  running: "bg-emerald-500",
-  idle: "bg-zinc-400",
-  waiting: "bg-amber-500",
-  exited: "bg-zinc-600",
-  offline: "bg-zinc-600",
-};
-
-const TONE_PILL_BG: Record<string, string> = {
-  running: "bg-emerald-500/15",
-  idle: "bg-zinc-500/15",
-  waiting: "bg-amber-500/15",
-  exited: "bg-zinc-500/10",
-  offline: "bg-zinc-500/10",
-};
-
-const TONE_PILL_TEXT: Record<string, string> = {
-  running: "text-emerald-400",
-  idle: "text-zinc-300",
-  waiting: "text-amber-400",
-  exited: "text-zinc-400",
-  offline: "text-zinc-400",
-};
-
 export function StatusDot({ status, size = "sm" }: { status: string; size?: "sm" | "md" | "lg" }) {
-  const bg = TONE_BG[status] ?? "bg-zinc-500";
-  return <View className={cn("rounded-full", SIZE_CLASS[size], bg)} />;
+  const tone = appStatusClasses(status);
+  return <View className={cn("rounded-full", SIZE_CLASS[size], tone.dot)} />;
 }
 
 // Restyle (Linear-style) dot used by the project view: green = running,
@@ -67,13 +44,7 @@ export function StatusDotMini({
   // encodes status: green = running, muted = idle, faint = empty.
   if (outline) {
     const size = shape === "diamond" ? "h-[7px] w-[7px]" : "h-2 w-2";
-    const borderColor = hollow
-      ? "border-[#44464e]"
-      : status === "running"
-        ? "border-[#4ade80]"
-        : status === "waiting"
-          ? "border-amber-400"
-          : "border-[#6b6d75]";
+    const borderColor = hollow ? "border-[#44464e]" : appStatusClasses(status).ring;
     return <View className={cn(size, cornerClass, rotateClass, "border-2", borderColor)} />;
   }
 
@@ -85,9 +56,8 @@ export function StatusDotMini({
       />
     );
   }
-  const bg =
-    status === "running" ? "bg-[#4ade80]" : status === "waiting" ? "bg-amber-400" : "bg-[#5b5d66]";
-  return <View className={cn(sizeClass, cornerClass, rotateClass, bg)} />;
+  const tone = appStatusClasses(status);
+  return <View className={cn(sizeClass, cornerClass, rotateClass, tone.dot)} />;
 }
 
 // Branch pill (revived from the pre-restyle design): a GitBranch glyph + the
@@ -118,11 +88,12 @@ export function TypeTag({ label }: { label: string }) {
 }
 
 export function StatusPill({ status }: { status: string }) {
-  const bg = TONE_PILL_BG[status] ?? "bg-zinc-500/10";
-  const text = TONE_PILL_TEXT[status] ?? "text-zinc-400";
+  const tone = appStatusClasses(status);
   return (
-    <View className={cn("px-1.5 py-0.5 rounded", bg)}>
-      <Text className={cn("text-[10px] font-medium uppercase tracking-wide", text)}>{status}</Text>
+    <View className={cn("px-1.5 py-0.5 rounded", tone.bg)}>
+      <Text className={cn("text-[10px] font-medium uppercase tracking-wide", tone.text)}>
+        {status}
+      </Text>
     </View>
   );
 }

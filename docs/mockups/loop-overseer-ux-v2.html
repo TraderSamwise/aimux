@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>aimux loop overseer ux v2</title>
+<style>
+  :root {
+    --page: #07080b;
+    --app: #101116;
+    --panel: #181a20;
+    --panel-2: #20222a;
+    --line: #323541;
+    --line-2: #444856;
+    --fg: #f1f2f5;
+    --muted: #a1a6b2;
+    --faint: #6d7280;
+    --green: #53d18a;
+    --cyan: #56b6d4;
+    --gold: #e5c66d;
+    --red: #ef7d7d;
+    --blue: #7fb0ff;
+    --purple: #d486e8;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); color: var(--fg); }
+  body { font: 14px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font: 780 28px/1.08 var(--sans); }
+  h2 {
+    margin: 34px 0 12px;
+    color: #d8dbe3;
+    font: 780 12px/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  h3 { font: 760 16px/1.15 var(--sans); }
+  button { font: inherit; }
+
+  .page { max-width: 1580px; margin: 0 auto; padding: 28px; }
+  .intro { margin-top: 10px; max-width: 920px; color: var(--muted); }
+  .rule {
+    margin-top: 18px;
+    border: 1px solid var(--line);
+    background: #12141a;
+    border-radius: 8px;
+    padding: 14px 16px;
+    color: var(--muted);
+  }
+  .rule strong { color: var(--fg); }
+
+  .browser, .phone, .terminalShell {
+    border: 1px solid #262a34;
+    background: #050608;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 20px 70px rgba(0,0,0,.42);
+  }
+  .chrome {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 14px;
+    background: #20232b;
+    border-bottom: 1px solid #303440;
+  }
+  .light { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+  .light:nth-child(2) { background: #febc2e; }
+  .light:nth-child(3) { background: #28c840; }
+  .url {
+    margin-left: 12px;
+    min-width: 0;
+    flex: 1;
+    color: #a7acb8;
+    font: 12px/1 var(--mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app {
+    min-height: 760px;
+    background: var(--app);
+    display: flex;
+    flex-direction: column;
+  }
+  .top {
+    height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: #14161c;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font: 760 16px/1 var(--mono); }
+  .bot {
+    width: 25px;
+    height: 25px;
+    border-radius: 7px;
+    background: #050608;
+    border: 1px solid #242833;
+    display: grid;
+    place-items: center;
+    color: #c8f7d1;
+    font-size: 15px;
+  }
+  .topActions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .pill, .iconBtn, .seg, .tag {
+    border: 1px solid var(--line);
+    background: #181a20;
+    color: var(--muted);
+    border-radius: 8px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 30px;
+    padding: 0 10px;
+    font: 700 12px/1 var(--sans);
+  }
+  .pill.active, .seg.active { background: #f4f5f7; color: #15171d; }
+  .iconBtn {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    font: 15px/1 var(--mono);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; flex: none; }
+  .dot.run { background: var(--green); }
+  .dot.wait { background: var(--gold); }
+  .dot.err { background: var(--red); }
+  .dot.blue { background: var(--cyan); }
+  .dot.purple { background: var(--purple); }
+
+  .body { display: flex; min-height: 0; flex: 1; }
+  .side {
+    width: 286px;
+    flex: none;
+    border-right: 1px solid var(--line);
+    background: #15171c;
+    padding: 14px 10px;
+  }
+  .sideHead { padding: 8px 10px 14px; border-bottom: 1px solid #282b34; }
+  .back { color: var(--faint); font-size: 12px; font-weight: 650; }
+  .projectName { margin-top: 8px; font-weight: 760; font-size: 16px; }
+  .path { margin-top: 3px; color: var(--faint); font: 11px/1.2 var(--mono); }
+  .tabs { display: flex; gap: 18px; padding: 10px; border-bottom: 1px solid #282b34; }
+  .tab { color: var(--faint); font-weight: 720; }
+  .tab.on { color: var(--fg); border-bottom: 2px solid var(--fg); padding-bottom: 6px; }
+  .navItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 6px;
+    color: var(--muted);
+    font-weight: 650;
+  }
+  .navItem.on { background: #262932; color: var(--fg); }
+  .dashboardGroup {
+    margin: 10px 0;
+    border: 1px solid #2a2e38;
+    border-left: 3px solid var(--green);
+    border-radius: 8px;
+    padding: 10px;
+    background: #17191f;
+  }
+  .dashboardGroup.wait { border-left-color: var(--gold); }
+  .groupTitle { display: flex; align-items: center; gap: 8px; font-weight: 760; }
+  .agentRow {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 28px;
+    margin-left: 12px;
+    color: var(--muted);
+    font: 12px/1.1 var(--mono);
+  }
+  .agentRow strong { color: var(--fg); font-family: var(--sans); }
+
+  .main { flex: 1; min-width: 0; padding: 18px 22px; overflow: auto; }
+  .pageHead {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 18px;
+  }
+  .eyebrow { color: var(--muted); font: 800 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .pageHead h3 { margin-top: 8px; font: 800 23px/1.05 var(--sans); }
+  .switcher, .filters { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #15171d; }
+  .seg { border: 0; border-radius: 0; padding: 8px 12px; font-weight: 760; background: transparent; }
+  .metrics { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+  .metric {
+    min-width: 122px;
+    border: 1px solid var(--line);
+    background: #181a20;
+    border-radius: 999px;
+    padding: 9px 13px;
+    font-weight: 760;
+  }
+  .metric span { color: var(--muted); margin-right: 8px; }
+
+  .overseerGrid {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .subtitle { color: var(--muted); font-size: 12px; }
+  .statusBadge {
+    border: 1px solid rgba(83, 209, 138, .34);
+    background: rgba(83, 209, 138, .12);
+    color: #a7f3c8;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font: 800 11px/1 var(--mono);
+  }
+  .statusBadge.gold { border-color: rgba(229,198,109,.34); background: rgba(229,198,109,.12); color: #f8dfa2; }
+  .statusBadge.off { border-color: #383b46; background: #20222a; color: var(--muted); }
+  .stack { display: grid; gap: 8px; }
+  .modelLine {
+    display: grid;
+    grid-template-columns: 118px 1fr;
+    gap: 10px;
+    color: var(--muted);
+    font: 12px/1.35 var(--mono);
+  }
+  .modelLine b { color: var(--fg); font-family: var(--sans); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .btn {
+    border: 1px solid var(--line-2);
+    background: #22252d;
+    color: var(--fg);
+    border-radius: 8px;
+    min-height: 34px;
+    padding: 0 12px;
+    font-weight: 760;
+  }
+  .btn.primary { background: #f5f6f8; color: #14161b; border-color: #f5f6f8; }
+  .btn.danger { color: #ffd1d1; border-color: rgba(239,125,125,.38); background: rgba(239,125,125,.09); }
+  .btn.ghost { color: var(--muted); background: transparent; }
+
+  .assignList { display: grid; gap: 8px; }
+  .assignment {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    border: 1px solid #2c303a;
+    background: #15171d;
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .assignmentTitle { display: flex; gap: 8px; align-items: center; font-weight: 760; }
+  .assignmentMeta { margin-top: 3px; color: var(--muted); font: 12px/1.2 var(--mono); }
+  .assignmentAction { display: flex; gap: 6px; }
+  .tinyBtn {
+    border: 1px solid var(--line);
+    background: #1f222a;
+    color: var(--muted);
+    border-radius: 6px;
+    height: 26px;
+    padding: 0 8px;
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    border: 1px solid rgba(229,198,109,.34);
+    background: rgba(229,198,109,.1);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+  }
+  .banner strong { color: #f5dd9c; }
+  .banner p { color: var(--muted); margin-top: 2px; }
+
+  .agentTable {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .agentTable th, .agentTable td {
+    text-align: left;
+    border-bottom: 1px solid #2b2e38;
+    padding: 10px 12px;
+    vertical-align: middle;
+  }
+  .agentTable th {
+    color: var(--muted);
+    font: 800 11px/1 var(--mono);
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    background: #14161b;
+  }
+  .agentTable tr:last-child td { border-bottom: 0; }
+  .agentName { display: flex; gap: 8px; align-items: center; font-weight: 760; }
+  .mutedMono { color: var(--muted); font: 12px/1.25 var(--mono); }
+
+  .terminalShell { border-radius: 8px; }
+  .terminalTop {
+    height: 32px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--line);
+    background: #161820;
+    color: var(--muted);
+    font: 12px/1 var(--mono);
+  }
+  .terminal {
+    min-height: 520px;
+    padding: 14px;
+    background: #252830;
+    color: #e7e8ed;
+    font: 13px/1.35 var(--mono);
+    white-space: pre;
+    overflow: hidden;
+  }
+  .termLine { color: #dfe2e8; }
+  .termDim { color: #868c99; }
+  .termGreen { color: #9ce3af; }
+  .termGold { color: #ebce77; }
+  .termBlue { color: #78c6e6; }
+  .termRed { color: #f19696; }
+  .termBox {
+    display: inline-block;
+    min-width: 560px;
+    border: 1px solid #80a1ca;
+    border-radius: 2px;
+    padding: 8px 10px;
+    margin: 4px 0 10px;
+  }
+  .termFooter {
+    margin-top: 12px;
+    border-top: 1px solid #a0a5af;
+    padding-top: 8px;
+    color: #d8dbe3;
+  }
+
+  .phoneWrap {
+    display: grid;
+    grid-template-columns: 390px 1fr;
+    gap: 22px;
+    align-items: start;
+  }
+  .phone {
+    width: 390px;
+    border-radius: 34px;
+  }
+  .phone .app { min-height: 760px; border-radius: 32px; }
+  .phone .top { height: 78px; padding: 18px 18px 0; }
+  .phone .body { display: block; }
+  .mobileMain { padding: 16px; }
+  .mobilePanel {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 14px;
+  }
+  .mobileRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 48px;
+    border-bottom: 1px solid #2a2d36;
+  }
+  .mobileRow:last-child { border-bottom: 0; }
+  .mobileBottom {
+    position: sticky;
+    bottom: 0;
+    background: #0f1014;
+    border-top: 1px solid var(--line);
+    padding: 10px 16px 20px;
+  }
+
+  @media (max-width: 920px) {
+    .page { padding: 18px; }
+    .side { display: none; }
+    .overseerGrid { grid-template-columns: 1fr; }
+    .phoneWrap { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <main class="page">
+    <h1>Loop overseer lifecycle v2</h1>
+    <p class="intro">
+      The overseer is explicit per-project state. A project can want an overseer, have a live overseer session,
+      and assign agents to that loop. Those are visible model fields, not hidden prompt context.
+    </p>
+    <div class="rule">
+      <strong>Product rule:</strong> no automatic overseer row on the dashboard. Status appears only when enabled,
+      errored, or explicitly opened. Press <strong>O</strong> to open the project overseer surface.
+    </div>
+
+    <h2>GUI project coordination</h2>
+    <section class="browser">
+      <div class="chrome"><span class="light"></span><span class="light"></span><span class="light"></span><div class="url">aimux.app/project/coordination?project=tealstreet-next</div></div>
+      <div class="app">
+        <div class="top">
+          <div class="brand"><span class="bot">ai</span> aimux</div>
+          <div class="topActions">
+            <span class="pill"><span class="dot run"></span>Remote</span>
+            <button class="iconBtn">[]</button>
+            <button class="iconBtn">!</button>
+            <button class="iconBtn">S</button>
+          </div>
+        </div>
+        <div class="body">
+          <aside class="side">
+            <div class="sideHead">
+              <div class="back">&lt; All projects</div>
+              <div class="projectName">tealstreet-next</div>
+              <div class="path">/Users/sam/cs/tealstreet-next</div>
+            </div>
+            <div class="tabs"><span class="tab">Dashboard</span><span class="tab on">Views</span></div>
+            <div class="navItem">Project</div>
+            <div class="navItem on">Coordination</div>
+            <div class="navItem">Expose</div>
+            <div class="navItem">Threads</div>
+            <div class="dashboardGroup wait">
+              <div class="groupTitle"><span class="dot wait"></span>Main Checkout</div>
+              <div class="agentRow"><span class="dot run"></span><strong>codex-o6o4kf</strong><span>coder</span></div>
+              <div class="agentRow"><span class="dot"></span><strong>claude-e030jz</strong><span>claude</span></div>
+            </div>
+            <div class="dashboardGroup">
+              <div class="groupTitle"><span class="dot run"></span>custom-modules-mcp</div>
+              <div class="agentRow"><span class="dot run"></span><strong>codex-vbuxpy</strong><span>coder</span></div>
+              <div class="agentRow"><span class="dot"></span><strong>codex-eq9yaz</strong><span>codex</span></div>
+            </div>
+          </aside>
+          <section class="main">
+            <div class="pageHead">
+              <div>
+                <div class="eyebrow">Coordination</div>
+                <h3>Project overseer</h3>
+                <p class="subtitle">One explicit overseer loop per project.</p>
+              </div>
+              <div class="switcher">
+                <button class="seg">Off</button>
+                <button class="seg active">On</button>
+              </div>
+            </div>
+
+            <div class="metrics">
+              <div class="metric"><span>Status</span>Running</div>
+              <div class="metric"><span>Tool</span>Claude</div>
+              <div class="metric"><span>Managed</span>3 agents</div>
+              <div class="metric"><span>Last check</span>18s ago</div>
+            </div>
+
+            <div class="overseerGrid">
+              <section class="card">
+                <div class="cardHeader">
+                  <div>
+                    <h3>Lifecycle</h3>
+                    <div class="subtitle">Desired state and current session.</div>
+                  </div>
+                  <span class="statusBadge">RUNNING</span>
+                </div>
+                <div class="stack">
+                  <div class="modelLine"><span>desired</span><b>enabled</b></div>
+                  <div class="modelLine"><span>session</span><b>claude-qh01fj</b></div>
+                  <div class="modelLine"><span>tool</span><b>claude</b></div>
+                  <div class="modelLine"><span>state</span><b>needs review loop brief</b></div>
+                  <div class="modelLine"><span>heartbeat</span><b>18s ago</b></div>
+                </div>
+                <div class="actions">
+                  <button class="btn primary">Open overseer</button>
+                  <button class="btn">Restart</button>
+                  <button class="btn danger">Stop</button>
+                </div>
+              </section>
+
+              <section class="card">
+                <div class="cardHeader">
+                  <div>
+                    <h3>Assignments</h3>
+                    <div class="subtitle">Agents being managed by the project overseer.</div>
+                  </div>
+                  <button class="btn">Add agent</button>
+                </div>
+                <div class="assignList">
+                  <div class="assignment">
+                    <div>
+                      <div class="assignmentTitle"><span class="dot run"></span>codex-vbuxpy</div>
+                      <div class="assignmentMeta">custom-modules-mcp - follow-up changes - last nudge 2m ago</div>
+                    </div>
+                    <div class="assignmentAction"><button class="tinyBtn">Open</button><button class="tinyBtn">Remove</button></div>
+                  </div>
+                  <div class="assignment">
+                    <div>
+                      <div class="assignmentTitle"><span class="dot wait"></span>claude-wjguuc</div>
+                      <div class="assignmentMeta">auto-api-sync - waiting for input - next action: continue</div>
+                    </div>
+                    <div class="assignmentAction"><button class="tinyBtn">Open</button><button class="tinyBtn">Remove</button></div>
+                  </div>
+                  <div class="assignment">
+                    <div>
+                      <div class="assignmentTitle"><span class="dot run"></span>codex-tyf5bg</div>
+                      <div class="assignmentMeta">e2e-audit - polling CI - next check in 43s</div>
+                    </div>
+                    <div class="assignmentAction"><button class="tinyBtn">Open</button><button class="tinyBtn">Remove</button></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="banner">
+              <div>
+                <strong>Needs input: claude-wjguuc</strong>
+                <p>Overseer can either ask you, continue the agent, or remove it from the loop.</p>
+              </div>
+              <button class="btn primary">Ask overseer</button>
+            </div>
+
+            <table class="agentTable">
+              <thead>
+                <tr><th>Agent</th><th>Worktree</th><th>Status</th><th>Overseer state</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><div class="agentName"><span class="dot run"></span>codex-o6o4kf</div></td>
+                  <td><span class="mutedMono">main</span></td>
+                  <td>Working</td>
+                  <td><span class="mutedMono">not managed</span></td>
+                  <td><button class="tinyBtn">Watch</button></td>
+                </tr>
+                <tr>
+                  <td><div class="agentName"><span class="dot wait"></span>claude-wjguuc</div></td>
+                  <td><span class="mutedMono">auto-api-sync</span></td>
+                  <td>Needs input</td>
+                  <td><span class="mutedMono">managed - pending nudge</span></td>
+                  <td><button class="tinyBtn">Unwatch</button></td>
+                </tr>
+                <tr>
+                  <td><div class="agentName"><span class="dot run"></span>codex-vbuxpy</div></td>
+                  <td><span class="mutedMono">custom-modules-mcp</span></td>
+                  <td>Working</td>
+                  <td><span class="mutedMono">managed - healthy</span></td>
+                  <td><button class="tinyBtn">Unwatch</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <h2>TUI dashboard flow</h2>
+    <section class="terminalShell">
+      <div class="terminalTop">aimux tealstreet-next - dashboard - overseer enabled</div>
+      <div class="terminal"><span class="termLine">aimux vlocal - agent multiplexer - tmux</span>
+
+<span class="termBox"><span class="termGold">[1] Main Checkout</span> - master                                        <span class="termGreen">1 working</span> - 2 offline
+  <span class="termGreen">o</span> [1] <b>codex</b> coder     WORKING     output 35s ago   Polling Sentry every 5 minutes
+  o [2] <b>codex</b>           Offline     output 1d ago
+  o [3] <b>claude</b>          Offline     output 1d ago</span>
+
+<span class="termBox"><span class="termBlue">[2] auto-api-sync</span> - fix/sync-leader-lock-destructure                 <span class="termGold">1 ready</span>
+  > <span class="termBlue">o</span> [1] <b>claude</b> coder      Ready       output 15h ago</span>
+
+<span class="termBox"><span class="termGreen">[3] data-analytics</span> - data-analytics                                  <span class="termGreen">1 working</span>
+  o [1] <b>claude</b> coder     WORKING     output 4m ago</span>
+
+<span class="termDim">DETAILS</span>
+  Project overseer: <span class="termGreen">enabled</span>
+  Session: claude-qh01fj
+  Tool: claude
+  State: running
+  Managed agents: 3
+  Next action: nudge claude-wjguuc
+
+<span class="termDim">OVERSEER ACTIONS</span>
+  O      open project overseer
+  O then s   stop overseer and disable project loop
+  O then a   add selected agent to overseer loop
+  O then r   remove selected agent from overseer loop
+  O then ?   status/details
+
+<span class="termFooter">up/down items   1-9 entry   Enter focus   O overseer   a watch   r unwatch   x stop   ? help   q quit</span></div>
+    </section>
+
+    <h2>Mobile status and controls</h2>
+    <section class="phoneWrap">
+      <div class="phone">
+        <div class="app">
+          <div class="top">
+            <div class="brand"><span class="bot">ai</span> aimux</div>
+            <div class="topActions">
+              <button class="iconBtn">O</button>
+              <button class="iconBtn">S</button>
+            </div>
+          </div>
+          <div class="mobileMain">
+            <div class="eyebrow">Coordination</div>
+            <h3 style="margin-top:8px;font-size:24px">Overseer</h3>
+            <p class="subtitle" style="margin:4px 0 16px">tealstreet-next</p>
+            <div class="mobilePanel">
+              <div class="mobileRow">
+                <div>
+                  <strong>Project loop</strong>
+                  <div class="subtitle">Explicitly enabled</div>
+                </div>
+                <span class="statusBadge">ON</span>
+              </div>
+              <div class="mobileRow">
+                <div>
+                  <strong>claude-qh01fj</strong>
+                  <div class="subtitle">Claude overseer session</div>
+                </div>
+                <span class="statusBadge">RUNNING</span>
+              </div>
+              <div class="mobileRow">
+                <div>
+                  <strong>3 agents watched</strong>
+                  <div class="subtitle">1 needs input</div>
+                </div>
+                <button class="tinyBtn">Edit</button>
+              </div>
+            </div>
+            <h2 style="margin-top:20px">Watched agents</h2>
+            <div class="assignList">
+              <div class="assignment">
+                <div>
+                  <div class="assignmentTitle"><span class="dot wait"></span>claude-wjguuc</div>
+                  <div class="assignmentMeta">auto-api-sync - needs input</div>
+                </div>
+                <button class="tinyBtn">Open</button>
+              </div>
+              <div class="assignment">
+                <div>
+                  <div class="assignmentTitle"><span class="dot run"></span>codex-vbuxpy</div>
+                  <div class="assignmentMeta">custom-modules-mcp - healthy</div>
+                </div>
+                <button class="tinyBtn">Open</button>
+              </div>
+            </div>
+          </div>
+          <div class="mobileBottom">
+            <button class="btn primary" style="width:100%">Open overseer chat</button>
+            <button class="btn danger" style="width:100%;margin-top:8px">Stop project overseer</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardHeader">
+          <div>
+            <h3>Stopped / off state</h3>
+            <div class="subtitle">The dashboard should be quiet until the user explicitly enables it.</div>
+          </div>
+          <span class="statusBadge off">OFF</span>
+        </div>
+        <div class="stack">
+          <div class="modelLine"><span>desired</span><b>disabled</b></div>
+          <div class="modelLine"><span>session</span><b>none</b></div>
+          <div class="modelLine"><span>assignments</span><b>preserved, hidden unless opened</b></div>
+          <div class="modelLine"><span>dashboard</span><b>no extra row, no wasted pane space</b></div>
+        </div>
+        <div class="actions">
+          <button class="btn primary">Start overseer</button>
+          <button class="btn ghost">View saved assignments</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

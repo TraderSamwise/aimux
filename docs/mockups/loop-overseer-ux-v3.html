@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>aimux compact overseer ux v3</title>
+<style>
+  :root {
+    --page:#07080b; --app:#101116; --panel:#181a20; --panel2:#20222a;
+    --line:#323541; --fg:#f1f2f5; --muted:#a1a6b2; --faint:#6d7280;
+    --green:#53d18a; --cyan:#56b6d4; --gold:#e5c66d; --red:#ef7d7d; --blue:#7fb0ff;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:var(--page);color:var(--fg)}
+  body{font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+  h1,h2,h3,p{margin:0}
+  h1{font:780 27px/1.08 var(--sans)}
+  h2{margin:34px 0 12px;color:#d8dbe3;font:780 12px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase}
+  .page{max-width:1580px;margin:0 auto;padding:28px}
+  .intro{margin-top:10px;max-width:900px;color:var(--muted)}
+  .rule{margin-top:18px;border:1px solid var(--line);background:#12141a;border-radius:8px;padding:14px 16px;color:var(--muted)}
+  .rule strong{color:var(--fg)}
+  .browser,.terminalShell{border:1px solid #262a34;background:#050608;border-radius:14px;overflow:hidden;box-shadow:0 20px 70px rgba(0,0,0,.42)}
+  .chrome{height:42px;display:flex;align-items:center;gap:9px;padding:0 14px;background:#20232b;border-bottom:1px solid #303440}
+  .light{width:12px;height:12px;border-radius:50%;background:#ff5f57}.light:nth-child(2){background:#febc2e}.light:nth-child(3){background:#28c840}
+  .url{margin-left:12px;min-width:0;flex:1;color:#a7acb8;font:12px/1 var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .terminalTop{height:32px;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);background:#161820;color:var(--muted);font:12px/1 var(--mono)}
+  .terminal{min-height:620px;padding:14px;background:#2a2d35;color:#e7e8ed;font:13px/1.35 var(--mono);white-space:pre;overflow:hidden;position:relative}
+  .box{display:inline-block;min-width:780px;border:1px solid #8096c0;border-radius:2px;padding:6px 10px;margin:3px 0 8px}
+  .dim{color:#878d9a}.green{color:#9ce3af}.gold{color:#ebce77}.blue{color:#78c6e6}.red{color:#f19696}.cyan{color:#6bd4ef}
+  .footer{position:absolute;left:0;right:0;bottom:0;border-top:1px solid #b7bcc7;background:#30333b;padding:8px 14px;color:#e9ebf0}
+  .statusToken{background:#3e3421;color:#f4d889;padding:1px 6px;border-radius:2px}
+  .overlay{position:absolute;inset:74px 72px 58px 72px;border:1px solid #8aa0c8;background:#171920;box-shadow:0 16px 60px rgba(0,0,0,.55);display:grid;grid-template-columns:310px 1fr}
+  .overlaySide{border-right:1px solid var(--line);padding:14px;background:#14161c}
+  .overlayMain{padding:14px;overflow:hidden}
+  .overlayTitle{font:780 15px/1 var(--mono);color:#e7eaf2;margin-bottom:6px}
+  .overlaySub{font:12px/1.25 var(--mono);color:var(--muted);margin-bottom:14px}
+  .menuItem{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid transparent;border-radius:6px;padding:9px 10px;color:var(--muted)}
+  .menuItem.on{background:#222631;border-color:#354054;color:var(--fg)}
+  .kbd{font:800 11px/1 var(--mono);color:#171920;background:#e9ebf1;border-radius:4px;padding:3px 6px}
+  .line{display:grid;grid-template-columns:120px 1fr;gap:12px;margin:6px 0;color:var(--muted);font:12px/1.35 var(--mono)}
+  .line b{color:var(--fg);font-family:var(--sans)}
+  .agent{display:grid;grid-template-columns:18px 1fr 92px 90px;gap:10px;align-items:center;border-bottom:1px solid #2b2e38;padding:9px 0;font:12px/1.2 var(--mono)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}.dot.run{background:var(--green)}.dot.wait{background:var(--gold)}
+  .tag{border:1px solid #3a3e49;border-radius:5px;padding:3px 7px;color:var(--muted);text-align:center}
+  .tag.good{border-color:rgba(83,209,138,.35);color:#a7f3c8}.tag.wait{border-color:rgba(229,198,109,.35);color:#f8dfa2}
+  .app{min-height:720px;background:var(--app);display:flex;flex-direction:column}
+  .top{height:54px;display:flex;align-items:center;gap:14px;padding:0 18px;border-bottom:1px solid var(--line);background:#14161c}
+  .brand{display:flex;align-items:center;gap:10px;font:760 16px/1 var(--mono)}
+  .bot{width:25px;height:25px;border-radius:7px;background:#050608;border:1px solid #242833;display:grid;place-items:center;color:#c8f7d1;font-size:15px}
+  .body{display:flex;min-height:0;flex:1}
+  .side{width:286px;flex:none;border-right:1px solid var(--line);background:#15171c;padding:14px 10px}
+  .main{flex:1;min-width:0;padding:18px 22px;overflow:auto}
+  .navItem{height:34px;padding:8px 10px;border-radius:6px;color:var(--muted);font-weight:650}.navItem.on{background:#262932;color:var(--fg)}
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:14px}
+  .head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:14px}
+  .eyebrow{color:var(--muted);font:800 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+  .head h3{margin-top:8px;font:800 23px/1.05 var(--sans)}
+  .btn{border:1px solid #454a56;background:#22252d;color:var(--fg);border-radius:8px;min-height:34px;padding:0 12px;font-weight:760}
+  .btn.primary{background:#f5f6f8;color:#14161b;border-color:#f5f6f8}.btn.danger{color:#ffd1d1;border-color:rgba(239,125,125,.38);background:rgba(239,125,125,.09)}
+  .statusStrip{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .pill{border:1px solid var(--line);background:#181a20;color:var(--muted);border-radius:999px;padding:8px 12px;font-weight:760}.pill strong{color:var(--fg);margin-left:6px}
+  .grid{display:grid;grid-template-columns:360px 1fr;gap:14px}
+  .agentList{display:grid;gap:8px}.agentRow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border:1px solid #2c303a;background:#15171d;border-radius:8px;padding:10px}
+  @media(max-width:900px){.page{padding:18px}.side{display:none}.grid{grid-template-columns:1fr}.overlay{inset:58px 14px 58px 14px;grid-template-columns:1fr}.overlaySide{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<main class="page">
+  <h1>Compact overseer lifecycle v3</h1>
+  <p class="intro">The dashboard spends zero persistent space on the overseer. The only always-visible affordance is a footer key hint and, when enabled, a tiny status token. Pressing <b>O</b> opens a focused command surface.</p>
+  <div class="rule"><strong>Recommendation:</strong> no details-pane takeover, no extra dashboard row, no sidebar section. The overseer is a project command mode with explicit start/stop/status.</div>
+
+  <h2>TUI default: no extra rows</h2>
+  <section class="terminalShell">
+    <div class="terminalTop">aimux tealstreet-next - dashboard</div>
+    <div class="terminal"><span class="dim">aimux vlocal - agent multiplexer - tmux</span>
+
+<span class="box"><span class="gold">[1] Main Checkout</span> - master                                            <span class="green">1 done</span> - 2 offline
+  <span class="green">o</span> [1] <b>codex</b> coder     Done        output 12m ago   1 unseen - Polling Sentry every 5 minutes
+  o [2] <b>codex</b>           Offline     output 1d ago
+  o [3] <b>claude</b>          Offline     output 1d ago</span>
+
+<span class="box"><span class="blue">[2] auto-api-sync</span> - fix/sync-leader-lock-destructure                     <span class="blue">1 ready</span>
+  > <span class="blue">o</span> [1] <b>claude</b> coder      Ready       output 15h ago</span>
+
+<span class="box"><span class="green">[3] data-analytics</span> - data-analytics                                      <span class="green">1 working</span>
+  o [1] <b>claude</b> coder     WORKING     output 3m ago</span>
+
+<span class="box"><span class="gold">[4] paradex-bugs</span> - paradex-bugs                                          <span class="gold">1 done</span>
+  o [1] <b>codex</b> coder      Done        output 1d ago   1 unseen</span>
+
+<span class="box"><span class="dim">[5] body-fill-candle</span> - body-fill-candle                                  <span class="dim">1 offline</span>
+  o [1] <b>claude</b>           Offline     output 3d ago</span>
+
+<span class="dim">DETAILS</span>
+  Agent: claude (claude-h4d1px)
+  Tool: claude
+  CWD: /Users/sam/cs/tealstreet-next/.aimux/worktrees/data-analytics
+  Loop: active
+  Goal: Keep progressing the data-analytics work.
+  Last: Claude completed its turn.
+
+<span class="footer">up/down items   1-9 entry   Enter focus   Tab details   u attention   Esc back   <span class="statusToken">O overseer: on / 3</span>   R reply   x stop   ? help   q quit</span></div>
+  </section>
+
+  <h2>TUI O overlay: start / stop / status</h2>
+  <section class="terminalShell">
+    <div class="terminalTop">press O from dashboard</div>
+    <div class="terminal"><span class="dim">dashboard remains underneath, selection state preserved</span>
+
+<span class="box"><span class="gold">[1] Main Checkout</span> - master                                            <span class="green">1 done</span> - 2 offline
+  o [1] <b>codex</b> coder     Done        output 12m ago
+  o [2] <b>codex</b>           Offline     output 1d ago</span>
+
+<span class="box"><span class="blue">[2] auto-api-sync</span> - fix/sync-leader-lock-destructure                     <span class="blue">1 ready</span>
+  > <span class="blue">o</span> [1] <b>claude</b> coder      Ready       output 15h ago</span>
+
+<div class="overlay"><div class="overlaySide"><div class="overlayTitle">OVERSEER</div><div class="overlaySub">tealstreet-next - project loop</div>
+<div class="menuItem on"><span>Status</span><span class="kbd">?</span></div>
+<div class="menuItem"><span>Open overseer</span><span class="kbd">Enter</span></div>
+<div class="menuItem"><span>Watch selected agent</span><span class="kbd">a</span></div>
+<div class="menuItem"><span>Unwatch selected agent</span><span class="kbd">r</span></div>
+<div class="menuItem"><span>Restart session</span><span class="kbd">S</span></div>
+<div class="menuItem"><span>Stop project loop</span><span class="kbd">x</span></div>
+<div class="menuItem"><span>Close</span><span class="kbd">Esc</span></div></div><div class="overlayMain"><div class="overlayTitle">Running - claude-qh01fj</div><div class="overlaySub">Explicitly enabled. Session exists. Assignments are persisted model state.</div>
+<div class="line"><span>desired</span><b>enabled</b></div>
+<div class="line"><span>session</span><b>claude-qh01fj</b></div>
+<div class="line"><span>tool</span><b>claude</b></div>
+<div class="line"><span>heartbeat</span><b>18s ago</b></div>
+<div class="line"><span>selected</span><b>claude-h4d1px can be added with a</b></div>
+
+<div class="agent"><span class="dot run"></span><b>codex-vbuxpy</b><span class="tag good">managed</span><span>healthy</span></div>
+<div class="agent"><span class="dot wait"></span><b>claude-wjguuc</b><span class="tag wait">managed</span><span>needs input</span></div>
+<div class="agent"><span class="dot run"></span><b>codex-tyf5bg</b><span class="tag good">managed</span><span>polling CI</span></div>
+<div class="agent"><span class="dot"></span><b>claude-h4d1px</b><span class="tag">not managed</span><span>selected</span></div>
+
+<div class="line" style="margin-top:16px"><span>chat command</span><b>"watch this agent", "stop watching auto-api-sync", "restart yourself"</b></div>
+</div></div>
+<span class="footer">O overlay open   arrows move   Enter action   a watch   r unwatch   x stop loop   Esc close</span></div>
+  </section>
+
+  <h2>GUI: project page, compact status</h2>
+  <section class="browser">
+    <div class="chrome"><span class="light"></span><span class="light"></span><span class="light"></span><div class="url">aimux.app/project/coordination</div></div>
+    <div class="app">
+      <div class="top"><div class="brand"><span class="bot">ai</span> aimux</div></div>
+      <div class="body">
+        <aside class="side">
+          <div style="padding:8px 10px 14px;border-bottom:1px solid #282b34">
+            <div style="color:var(--faint);font-size:12px;font-weight:650">&lt; All projects</div>
+            <div style="margin-top:8px;font-weight:760;font-size:16px">tealstreet-next</div>
+            <div style="margin-top:3px;color:var(--faint);font:11px/1.2 var(--mono)">/Users/sam/cs/tealstreet-next</div>
+          </div>
+          <div style="display:flex;gap:18px;padding:10px;border-bottom:1px solid #282b34"><b>Dashboard</b><span style="color:var(--faint)">Views</span></div>
+          <div class="navItem">Project</div><div class="navItem on">Coordination</div><div class="navItem">Expose</div><div class="navItem">Threads</div>
+        </aside>
+        <section class="main">
+          <div class="head"><div><div class="eyebrow">Coordination</div><h3>tealstreet-next</h3><p style="color:var(--muted);margin-top:4px">Shared project coordination without dashboard clutter.</p></div><button class="btn primary">Overseer</button></div>
+          <div class="statusStrip"><div class="pill">Overseer <strong>On</strong></div><div class="pill">Managed <strong>3</strong></div><div class="pill">Needs input <strong>1</strong></div><div class="pill">Heartbeat <strong>18s</strong></div></div>
+          <div class="grid">
+            <div class="card"><h3>Lifecycle</h3><div class="line"><span>desired</span><b>enabled</b></div><div class="line"><span>session</span><b>claude-qh01fj</b></div><div class="line"><span>tool</span><b>claude</b></div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary">Open</button><button class="btn">Restart</button><button class="btn danger">Stop</button></div></div>
+            <div class="card"><h3>Assignments</h3><div class="agentList" style="margin-top:10px"><div class="agentRow"><div><b>claude-wjguuc</b><div class="line" style="display:block;margin:2px 0 0">auto-api-sync - needs input</div></div><button class="btn">Remove</button></div><div class="agentRow"><div><b>codex-vbuxpy</b><div class="line" style="display:block;margin:2px 0 0">custom-modules-mcp - healthy</div></div><button class="btn">Remove</button></div><div class="agentRow"><div><b>codex-tyf5bg</b><div class="line" style="display:block;margin:2px 0 0">e2e-audit - polling CI</div></div><button class="btn">Remove</button></div></div></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>
