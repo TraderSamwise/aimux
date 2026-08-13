@@ -855,6 +855,37 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(lines[previewTopIndex - 1]).toContain("╰");
   });
 
+  it("renders selected agent overseer and loop state in details", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "codex-1",
+        sessions: [
+          {
+            index: 0,
+            id: "codex-1",
+            command: "codex",
+            status: "running",
+            active: true,
+            overseer: true,
+            loop: {
+              active: true,
+              goal: "watch the handoff queue",
+              since: "2026-08-10T00:00:00.000Z",
+            },
+          },
+        ],
+      }),
+      140,
+      30,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("Overseer: yes");
+    expect(plain).toContain("Loop: active");
+    expect(plain).toContain("Goal: watch the handoff queue");
+  });
+
   it("renders pending teammate labels even when semantic state is stale", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({

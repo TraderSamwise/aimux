@@ -749,6 +749,14 @@ export function renderDashboardFrame(
     if (selected.repoOwner || selected.repoName)
       lines.push(...wrapKeyValue("Repo", `${selected.repoOwner ?? "?"}/${selected.repoName ?? "?"}`, width));
     if (selected.repoRemote) lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
+    if (selected.overseer) lines.push(...wrapKeyValue("Overseer", "yes", width));
+    if (selected.loop?.active) {
+      lines.push(...wrapKeyValue("Loop", "active", width));
+      if (selected.loop.goal) lines.push(...wrapKeyValue("Goal", selected.loop.goal, width));
+      if (selected.loop.since) {
+        lines.push(...wrapKeyValue("Since", formatRelativeRecency(selected.loop.since) ?? selected.loop.since, width));
+      }
+    }
     if (selected.previewLine) lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
     if (selected.pendingAction) {
       lines.push(...wrapKeyValue("State", rowStateLabel(selected.pendingAction), width));
