@@ -85,6 +85,7 @@ describe("projectStateErrorCopy", () => {
 describe("isRelayUnavailableForProjectDiscovery", () => {
   it("only treats terminal relay states as discovery unavailable", () => {
     expect(isRelayUnavailableForProjectDiscovery("daemon_offline")).toBe(true);
+    expect(isRelayUnavailableForProjectDiscovery("relay_unavailable")).toBe(true);
     expect(isRelayUnavailableForProjectDiscovery("auth_failed")).toBe(true);
     expect(isRelayUnavailableForProjectDiscovery("disconnected")).toBe(false);
     expect(isRelayUnavailableForProjectDiscovery("connecting")).toBe(false);

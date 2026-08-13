@@ -105,7 +105,7 @@ describe("RelayTransport remote security state", () => {
       await vi.advanceTimersByTimeAsync(30_000);
 
       expect(statuses).not.toContain("auth_failed");
-      expect(statuses).toContain("disconnected");
+      expect(statuses).toContain("relay_unavailable");
       expect(sockets.length).toBeGreaterThan(3);
     } finally {
       vi.stubGlobal("WebSocket", originalWebSocket);

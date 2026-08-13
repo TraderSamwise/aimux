@@ -50,7 +50,7 @@ export function isProjectHostOfflineError(error: string) {
 }
 
 export function isRelayUnavailableForProjectDiscovery(status: RelayStatus): boolean {
-  return status === "daemon_offline" || status === "auth_failed";
+  return status === "daemon_offline" || status === "relay_unavailable" || status === "auth_failed";
 }
 
 export function relayUnavailableProjectCopy(status: RelayStatus): {

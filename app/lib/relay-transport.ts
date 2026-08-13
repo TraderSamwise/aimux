@@ -67,6 +67,7 @@ export type RelayStatus =
   | "connecting"
   | "connected"
   | "daemon_offline"
+  | "relay_unavailable"
   | "auth_failed";
 
 export type RelayStatusListener = (status: RelayStatus) => void;
@@ -169,7 +170,7 @@ export class RelayTransport {
       if (!opened) {
         this.consecutiveHandshakeFailures += 1;
         if (this.consecutiveHandshakeFailures >= HANDSHAKE_FAILURE_AUTH_THRESHOLD) {
-          this.setStatus("disconnected");
+          this.setStatus("relay_unavailable");
           this.scheduleRetry();
           return;
         }
