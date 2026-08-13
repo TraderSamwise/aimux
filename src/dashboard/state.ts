@@ -16,6 +16,7 @@ export type DashboardOverlayKind =
   | "migrate-picker"
   | "thread-reply"
   | "teammate-picker"
+  | "overseer"
   | "switcher";
 
 export class DashboardState {

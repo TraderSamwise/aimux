@@ -198,6 +198,68 @@ export function renderTeammatePickerOverlay(ctx: any): void {
   if (output) process.stdout.write(output);
 }
 
+function sessionLabel(entry: any): string {
+  return entry?.team?.label ?? entry?.label ?? entry?.command ?? entry?.id ?? "agent";
+}
+
+function isLiveSession(entry: any): boolean {
+  return Boolean(entry && entry.status !== "offline" && entry.status !== "exited");
+}
+
+function dashboardOverseerSessions(ctx: any): any[] {
+  return ctx.dashboardOverseerSessionsCache ?? ctx.dashboard?.viewModel?.overseerSessions ?? [];
+}
+
+function watchedDashboardSessions(ctx: any): any[] {
+  const normal = ctx.dashboardSessionsCache ?? ctx.dashboard?.viewModel?.sessions ?? [];
+  const teammates = ctx.dashboardTeammatesCache ?? [];
+  const byId = new Map<string, any>();
+  for (const entry of [...normal, ...teammates]) {
+    if (entry?.id && entry.loop?.active) byId.set(entry.id, entry);
+  }
+  return [...byId.values()];
+}
+
+export function buildOverseerOverlayOutput(ctx: any, cols: number, rows: number): string {
+  const overseers = dashboardOverseerSessions(ctx);
+  const liveOverseer = overseers.find(isLiveSession);
+  const selected = ctx.getSelectedDashboardSessionForActions?.();
+  const watched = watchedDashboardSessions(ctx);
+  const maxWatchedRows = Math.max(2, rows - 15);
+  const watchedRows = watched.slice(0, maxWatchedRows).map((entry) => {
+    const goal = entry.loop?.goal ? style(` - ${entry.loop.goal}`, "muted") : "";
+    return `  ${style("•", "accent")} ${style(sessionLabel(entry), "strong")} ${style(entry.status ?? "", "muted")}${goal}`;
+  });
+
+  if (watched.length > watchedRows.length) {
+    watchedRows.push(`  ${style(`${watched.length - watchedRows.length} more watched agents`, "muted")}`);
+  }
+
+  const selectedLine = selected
+    ? `${style(sessionLabel(selected), "strong")} ${selected.loop?.active ? style("watched", "done") : style("not watched", "muted")}`
+    : style("none", "muted");
+  const overseerLine = liveOverseer
+    ? `${style(sessionLabel(liveOverseer), "strong")} ${style(liveOverseer.status ?? "active", "done")}`
+    : style("none running", "muted");
+  const body = [
+    `  ${style("Status:", "muted")} ${liveOverseer ? style("Active", "done") : style("Off", "muted")}`,
+    `  ${style("Overseer:", "muted")} ${overseerLine}`,
+    `  ${style("Watching:", "muted")} ${watched.length} ${watched.length === 1 ? "agent" : "agents"}`,
+    `  ${style("Selected:", "muted")} ${selectedLine}`,
+    "",
+    ...(watchedRows.length > 0 ? watchedRows : [`  ${style("No watched agents yet.", "muted")}`]),
+    "",
+    hints([
+      ["Enter", liveOverseer ? "focus" : "start"],
+      ["w", "watch selected"],
+      ["u", "unwatch selected"],
+      ...(liveOverseer ? ([["x", "stop overseer"]] as [string, string][]) : []),
+      ["Esc", "back"],
+    ]),
+  ];
+  return renderOverlayBox({ title: "Overseer", body, cols, rows });
+}
+
 export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): string {
   const allLines = [
     "Tmux mode",

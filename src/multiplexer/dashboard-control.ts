@@ -32,6 +32,7 @@ import {
   buildDashboardRuntimeGuardOverlayOutput,
   buildLabelInputOverlayOutput,
   buildMigratePickerOverlayOutput,
+  buildOverseerOverlayOutput,
   buildServiceInputOverlayOutput,
   buildSwitcherOverlayOutput,
   buildTeammatePickerOverlayOutput,
@@ -814,6 +815,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "teammate-picker":
       host.handleTeammatePickerKey(data);
       return true;
+    case "overseer":
+      host.handleOverseerOverlayKey(data);
+      return true;
     case "worktree-remove-confirm":
       host.handleWorktreeRemoveConfirmKey(data);
       return true;
@@ -878,6 +882,9 @@ export function buildActiveDashboardOverlayOutput(
   }
   if (host.dashboardOverlayState.kind === "teammate-picker") {
     return buildTeammatePickerOverlayOutput(host, cols, rows);
+  }
+  if (host.dashboardOverlayState.kind === "overseer") {
+    return buildOverseerOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "thread-reply") {
     return buildThreadReplyOverlayOutput(host, cols, rows);

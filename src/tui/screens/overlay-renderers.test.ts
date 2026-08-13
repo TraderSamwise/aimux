@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { buildHelpOverlayOutput, buildWorktreeListOverlayOutput } from "./overlay-renderers.js";
+import {
+  buildHelpOverlayOutput,
+  buildOverseerOverlayOutput,
+  buildWorktreeListOverlayOutput,
+} from "./overlay-renderers.js";
 
 function plain(value: string): string {
   return value.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b[78]/g, "");
@@ -37,5 +41,77 @@ describe("buildHelpOverlayOutput", () => {
     expect(output).toContain("x  stop or remove selected item");
     expect(output).not.toContain("Ctrl+A c  new agent");
     expect(output).not.toContain("Ctrl+A v  request review");
+  });
+});
+
+describe("buildOverseerOverlayOutput", () => {
+  it("renders the off state without requiring a persistent dashboard row", () => {
+    const output = plain(
+      buildOverseerOverlayOutput(
+        {
+          dashboardOverseerSessionsCache: [],
+          dashboardSessionsCache: [],
+          getSelectedDashboardSessionForActions: () => undefined,
+        },
+        100,
+        30,
+      ),
+    );
+
+    expect(output).toContain("Overseer");
+    expect(output).toContain("Status: Off");
+    expect(output).toContain("Overseer: none running");
+    expect(output).toContain("Watching: 0 agents");
+    expect(output).toContain("Enter  start");
+    expect(output).toContain("w  watch selected");
+  });
+
+  it("renders the live overseer and selected agent loop state", () => {
+    const selected = {
+      id: "codex-1",
+      command: "codex",
+      status: "working",
+      loop: { active: true, goal: "keep progressing" },
+    };
+    const output = plain(
+      buildOverseerOverlayOutput(
+        {
+          dashboardOverseerSessionsCache: [{ id: "overseer-1", command: "claude", status: "working" }],
+          dashboardSessionsCache: [selected],
+          getSelectedDashboardSessionForActions: () => selected,
+        },
+        100,
+        30,
+      ),
+    );
+
+    expect(output).toContain("Status: Active");
+    expect(output).toContain("Overseer: claude working");
+    expect(output).toContain("Watching: 1 agent");
+    expect(output).toContain("Selected: codex watched");
+    expect(output).toContain("codex working - keep progressing");
+    expect(output).toContain("x  stop overseer");
+  });
+
+  it("reads overseers from the dashboard view model", () => {
+    const output = plain(
+      buildOverseerOverlayOutput(
+        {
+          dashboard: {
+            viewModel: {
+              overseerSessions: [{ id: "overseer-1", command: "claude", status: "ready" }],
+            },
+          },
+          dashboardSessionsCache: [],
+          getSelectedDashboardSessionForActions: () => undefined,
+        },
+        100,
+        30,
+      ),
+    );
+
+    expect(output).toContain("Status: Active");
+    expect(output).toContain("Overseer: claude ready");
+    expect(output).toContain("x  stop overseer");
   });
 });

@@ -389,6 +389,23 @@ function selectedDashboardSession(host: any): DashboardSession | undefined {
   return undefined;
 }
 
+function dashboardSessionLabel(entry: DashboardSession): string {
+  return entry.team?.label ?? entry.label ?? entry.command ?? entry.id ?? "agent";
+}
+
+function dashboardOverseerEntries(host: any): DashboardSession[] {
+  const entries = [
+    ...(host.dashboardOverseerSessionsCache ?? []),
+    ...(host.dashboard?.viewModel?.overseerSessions ?? []),
+    ...((host.dashboardSessionsCache ?? []).filter(isOverseerSession) as DashboardSession[]),
+  ];
+  const byId = new Map<string, DashboardSession>();
+  for (const entry of entries) {
+    if (entry?.id) byId.set(entry.id, entry);
+  }
+  return [...byId.values()];
+}
+
 function teammateParentSession(host: any): DashboardSession | undefined {
   const parentId = host.teammatePickerState?.parentSessionId;
   const selected = selectedDashboardSession(host);
@@ -651,7 +668,7 @@ export const dashboardInteractionMethods = {
       return;
     }
     if (isShiftedCommand(event, key, "o")) {
-      this.handleAction({ type: "create-overseer" });
+      this.showOverseerOverlay();
       return;
     }
     if (isShiftedCommand(event, key, "r")) {
@@ -1084,6 +1101,79 @@ export const dashboardInteractionMethods = {
     this.teammatePickerState = null;
     this.clearDashboardOverlay();
     void this.activateDashboardEntry(teammate, { preserveDashboardSelection: true });
+  },
+
+  showOverseerOverlay(this: any): void {
+    this.openDashboardOverlay("overseer");
+    this.renderOverseerOverlay();
+  },
+
+  renderOverseerOverlay(this: any): void {
+    this.redrawDashboardWithOverlay();
+  },
+
+  handleOverseerOverlayKey(this: any, data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = commandKey(events[0]);
+
+    if (key === "escape" || key === "q") {
+      this.clearDashboardOverlay();
+      this.restoreDashboardAfterOverlayDismiss();
+      return;
+    }
+
+    if (key === "enter" || key === "return") {
+      this.clearDashboardOverlay();
+      this.handleAction({ type: "create-overseer" });
+      return;
+    }
+
+    if (key === "w" || key === "u") {
+      const selected = this.getSelectedDashboardSessionForActions();
+      if (!selected) {
+        this.footerFlash = "Select an agent first";
+        this.footerFlashTicks = 2;
+        this.renderOverseerOverlay();
+        return;
+      }
+      const active = key === "w";
+      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+      void mutateDashboardApi(this, PROJECT_API_ROUTES.agents.loop, {
+        sessionId: selected.id,
+        active,
+        goal: active ? selected.taskDescription || selected.headline || undefined : undefined,
+      })
+        .then(() => refreshDashboardModelThroughApi(this, { force: true, lifecycle }))
+        .then(() => {
+          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+          this.footerFlash = `${dashboardSessionLabel(selected)} ${active ? "added to" : "removed from"} overseer loop`;
+          this.footerFlashTicks = 2;
+          this.renderOverseerOverlay();
+        })
+        .catch((error: unknown) => {
+          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+          this.footerFlash = `Overseer update failed: ${error instanceof Error ? error.message : String(error)}`;
+          this.footerFlashTicks = 3;
+          this.renderOverseerOverlay();
+        });
+      return;
+    }
+
+    if (key === "x") {
+      const overseer = dashboardOverseerEntries(this).find(
+        (entry: DashboardSession) => entry.status !== "offline" && entry.status !== "exited",
+      );
+      if (!overseer) {
+        this.footerFlash = "No running overseer";
+        this.footerFlashTicks = 2;
+        this.renderOverseerOverlay();
+        return;
+      }
+      const runtime = this.sessions?.find((session: DashboardSession) => session.id === overseer.id);
+      void this.stopSessionToOfflineWithFeedback(runtime ?? overseer);
+      this.renderOverseerOverlay();
+    }
   },
 
   handleServiceInputKey(this: any, data: Buffer): void {

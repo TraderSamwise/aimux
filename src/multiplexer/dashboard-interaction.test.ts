@@ -9,14 +9,17 @@ import { dashboardInteractionMethods } from "./dashboard-interaction.js";
 
 const dashboardApiClientMock = vi.hoisted(() => ({
   mutateDashboardApi: vi.fn(),
+  refreshDashboardModelThroughApi: vi.fn(),
 }));
 
 vi.mock("./dashboard-api-client.js", async () => {
   const actual = await vi.importActual<typeof import("./dashboard-api-client.js")>("./dashboard-api-client.js");
   dashboardApiClientMock.mutateDashboardApi.mockImplementation(actual.mutateDashboardApi);
+  dashboardApiClientMock.refreshDashboardModelThroughApi.mockImplementation(actual.refreshDashboardModelThroughApi);
   return {
     ...actual,
     mutateDashboardApi: dashboardApiClientMock.mutateDashboardApi,
+    refreshDashboardModelThroughApi: dashboardApiClientMock.refreshDashboardModelThroughApi,
   };
 });
 
@@ -45,6 +48,7 @@ function deferred<T>(): {
 describe("dashboardInteractionMethods", () => {
   beforeEach(() => {
     dashboardApiClientMock.mutateDashboardApi.mockClear();
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockClear();
   });
 
   it("requests reviews through the project service", async () => {
@@ -2203,6 +2207,7 @@ describe("dashboardInteractionMethods", () => {
       showOrchestrationRoutePicker: vi.fn(),
       showLibrary: vi.fn(),
       showWorktreeList: vi.fn(),
+      showOverseerOverlay: vi.fn(),
       handleAction: vi.fn(),
       getSelectedDashboardSessionForActions: vi.fn(() => selected),
       openRelevantThreadForSession: vi.fn(),
@@ -2219,8 +2224,75 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("task");
     expect(host.showLibrary).toHaveBeenCalledOnce();
     expect(host.showWorktreeList).toHaveBeenCalledOnce();
-    expect(host.handleAction).toHaveBeenCalledWith({ type: "create-overseer" });
+    expect(host.showOverseerOverlay).toHaveBeenCalledOnce();
+    expect(host.handleAction).not.toHaveBeenCalledWith({ type: "create-overseer" });
     expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
+  });
+
+  it("toggles the selected agent in the overseer loop through the overlay", async () => {
+    const selected = { id: "codex-1", command: "codex", status: "working", headline: "keep going" };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      getSelectedDashboardSessionForActions: vi.fn(() => selected),
+      renderOverseerOverlay: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+    dashboardApiClientMock.mutateDashboardApi.mockResolvedValueOnce({ ok: true });
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
+
+    dashboardInteractionMethods.handleOverseerOverlayKey.call(host, Buffer.from("w"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dashboardApiClientMock.mutateDashboardApi).toHaveBeenCalledWith(
+      host,
+      "/agents/loop",
+      expect.objectContaining({ sessionId: "codex-1", active: true, goal: "keep going" }),
+    );
+    await vi.waitFor(() => expect(host.footerFlash).toBe("codex added to overseer loop"));
+    expect(host.renderOverseerOverlay).toHaveBeenCalled();
+  });
+
+  it("ignores stale overseer loop updates after the overlay input epoch changes", async () => {
+    const selected = { id: "codex-1", command: "codex", status: "working" };
+    const mutation = deferred<unknown>();
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      getSelectedDashboardSessionForActions: vi.fn(() => selected),
+      renderOverseerOverlay: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+    dashboardApiClientMock.mutateDashboardApi.mockReturnValueOnce(mutation.promise);
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
+
+    dashboardInteractionMethods.handleOverseerOverlayKey.call(host, Buffer.from("w"));
+    host.dashboardInputEpoch = 2;
+    mutation.resolve({ ok: true });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(host.footerFlash).toBe("");
+    expect(host.renderOverseerOverlay).not.toHaveBeenCalled();
+  });
+
+  it("stops the live overseer from the dashboard view model", () => {
+    const overseer = { id: "overseer-1", command: "claude", status: "working" };
+    const host: any = {
+      dashboard: { viewModel: { overseerSessions: [overseer] } },
+      sessions: [],
+      stopSessionToOfflineWithFeedback: vi.fn(),
+      renderOverseerOverlay: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleOverseerOverlayKey.call(host, Buffer.from("x"));
+
+    expect(host.stopSessionToOfflineWithFeedback).toHaveBeenCalledWith(overseer);
+    expect(host.renderOverseerOverlay).toHaveBeenCalled();
   });
 });
 
