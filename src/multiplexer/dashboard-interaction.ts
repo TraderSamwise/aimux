@@ -650,6 +650,10 @@ export const dashboardInteractionMethods = {
       this.showWorktreeList();
       return;
     }
+    if (isShiftedCommand(event, key, "o")) {
+      this.handleAction({ type: "create-overseer" });
+      return;
+    }
     if (isShiftedCommand(event, key, "r")) {
       const selected = this.getSelectedDashboardSessionForActions();
       if (selected) {

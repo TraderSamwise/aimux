@@ -91,7 +91,7 @@ describe("buildDashboardFooterHints", () => {
   it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
-      new Set(["u", "Tab", "n", "v", "f", "s", "H", "T", "o", "R", "?", "q"]),
+      new Set(["u", "Tab", "n", "v", "f", "s", "H", "T", "o", "O", "R", "?", "q"]),
     );
     // worktree level
     expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
@@ -122,6 +122,7 @@ describe("buildDashboardFooterHints", () => {
         "H",
         "T",
         "o",
+        "O",
         "R",
         "e",
         "m",
@@ -133,7 +134,7 @@ describe("buildDashboardFooterHints", () => {
     );
     // flat session list with a selected session
     expect(keys({ hasWorktrees: false, navLevel: "sessions", sessions: sess(), selectedSessionId: "a" })).toEqual(
-      new Set(["↑↓/jk", "Enter/→/l", "u", "Tab", "n", "v", "f", "w", "s", "H", "T", "o", "R", "x", "r", "?", "q"]),
+      new Set(["↑↓/jk", "Enter/→/l", "u", "Tab", "n", "v", "f", "w", "s", "H", "T", "o", "O", "R", "x", "r", "?", "q"]),
     );
   });
 });
@@ -167,6 +168,39 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("Status: creating");
     expect(frame).not.toContain("Elapsed:");
     expect(frame).not.toContain("Progress:");
+  });
+
+  it("does not render overseers as an unreachable dashboard band", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions: [],
+        overseerSessions: [
+          {
+            index: 0,
+            id: "claude-overseer",
+            command: "claude",
+            status: "running",
+            overseer: true,
+          } as never,
+        ],
+        worktreeGroups: [
+          {
+            name: "demo",
+            branch: "demo",
+            path: "/repo/.aimux/worktrees/demo",
+            createdAt: "2026-05-09T12:00:00.000Z",
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      120,
+      40,
+    );
+
+    expect(stripAnsi(frame)).not.toContain("Overseer");
+    expect(stripAnsi(frame)).not.toContain("claude-overseer");
   });
 
   it("color-codes semantic agent states", () => {
@@ -632,7 +666,7 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(plain).not.toContain("Status: running");
   });
 
-  it("renders a dedicated Overseer line above the worktrees when an overseer exists", () => {
+  it("does not render overseers as unreachable dashboard rows", () => {
     const overseerSession = {
       index: 0,
       id: "claude-boss",
@@ -652,8 +686,8 @@ describe("renderDashboardFrame worktree progress", () => {
       120,
       40,
     );
-    expect(withOverseer.frame).toContain("\x1b[35mOverseer\x1b[0m");
-    expect(stripAnsi(withOverseer.frame)).toContain("overseer");
+    expect(stripAnsi(withOverseer.frame)).not.toContain("Overseer");
+    expect(stripAnsi(withOverseer.frame)).not.toContain("claude-boss");
 
     const withoutOverseer = renderDashboardFrame(
       baseDashboardViewModel({

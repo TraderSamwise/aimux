@@ -139,7 +139,7 @@ export interface MainCheckoutInfo {
 
 export interface DashboardViewModel {
   sessions: DashboardSession[];
-  /** Overseer sessions, rendered on a dedicated line above the worktree groups. */
+  /** Project overseer sessions, addressable through explicit overseer actions. */
   overseerSessions: DashboardSession[];
   services: DashboardService[];
   worktreeGroups: WorktreeGroup[];

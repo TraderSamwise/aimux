@@ -383,6 +383,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     ["H", "handoff"],
     ["T", "task"],
     ["o", "thread"],
+    ["O", "overseer"],
     ["R", "reply"],
   ];
   if (selectedSession && state.selectedTeammates.length > 0) talk.push(["e", "team"]);
@@ -856,12 +857,6 @@ export function renderDashboardFrame(
     })) {
       content.push(line);
     }
-    content.push("");
-  }
-  const overseerSessions = state.overseerSessions ?? [];
-  if (overseerSessions.length > 0) {
-    content.push(`  ${style("Overseer", "blocked")}`);
-    for (const session of overseerSessions) content.push(`    ${agentRow(session, false)}`);
     content.push("");
   }
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
