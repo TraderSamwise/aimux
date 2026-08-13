@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { Platform } from "react-native";
-import { Stack, useGlobalSearchParams, usePathname } from "expo-router";
+import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
@@ -28,7 +28,7 @@ import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { activeSessionsFromShareSummaries, sharedSessionsEqual } from "@/lib/shared-sessions";
-import { useRouteShare } from "@/lib/use-route-share";
+import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
   applyDesktopStateFailureAtom,
@@ -113,6 +113,7 @@ export default function MainLayout() {
   const setLegacyActiveShareRef = useRef(setLegacyActiveShare);
   const store = useStore();
   const { getToken } = useAuth();
+  const router = useRouter();
   const getTokenRef = useRef(getToken);
   const stackScreenOptions = useAppStackScreenOptions();
   const pathname = usePathname();
@@ -153,8 +154,15 @@ export default function MainLayout() {
   }, [activeShare, selectedProjectPath, store, urlProjectPath]);
 
   useEffect(() => {
+    if (!activeShare) return;
+    if (pathname === "/shares" || pathname.startsWith("/shares/")) return;
+    router.replace(sharedChatHref(activeShare));
+  }, [activeShare, pathname, router]);
+
+  useEffect(() => {
     if (Platform.OS !== "web") return;
     if (!effectiveProjectPath || !isProjectScopedPath(pathname)) return;
+    if (activeShare) return;
     const url = new URL(window.location.href);
     if (url.searchParams.get("project") === effectiveProjectPath) return;
     url.searchParams.set("project", effectiveProjectPath);
@@ -300,7 +308,11 @@ export default function MainLayout() {
         if (cancelled) return;
         const acceptedShares = activeSessionsFromShareSummaries(result.shares);
         setAcceptedSharesRef.current((current) =>
-          sharedSessionsEqual(current, acceptedShares) ? current : acceptedShares,
+          acceptedShares.length === 0 && current.length > 0
+            ? current
+            : sharedSessionsEqual(current, acceptedShares)
+              ? current
+              : acceptedShares,
         );
         const stillActive = activeShare
           ? acceptedShares.some(
@@ -309,7 +321,9 @@ export default function MainLayout() {
                 share.shareId === activeShare.shareId,
             )
           : false;
-        if (!stillActive) setLegacyActiveShareRef.current(null);
+        if (activeShare && acceptedShares.length > 0 && !stillActive) {
+          setLegacyActiveShareRef.current(null);
+        }
       } catch (err) {
         if (!cancelled && !isTransientRequestError(err)) {
           console.warn("shared chat list refresh failed:", err);

@@ -16,6 +16,7 @@ import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
+import { useRouteShare } from "@/lib/use-route-share";
 import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
 import { sidebarOpenAtom } from "@/stores/ui";
 
@@ -31,9 +32,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
   const pathname = usePathname();
+  const activeShare = useRouteShare();
   const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
+  const isSharedShell = isSharedRoute || Boolean(activeShare);
   const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
-  const Sidebar = isSharedRoute ? SharedSidebar : ProjectSidebar;
+  const Sidebar = isSharedShell ? SharedSidebar : ProjectSidebar;
 
   // Mobile drawer should start closed — users don't expect it open on load.
   useEffect(() => {
@@ -119,7 +122,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 transform: [{ translateX }],
               }}
             >
-              {isSharedRoute ? <SharedSidebar /> : <ProjectSidebar showPrimaryNav={false} />}
+              {isSharedShell ? <SharedSidebar /> : <ProjectSidebar showPrimaryNav={false} />}
             </Animated.View>
           ) : null}
         </View>

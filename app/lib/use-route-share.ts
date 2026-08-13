@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import { useGlobalSearchParams, usePathname } from "expo-router";
 import { useAtomValue } from "jotai";
 import { singleRouteParam } from "@/lib/route-params";
+import { resolveRouteShare } from "@/lib/route-share-resolver";
+import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
@@ -14,30 +16,37 @@ export function useRouteShare(): ActiveSharedSession | null {
     ownerUserId?: string | string[];
     shareId?: string | string[];
     sessionId?: string | string[];
+    project?: string | string[];
   }>();
   const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
   const legacyActiveShare = useAtomValue(activeSharedSessionAtom);
   const ownerUserId = singleRouteParam(params.ownerUserId);
   const shareId = singleRouteParam(params.shareId);
   const sessionId = singleRouteParam(params.sessionId);
+  const routeProjectPath = projectPathFromSearchOrLocation(params.project);
   const isShareRoute = pathname === "/shares" || pathname.startsWith("/shares/");
 
   return useMemo(() => {
-    if (!isShareRoute || !ownerUserId || !shareId) return null;
-    const routeShare =
-      acceptedShares.find(
-        (share) =>
-          share.ownerUserId === ownerUserId &&
-          share.shareId === shareId &&
-          (!sessionId || share.sessionId === sessionId),
-      ) ??
-      (legacyActiveShare?.ownerUserId === ownerUserId &&
-      legacyActiveShare.shareId === shareId &&
-      (!sessionId || legacyActiveShare.sessionId === sessionId)
-        ? legacyActiveShare
-        : null);
-    return routeShare ?? null;
-  }, [acceptedShares, isShareRoute, legacyActiveShare, ownerUserId, sessionId, shareId]);
+    return resolveRouteShare({
+      acceptedShares,
+      legacyActiveShare,
+      ownerUserId,
+      pathname,
+      routeProjectPath,
+      sessionId,
+      shareId,
+      isShareRoute,
+    });
+  }, [
+    acceptedShares,
+    isShareRoute,
+    legacyActiveShare,
+    ownerUserId,
+    pathname,
+    routeProjectPath,
+    sessionId,
+    shareId,
+  ]);
 }
 
 export function sharedChatHref(share: ActiveSharedSession) {
