@@ -73,6 +73,11 @@ import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { singleRouteParam } from "@/lib/route-params";
+import {
+  activeSessionsFromShareSummaries,
+  mergeActiveSharedSessions,
+  sharedSessionsEqual,
+} from "@/lib/shared-sessions";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
@@ -223,8 +228,7 @@ function isMultiplexedShare(summary: SharedSessionSummary | null): boolean {
   return (
     summary.participants.some(
       (participant) => participant.role !== "owner" && participant.status === "active",
-    ) ||
-    summary.invites.some((invite) => invite.status === "pending" || invite.status === "accepted")
+    ) || summary.invites.some((invite) => invite.status === "pending")
   );
 }
 
@@ -320,8 +324,14 @@ function buildChatListItems({
 }
 
 export default function ChatScreen() {
-  const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    ownerUserId?: string | string[];
+    sessionId?: string | string[];
+    shareId?: string | string[];
+  }>();
+  const routeOwnerUserId = singleRouteParam(params.ownerUserId);
   const sessionId = singleRouteParam(params.sessionId);
+  const routeShareId = singleRouteParam(params.shareId);
   const sessionKey = sessionId ?? "";
   const { project, projectPath, endpoint: serviceEndpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
@@ -355,6 +365,7 @@ export default function ChatScreen() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
+  const [shareSummaryCheckedKey, setShareSummaryCheckedKey] = useState<string | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingImageAttachment[]>([]);
@@ -372,7 +383,12 @@ export default function ChatScreen() {
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const activeShareForRoute =
     activeShare && activeShare.sessionId === sessionId ? activeShare : null;
+  const isCanonicalSharedRoute = Boolean(
+    pathname.startsWith("/shares/") && routeOwnerUserId && routeShareId && sessionId,
+  );
   const isSharedSessionView = Boolean(activeShareForRoute);
+  const isSharedConversation =
+    isCanonicalSharedRoute || isSharedSessionView || isMultiplexedShare(shareSummary);
   const canUseOwnerControls = !isSharedSessionView;
   const userEmail =
     user?.primaryEmailAddress?.emailAddress?.trim() ||
@@ -391,8 +407,8 @@ export default function ChatScreen() {
     );
   }, [shareSummary, user?.id, userEmail]);
   const sharedChatActor = useMemo<SharedChatActorInput | undefined>(() => {
-    if (!shareSummary || !isMultiplexedShare(shareSummary)) return undefined;
-    if (activeShareForRoute) {
+    if (!isSharedConversation) return undefined;
+    if (activeShareForRoute || isCanonicalSharedRoute) {
       return {
         role: "guest",
         displayName: currentShareParticipant?.displayName ?? userName ?? "shared guest",
@@ -404,10 +420,56 @@ export default function ChatScreen() {
       displayName: currentShareParticipant?.displayName ?? userName ?? "chat owner",
       email: currentShareParticipant?.email ?? userEmail,
     };
-  }, [activeShareForRoute, currentShareParticipant, shareSummary, userEmail, userName]);
+  }, [
+    activeShareForRoute,
+    currentShareParticipant,
+    isCanonicalSharedRoute,
+    isSharedConversation,
+    userEmail,
+    userName,
+  ]);
   const visibleShareInvites = useMemo(
     () => shareSummary?.invites.filter((invite) => invite.status !== "accepted") ?? [],
     [shareSummary],
+  );
+  const shouldLoadShareSummary = Boolean(
+    token &&
+    sessionId &&
+    (isCanonicalSharedRoute ||
+      activeShareForRoute ||
+      sharePanelOpen ||
+      (relayConfigured && project?.path)),
+  );
+  const shareSummaryRequestKey = useMemo(
+    () =>
+      token && sessionId
+        ? isCanonicalSharedRoute && routeOwnerUserId && routeShareId
+          ? `share:${routeOwnerUserId}:${routeShareId}:${sessionId}`
+          : activeShareForRoute
+            ? `share:${activeShareForRoute.ownerUserId}:${activeShareForRoute.shareId}:${sessionId}`
+            : relayConfigured && project?.path
+              ? `owner:${project.path}:${sessionId}`
+              : null
+        : null,
+    [
+      activeShareForRoute,
+      isCanonicalSharedRoute,
+      project?.path,
+      relayConfigured,
+      routeOwnerUserId,
+      routeShareId,
+      sessionId,
+      token,
+    ],
+  );
+  const ownerShareStatusPending = Boolean(
+    !isSharedSessionView &&
+    relayConfigured &&
+    token &&
+    project?.path &&
+    sessionId &&
+    shareSummaryRequestKey &&
+    shareSummaryCheckedKey !== shareSummaryRequestKey,
   );
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
@@ -596,9 +658,9 @@ export default function ChatScreen() {
   const parsedMessages = useMemo<ChatMessage[]>(
     () =>
       toChatMessages(transcript, sessionKey, {
-        shared: Boolean(shareSummary && isMultiplexedShare(shareSummary)),
+        shared: isSharedConversation,
       }),
-    [transcript, sessionKey, shareSummary],
+    [transcript, sessionKey, isSharedConversation],
   );
   const visibleLastError = lastError && !isTransientRequestError(lastError) ? lastError : null;
 
@@ -783,6 +845,7 @@ export default function ChatScreen() {
     sessionId &&
     session &&
     !sendBusy &&
+    !ownerShareStatusPending &&
     (composerSendText || hasPendingAttachments),
   );
 
@@ -1046,6 +1109,7 @@ export default function ChatScreen() {
       !serviceEndpoint ||
       !sessionId ||
       !session ||
+      ownerShareStatusPending ||
       sendBusyRef.current ||
       (!text && attachments.length === 0)
     ) {
@@ -1198,12 +1262,6 @@ export default function ChatScreen() {
     if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
   }
 
-  const shouldLoadShareSummary = Boolean(
-    token &&
-    sessionId &&
-    (activeShareForRoute || sharePanelOpen || (relayConfigured && project?.path)),
-  );
-
   useEffect(() => {
     if (!shouldLoadShareSummary) {
       if (!activeShareForRoute && !sharePanelOpen) setShareSummary(null);
@@ -1212,15 +1270,22 @@ export default function ChatScreen() {
     let cancelled = false;
     async function refreshShareSummary() {
       if (!token || !sessionId) return;
-      if (activeShareForRoute) {
-        const result = await getShare(
-          activeShareForRoute.ownerUserId,
-          activeShareForRoute.shareId,
-          {
-            token,
-          },
-        );
-        if (!cancelled) setShareSummary(result.share);
+      if ((isCanonicalSharedRoute && routeOwnerUserId && routeShareId) || activeShareForRoute) {
+        const ownerUserId = routeOwnerUserId ?? activeShareForRoute!.ownerUserId;
+        const shareId = routeShareId ?? activeShareForRoute!.shareId;
+        const result = await getShare(ownerUserId, shareId, { token });
+        if (!cancelled) {
+          setShareSummary(result.share);
+          const [acceptedShare] = activeSessionsFromShareSummaries([result.share]);
+          if (acceptedShare) {
+            setAcceptedShares((current) => {
+              const next = mergeActiveSharedSessions(current, acceptedShare);
+              return sharedSessionsEqual(current, next) ? current : next;
+            });
+            setLegacyActiveShare(acceptedShare);
+          }
+          setShareSummaryCheckedKey(shareSummaryRequestKey);
+        }
         return;
       }
       if (!project?.path) return;
@@ -1231,9 +1296,11 @@ export default function ChatScreen() {
             (share) => share.projectRoot === project.path && share.sessionId === sessionId,
           ) ?? null,
         );
+        setShareSummaryCheckedKey(shareSummaryRequestKey);
       }
     }
     void refreshShareSummary().catch((err) => {
+      if (!cancelled) setShareSummaryCheckedKey(shareSummaryRequestKey);
       if (!cancelled && sharePanelOpen) {
         setInviteStatus(err instanceof Error ? err.message : String(err));
       }
@@ -1243,9 +1310,15 @@ export default function ChatScreen() {
     };
   }, [
     activeShareForRoute,
+    isCanonicalSharedRoute,
     project?.path,
+    routeOwnerUserId,
+    routeShareId,
     sessionId,
+    setAcceptedShares,
+    setLegacyActiveShare,
     sharePanelOpen,
+    shareSummaryRequestKey,
     shouldLoadShareSummary,
     token,
   ]);
