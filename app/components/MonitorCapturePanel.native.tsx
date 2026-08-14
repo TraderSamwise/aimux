@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Image, Platform, View } from "react-native";
+import { Image, Platform, StyleSheet, View } from "react-native";
 import { Camera as CameraIcon, Mic, MicOff, Repeat, Square } from "lucide-react-native";
 import {
   CameraView,
@@ -63,6 +63,11 @@ export function MonitorCapturePanel({
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [frameCount, setFrameCount] = useState(0);
   const [lastFrame, setLastFrame] = useState<MonitorFrameSample | null>(null);
+  const [cameraPreviewState, setCameraPreviewState] = useState<{
+    error: string | null;
+    key: string;
+    ready: boolean;
+  }>({ error: null, key: "", ready: false });
   const [recognizing, setRecognizing] = useState(false);
   const [speechText, setSpeechText] = useState("");
   const [speechError, setSpeechError] = useState<string | null>(null);
@@ -249,7 +254,12 @@ export function MonitorCapturePanel({
     };
   }, []);
 
-  const cameraReady = !capturesCamera(settings.captureMode) || cameraPermission?.granted;
+  const cameraPreviewKey = `${settings.captureMode}:${facing}:${cameraPermission?.granted ? "granted" : "pending"}`;
+  const cameraPreviewReady =
+    cameraPreviewState.key === cameraPreviewKey && cameraPreviewState.ready;
+  const cameraMountError =
+    cameraPreviewState.key === cameraPreviewKey ? cameraPreviewState.error : null;
+  const cameraStartReady = !capturesCamera(settings.captureMode) || cameraPermission?.granted;
   const status = running
     ? capturing
       ? "Capturing"
@@ -305,7 +315,7 @@ export function MonitorCapturePanel({
                   : "text-sm font-semibold text-primary-foreground"
               }
             >
-              {running ? "Stop" : cameraReady ? "Start" : "Allow camera"}
+              {running ? "Stop" : cameraStartReady ? "Start" : "Allow camera"}
             </Text>
           </Button>
         </View>
@@ -314,19 +324,45 @@ export function MonitorCapturePanel({
       <View className="gap-4 p-5 md:flex-row">
         <View className="min-w-0 flex-1">
           {capturesCamera(settings.captureMode) ? (
-            <View className="aspect-[4/3] overflow-hidden rounded-lg border border-border bg-background">
+            <View
+              className="overflow-hidden rounded-lg border border-border bg-background"
+              collapsable={false}
+              style={styles.cameraPreviewFrame}
+            >
               {cameraPermission?.granted ? (
-                <CameraView
-                  ref={cameraRef}
-                  className="h-full w-full"
-                  facing={facing}
-                  mode="picture"
-                />
+                <>
+                  <CameraView
+                    key={cameraPreviewKey}
+                    ref={cameraRef}
+                    active
+                    facing={facing}
+                    mode="picture"
+                    onCameraReady={() => {
+                      setCameraPreviewState({ error: null, key: cameraPreviewKey, ready: true });
+                    }}
+                    onMountError={(event) => {
+                      setCameraPreviewState({
+                        error: event.message,
+                        key: cameraPreviewKey,
+                        ready: false,
+                      });
+                    }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  {!cameraPreviewReady || cameraMountError ? (
+                    <View className="absolute inset-0 items-center justify-center bg-background/80 px-5">
+                      <CameraIcon size={28} color="#71717a" />
+                      <Text className="mt-3 text-center text-sm text-muted-foreground">
+                        {cameraMountError ?? "Starting camera preview..."}
+                      </Text>
+                    </View>
+                  ) : null}
+                </>
               ) : lastFrame ? (
                 <Image
                   source={{ uri: lastFrame.uri }}
-                  className="h-full w-full"
                   resizeMode="cover"
+                  style={StyleSheet.absoluteFill}
                 />
               ) : (
                 <View className="h-full w-full items-center justify-center px-5">
@@ -401,3 +437,10 @@ export function MonitorCapturePanel({
     </Card>
   );
 }
+
+const styles = StyleSheet.create({
+  cameraPreviewFrame: {
+    aspectRatio: 4 / 3,
+    minHeight: 220,
+  },
+});
