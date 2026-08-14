@@ -5,8 +5,9 @@ import { useAtomValue } from "jotai";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { monitorSettingsAtom } from "@/stores/settings";
+import type { MonitorCapturePanelProps } from "@/lib/monitor-capture";
 
-export function MonitorCapturePanel() {
+export function MonitorCapturePanel(_props: MonitorCapturePanelProps = {}) {
   const settings = useAtomValue(monitorSettingsAtom);
 
   return (

@@ -19,6 +19,8 @@ import {
   MONITOR_SPEECH_CONTEXT,
   monitorFrameFilename,
   type MonitorFrameSample,
+  type MonitorSample,
+  type MonitorCapturePanelProps,
 } from "@/lib/monitor-capture";
 import { monitorSettingsAtom } from "@/stores/settings";
 
@@ -42,16 +44,23 @@ async function supportsRequestedOnDeviceLocale(locale: string): Promise<boolean>
 }
 
 export function MonitorCapturePanel({
-  onFrameCaptured,
-}: {
-  onFrameCaptured?: (sample: MonitorFrameSample) => void;
-}) {
+  deliveryEnabled = false,
+  deliveryLabel,
+  deliveryHint,
+  startDisabled = false,
+  textOnlyDelivery = false,
+  onSampleCaptured,
+}: MonitorCapturePanelProps = {}) {
   const settings = useAtomValue(monitorSettingsAtom);
   const cameraRef = useRef<CameraView | null>(null);
+  const lastDeliveredSpeechRef = useRef("");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>("back");
   const [running, setRunning] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [delivering, setDelivering] = useState(false);
+  const [deliveryCount, setDeliveryCount] = useState(0);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [frameCount, setFrameCount] = useState(0);
   const [lastFrame, setLastFrame] = useState<MonitorFrameSample | null>(null);
   const [recognizing, setRecognizing] = useState(false);
@@ -72,6 +81,25 @@ export function MonitorCapturePanel({
     setRecognizing(false);
     setSpeechError(event.message || event.error);
   });
+
+  const deliverSample = useCallback(
+    async (sample: MonitorSample) => {
+      if (!deliveryEnabled || !onSampleCaptured) return;
+      setDelivering(true);
+      setDeliveryError(null);
+      try {
+        await onSampleCaptured(sample);
+        setDeliveryCount((current) => current + 1);
+        const transcript = sample.transcript?.trim();
+        if (transcript) lastDeliveredSpeechRef.current = transcript;
+      } catch (err) {
+        setDeliveryError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setDelivering(false);
+      }
+    },
+    [deliveryEnabled, onSampleCaptured],
+  );
 
   const captureNow = useCallback(async () => {
     if (!capturesCamera(settings.captureMode) || !cameraPermission?.granted) return;
@@ -99,11 +127,35 @@ export function MonitorCapturePanel({
       };
       setLastFrame(sample);
       setFrameCount((current) => current + 1);
-      onFrameCaptured?.(sample);
+      const transcript = speechText.trim();
+      if (textOnlyDelivery && (!transcript || transcript === lastDeliveredSpeechRef.current)) {
+        return;
+      }
+      await deliverSample({
+        frame: textOnlyDelivery ? undefined : sample,
+        transcript,
+        capturedAt,
+      });
     } finally {
       setCapturing(false);
     }
-  }, [cameraPermission?.granted, capturing, onFrameCaptured, settings.captureMode]);
+  }, [
+    cameraPermission?.granted,
+    capturing,
+    deliverSample,
+    settings.captureMode,
+    speechText,
+    textOnlyDelivery,
+  ]);
+
+  const deliverSpeechSample = useCallback(async () => {
+    const transcript = speechText.trim();
+    if (!transcript || transcript === lastDeliveredSpeechRef.current) return;
+    await deliverSample({
+      transcript,
+      capturedAt: new Date().toISOString(),
+    });
+  }, [deliverSample, speechText]);
 
   const startSpeech = useCallback(async () => {
     if (!settings.speechToText || !capturesAudio(settings.captureMode)) return;
@@ -177,6 +229,15 @@ export function MonitorCapturePanel({
   }, [captureNow, running, settings.captureMode, settings.intervalSeconds]);
 
   useEffect(() => {
+    if (!running || capturesCamera(settings.captureMode) || !capturesAudio(settings.captureMode))
+      return;
+    const id = setInterval(() => {
+      void deliverSpeechSample();
+    }, settings.intervalSeconds * 1000);
+    return () => clearInterval(id);
+  }, [deliverSpeechSample, running, settings.captureMode, settings.intervalSeconds]);
+
+  useEffect(() => {
     if (!running || !recognizing) return;
     if (settings.speechToText && capturesAudio(settings.captureMode)) return;
     ExpoSpeechRecognitionModule.stop();
@@ -192,9 +253,11 @@ export function MonitorCapturePanel({
   const status = running
     ? capturing
       ? "Capturing"
-      : recognizing
-        ? "Listening"
-        : "Running"
+      : delivering
+        ? "Delivering"
+        : recognizing
+          ? "Listening"
+          : "Running"
     : "Stopped";
 
   return (
@@ -202,7 +265,17 @@ export function MonitorCapturePanel({
       <View className="border-b border-border px-5 py-4 md:flex-row md:items-center md:justify-between">
         <View className="min-w-0">
           <Text className="text-base font-semibold text-foreground">Live monitor</Text>
-          <Text className="mt-1 text-sm text-muted-foreground">{status}</Text>
+          <Text className="mt-1 text-sm text-muted-foreground">
+            {deliveryEnabled && deliveryLabel
+              ? `${status} - delivering to ${deliveryLabel}`
+              : status}
+          </Text>
+          {deliveryHint ? (
+            <Text className="mt-1 text-xs text-muted-foreground">{deliveryHint}</Text>
+          ) : null}
+          {deliveryError ? (
+            <Text className="mt-1 text-xs text-red-400">{deliveryError}</Text>
+          ) : null}
         </View>
         <View className="mt-3 flex-row gap-2 md:mt-0">
           <Button
@@ -217,6 +290,7 @@ export function MonitorCapturePanel({
           <Button
             variant={running ? "destructive" : "default"}
             className="gap-2"
+            disabled={!running && startDisabled}
             onPress={running ? stop : start}
           >
             {running ? (
@@ -283,6 +357,9 @@ export function MonitorCapturePanel({
             />
             <View className="rounded-lg border border-border px-3 py-2">
               <Text className="text-xs text-muted-foreground">{frameCount} frames</Text>
+            </View>
+            <View className="rounded-lg border border-border px-3 py-2">
+              <Text className="text-xs text-muted-foreground">{deliveryCount} delivered</Text>
             </View>
             <View className="rounded-lg border border-border px-3 py-2">
               <Text className="text-xs text-muted-foreground">

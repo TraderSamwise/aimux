@@ -23,11 +23,27 @@ export interface MonitorFrameSample {
   sizeBytes: number;
 }
 
+export interface MonitorSample {
+  frame?: MonitorFrameSample;
+  transcript?: string | null;
+  capturedAt: string;
+}
+
+export interface MonitorCapturePanelProps {
+  deliveryEnabled?: boolean;
+  deliveryLabel?: string;
+  deliveryHint?: string | null;
+  startDisabled?: boolean;
+  textOnlyDelivery?: boolean;
+  onSampleCaptured?: (sample: MonitorSample) => Promise<void> | void;
+}
+
 export interface MonitorSampleTextInput {
   capturedAt: string;
   captureMode: MonitorCaptureMode;
   transcript?: string | null;
   frameAttached?: boolean;
+  frameSkippedReason?: string | null;
   audioSampleRate?: MonitorAudioSampleRate;
 }
 
@@ -53,6 +69,8 @@ export function estimateBase64DecodedBytes(value: string): number {
 export function formatMonitorSampleText(input: MonitorSampleTextInput): string {
   const parts = [`Monitor sample captured at ${input.capturedAt}.`];
   if (input.frameAttached) parts.push("A camera frame is attached.");
+  if (input.frameSkippedReason)
+    parts.push(`Camera frame not attached: ${input.frameSkippedReason}.`);
   if (input.captureMode !== "camera" && input.audioSampleRate) {
     parts.push(`Audio sample rate: ${input.audioSampleRate} Hz.`);
   }
