@@ -2790,7 +2790,8 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
+    expect(log.some((line) => line.includes("couldn't switch window"))).toBe(false);
     expect(log).not.toContain("link-window -d -s @parent -t aimux-proj-client-1234abcd");
     expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
   });

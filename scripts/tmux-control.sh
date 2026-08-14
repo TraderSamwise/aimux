@@ -879,7 +879,8 @@ if not items:
     raise SystemExit(1)
 current = next((item for item in items if item.get("windowId") == current_window_id), None)
 if current and current.get("overseer") and action in ("next", "prev"):
-    raise SystemExit(1)
+    print("__AIMUX_NOOP__")
+    raise SystemExit(0)
 
 if current and (current.get("team") or {}).get("parentSessionId"):
     parent_id = (current.get("team") or {}).get("parentSessionId")
@@ -953,6 +954,7 @@ raise SystemExit(1)
 PY
   ) || return 1
   [ -n "$resolved_target" ] || return 1
+  [ "$resolved_target" != "__AIMUX_NOOP__" ] || return 2
   printf '%s' "$resolved_target"
 }
 
@@ -978,7 +980,10 @@ fallback_local_control() {
       return 0
       ;;
     next|prev|attention|window)
-      target_window_id=$(resolve_local_target_from_tmux_metadata) || return 1
+      target_window_id=$(resolve_local_target_from_tmux_metadata)
+      resolve_status=$?
+      [ "$resolve_status" -ne 2 ] || return 0
+      [ "$resolve_status" -eq 0 ] || return 1
       switch_local_window "$target_window_id"
       ;;
     team)
