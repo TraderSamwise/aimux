@@ -464,6 +464,7 @@ export const persistenceMethods = {
           active: session.active,
           worktreePath: session.worktreePath,
           semantic: session.semantic,
+          overseer: session.overseer ?? false,
         })),
         ...orderedServices.map((service: any) => ({
           id: service.id,

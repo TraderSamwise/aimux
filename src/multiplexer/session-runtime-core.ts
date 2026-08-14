@@ -742,6 +742,7 @@ export function buildTmuxWindowMetadata(
     toolConfigKey: host.sessionToolKeys.get(sessionId) ?? command,
     backendSessionId: runtime?.backendSessionId,
     team: runtime?.team ?? existing?.team,
+    overseer: sessionMetadata?.overseer === true,
     worktreePath: host.sessionWorktreePaths.get(sessionId),
     label: getSessionLabel(host, sessionId),
     role: host.sessionRoles.get(sessionId),

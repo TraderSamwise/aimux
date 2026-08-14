@@ -33,6 +33,7 @@ export interface FastControlItem {
   recentRank: number;
   previewSnapshot?: ExposePreviewSnapshot;
   chatPreview?: ExposeChatPreview;
+  overseer?: boolean;
 }
 
 type ManagedWindowEntry = { target: TmuxTarget; metadata: TmuxWindowMetadata };
@@ -145,9 +146,10 @@ export type AgentListScope = "all" | "worktree";
 function buildSwitchableAgentItems(
   context: FastControlContext,
   tmux = new TmuxRuntimeManager(),
-  opts: { scope?: AgentListScope } = {},
+  opts: { scope?: AgentListScope; includeOverseer?: boolean } = {},
 ): InternalFastControlItem[] {
   const scope = opts.scope ?? "worktree";
+  const metadataState = loadMetadataState(context.projectRoot);
   const sessionNames = context.sessionNames?.length
     ? context.sessionNames
     : [tmux.getProjectSession(context.projectRoot).sessionName];
@@ -175,11 +177,23 @@ function buildSwitchableAgentItems(
   );
   const teammateParentSessionId = currentManagedWindow?.metadata.team?.parentSessionId;
   const scopedWorktreePath = resolveContextWorktreePath(context, currentManagedWindow);
+  const isOverseerWindow = (metadata: TmuxWindowMetadata) =>
+    metadataState.sessions[metadata.sessionId]?.overseer === true ||
+    metadata.overseer === true ||
+    metadata.team?.role === "overseer";
+  if (currentManagedWindow && isOverseerWindow(currentManagedWindow.metadata) && !opts.includeOverseer) return [];
   let managed = allManagedWindows
     .filter(({ target, metadata }) => {
       if (isDashboardWindowName(target.windowName)) return false;
       const alive = aliveByWindowId.get(target.windowId) ?? false;
       if (!alive && target.windowId !== currentManagedWindow?.target.windowId) return false;
+      const overseer = isOverseerWindow(metadata);
+      if (!opts.includeOverseer && overseer) return false;
+      if (opts.includeOverseer && overseer) {
+        if (scope === "all") return true;
+        const worktreePath = metadata.worktreePath || context.projectRoot;
+        return pathResolve(worktreePath) === scopedWorktreePath;
+      }
       if (teammateParentSessionId && scope !== "all") {
         return metadata.kind !== "service" && metadata.team?.parentSessionId === teammateParentSessionId;
       }
@@ -204,6 +218,7 @@ function buildSwitchableAgentItems(
       activity: entry.target.windowIndex,
       lastUsedAt: getLastUsedAt(context.projectRoot, entry.metadata.sessionId),
       recentRank: recentRankMap.get(entry.metadata.sessionId) ?? Number.MAX_SAFE_INTEGER,
+      overseer: isOverseerWindow(entry.metadata),
       alive: aliveByWindowId.get(entry.target.windowId) ?? false,
     }));
 
@@ -223,7 +238,7 @@ function buildSwitchableAgentItems(
 export function listSwitchableAgentItems(
   context: FastControlContext,
   tmux = new TmuxRuntimeManager(),
-  opts: { scope?: AgentListScope } = {},
+  opts: { scope?: AgentListScope; includeOverseer?: boolean } = {},
 ): FastControlItem[] {
   return buildSwitchableAgentItems(context, tmux, opts).filter((entry) => entry.alive);
 }
@@ -292,6 +307,7 @@ export function serializeFastControlItem(item: FastControlItem) {
     recentRank: item.recentRank,
     previewSnapshot: item.previewSnapshot,
     chatPreview: item.chatPreview,
+    overseer: item.overseer ?? false,
   };
 }
 

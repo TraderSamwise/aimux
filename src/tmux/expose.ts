@@ -15,6 +15,7 @@ import {
   focusExposeItem,
   initialExposeScope,
   loadExposeScopeItems,
+  loadOverseerExposeItem,
   nextExposeScope,
   type ExposeConfig,
   type ExposeScope,
@@ -106,6 +107,7 @@ const RESET = "\x1b[0m";
 // tmux popups keep launch dimensions after terminal resize. Exposé exits with this
 // code when the controlling client size changes so the launcher can relaunch it.
 const RELAUNCH_ON_RESIZE_EXIT = 75;
+export const OPEN_DASHBOARD_FROM_EXPOSE_EXIT = 76;
 
 /** Pick one client's `WxH` out of a `list-clients` listing, by tty. */
 export function matchClientSize(listing: string, clientTty: string): string {
@@ -611,7 +613,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const zoom = scope === "global" ? "" : " · g zoom out";
     const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`, cols - 2);
     const help = truncateAnsi(
-      `\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`,
+      `\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open · O overseer · ^A d dashboard${zoom} · q/Esc close${more}${RESET}`,
       cols - 2,
     );
 
@@ -806,10 +808,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         });
     };
 
-    const selectTile = (i: number) => {
+    const selectItem = (item: ExposeScopeItem) => {
       if (opening) return;
-      const item = items[i];
-      if (!item) return;
       opening = true;
       markTiming("focus-start", { scope, itemCount: items.length });
       focusTimingOpen = true;
@@ -837,13 +837,60 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         });
     };
 
+    const selectTile = (i: number) => {
+      const item = items[i];
+      if (!item) return;
+      selectItem(item);
+    };
+
+    const selectOverseer = () => {
+      if (opening) return;
+      if (loading) {
+        pendingKeys.push({ key: "O" });
+        return;
+      }
+      opening = true;
+      void loadOverseerExposeItem(context, options.projectStateDir, exposeDeps)
+        .then((item) => {
+          if (finished) return;
+          if (!item) {
+            opening = false;
+            render(false);
+            return;
+          }
+          opening = false;
+          selectItem(item);
+        })
+        .catch(() => {
+          if (finished) return;
+          opening = false;
+          render(false);
+        });
+    };
+
+    let leaderPending = false;
     function handleKey(key: string, ctrl = false, deferRender = false): boolean {
       if (key === "q" || key === "escape" || (ctrl && key === "c")) {
         finish(0);
         return false;
       }
+      if (leaderPending) {
+        leaderPending = false;
+        if (!ctrl && key === "d") {
+          finish(OPEN_DASHBOARD_FROM_EXPOSE_EXIT);
+          return false;
+        }
+      }
+      if (ctrl && key === "a") {
+        leaderPending = true;
+        return false;
+      }
       if (loading) {
         pendingKeys.push({ key, ctrl });
+        return false;
+      }
+      if (key === "O") {
+        selectOverseer();
         return false;
       }
       if (key === "g") {

@@ -2688,6 +2688,113 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @teammate -t aimux-proj-client-1234abcd");
   });
 
+  it("keeps next/prev out of the overseer window", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@overseer", index: 2, name: "claude-overseer" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@overseer": {
+          sessionId: "boss",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          overseer: true,
+          team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+        },
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+
+    runControl(envRoot, [
+      "next",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@parent",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @overseer -t aimux-proj-client-1234abcd");
+  });
+
+  it("does not switch from the overseer into normal checkout windows", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@overseer" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@overseer", index: 2, name: "claude-overseer" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+        "aimux-proj-client-1234abcd": [{ id: "@overseer", index: 2, name: "claude-overseer" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@overseer": {
+          sessionId: "boss",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          overseer: true,
+          team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+        },
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+
+    runControl(envRoot, [
+      "next",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude-overseer",
+      "--current-window-id",
+      "@overseer",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
+    expect(log).not.toContain("link-window -d -s @parent -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
+  });
+
   it("switches from a focused teammate back to its recorded parent", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@teammate" }],

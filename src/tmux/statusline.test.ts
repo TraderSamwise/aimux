@@ -230,6 +230,94 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("Fix auth flow");
   });
 
+  it("omits the overseer from normal scoped footer chips", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "coder",
+            tool: "codex",
+            label: "coder",
+            windowName: "codex",
+            tmuxWindowId: "@1",
+            role: "coder",
+            status: "running",
+            worktreePath: repoRoot,
+          },
+          {
+            id: "boss",
+            tool: "claude",
+            label: "claude-overseer",
+            windowName: "claude",
+            tmuxWindowId: "@2",
+            role: "coder",
+            status: "idle",
+            worktreePath: repoRoot,
+            overseer: true,
+          },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "codex",
+      currentWindowId: "@1",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+    expect(rendered).toContain("coder(coder)");
+    expect(rendered).not.toContain("claude-overseer");
+    expect(rendered).not.toContain("overseer");
+  });
+
+  it("renders the active overseer with an explicit footer classification", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "coder",
+            tool: "codex",
+            label: "coder",
+            windowName: "codex",
+            tmuxWindowId: "@1",
+            role: "coder",
+            status: "running",
+            worktreePath: repoRoot,
+          },
+          {
+            id: "boss",
+            tool: "claude",
+            label: "claude-overseer",
+            windowName: "claude",
+            tmuxWindowId: "@2",
+            role: "coder",
+            status: "idle",
+            worktreePath: repoRoot,
+            overseer: true,
+          },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@2",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+    expect(rendered).toContain("overseer");
+    expect(rendered).toContain("claude(coder) idle");
+    expect(rendered).not.toContain("coder(coder)");
+  });
+
   it("renders plugin-provided statusline segments for the active session", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(

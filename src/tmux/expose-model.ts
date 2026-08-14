@@ -121,6 +121,22 @@ export async function loadExposeScopeItems(
   };
 }
 
+export async function loadOverseerExposeItem(
+  context: FastControlContext,
+  projectStateDir: string,
+  deps: LoadExposeScopeDeps = {},
+): Promise<ExposeScopeItem | null> {
+  const endpoint = projectServiceEndpoint(projectStateDir, deps);
+  const url = new URL(PROJECT_API_ROUTES.controls.switchableAgents, endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
+  url.searchParams.set("scope", "all");
+  url.searchParams.set("labelFormat", "raw");
+  url.searchParams.set("includePreview", "1");
+  url.searchParams.set("includeOverseer", "1");
+  appendFocusContext(url, context);
+  const items = await requestExposeItems(url, deps);
+  return items.find((item) => item.overseer === true) ?? null;
+}
+
 export async function focusExposeItem(
   item: ExposeScopeItem,
   context: FastControlContext & { clientTty?: string },

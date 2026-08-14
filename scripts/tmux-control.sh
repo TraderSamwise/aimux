@@ -603,6 +603,10 @@ show_local_expose() {
     fi
     break
   done
+  if [ "$popup_status" = 76 ]; then
+    switch_local_dashboard || { dashboard_candidate_needs_reload && reload_local_dashboard && return 0; }
+    return 1
+  fi
   [ "$popup_status" = 0 ] || return 1
   if [ -n "$selected_expose_window" ]; then
     switch_local_window "$selected_expose_window"
@@ -791,6 +795,7 @@ for line in windows:
         "kind": kind,
         "sessionId": meta.get("sessionId", ""),
         "worktreePath": worktree,
+        "overseer": bool(meta.get("overseer")) or (isinstance(team, dict) and team.get("role") == "overseer"),
         "attention": meta.get("attention", ""),
         "unseenCount": int(meta.get("unseenCount") or 0),
         "statusText": meta.get("statusText", ""),
@@ -873,6 +878,8 @@ if not items:
     log("no metadata candidates in current worktree")
     raise SystemExit(1)
 current = next((item for item in items if item.get("windowId") == current_window_id), None)
+if current and current.get("overseer") and action in ("next", "prev"):
+    raise SystemExit(1)
 
 if current and (current.get("team") or {}).get("parentSessionId"):
     parent_id = (current.get("team") or {}).get("parentSessionId")
@@ -885,7 +892,7 @@ if current and (current.get("team") or {}).get("parentSessionId"):
 
     items.sort(key=lambda s: (teammate_nav_order(s), s.get("windowIndex", 10**9), s.get("createdAt") or "", s.get("sessionId") or ""))
 else:
-    items = [item for item in items if not (item.get("team") or {}).get("parentSessionId")]
+    items = [item for item in items if not item.get("overseer") and not (item.get("team") or {}).get("parentSessionId")]
     items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
 
 if not items:

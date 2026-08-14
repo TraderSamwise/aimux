@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastControlContext } from "../fast-control.js";
 import type { ExposeConfig, ExposeScope } from "./expose-model.js";
-import { focusExposeItem, initialExposeScope, loadExposeScopeItems, nextExposeScope } from "./expose-model.js";
+import {
+  focusExposeItem,
+  initialExposeScope,
+  loadExposeScopeItems,
+  loadOverseerExposeItem,
+  nextExposeScope,
+} from "./expose-model.js";
 
 vi.mock("../worktree.js", () => ({
   listWorktrees: vi.fn(() => [{ path: "/repo" }, { path: "/repo/.aimux/worktrees/feat-x" }]),
@@ -155,6 +161,19 @@ describe("loadExposeScopeItems", () => {
     expect(requested.searchParams.get("includePreview")).toBe("1");
     expect(view).toMatchObject({ scope: "global", scopeLabel: "all projects", sublabel: "project-worktree" });
     expect(view.items.map((i) => i.id)).toEqual(["global-agent"]);
+  });
+
+  it("loads the overseer through an explicit opt-in project query", async () => {
+    const requestJsonFn = vi.fn(async () => ({
+      status: 200,
+      json: { ok: true, items: [{ id: "agent" }, { id: "boss", overseer: true }] },
+    }));
+    const item = await loadOverseerExposeItem(context, createProjectStateDir(), { requestJsonFn });
+    const requested = new URL(requestJsonFn.mock.calls[0]![0]);
+    expect(requested.pathname).toBe("/control/switchable-agents");
+    expect(requested.searchParams.get("scope")).toBe("all");
+    expect(requested.searchParams.get("includeOverseer")).toBe("1");
+    expect(item?.id).toBe("boss");
   });
 });
 

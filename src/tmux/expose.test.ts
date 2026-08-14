@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runTmuxExpose } from "./expose.js";
+import { OPEN_DASHBOARD_FROM_EXPOSE_EXIT, runTmuxExpose } from "./expose.js";
 import type { TmuxExposeTimingEvent } from "./expose.js";
 import { writeHotExposeScopeView } from "./expose-hot-snapshot.js";
 
@@ -120,6 +120,132 @@ async function waitForCondition(predicate: () => boolean, ms = 1000): Promise<vo
 }
 
 describe("runTmuxExpose", () => {
+  it("returns the dashboard exit code for leader-d inside the popup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-dashboard-exit-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    const result = runTmuxExpose({
+      projectRoot: "/repo",
+      projectStateDir,
+      currentWindow: "codex",
+      currentWindowId: "@1",
+      currentPath: "/repo",
+      input,
+      output,
+      manageTerminal: false,
+      columns: 80,
+      rows: 24,
+      exposeConfig: { initialScope: "project" },
+    });
+
+    input.write("\x01d");
+    await expect(withTimeout(result, 1000)).resolves.toBe(OPEN_DASHBOARD_FROM_EXPOSE_EXIT);
+    input.destroy();
+    output.destroy();
+  });
+
+  it("opens the overseer from uppercase O inside the popup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-overseer-key-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+    const requestedUrls: string[] = [];
+    const focusBodies: unknown[] = [];
+    const server = createServer(async (req, res) => {
+      requestedUrls.push(req.url ?? "");
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "agent",
+              label: "agent",
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: { sessionId: "agent", command: "codex", worktreePath: "/repo" },
+            },
+            {
+              id: "boss",
+              label: "Overseer",
+              overseer: true,
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+              metadata: {
+                sessionId: "boss",
+                command: "claude",
+                worktreePath: "/repo",
+                overseer: true,
+                team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        req.on("end", () => {
+          focusBodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        currentClientSession: "aimux-test-client-12345678",
+        clientTty: "/dev/live",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      input.write("O");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      const switchUrl = new URL(
+        requestedUrls.find((url) => url.startsWith("/control/switchable-agents") && url.includes("includeOverseer=1"))!,
+        endpoint,
+      );
+      expect(switchUrl.searchParams.get("includeOverseer")).toBe("1");
+      expect(focusBodies).toContainEqual(
+        expect.objectContaining({
+          windowId: "@2",
+          currentClientSession: "aimux-test-client-12345678",
+          clientTty: "/dev/live",
+        }),
+      );
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("renders a hot snapshot before slow item discovery resolves", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-hot-render-test-"));
     tempRoots.push(root);

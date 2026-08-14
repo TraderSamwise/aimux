@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   listSwitchableAgentItems,
   listSwitchableAgentMenuItems,
@@ -7,11 +10,21 @@ import {
   resolvePrevAgent,
   serializeFastControlItem,
 } from "./fast-control.js";
+import { initPaths } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { setSessionOverseer } from "./metadata-store.js";
 
 vi.mock("./worktree.js", () => ({
   listWorktrees: vi.fn(() => [{ path: "/repo" }, { path: "/repo/.aimux/worktrees/tealchart-cleanup-11" }]),
 }));
+
+const tempRoots: string[] = [];
+
+afterEach(() => {
+  while (tempRoots.length > 0) {
+    rmSync(tempRoots.pop()!, { recursive: true, force: true });
+  }
+});
 
 describe("fast-control worktree scoping", () => {
   it("serializes optional expose preview snapshots", () => {
@@ -41,6 +54,106 @@ describe("fast-control worktree scoping", () => {
       startLine: -40,
       lineCount: 40,
     });
+  });
+
+  it("omits the overseer from switchable agents unless explicitly requested", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-fast-control-overseer-"));
+    tempRoots.push(projectRoot);
+    await initPaths(projectRoot);
+    setSessionOverseer("boss", true, projectRoot);
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn(() => [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@1", windowIndex: 1, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "coder",
+            label: "Coder",
+            command: "codex",
+            worktreePath: projectRoot,
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@2", windowIndex: 2, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "boss",
+            label: "Overseer",
+            command: "claude",
+            worktreePath: projectRoot,
+            team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+          },
+        },
+      ]),
+      isWindowAlive: vi.fn(() => true),
+      listWindows: vi.fn(() => [
+        { id: "@1", index: 1, name: "codex", active: true },
+        { id: "@2", index: 2, name: "claude", active: false },
+      ]),
+    } as unknown as TmuxRuntimeManager;
+    const context = {
+      projectRoot,
+      currentClientSession: "aimux-repo-abc-client-123",
+      currentWindow: "codex",
+      currentWindowId: "@1",
+      currentPath: projectRoot,
+    };
+
+    expect(listSwitchableAgentItems(context, tmux).map((item) => item.id)).toEqual(["coder"]);
+    expect(listSwitchableAgentItems(context, tmux, { includeOverseer: true }).map((item) => item.id)).toEqual([
+      "coder",
+      "boss",
+    ]);
+  });
+
+  it("does not switch from an active overseer into normal agents", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-fast-control-current-overseer-"));
+    tempRoots.push(projectRoot);
+    await initPaths(projectRoot);
+    setSessionOverseer("boss", true, projectRoot);
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn(() => [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@1", windowIndex: 1, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "coder",
+            label: "Coder",
+            command: "codex",
+            worktreePath: projectRoot,
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@2", windowIndex: 2, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "boss",
+            label: "Overseer",
+            command: "claude",
+            worktreePath: projectRoot,
+            overseer: true,
+            team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+          },
+        },
+      ]),
+      isWindowAlive: vi.fn(() => true),
+      listWindows: vi.fn(() => [
+        { id: "@1", index: 1, name: "codex", active: false },
+        { id: "@2", index: 2, name: "claude", active: true },
+      ]),
+    } as unknown as TmuxRuntimeManager;
+    const context = {
+      projectRoot,
+      currentClientSession: "aimux-repo-abc-client-123",
+      currentWindow: "claude",
+      currentWindowId: "@2",
+      currentPath: projectRoot,
+    };
+
+    expect(resolveNextAgent(context, tmux)).toBeNull();
+    expect(resolvePrevAgent(context, tmux)).toBeNull();
   });
 
   it("uses current window metadata worktree when cwd is outside the worktree", () => {

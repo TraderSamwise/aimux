@@ -1263,6 +1263,7 @@ export interface SwitchableAgentsInput {
   scope?: "all" | "worktree";
   includePreview?: "1";
   includeChatPreview?: "1";
+  includeOverseer?: "1";
   expose?: "1";
   labelFormat?: "raw";
 }
@@ -1296,6 +1297,7 @@ export interface SwitchableAgentItem extends Record<string, unknown> {
     kind: string;
     label: string;
   };
+  overseer?: boolean;
 }
 
 export interface SwitchableAgentsResponse extends ProjectApiOk {

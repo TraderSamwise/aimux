@@ -3110,6 +3110,7 @@ export class MetadataServer {
       const rawLabels = url.searchParams.get("labelFormat") === "raw";
       const includePreview = url.searchParams.get("includePreview") === "1";
       const includeChatPreview = url.searchParams.get("includeChatPreview") === "1";
+      const includeOverseer = url.searchParams.get("includeOverseer") === "1";
       const expose = url.searchParams.get("expose") === "1";
       const rawItems = listSwitchableAgentItems(
         {
@@ -3120,7 +3121,7 @@ export class MetadataServer {
           currentPath,
         },
         new TmuxRuntimeManager(),
-        { scope },
+        { scope, includeOverseer },
       );
       let itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems) : rawItems;
       if (includeChatPreview) itemsWithPreview = await this.attachExposeChatPreviews(itemsWithPreview);
