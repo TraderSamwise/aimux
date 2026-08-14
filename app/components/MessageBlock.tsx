@@ -59,6 +59,8 @@ export function resolveImageUrl(
   return `${getServiceUrl(endpoint)}${path}`;
 }
 
+export const resolveAttachmentUrl = resolveImageUrl;
+
 export function messageSpeakerLabel(message: Pick<ChatMessage, "actor">): string | null {
   const name = message.actor?.displayName?.trim().replace(/\s+/g, " ");
   return name || null;
@@ -72,6 +74,17 @@ function imagePartLabel(part: HistoryImagePart | HistoryImageReferencePart): str
 function attachmentPartLabel(part: HistoryAttachmentReferencePart): string {
   if (part.label.trim()) return part.label;
   return "[file]";
+}
+
+function attachmentPreviewKind(part: HistoryAttachmentReferencePart): string {
+  const mimeType = part.mimeType ?? "";
+  if (part.kind === "audio" || mimeType.startsWith("audio/")) return "audio";
+  if (part.kind === "video" || mimeType.startsWith("video/")) return "video";
+  if (part.kind === "pdf" || mimeType === "application/pdf") return "pdf";
+  if (part.kind === "text" || mimeType.startsWith("text/") || mimeType === "application/json") {
+    return "text";
+  }
+  return "file";
 }
 
 function spanText(spans: readonly HistoryTextSpan[]): string {
@@ -190,14 +203,18 @@ function ImageReferenceToken({
 
 function AttachmentReferenceToken({
   part,
+  endpoint,
   isUser,
 }: {
   part: HistoryAttachmentReferencePart;
+  endpoint: ServiceEndpoint;
   isUser: boolean;
 }) {
   const label = attachmentPartLabel(part);
   const title = part.filename || label;
   const detail = [part.kind, part.mimeType].filter(Boolean).join(" · ");
+  const contentUrl = resolveAttachmentUrl(part, endpoint);
+  const previewKind = attachmentPreviewKind(part);
   return (
     <View
       className={
@@ -231,8 +248,52 @@ function AttachmentReferenceToken({
           {detail}
         </Text>
       ) : null}
+      {contentUrl && Platform.OS === "web" ? (
+        <WebAttachmentPreview kind={previewKind} url={contentUrl} title={title} />
+      ) : null}
     </View>
   );
+}
+
+function WebAttachmentPreview({ kind, title, url }: { kind: string; title: string; url: string }) {
+  const frameStyle = {
+    border: "1px solid rgba(161, 161, 170, 0.35)",
+    borderRadius: 6,
+    marginTop: 8,
+    maxWidth: "100%",
+    width: 360,
+  };
+  if (kind === "audio") {
+    return React.createElement("audio", {
+      controls: true,
+      src: url,
+      style: { marginTop: 8, maxWidth: "100%", width: 320 },
+    });
+  }
+  if (kind === "video") {
+    return React.createElement("video", {
+      controls: true,
+      src: url,
+      style: {
+        ...frameStyle,
+        backgroundColor: "rgba(0, 0, 0, 0.18)",
+        height: 220,
+      },
+    });
+  }
+  if (kind === "pdf" || kind === "text") {
+    return React.createElement("iframe", {
+      src: url,
+      title,
+      sandbox: "",
+      style: {
+        ...frameStyle,
+        backgroundColor: "rgba(0, 0, 0, 0.18)",
+        height: kind === "pdf" ? 240 : 180,
+      },
+    });
+  }
+  return null;
 }
 
 export const MessageBlock = React.memo(function MessageBlock({
@@ -306,7 +367,14 @@ export const MessageBlock = React.memo(function MessageBlock({
               />
             );
           }
-          return <AttachmentReferenceToken key={idx} part={part} isUser={isUser} />;
+          return (
+            <AttachmentReferenceToken
+              key={idx}
+              part={part}
+              endpoint={serviceEndpoint}
+              isUser={isUser}
+            />
+          );
         })
       ) : (
         <Text

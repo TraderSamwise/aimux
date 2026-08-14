@@ -1,5 +1,8 @@
-export interface PickedImageAttachment {
+export type PickedAttachmentKind = "image" | "audio" | "video" | "pdf" | "text" | "file";
+
+export interface PickedAttachment {
   id: string;
+  kind: PickedAttachmentKind;
   filename: string;
   mimeType: string;
   dataBase64: string;
@@ -7,12 +10,22 @@ export interface PickedImageAttachment {
   sizeBytes?: number;
 }
 
+export type PickedImageAttachment = PickedAttachment;
+
+export async function pickAttachment(): Promise<PickedAttachment | null> {
+  throw new Error("File picker is not available for this platform.");
+}
+
 export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
-  throw new Error("Image picker is not available for this platform.");
+  return pickAttachment();
+}
+
+export async function attachmentsFromFiles(_files: Iterable<File>): Promise<PickedAttachment[]> {
+  return [];
 }
 
 export async function imageAttachmentsFromFiles(
-  _files: Iterable<File>,
+  files: Iterable<File>,
 ): Promise<PickedImageAttachment[]> {
-  return [];
+  return attachmentsFromFiles(files);
 }

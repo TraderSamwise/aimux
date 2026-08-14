@@ -54,6 +54,25 @@ describe("MessageBlock image URLs", () => {
     ).toBe("http://127.0.0.1:43210/attachments/att_1/content");
   });
 
+  it("resolves generic attachment reference URLs through direct project HTTP", () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "local";
+
+    expect(
+      resolveImageUrl(
+        {
+          type: "attachment_reference",
+          attachmentId: "att_pdf",
+          contentUrl: "/attachments/att_pdf/content",
+          filename: "brief.pdf",
+          kind: "pdf",
+          label: "[file #1]",
+          mimeType: "application/pdf",
+        },
+        endpoint,
+      ),
+    ).toBe("http://127.0.0.1:43210/attachments/att_pdf/content");
+  });
+
   it("resolves relative image URLs through the relay proxy in relay mode", () => {
     process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
     process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay.example.test";

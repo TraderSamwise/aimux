@@ -1,7 +1,11 @@
-import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
 
-export interface PickedImageAttachment {
+export type PickedAttachmentKind = "image" | "audio" | "video" | "pdf" | "text" | "file";
+
+export interface PickedAttachment {
   id: string;
+  kind: PickedAttachmentKind;
   filename: string;
   mimeType: string;
   dataBase64: string;
@@ -9,50 +13,75 @@ export interface PickedImageAttachment {
   sizeBytes?: number;
 }
 
+export type PickedImageAttachment = PickedAttachment;
+
 function localId(): string {
   return `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function kindFromMimeType(mimeType: string): PickedAttachmentKind {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType.startsWith("text/") || mimeType === "application/json") return "text";
+  return "file";
 }
 
 function mimeTypeFromName(name: string | null | undefined): string {
   const lower = (name ?? "").toLowerCase();
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".gif")) return "image/gif";
-  return "image/png";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".md")) return "text/markdown";
+  if (lower.endsWith(".json")) return "application/json";
+  return "application/octet-stream";
 }
 
-function filenameFromUri(uri: string): string {
-  const tail = uri.split("/").filter(Boolean).pop();
-  return tail && tail.includes(".") ? tail : "image.png";
-}
-
-export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) throw new Error("Photo library permission is required.");
-
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    base64: true,
-    quality: 1,
+export async function pickAttachment(): Promise<PickedAttachment | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    copyToCacheDirectory: true,
+    multiple: false,
   });
   if (result.canceled) return null;
 
   const asset = result.assets[0];
-  if (!asset?.base64) throw new Error("Could not read image data.");
-  const filename = asset.fileName ?? filenameFromUri(asset.uri);
+  if (!asset?.uri) throw new Error("Could not read file.");
+  const filename = asset.name || "attachment";
+  const dataBase64 = await FileSystem.readAsStringAsync(asset.uri, {
+    encoding: "base64",
+  });
+  const mimeType = asset.mimeType ?? mimeTypeFromName(filename);
 
   return {
     id: localId(),
+    kind: kindFromMimeType(mimeType),
     filename,
-    mimeType: asset.mimeType ?? mimeTypeFromName(filename),
-    dataBase64: asset.base64,
+    mimeType,
+    dataBase64,
     previewUri: asset.uri,
-    sizeBytes: asset.fileSize,
+    sizeBytes: asset.size,
   };
 }
 
-export async function imageAttachmentsFromFiles(
-  _files: Iterable<File>,
-): Promise<PickedImageAttachment[]> {
+export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
+  return pickAttachment();
+}
+
+export async function attachmentsFromFiles(_files: Iterable<File>): Promise<PickedAttachment[]> {
   return [];
+}
+
+export async function imageAttachmentsFromFiles(
+  files: Iterable<File>,
+): Promise<PickedImageAttachment[]> {
+  return attachmentsFromFiles(files);
 }

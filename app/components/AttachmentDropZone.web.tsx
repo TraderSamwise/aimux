@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from "react";
 
-import { imageAttachmentsFromFiles, type PickedImageAttachment } from "@/lib/image-picker";
+import { attachmentsFromFiles, type PickedAttachment } from "@/lib/image-picker";
 
 export function AttachmentDropZone({
   children,
@@ -10,41 +10,39 @@ export function AttachmentDropZone({
 }: {
   children: (state: { dragging: boolean }) => React.ReactNode;
   disabled?: boolean;
-  onDropAttachments: (attachments: PickedImageAttachment[]) => void;
+  onDropAttachments: (attachments: PickedAttachment[]) => void;
   onDropRejected?: (message: string) => void;
 }) {
   const [dragging, setDragging] = useState(false);
 
-  const hasImage = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+  const hasFile = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     const items = Array.from(event.dataTransfer.items ?? []);
     if (items.length > 0) {
-      return items.some((item) => item.kind === "file" && item.type.startsWith("image/"));
+      return items.some((item) => item.kind === "file");
     }
-    return Array.from(event.dataTransfer.files ?? []).some((file) =>
-      file.type.startsWith("image/"),
-    );
+    return Array.from(event.dataTransfer.files ?? []).length > 0;
   }, []);
 
   const handleDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (disabled || !hasImage(event)) return;
+      if (disabled || !hasFile(event)) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
       setDragging(true);
     },
-    [disabled, hasImage],
+    [disabled, hasFile],
   );
 
   const handleDrop = useCallback(
     async (event: React.DragEvent<HTMLDivElement>) => {
-      if (disabled || !hasImage(event)) return;
+      if (disabled || !hasFile(event)) return;
       event.preventDefault();
       setDragging(false);
       const files = Array.from(event.dataTransfer.files ?? []);
       try {
-        const attachments = await imageAttachmentsFromFiles(files);
+        const attachments = await attachmentsFromFiles(files);
         if (files.length > 0 && attachments.length === 0) {
-          onDropRejected?.("Drop image files only.");
+          onDropRejected?.("Could not read dropped files.");
           return;
         }
         onDropAttachments(attachments);
@@ -52,7 +50,7 @@ export function AttachmentDropZone({
         onDropRejected?.(err instanceof Error ? err.message : String(err));
       }
     },
-    [disabled, hasImage, onDropAttachments, onDropRejected],
+    [disabled, hasFile, onDropAttachments, onDropRejected],
   );
 
   return (

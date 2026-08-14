@@ -60,12 +60,12 @@ import {
   revokeShareInvite,
   interruptLivePane,
   sendLivePaneInput,
-  uploadImageAttachment,
+  uploadAttachment,
   type ShareInvite,
   type ShareParticipant,
   type SharedSessionSummary,
 } from "@/lib/api";
-import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
+import { pickAttachment, type PickedAttachment } from "@/lib/image-picker";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { cn } from "@/lib/utils";
@@ -184,7 +184,7 @@ function nextAgentOutputViewMode(
   return "chat";
 }
 
-type PendingImageAttachment = PickedImageAttachment & {
+type PendingAttachment = PickedAttachment & {
   uploadedAttachmentId?: string;
 };
 
@@ -368,7 +368,7 @@ export default function ChatScreen() {
   const [shareSummaryCheckedKey, setShareSummaryCheckedKey] = useState<string | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [pendingAttachments, setPendingAttachments] = useState<PendingImageAttachment[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
@@ -541,7 +541,6 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!isSharedSessionView) return;
-    setPendingAttachments([]);
     setManagePanelOpen(false);
     setSharePanelOpen(true);
   }, [isSharedSessionView]);
@@ -838,7 +837,7 @@ export default function ChatScreen() {
     hasSessionId: Boolean(sessionId && !routeSessionMissing),
     sendBusy,
   });
-  const hasPendingAttachments = !isSharedSessionView && pendingAttachments.length > 0;
+  const hasPendingAttachments = pendingAttachments.length > 0;
   const canSendMessage = Boolean(
     serviceEndpoint &&
     sessionId &&
@@ -1103,7 +1102,7 @@ export default function ChatScreen() {
 
   async function handleSendMessage() {
     const text = composerSendText ?? "";
-    const attachments = isSharedSessionView ? [] : [...pendingAttachments];
+    const attachments = [...pendingAttachments];
     if (
       !serviceEndpoint ||
       !sessionId ||
@@ -1124,9 +1123,10 @@ export default function ChatScreen() {
       for (let idx = 0; idx < attachments.length; idx += 1) {
         const attachment = attachments[idx];
         if (attachment.uploadedAttachmentId) continue;
-        const uploaded = await uploadImageAttachment(
+        const uploaded = await uploadAttachment(
           serviceEndpoint,
           {
+            kind: attachment.kind,
             filename: attachment.filename,
             mimeType: attachment.mimeType,
             dataBase64: attachment.dataBase64,
@@ -1141,17 +1141,15 @@ export default function ChatScreen() {
       }
       await sendLivePaneInput(serviceEndpoint, sessionId, text, {
         token,
-        attachmentIds: isSharedSessionView
-          ? []
-          : attachments
-              .map((attachment) => attachment.uploadedAttachmentId)
-              .filter((id): id is string => Boolean(id)),
+        attachmentIds: attachments
+          .map((attachment) => attachment.uploadedAttachmentId)
+          .filter((id): id is string => Boolean(id)),
         ...(sharedChatActor ? { sharedChatActor } : {}),
       });
       void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
       setDraft(text);
-      setPendingAttachments(isSharedSessionView ? [] : attachments);
+      setPendingAttachments(attachments);
       setSendError(err instanceof Error ? err.message : String(err));
     } finally {
       sendBusyRef.current = false;
@@ -1159,16 +1157,11 @@ export default function ChatScreen() {
     }
   }
 
-  async function handleAttachImage() {
+  async function handleAttachAttachment() {
     if (sendBusy || sendBusyRef.current) return;
-    if (isSharedSessionView) {
-      setPendingAttachments([]);
-      setSendError("Shared session chat is text-only.");
-      return;
-    }
     setSendError(null);
     try {
-      const picked = await pickImageAttachment();
+      const picked = await pickAttachment();
       if (!picked) return;
       appendPendingAttachments([picked]);
     } catch (err) {
@@ -1176,34 +1169,24 @@ export default function ChatScreen() {
     }
   }
 
-  function handleDropAttachments(attachments: PickedImageAttachment[]) {
+  function handleDropAttachments(attachments: PickedAttachment[]) {
     if (sendBusy || sendBusyRef.current) return;
-    if (isSharedSessionView) {
-      setPendingAttachments([]);
-      setSendError("Shared session chat is text-only.");
-      return;
-    }
     setSendError(null);
     appendPendingAttachments(attachments);
   }
 
-  function appendPendingAttachments(attachments: PickedImageAttachment[]) {
-    if (isSharedSessionView) {
-      setPendingAttachments([]);
-      setSendError("Shared session chat is text-only.");
-      return;
-    }
+  function appendPendingAttachments(attachments: PickedAttachment[]) {
     if (attachments.length === 0) return;
     const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
     if (slots <= 0) {
-      setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} images.`);
+      setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} files.`);
       return;
     }
     const accepted = attachments.slice(0, slots);
     setPendingAttachments((current) => [...current, ...accepted]);
     setSendError(
       accepted.length < attachments.length
-        ? `Attach up to ${MAX_PENDING_ATTACHMENTS} images.`
+        ? `Attach up to ${MAX_PENDING_ATTACHMENTS} files.`
         : null,
     );
   }
@@ -1433,7 +1416,7 @@ export default function ChatScreen() {
         paddingBottom: usesNativeKeyboardController ? bottomInset : undefined,
       }}
     >
-      {!isSharedSessionView && pendingAttachments.length > 0 ? (
+      {pendingAttachments.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
           <View className="flex-row gap-2">
             {pendingAttachments.map((attachment) => (
@@ -1441,11 +1424,19 @@ export default function ChatScreen() {
                 key={attachment.id}
                 className="w-24 rounded-md border border-border bg-card p-1"
               >
-                <Image
-                  source={{ uri: attachment.previewUri }}
-                  className="h-14 w-full rounded"
-                  resizeMode="cover"
-                />
+                {attachment.kind === "image" || attachment.mimeType.startsWith("image/") ? (
+                  <Image
+                    source={{ uri: attachment.previewUri }}
+                    className="h-14 w-full rounded"
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View className="h-14 w-full items-center justify-center rounded bg-muted px-1">
+                    <Text className="text-center text-[10px] font-semibold uppercase text-muted-foreground">
+                      {attachment.kind}
+                    </Text>
+                  </View>
+                )}
                 <Text className="mt-1 text-[10px] text-muted-foreground" numberOfLines={1}>
                   {attachment.filename}
                 </Text>
@@ -1469,9 +1460,7 @@ export default function ChatScreen() {
       is the part that needs it.
     */}
       <AttachmentDropZone
-        disabled={
-          isSharedSessionView || sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-        }
+        disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
         onDropAttachments={handleDropAttachments}
         onDropRejected={setSendError}
       >
@@ -1516,16 +1505,14 @@ export default function ChatScreen() {
                   textAlignVertical="top"
                 />
                 <View className="flex-row items-center gap-2">
-                  {!isSharedSessionView ? (
-                    <ComposerControl
-                      wide={wideControls}
-                      label="Attach"
-                      accessibilityLabel="Attach an image"
-                      icon={<Plus size={17} color={CONTROL_INK} />}
-                      disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
-                      onPress={handleAttachImage}
-                    />
-                  ) : null}
+                  <ComposerControl
+                    wide={wideControls}
+                    label="Attach"
+                    accessibilityLabel="Attach a file"
+                    icon={<Plus size={17} color={CONTROL_INK} />}
+                    disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+                    onPress={handleAttachAttachment}
+                  />
                   <View className="flex-1 px-1">
                     {activityLabel ? (
                       <Text className="text-xs text-muted-foreground">{activityLabel}</Text>

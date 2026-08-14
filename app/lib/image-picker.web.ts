@@ -1,5 +1,8 @@
-export interface PickedImageAttachment {
+export type PickedAttachmentKind = "image" | "audio" | "video" | "pdf" | "text" | "file";
+
+export interface PickedAttachment {
   id: string;
+  kind: PickedAttachmentKind;
   filename: string;
   mimeType: string;
   dataBase64: string;
@@ -7,18 +10,25 @@ export interface PickedImageAttachment {
   sizeBytes?: number;
 }
 
-const ACCEPTED_IMAGE_TYPES = "image/png,image/jpeg,image/webp,image/gif";
-const ACCEPTED_IMAGE_TYPE_SET = new Set(ACCEPTED_IMAGE_TYPES.split(","));
+export type PickedImageAttachment = PickedAttachment;
 
 function localId(): string {
   return `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
 
-export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
+function kindFromMimeType(mimeType: string): PickedAttachmentKind {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType.startsWith("text/") || mimeType === "application/json") return "text";
+  return "file";
+}
+
+export async function pickAttachment(): Promise<PickedAttachment | null> {
   if (typeof document === "undefined") return null;
   const input = document.createElement("input");
   input.type = "file";
-  input.accept = ACCEPTED_IMAGE_TYPES;
 
   const file = await new Promise<File | null>((resolve) => {
     const cleanup = () => {
@@ -37,34 +47,47 @@ export async function pickImageAttachment(): Promise<PickedImageAttachment | nul
   });
   if (!file) return null;
 
-  return imageAttachmentFromFile(file);
+  return attachmentFromFile(file);
+}
+
+export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
+  return pickAttachment();
+}
+
+export function isAcceptedAttachmentFile(_file: Pick<File, "type">): boolean {
+  return true;
 }
 
 export function isAcceptedImageFile(file: Pick<File, "type">): boolean {
-  return ACCEPTED_IMAGE_TYPE_SET.has(file.type);
+  return file.type.startsWith("image/");
+}
+
+export async function attachmentsFromFiles(files: Iterable<File>): Promise<PickedAttachment[]> {
+  return Promise.all(Array.from(files).filter(isAcceptedAttachmentFile).map(attachmentFromFile));
 }
 
 export async function imageAttachmentsFromFiles(
   files: Iterable<File>,
 ): Promise<PickedImageAttachment[]> {
-  const images = Array.from(files).filter(isAcceptedImageFile);
-  return Promise.all(images.map(imageAttachmentFromFile));
+  return attachmentsFromFiles(files);
 }
 
-async function imageAttachmentFromFile(file: File): Promise<PickedImageAttachment> {
+async function attachmentFromFile(file: File): Promise<PickedAttachment> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read image."));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read file."));
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(file);
   });
   const comma = dataUrl.indexOf(",");
-  if (comma === -1) throw new Error("Could not read image data.");
+  if (comma === -1) throw new Error("Could not read file data.");
+  const mimeType = file.type || dataUrl.slice(5, comma).split(";")[0] || "application/octet-stream";
 
   return {
     id: localId(),
-    filename: file.name || "image",
-    mimeType: file.type || "image/png",
+    kind: kindFromMimeType(mimeType),
+    filename: file.name || "attachment",
+    mimeType,
     dataBase64: dataUrl.slice(comma + 1),
     previewUri: dataUrl,
     sizeBytes: file.size,

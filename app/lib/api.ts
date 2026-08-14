@@ -896,7 +896,10 @@ export async function switchAttentionAgent(
   });
 }
 
-export interface UploadImageAttachmentInput {
+export type UploadAttachmentKind = "image" | "audio" | "video" | "pdf" | "text" | "file";
+
+export interface UploadAttachmentInput {
+  kind?: UploadAttachmentKind;
   filename: string;
   mimeType: string;
   dataBase64: string;
@@ -904,11 +907,11 @@ export interface UploadImageAttachmentInput {
   sessionId: string;
 }
 
-export interface UploadImageAttachmentResponse {
+export interface UploadAttachmentResponse {
   ok: boolean;
   attachment: {
     id: string;
-    kind: "image";
+    kind: UploadAttachmentKind;
     filename: string;
     mimeType: string;
     sizeBytes: number;
@@ -919,24 +922,35 @@ export interface UploadImageAttachmentResponse {
   };
 }
 
-export async function uploadImageAttachment(
+export async function uploadAttachment(
   endpoint: ServiceEndpoint,
-  input: UploadImageAttachmentInput,
+  input: UploadAttachmentInput,
   opts?: ApiOpts,
-): Promise<UploadImageAttachmentResponse> {
-  return callProjectJson<UploadImageAttachmentResponse>(
+): Promise<UploadAttachmentResponse> {
+  return callProjectJson<UploadAttachmentResponse>(
     endpoint,
     "POST",
     PROJECT_API_ROUTES.attachments,
     opts,
     {
-      kind: "image",
+      kind: input.kind ?? "file",
       filename: input.filename,
       mimeType: input.mimeType,
       dataBase64: input.dataBase64,
       sessionId: input.sessionId,
     },
   );
+}
+
+export type UploadImageAttachmentInput = UploadAttachmentInput;
+export type UploadImageAttachmentResponse = UploadAttachmentResponse;
+
+export async function uploadImageAttachment(
+  endpoint: ServiceEndpoint,
+  input: UploadImageAttachmentInput,
+  opts?: ApiOpts,
+): Promise<UploadImageAttachmentResponse> {
+  return uploadAttachment(endpoint, { ...input, kind: "image" }, opts);
 }
 
 // ── Relay sharing ────────────────────────────────────────────────────────

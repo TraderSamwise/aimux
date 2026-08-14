@@ -1,7 +1,7 @@
 import React, { useCallback } from "react";
 import { Platform, UIManager, requireNativeComponent, View, type ViewProps } from "react-native";
 
-import type { PickedImageAttachment } from "@/lib/image-picker";
+import type { PickedAttachment } from "@/lib/image-picker";
 
 type NativeDroppedImage = {
   dataBase64: string;
@@ -31,9 +31,10 @@ function localId(): string {
   return `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
 
-function toPickedAttachment(image: NativeDroppedImage): PickedImageAttachment {
+function toPickedAttachment(image: NativeDroppedImage): PickedAttachment {
   return {
     id: localId(),
+    kind: "image",
     filename: image.filename,
     mimeType: image.mimeType,
     dataBase64: image.dataBase64,
@@ -49,7 +50,7 @@ export function AttachmentDropZone({
 }: {
   children: (state: { dragging: boolean }) => React.ReactNode;
   disabled?: boolean;
-  onDropAttachments: (attachments: PickedImageAttachment[]) => void;
+  onDropAttachments: (attachments: PickedAttachment[]) => void;
   onDropRejected?: (message: string) => void;
 }) {
   const handleDropImages = useCallback(

@@ -87,6 +87,7 @@ import {
   switchNextAgent,
   switchPrevAgent,
   updateThreadStatus,
+  uploadAttachment,
   uploadImageAttachment,
 } from "@/lib/api";
 import type { RelayTransport } from "@/lib/relay-transport";
@@ -910,6 +911,48 @@ describe("api relay routing", () => {
       kind: "image",
       filename: "shot.png",
       mimeType: "image/png",
+      dataBase64: "aGVsbG8=",
+      sessionId: "agent-1",
+    });
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
+  });
+
+  it("uploads generic attachments through direct project HTTP with auth", async () => {
+    const fetchMock = installFetchMock({
+      ok: true,
+      attachment: {
+        id: "att_pdf",
+        kind: "pdf",
+        filename: "brief.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 5,
+        sha256: "hash",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        source: "upload",
+        contentUrl: "/attachments/att_pdf/content",
+      },
+    });
+
+    await uploadAttachment(
+      endpoint,
+      {
+        kind: "pdf",
+        filename: "brief.pdf",
+        mimeType: "application/pdf",
+        dataBase64: "aGVsbG8=",
+        sessionId: "agent-1",
+      },
+      { token: "local-token" },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:43210/attachments");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      kind: "pdf",
+      filename: "brief.pdf",
+      mimeType: "application/pdf",
       dataBase64: "aGVsbG8=",
       sessionId: "agent-1",
     });
