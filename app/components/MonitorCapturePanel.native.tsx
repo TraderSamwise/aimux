@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Image, Platform, StyleSheet, View } from "react-native";
+import {
+  Image,
+  Platform,
+  StyleSheet,
+  View,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+} from "react-native";
 import { Camera as CameraIcon, Mic, MicOff, Repeat, Square } from "lucide-react-native";
 import {
   CameraView,
@@ -7,8 +14,9 @@ import {
   type CameraCapturedPicture,
   type CameraType,
 } from "expo-camera";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
-import { useAtomValue } from "jotai";
+import { useAtom } from "jotai";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
@@ -22,7 +30,12 @@ import {
   type MonitorSample,
   type MonitorCapturePanelProps,
 } from "@/lib/monitor-capture";
-import { monitorSettingsAtom } from "@/stores/settings";
+import {
+  MONITOR_CAMERA_MAX_ZOOM,
+  MONITOR_CAMERA_MIN_ZOOM,
+  monitorSettingsAtom,
+  type MonitorCameraViewport,
+} from "@/stores/settings";
 
 function capturesCamera(mode: string) {
   return mode === "camera" || mode === "camera-audio";
@@ -30,6 +43,18 @@ function capturesCamera(mode: string) {
 
 function capturesAudio(mode: string) {
   return mode === "audio" || mode === "camera-audio";
+}
+
+interface PreviewLayout {
+  height: number;
+  width: number;
+}
+
+interface FocusGesture {
+  distance: number | null;
+  startTouches: { x: number; y: number };
+  startViewport: MonitorCameraViewport;
+  touchCount: number;
 }
 
 async function supportsRequestedOnDeviceLocale(locale: string): Promise<boolean> {
@@ -51,11 +76,15 @@ export function MonitorCapturePanel({
   textOnlyDelivery = false,
   onSampleCaptured,
 }: MonitorCapturePanelProps = {}) {
-  const settings = useAtomValue(monitorSettingsAtom);
+  const [settings, setSettings] = useAtom(monitorSettingsAtom);
   const cameraRef = useRef<CameraView | null>(null);
   const lastDeliveredSpeechRef = useRef("");
+  const viewportRef = useRef(settings.cameraViewport);
+  const gestureRef = useRef<FocusGesture | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>("back");
+  const [viewport, setViewport] = useState(settings.cameraViewport);
+  const [previewLayout, setPreviewLayout] = useState<PreviewLayout>({ height: 0, width: 0 });
   const [running, setRunning] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [delivering, setDelivering] = useState(false);
@@ -86,6 +115,25 @@ export function MonitorCapturePanel({
     setRecognizing(false);
     setSpeechError(event.message || event.error);
   });
+
+  const setLiveViewport = useCallback((next: MonitorCameraViewport) => {
+    const normalized = normalizeViewport(next);
+    viewportRef.current = normalized;
+    setViewport(normalized);
+  }, []);
+
+  useEffect(() => {
+    if (gestureRef.current) return;
+    setLiveViewport(settings.cameraViewport);
+  }, [setLiveViewport, settings.cameraViewport]);
+
+  const persistViewport = useCallback(() => {
+    const nextViewport = viewportRef.current;
+    setSettings((current) => ({
+      ...current,
+      cameraViewport: nextViewport,
+    }));
+  }, [setSettings]);
 
   const deliverSample = useCallback(
     async (sample: MonitorSample) => {
@@ -119,16 +167,17 @@ export function MonitorCapturePanel({
         shutterSound: false,
       });
       if (!picture.base64) return;
+      const focusedPicture = await cropPictureToViewport(picture, viewportRef.current);
       const capturedAt = new Date().toISOString();
       const sample: MonitorFrameSample = {
         filename: monitorFrameFilename(capturedAt),
         mimeType: MONITOR_IMAGE_MIME_TYPE,
-        dataBase64: picture.base64,
+        dataBase64: focusedPicture.base64,
         capturedAt,
-        uri: picture.uri,
-        width: picture.width,
-        height: picture.height,
-        sizeBytes: estimateBase64DecodedBytes(picture.base64),
+        uri: focusedPicture.uri,
+        width: focusedPicture.width,
+        height: focusedPicture.height,
+        sizeBytes: estimateBase64DecodedBytes(focusedPicture.base64),
       };
       setLastFrame(sample);
       setFrameCount((current) => current + 1);
@@ -141,6 +190,8 @@ export function MonitorCapturePanel({
         transcript,
         capturedAt,
       });
+    } catch (err) {
+      setDeliveryError(err instanceof Error ? err.message : String(err));
     } finally {
       setCapturing(false);
     }
@@ -152,6 +203,70 @@ export function MonitorCapturePanel({
     speechText,
     textOnlyDelivery,
   ]);
+
+  const handlePreviewLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height, width } = event.nativeEvent.layout;
+    setPreviewLayout({ height, width });
+  }, []);
+
+  const handleFocusGestureGrant = useCallback((event: GestureResponderEvent) => {
+    const touches = event.nativeEvent.touches;
+    gestureRef.current = {
+      distance: touches.length >= 2 ? touchDistance(touches[0], touches[1]) : null,
+      startTouches: touchPoint(touches),
+      startViewport: viewportRef.current,
+      touchCount: touches.length,
+    };
+  }, []);
+
+  const handleFocusGestureMove = useCallback(
+    (event: GestureResponderEvent) => {
+      const gesture = gestureRef.current;
+      if (!gesture || previewLayout.width <= 0 || previewLayout.height <= 0) return;
+      const touches = event.nativeEvent.touches;
+      if (touches.length >= 2) {
+        const distance = touchDistance(touches[0], touches[1]);
+        if (gesture.touchCount < 2 || !gesture.distance || gesture.distance <= 0) {
+          gestureRef.current = {
+            distance,
+            startTouches: touchPoint(touches),
+            startViewport: viewportRef.current,
+            touchCount: touches.length,
+          };
+          return;
+        }
+        const nextZoom = gesture.startViewport.zoom * (distance / gesture.distance);
+        setLiveViewport({ ...gesture.startViewport, zoom: nextZoom });
+        return;
+      }
+      if (touches.length === 1) {
+        const point = touchPoint(touches);
+        if (gesture.touchCount !== 1) {
+          gestureRef.current = {
+            distance: null,
+            startTouches: point,
+            startViewport: viewportRef.current,
+            touchCount: 1,
+          };
+          return;
+        }
+        const dx = point.x - gesture.startTouches.x;
+        const dy = point.y - gesture.startTouches.y;
+        const zoom = gesture.startViewport.zoom;
+        setLiveViewport({
+          centerX: gesture.startViewport.centerX - dx / (previewLayout.width * zoom),
+          centerY: gesture.startViewport.centerY - dy / (previewLayout.height * zoom),
+          zoom,
+        });
+      }
+    },
+    [previewLayout.height, previewLayout.width, setLiveViewport],
+  );
+
+  const handleFocusGestureRelease = useCallback(() => {
+    gestureRef.current = null;
+    persistViewport();
+  }, [persistViewport]);
 
   const deliverSpeechSample = useCallback(async () => {
     const transcript = speechText.trim();
@@ -327,6 +442,7 @@ export function MonitorCapturePanel({
             <View
               className="overflow-hidden rounded-lg border border-border bg-background"
               collapsable={false}
+              onLayout={handlePreviewLayout}
               style={styles.cameraPreviewFrame}
             >
               {cameraPermission?.granted ? (
@@ -347,8 +463,28 @@ export function MonitorCapturePanel({
                         ready: false,
                       });
                     }}
-                    style={StyleSheet.absoluteFill}
+                    style={[
+                      StyleSheet.absoluteFill,
+                      cameraPreviewTransform(viewport, previewLayout),
+                    ]}
                   />
+                  <View
+                    className="absolute inset-0"
+                    onMoveShouldSetResponder={() => true}
+                    onResponderGrant={handleFocusGestureGrant}
+                    onResponderMove={handleFocusGestureMove}
+                    onResponderRelease={handleFocusGestureRelease}
+                    onResponderTerminate={handleFocusGestureRelease}
+                    onStartShouldSetResponder={() => true}
+                  >
+                    <View className="absolute inset-0 border border-white/20" />
+                    <View className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/70 bg-black/25" />
+                    <View className="absolute bottom-3 left-3 rounded-md bg-black/60 px-2 py-1">
+                      <Text className="text-[11px] font-semibold text-white">
+                        {viewport.zoom.toFixed(1)}x
+                      </Text>
+                    </View>
+                  </View>
                   {!cameraPreviewReady || cameraMountError ? (
                     <View className="absolute inset-0 items-center justify-center bg-background/80 px-5">
                       <CameraIcon size={28} color="#71717a" />
@@ -399,7 +535,7 @@ export function MonitorCapturePanel({
             </View>
             <View className="rounded-lg border border-border px-3 py-2">
               <Text className="text-xs text-muted-foreground">
-                {lastFrame ? `${Math.round(lastFrame.sizeBytes / 1024)} KB` : "No frame"}
+                {lastFrame ? `${Math.round(lastFrame.sizeBytes / 1024)} KB` : "Pinch + drag"}
               </Text>
             </View>
           </View>
@@ -444,3 +580,102 @@ const styles = StyleSheet.create({
     minHeight: 220,
   },
 });
+
+function normalizeViewport(viewport: MonitorCameraViewport): MonitorCameraViewport {
+  const zoom = clamp(viewport.zoom, MONITOR_CAMERA_MIN_ZOOM, MONITOR_CAMERA_MAX_ZOOM);
+  const minCenter = 1 / (2 * zoom);
+  const maxCenter = 1 - minCenter;
+  return {
+    centerX: clamp(viewport.centerX, minCenter, maxCenter),
+    centerY: clamp(viewport.centerY, minCenter, maxCenter),
+    zoom,
+  };
+}
+
+function cameraPreviewTransform(viewport: MonitorCameraViewport, layout: PreviewLayout) {
+  if (layout.width <= 0 || layout.height <= 0) return null;
+  const normalized = normalizeViewport(viewport);
+  return {
+    transform: [
+      { translateX: (0.5 - normalized.centerX) * layout.width * normalized.zoom },
+      { translateY: (0.5 - normalized.centerY) * layout.height * normalized.zoom },
+      { scale: normalized.zoom },
+    ],
+  };
+}
+
+async function cropPictureToViewport(
+  picture: CameraCapturedPicture,
+  viewport: MonitorCameraViewport,
+): Promise<Required<Pick<CameraCapturedPicture, "base64" | "height" | "uri" | "width">>> {
+  if (!picture.base64) throw new Error("Camera frame did not include image data.");
+  const normalized = normalizeViewport(viewport);
+  if (normalized.zoom <= 1.01) {
+    return {
+      base64: picture.base64,
+      height: picture.height,
+      uri: picture.uri,
+      width: picture.width,
+    };
+  }
+  const cropWidth = Math.max(1, Math.round(picture.width / normalized.zoom));
+  const cropHeight = Math.max(1, Math.round(picture.height / normalized.zoom));
+  const originX = clamp(
+    Math.round(normalized.centerX * picture.width - cropWidth / 2),
+    0,
+    picture.width - cropWidth,
+  );
+  const originY = clamp(
+    Math.round(normalized.centerY * picture.height - cropHeight / 2),
+    0,
+    picture.height - cropHeight,
+  );
+  const focused = await manipulateAsync(
+    picture.uri,
+    [
+      {
+        crop: {
+          height: cropHeight,
+          originX,
+          originY,
+          width: cropWidth,
+        },
+      },
+    ],
+    {
+      base64: true,
+      compress: MONITOR_IMAGE_QUALITY,
+      format: SaveFormat.JPEG,
+    },
+  );
+  if (!focused.base64) throw new Error("Focused camera frame did not include image data.");
+  return {
+    base64: focused.base64,
+    height: focused.height,
+    uri: focused.uri,
+    width: focused.width,
+  };
+}
+
+function touchPoint(touches: GestureResponderEvent["nativeEvent"]["touches"]) {
+  if (touches.length === 0) return { x: 0, y: 0 };
+  const total = touches.reduce(
+    (acc, touch) => ({ x: acc.x + touch.locationX, y: acc.y + touch.locationY }),
+    { x: 0, y: 0 },
+  );
+  return {
+    x: total.x / touches.length,
+    y: total.y / touches.length,
+  };
+}
+
+function touchDistance(
+  first: GestureResponderEvent["nativeEvent"]["touches"][number],
+  second: GestureResponderEvent["nativeEvent"]["touches"][number],
+) {
+  return Math.hypot(first.locationX - second.locationX, first.locationY - second.locationY);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}

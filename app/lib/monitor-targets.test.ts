@@ -55,6 +55,11 @@ describe("monitor targets", () => {
       intervalSeconds: 10,
       targetKind: "project-agent",
       captureMode: "camera",
+      cameraViewport: {
+        centerX: 0.5,
+        centerY: 0.5,
+        zoom: 1,
+      },
       speechToText: true,
       speechOnDeviceOnly: true,
       speechInterimResults: true,

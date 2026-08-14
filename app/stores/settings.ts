@@ -42,6 +42,7 @@ export interface MonitorSettings {
   intervalSeconds: number;
   targetKind: MonitorTargetKind;
   captureMode: MonitorCaptureMode;
+  cameraViewport: MonitorCameraViewport;
   speechToText: boolean;
   speechOnDeviceOnly: boolean;
   speechInterimResults: boolean;
@@ -53,8 +54,16 @@ export interface MonitorSettings {
   shareId: string | null;
 }
 
+export interface MonitorCameraViewport {
+  centerX: number;
+  centerY: number;
+  zoom: number;
+}
+
 export const MONITOR_INTERVAL_SECONDS = [5, 10, 15, 30, 60] as const;
 export const MONITOR_AUDIO_SAMPLE_RATES = [8000, 16000, 24000, 44100, 48000] as const;
+export const MONITOR_CAMERA_MIN_ZOOM = 1;
+export const MONITOR_CAMERA_MAX_ZOOM = 4;
 
 export const defaultSettings = Object.freeze<AppSettings>({
   theme: "dark",
@@ -69,6 +78,11 @@ export const defaultSettings = Object.freeze<AppSettings>({
     intervalSeconds: 10,
     targetKind: "project-agent",
     captureMode: "camera",
+    cameraViewport: {
+      centerX: 0.5,
+      centerY: 0.5,
+      zoom: 1,
+    },
     speechToText: true,
     speechOnDeviceOnly: true,
     speechInterimResults: true,
@@ -166,6 +180,7 @@ function normalizeMonitorSettings(value: AppSettings["monitor"] | undefined): Mo
     intervalSeconds,
     targetKind,
     captureMode,
+    cameraViewport: normalizeMonitorCameraViewport(value?.cameraViewport),
     speechToText: value?.speechToText !== false,
     speechOnDeviceOnly: value?.speechOnDeviceOnly !== false,
     speechInterimResults: value?.speechInterimResults !== false,
@@ -176,6 +191,40 @@ function normalizeMonitorSettings(value: AppSettings["monitor"] | undefined): Mo
     shareOwnerUserId: sanitizeNullableText(value?.shareOwnerUserId),
     shareId: sanitizeNullableText(value?.shareId),
   };
+}
+
+function normalizeMonitorCameraViewport(value: unknown): MonitorCameraViewport {
+  if (!value || typeof value !== "object") return defaultSettings.monitor.cameraViewport;
+  const input = value as Partial<MonitorCameraViewport>;
+  const zoom = clampMonitorNumber(
+    input.zoom,
+    MONITOR_CAMERA_MIN_ZOOM,
+    MONITOR_CAMERA_MAX_ZOOM,
+    defaultSettings.monitor.cameraViewport.zoom,
+  );
+  const minCenter = 1 / (2 * zoom);
+  const maxCenter = 1 - minCenter;
+  return {
+    centerX: clampMonitorNumber(
+      input.centerX,
+      minCenter,
+      maxCenter,
+      defaultSettings.monitor.cameraViewport.centerX,
+    ),
+    centerY: clampMonitorNumber(
+      input.centerY,
+      minCenter,
+      maxCenter,
+      defaultSettings.monitor.cameraViewport.centerY,
+    ),
+    zoom,
+  };
+}
+
+function clampMonitorNumber(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, value))
+    : fallback;
 }
 
 function normalizeMonitorAudioSampleRate(value: unknown): MonitorAudioSampleRate {

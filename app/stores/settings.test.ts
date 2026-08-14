@@ -49,6 +49,11 @@ describe("settings store", () => {
         intervalSeconds: 10,
         targetKind: "project-agent",
         captureMode: "camera",
+        cameraViewport: {
+          centerX: 0.5,
+          centerY: 0.5,
+          zoom: 1,
+        },
         speechToText: true,
         speechOnDeviceOnly: true,
         speechInterimResults: true,
@@ -110,6 +115,11 @@ describe("settings store", () => {
       intervalSeconds: 30,
       targetKind: "shared-chat",
       captureMode: "camera-audio",
+      cameraViewport: {
+        centerX: 0.25,
+        centerY: 0.75,
+        zoom: 2,
+      },
       speechToText: false,
       speechOnDeviceOnly: false,
       speechInterimResults: false,
@@ -131,6 +141,11 @@ describe("settings store", () => {
       intervalSeconds: 30,
       targetKind: "shared-chat",
       captureMode: "camera-audio",
+      cameraViewport: {
+        centerX: 0.25,
+        centerY: 0.75,
+        zoom: 2,
+      },
       speechToText: false,
       speechOnDeviceOnly: false,
       speechInterimResults: false,
@@ -155,6 +170,26 @@ describe("settings store", () => {
       acceptedShares: [],
       activeShare: null,
       monitor: settingsModule.defaultSettings.monitor,
+    });
+  });
+
+  it("normalizes monitor camera viewport values", () => {
+    const normalized = settingsModule.normalizeAppSettings({
+      ...settingsModule.defaultSettings,
+      monitor: {
+        ...settingsModule.defaultSettings.monitor,
+        cameraViewport: {
+          centerX: 4,
+          centerY: -2,
+          zoom: 9,
+        },
+      },
+    });
+
+    expect(normalized.monitor.cameraViewport).toEqual({
+      centerX: 0.875,
+      centerY: 0.125,
+      zoom: 4,
     });
   });
 
@@ -199,6 +234,11 @@ describe("settings store", () => {
       intervalSeconds: 15,
       targetKind: "project-agent",
       captureMode: "camera",
+      cameraViewport: {
+        centerX: 0.5,
+        centerY: 0.5,
+        zoom: 1,
+      },
       speechToText: true,
       speechOnDeviceOnly: true,
       speechInterimResults: true,
@@ -241,6 +281,11 @@ describe("settings store", () => {
           intervalSeconds: 15,
           targetKind: "project-agent",
           captureMode: "camera",
+          cameraViewport: {
+            centerX: 0.5,
+            centerY: 0.5,
+            zoom: 1,
+          },
           speechToText: true,
           speechOnDeviceOnly: true,
           speechInterimResults: true,
