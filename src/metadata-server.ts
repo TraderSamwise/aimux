@@ -118,6 +118,7 @@ import type { ParsedAgentOutput } from "./agent-output-parser.js";
 import type { AgentTranscriptMessage } from "./agent-transcript.js";
 import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
+  createPathAttachment,
   createUploadedAttachment,
   getAttachment,
   getAttachmentContent,
@@ -5589,6 +5590,72 @@ export class MetadataServer {
         setSessionOverseer(sessionId, body.active);
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, sessionId, overseer: body.active });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.attachmentsPublish) {
+        const remoteActor = parseRemoteActor(requestHeaderRecord(req));
+        if (remoteActor) {
+          send(res, 403, { ok: false, error: "attachment publish is local only" });
+          return;
+        }
+        const body = (await readJson(req)) as {
+          filename?: unknown;
+          mimeType?: unknown;
+          path?: unknown;
+          sessionId?: unknown;
+          sourcePath?: unknown;
+        };
+        const rawSessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+        if (!rawSessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        const sessionId = validateSessionId(rawSessionId);
+        if (!sessionId.ok) {
+          send(res, 400, { ok: false, error: "sessionId is invalid" });
+          return;
+        }
+        const sourcePath =
+          typeof body.path === "string"
+            ? body.path.trim()
+            : typeof body.sourcePath === "string"
+              ? body.sourcePath.trim()
+              : "";
+        if (!sourcePath) {
+          send(res, 400, { ok: false, error: "path is required" });
+          return;
+        }
+        const allowedRoots = [
+          this.currentProjectRoot(),
+          ...(this.options.desktop?.listWorktrees?.() ?? [])
+            .map((entry) =>
+              entry && typeof entry === "object" && "path" in entry && typeof entry.path === "string"
+                ? entry.path
+                : null,
+            )
+            .filter((entry): entry is string => Boolean(entry)),
+        ];
+        try {
+          const attachment = createPathAttachment({
+            filename: typeof body.filename === "string" ? body.filename : undefined,
+            mimeType: typeof body.mimeType === "string" ? body.mimeType : undefined,
+            projectRoot: this.currentProjectRoot(),
+            sourcePath,
+            allowedRoots,
+            sessionId: sessionId.value,
+          });
+          const record = getAttachmentRecord(attachment.id, sessionId.value);
+          if (!record) {
+            send(res, 500, { ok: false, error: "published attachment could not be read" });
+            return;
+          }
+          const referenceLine = `- ${record.filename} (${record.mimeType}, ${record.sizeBytes} bytes): ${record.contentPath}`;
+          const referenceText = `Attached files:\n${referenceLine}`;
+          send(res, 200, { ok: true, attachment, referenceText });
+        } catch (error) {
+          send(res, 400, { ok: false, error: error instanceof Error ? error.message : "invalid attachment" });
+        }
         return;
       }
 

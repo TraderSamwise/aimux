@@ -2134,6 +2134,41 @@ program
     console.log(`delivered to ${sessionId}`);
   });
 
+const attachmentCmd = program.command("attachment").description("Publish local files as chat attachments");
+
+attachmentCmd
+  .command("publish <path>")
+  .description("Copy a local file into aimux attachments and print a transcript reference")
+  .requiredOption("--session <sessionId>", "Session that owns the attachment")
+  .option("--project <path>", "Project path")
+  .option("--name <filename>", "Display filename")
+  .option("--mime <mimeType>", "Attachment MIME type")
+  .option("--json", "Emit JSON")
+  .action(
+    async (
+      filePath: string,
+      opts: { session: string; project?: string; name?: string; mime?: string; json?: boolean },
+    ) => {
+      const sourcePath = pathResolve(filePath);
+      const projectRoot = opts.project ? await prepareProjectContext(opts.project) : await prepareProjectContext();
+      const result = await postProjectServiceJson(
+        PROJECT_API_ROUTES.attachmentsPublish,
+        {
+          path: sourcePath,
+          sessionId: opts.session,
+          filename: opts.name,
+          mimeType: opts.mime,
+        },
+        { projectRoot },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      console.log(result.referenceText);
+    },
+  );
+
 program
   .command("ps")
   .description("Show all agents in this project (across worktrees) with activity and loop state")

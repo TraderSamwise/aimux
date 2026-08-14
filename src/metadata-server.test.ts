@@ -4842,6 +4842,65 @@ describe("MetadataServer threads API", () => {
     expect(contentBytes.equals(fileBytes)).toBe(true);
   });
 
+  it("publishes a local project file as a path attachment", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const sourcePath = join(repoRoot, "notes.txt");
+    writeFileSync(sourcePath, "published notes");
+
+    const publishRes = await fetch(`${base}${PROJECT_API_ROUTES.attachmentsPublish}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        path: sourcePath,
+        sessionId: "codex-1",
+      }),
+    });
+    const published = (await publishRes.json()) as {
+      ok: boolean;
+      attachment: { id: string; kind: string; source: string; contentUrl: string };
+      referenceText: string;
+    };
+
+    expect(publishRes.ok).toBe(true);
+    expect(published.attachment.kind).toBe("text");
+    expect(published.attachment.source).toBe("path");
+    expect(published.referenceText).toContain("Attached files:");
+    expect(published.referenceText).toContain("notes.txt (text/plain, 15 bytes):");
+    expect(published.referenceText).toContain(
+      join(repoRoot, ".aimux", "attachments", `${published.attachment.id}.txt`),
+    );
+
+    const contentRes = await fetch(`${base}${published.attachment.contentUrl}`);
+    expect(contentRes.status).toBe(200);
+    expect(Buffer.from(await contentRes.arrayBuffer()).toString("utf8")).toBe("published notes");
+  });
+
+  it("rejects remote attempts to publish local path attachments", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const sourcePath = join(repoRoot, "notes.txt");
+    writeFileSync(sourcePath, "published notes");
+
+    const publishRes = await fetch(`${base}${PROJECT_API_ROUTES.attachmentsPublish}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-aimux-actor-role": "guest",
+        "x-aimux-share-session-id": "codex-1",
+      },
+      body: JSON.stringify({
+        path: sourcePath,
+        sessionId: "codex-1",
+      }),
+    });
+
+    expect(publishRes.status).toBe(403);
+    expect(await publishRes.json()).toEqual({ ok: false, error: "attachment publish is local only" });
+  });
+
   it("rejects active browser content uploads", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

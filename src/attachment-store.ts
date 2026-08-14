@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { getAttachmentsDir } from "./paths.js";
 import { atomicWrite, writeJsonAtomic } from "./atomic-write.js";
 
@@ -43,6 +43,16 @@ export interface CreateUploadedAttachmentInput {
   filename: string;
   mimeType: string;
   dataBase64: string;
+  /** Required: an attachment with no owner cannot be reached by a remote operator. */
+  sessionId: string;
+}
+
+export interface CreatePathAttachmentInput {
+  filename?: string;
+  mimeType?: string;
+  projectRoot: string;
+  sourcePath: string;
+  allowedRoots?: string[];
   /** Required: an attachment with no owner cannot be reached by a remote operator. */
   sessionId: string;
 }
@@ -129,6 +139,58 @@ export function createUploadedAttachment(input: CreateUploadedAttachmentInput): 
     sha256: createHash("sha256").update(buffer).digest("hex"),
     createdAt: new Date().toISOString(),
     source: "upload",
+    contentPath,
+    sessionId,
+  };
+
+  atomicWrite(contentPath, buffer);
+  writeJsonAtomic(join(attachmentsDir, `${id}.json`), record);
+
+  return toPublicAttachment(record);
+}
+
+export function createPathAttachment(input: CreatePathAttachmentInput): PublicAttachmentRecord {
+  const sessionId = input.sessionId?.trim();
+  if (!sessionId) {
+    throw new Error("attachment sessionId is required");
+  }
+  const sourcePath = resolve(input.sourcePath);
+  const stat = lstatSync(sourcePath);
+  if (!stat.isFile()) {
+    throw new Error("attachment source must be a regular file");
+  }
+  const sourceRealPath = realpathSync(sourcePath);
+  const allowedRoots = [input.projectRoot, ...(input.allowedRoots ?? [])].filter(Boolean);
+  if (!isPathUnderAnyRoot(sourceRealPath, allowedRoots)) {
+    throw new Error("attachment source must be inside the project");
+  }
+
+  const buffer = readFileSync(sourceRealPath);
+  if (buffer.length === 0) {
+    throw new Error("attachment content is required");
+  }
+  if (buffer.length > maxUploadBytes) {
+    throw new Error("attachment exceeds 10 MB");
+  }
+
+  const filename = sanitizeFilename(input.filename || basename(sourcePath));
+  const mimeType = normalizeMimeType(input.mimeType || mimeTypeFromFilename(filename));
+  const kind = inferAttachmentKind(mimeType);
+  const attachmentsDir = getAttachmentsDir();
+  mkdirSync(attachmentsDir, { recursive: true });
+
+  const id = `att_${randomUUID().replaceAll("-", "")}`;
+  const extension = extensionForAttachment(mimeType, filename);
+  const contentPath = join(attachmentsDir, `${id}${extension}`);
+  const record: AttachmentRecord = {
+    id,
+    kind,
+    filename,
+    mimeType,
+    sizeBytes: buffer.length,
+    sha256: createHash("sha256").update(buffer).digest("hex"),
+    createdAt: new Date().toISOString(),
+    source: "path",
     contentPath,
     sessionId,
   };
@@ -240,6 +302,30 @@ function extensionForAttachment(mimeType: string, filename: string): string {
   const fromName = extname(filename).toLowerCase();
   if (/^\.[a-z0-9]{1,12}$/.test(fromName)) return fromName;
   return ".bin";
+}
+
+function mimeTypeFromFilename(filename: string): string {
+  const extension = extname(filename).toLowerCase();
+  for (const [mimeType, candidateExtension] of mimeExtensions) {
+    if (candidateExtension === extension) return mimeType;
+  }
+  if (extension === ".mjs" || extension === ".cjs") return "application/javascript";
+  if (extension === ".html" || extension === ".htm") return "text/html";
+  if (extension === ".svg") return "image/svg+xml";
+  return "application/octet-stream";
+}
+
+function isPathUnderAnyRoot(path: string, roots: string[]): boolean {
+  return roots.some((root) => {
+    try {
+      const rootRealPath = realpathSync(root);
+      if (path === rootRealPath) return true;
+      const delta = relative(rootRealPath, path);
+      return Boolean(delta) && !delta.startsWith("..") && !isAbsolute(delta);
+    } catch {
+      return false;
+    }
+  });
 }
 
 function normalizeBase64(dataBase64: string): string {

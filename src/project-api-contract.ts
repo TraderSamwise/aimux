@@ -120,6 +120,7 @@ export const PROJECT_API_ROUTES = {
     routes: "/orchestration/routes",
   },
   attachments: "/attachments",
+  attachmentsPublish: "/attachments/publish",
   controls: {
     switchableAgents: "/control/switchable-agents",
     openDashboard: "/control/open-dashboard",
