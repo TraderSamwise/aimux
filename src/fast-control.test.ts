@@ -152,6 +152,7 @@ describe("fast-control worktree scoping", () => {
       currentPath: projectRoot,
     };
 
+    expect(listSwitchableAgentItems(context, tmux).map((item) => item.id)).toEqual(["coder"]);
     expect(resolveNextAgent(context, tmux)).toBeNull();
     expect(resolvePrevAgent(context, tmux)).toBeNull();
   });

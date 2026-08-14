@@ -38,6 +38,7 @@ export interface FastControlItem {
 
 type ManagedWindowEntry = { target: TmuxTarget; metadata: TmuxWindowMetadata };
 type InternalFastControlItem = FastControlItem & { alive: boolean };
+type MetadataState = ReturnType<typeof loadMetadataState>;
 
 export function navigationUrgencyScore(input: {
   semantic?: {
@@ -109,6 +110,44 @@ function resolveCurrentManagedWindow(
   );
 }
 
+function listManagedWindowEntries(context: FastControlContext, tmux: TmuxRuntimeManager): ManagedWindowEntry[] {
+  const sessionNames = context.sessionNames?.length
+    ? context.sessionNames
+    : [tmux.getProjectSession(context.projectRoot).sessionName];
+  const allManagedWindows: ManagedWindowEntry[] = [];
+  for (const sessionName of sessionNames) {
+    for (const entry of tmux.listManagedWindows(sessionName)) {
+      const existingIndex = allManagedWindows.findIndex(({ target }) => target.windowId === entry.target.windowId);
+      if (existingIndex >= 0) {
+        const existing = allManagedWindows[existingIndex];
+        if (
+          tmux.isClientSessionName(existing.target.sessionName) &&
+          !tmux.isClientSessionName(entry.target.sessionName)
+        ) {
+          allManagedWindows[existingIndex] = entry;
+        }
+        continue;
+      }
+      allManagedWindows.push(entry);
+    }
+  }
+  return allManagedWindows;
+}
+
+function isOverseerWindow(metadataState: MetadataState, metadata: TmuxWindowMetadata): boolean {
+  return (
+    metadataState.sessions[metadata.sessionId]?.overseer === true ||
+    metadata.overseer === true ||
+    metadata.team?.role === "overseer"
+  );
+}
+
+function currentWindowIsOverseer(context: FastControlContext, tmux: TmuxRuntimeManager): boolean {
+  const metadataState = loadMetadataState(context.projectRoot);
+  const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, listManagedWindowEntries(context, tmux));
+  return Boolean(currentManagedWindow && isOverseerWindow(metadataState, currentManagedWindow.metadata));
+}
+
 function compareSwitchableWindows(
   left: ManagedWindowEntry,
   right: ManagedWindowEntry,
@@ -154,40 +193,19 @@ function buildSwitchableAgentItems(
     ? context.sessionNames
     : [tmux.getProjectSession(context.projectRoot).sessionName];
   const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
-  const allManagedWindows: ManagedWindowEntry[] = [];
-  for (const sessionName of sessionNames) {
-    for (const entry of tmux.listManagedWindows(sessionName)) {
-      const existingIndex = allManagedWindows.findIndex(({ target }) => target.windowId === entry.target.windowId);
-      if (existingIndex >= 0) {
-        const existing = allManagedWindows[existingIndex];
-        if (
-          tmux.isClientSessionName(existing.target.sessionName) &&
-          !tmux.isClientSessionName(entry.target.sessionName)
-        ) {
-          allManagedWindows[existingIndex] = entry;
-        }
-        continue;
-      }
-      allManagedWindows.push(entry);
-    }
-  }
+  const allManagedWindows = listManagedWindowEntries(context, tmux);
   const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, allManagedWindows);
   const aliveByWindowId = new Map(
     allManagedWindows.map((entry) => [entry.target.windowId, tmux.isWindowAlive(entry.target)] as const),
   );
   const teammateParentSessionId = currentManagedWindow?.metadata.team?.parentSessionId;
   const scopedWorktreePath = resolveContextWorktreePath(context, currentManagedWindow);
-  const isOverseerWindow = (metadata: TmuxWindowMetadata) =>
-    metadataState.sessions[metadata.sessionId]?.overseer === true ||
-    metadata.overseer === true ||
-    metadata.team?.role === "overseer";
-  if (currentManagedWindow && isOverseerWindow(currentManagedWindow.metadata) && !opts.includeOverseer) return [];
   let managed = allManagedWindows
     .filter(({ target, metadata }) => {
       if (isDashboardWindowName(target.windowName)) return false;
       const alive = aliveByWindowId.get(target.windowId) ?? false;
       if (!alive && target.windowId !== currentManagedWindow?.target.windowId) return false;
-      const overseer = isOverseerWindow(metadata);
+      const overseer = isOverseerWindow(metadataState, metadata);
       if (!opts.includeOverseer && overseer) return false;
       if (opts.includeOverseer && overseer) {
         if (scope === "all") return true;
@@ -218,7 +236,7 @@ function buildSwitchableAgentItems(
       activity: entry.target.windowIndex,
       lastUsedAt: getLastUsedAt(context.projectRoot, entry.metadata.sessionId),
       recentRank: recentRankMap.get(entry.metadata.sessionId) ?? Number.MAX_SAFE_INTEGER,
-      overseer: isOverseerWindow(entry.metadata),
+      overseer: isOverseerWindow(metadataState, entry.metadata),
       alive: aliveByWindowId.get(entry.target.windowId) ?? false,
     }));
 
@@ -254,6 +272,7 @@ export function resolveCurrentAgentIndex(items: FastControlItem[], context: Fast
 }
 
 export function resolveNextAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
+  if (currentWindowIsOverseer(context, tmux)) return null;
   const items = buildSwitchableAgentItems(context, tmux);
   if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
@@ -266,6 +285,7 @@ export function resolveNextAgent(context: FastControlContext, tmux = new TmuxRun
 }
 
 export function resolvePrevAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
+  if (currentWindowIsOverseer(context, tmux)) return null;
   const items = buildSwitchableAgentItems(context, tmux);
   if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
