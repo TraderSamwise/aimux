@@ -589,6 +589,7 @@ export default function MainLayout() {
           <Stack.Screen name="agent/[sessionId]/chat" />
           <Stack.Screen name="shares/index" />
           <Stack.Screen name="shares/[ownerUserId]/[shareId]/agent/[sessionId]/chat" />
+          <Stack.Screen name="monitor" />
           <Stack.Screen name="global-notifications" />
           <Stack.Screen name="global-threads" />
         </Stack>

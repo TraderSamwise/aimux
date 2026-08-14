@@ -45,6 +45,16 @@ describe("settings store", () => {
       chatRichTerminalColors: true,
       acceptedShares: [],
       activeShare: null,
+      monitor: {
+        intervalSeconds: 10,
+        targetKind: "project-agent",
+        captureMode: "camera",
+        speechToText: true,
+        projectPath: null,
+        sessionId: null,
+        shareOwnerUserId: null,
+        shareId: null,
+      },
       notifications: {
         enabled: false,
         channels: {
@@ -80,6 +90,7 @@ describe("settings store", () => {
     expect(store.get(settingsModule.chatRichTerminalColorsAtom)).toBe(true);
     expect(store.get(settingsModule.acceptedSharedSessionsAtom)).toEqual([]);
     expect(store.get(settingsModule.activeSharedSessionAtom)).toBeNull();
+    expect(store.get(settingsModule.monitorSettingsAtom).intervalSeconds).toBe(10);
     expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
     store.set(settingsModule.agentOutputViewModeAtom, "terminal");
@@ -89,6 +100,14 @@ describe("settings store", () => {
     store.set(settingsModule.notificationSettingsAtom, {
       ...store.get(settingsModule.notificationSettingsAtom),
       enabled: true,
+    });
+    store.set(settingsModule.monitorSettingsAtom, {
+      ...store.get(settingsModule.monitorSettingsAtom),
+      intervalSeconds: 30,
+      targetKind: "shared-chat",
+      captureMode: "camera-audio",
+      speechToText: false,
+      sessionId: "claude-1",
     });
 
     expect(store.get(settingsModule.agentOutputViewModeAtom)).toBe("terminal");
@@ -100,6 +119,13 @@ describe("settings store", () => {
     expect(store.get(settingsModule.settingsAtom).desktopAppZoom).toBe(130);
     expect(store.get(settingsModule.settingsAtom).chatRichTerminalColors).toBe(true);
     expect(store.get(settingsModule.settingsAtom).notifications.enabled).toBe(true);
+    expect(store.get(settingsModule.settingsAtom).monitor).toMatchObject({
+      intervalSeconds: 30,
+      targetKind: "shared-chat",
+      captureMode: "camera-audio",
+      speechToText: false,
+      sessionId: "claude-1",
+    });
   });
 
   it("normalizes older persisted settings without notification keys", () => {
@@ -116,6 +142,7 @@ describe("settings store", () => {
       chatRichTerminalColors: true,
       acceptedShares: [],
       activeShare: null,
+      monitor: settingsModule.defaultSettings.monitor,
     });
   });
 
@@ -156,6 +183,16 @@ describe("settings store", () => {
         acceptedAt: "2026-05-24T00:00:00.000Z",
       },
     ]);
+    store.set(settingsModule.monitorSettingsAtom, {
+      intervalSeconds: 15,
+      targetKind: "project-agent",
+      captureMode: "camera",
+      speechToText: true,
+      projectPath: "/repo",
+      sessionId: "claude-1",
+      shareOwnerUserId: null,
+      shareId: null,
+    });
 
     await vi.waitFor(async () => {
       const raw = await AsyncStorage.getItem("aimux-settings");
@@ -183,6 +220,16 @@ describe("settings store", () => {
           sessionId: "claude-1",
           serviceEndpoint: { host: "127.0.0.1", port: 43192 },
           acceptedAt: "2026-05-24T00:00:00.000Z",
+        },
+        monitor: {
+          intervalSeconds: 15,
+          targetKind: "project-agent",
+          captureMode: "camera",
+          speechToText: true,
+          projectPath: "/repo",
+          sessionId: "claude-1",
+          shareOwnerUserId: null,
+          shareId: null,
         },
         notifications: {
           enabled: true,

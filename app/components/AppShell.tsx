@@ -10,6 +10,7 @@ import {
 import { usePathname } from "expo-router";
 import { useAtom, useSetAtom } from "jotai";
 import { Menu } from "lucide-react-native";
+import { MonitorSidebar } from "@/components/MonitorSidebar";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SharedSidebar } from "@/components/SharedSidebar";
 import { TopBar } from "@/components/TopBar";
@@ -34,9 +35,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const activeShare = useRouteShare();
   const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
+  const isMonitorRoute = pathname === "/monitor";
   const isSharedShell = isSharedRoute || Boolean(activeShare);
   const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
-  const Sidebar = isSharedShell ? SharedSidebar : ProjectSidebar;
+  const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
 
   // Mobile drawer should start closed — users don't expect it open on load.
   useEffect(() => {
@@ -122,7 +124,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 transform: [{ translateX }],
               }}
             >
-              {isSharedShell ? <SharedSidebar /> : <ProjectSidebar showPrimaryNav={false} />}
+              {isMonitorRoute ? (
+                <MonitorSidebar />
+              ) : isSharedShell ? (
+                <SharedSidebar />
+              ) : (
+                <ProjectSidebar showPrimaryNav={false} />
+              )}
             </Animated.View>
           ) : null}
         </View>
