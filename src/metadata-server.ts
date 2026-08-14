@@ -1334,12 +1334,12 @@ function formatAgentInputWithAttachments(text: string, attachments: AttachmentRe
   const trimmedText = text.trim();
   if (attachments.length === 0) return text;
 
-  const body = trimmedText || "Please review the attached image file(s).";
+  const body = trimmedText || "Please review the attached file(s).";
   const attachmentLines = attachments.map((attachment) => {
     return `- ${attachment.filename} (${attachment.mimeType}, ${attachment.sizeBytes} bytes): ${attachment.contentPath}`;
   });
 
-  return `${body}\n\nAttached image files:\n${attachmentLines.join("\n")}`;
+  return `${body}\n\nAttached files:\n${attachmentLines.join("\n")}`;
 }
 
 function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {

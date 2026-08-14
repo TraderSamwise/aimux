@@ -11,6 +11,7 @@ import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import type {
   ChatMessage,
+  HistoryAttachmentReferencePart,
   HistoryImagePart,
   HistoryImageReferencePart,
   HistoryTextSpan,
@@ -46,7 +47,7 @@ const MESSAGE_TEXT_STYLE: TextStyle = {
 };
 
 export function resolveImageUrl(
-  part: HistoryImagePart | HistoryImageReferencePart,
+  part: HistoryImagePart | HistoryImageReferencePart | HistoryAttachmentReferencePart,
   endpoint: ServiceEndpoint,
 ): string | null {
   if (!part.contentUrl) return null;
@@ -66,6 +67,11 @@ export function messageSpeakerLabel(message: Pick<ChatMessage, "actor">): string
 function imagePartLabel(part: HistoryImagePart | HistoryImageReferencePart): string {
   if ("label" in part && part.label.trim()) return part.label;
   return "[image]";
+}
+
+function attachmentPartLabel(part: HistoryAttachmentReferencePart): string {
+  if (part.label.trim()) return part.label;
+  return "[file]";
 }
 
 function spanText(spans: readonly HistoryTextSpan[]): string {
@@ -182,6 +188,53 @@ function ImageReferenceToken({
   );
 }
 
+function AttachmentReferenceToken({
+  part,
+  isUser,
+}: {
+  part: HistoryAttachmentReferencePart;
+  isUser: boolean;
+}) {
+  const label = attachmentPartLabel(part);
+  const title = part.filename || label;
+  const detail = [part.kind, part.mimeType].filter(Boolean).join(" · ");
+  return (
+    <View
+      className={
+        isUser
+          ? "mt-1 self-start rounded border border-primary-foreground/35 bg-primary-foreground/15 p-2"
+          : "mt-1 self-start rounded border border-border bg-background p-2"
+      }
+    >
+      <Text
+        className={
+          isUser
+            ? "font-mono text-xs font-semibold text-primary-foreground"
+            : "font-mono text-xs font-semibold text-muted-foreground"
+        }
+      >
+        {label}
+      </Text>
+      <Text
+        className={isUser ? "mt-1 text-sm text-primary-foreground" : "mt-1 text-sm text-foreground"}
+      >
+        {title}
+      </Text>
+      {detail ? (
+        <Text
+          className={
+            isUser
+              ? "mt-0.5 text-xs text-primary-foreground/70"
+              : "mt-0.5 text-xs text-muted-foreground"
+          }
+        >
+          {detail}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 export const MessageBlock = React.memo(function MessageBlock({
   message,
   serviceEndpoint,
@@ -243,9 +296,17 @@ export const MessageBlock = React.memo(function MessageBlock({
               </Text>
             );
           }
-          return (
-            <ImageReferenceToken key={idx} part={part} endpoint={serviceEndpoint} isUser={isUser} />
-          );
+          if (part.type === "image" || part.type === "image_reference") {
+            return (
+              <ImageReferenceToken
+                key={idx}
+                part={part}
+                endpoint={serviceEndpoint}
+                isUser={isUser}
+              />
+            );
+          }
+          return <AttachmentReferenceToken key={idx} part={part} isUser={isUser} />;
         })
       ) : (
         <Text

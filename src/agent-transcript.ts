@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { parseAgentOutput } from "./agent-output-parser.js";
 import type {
+  AgentTranscriptAttachmentPart,
   AgentTranscriptImagePart,
   AgentTranscriptMessage,
   AgentTranscriptPart,
@@ -9,6 +10,7 @@ import type {
 } from "./agent-transcript-contract.js";
 import { parseSgrRichTextLines, richTextLineText, sliceRichTextSpans } from "./rich-text.js";
 export type {
+  AgentTranscriptAttachmentPart,
   AgentTranscriptImagePart,
   AgentTranscriptMessage,
   AgentTranscriptPart,
@@ -49,17 +51,20 @@ export interface ParsedAgentOutputLike {
   blocks?: readonly TranscriptBlock[];
 }
 
-const ATTACHED_IMAGE_LINE =
-  /^\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
-const INLINE_ATTACHED_IMAGE =
-  /^(.*?)\s*Attached image files:\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
-const FLATTENED_ATTACHMENTS_HEADER = /\bAttached image files:\s*/;
+const MIME_PATTERN = "[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+";
+const ATTACHED_FILE_LINE = new RegExp(
+  `^\\s*-\\s+(.+?)\\s+\\((${MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(.+?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)\\s*$`,
+);
+const INLINE_ATTACHED_FILE = new RegExp(
+  `^(.*?)\\s*Attached (?:image )?files:\\s*-\\s+(.+?)\\s+\\((${MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(.+?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)\\s*$`,
+);
+const FLATTENED_ATTACHMENTS_HEADER = /\bAttached (?:image )?files:\s*/;
 const FLATTENED_ATTACHMENT_ITEM =
-  /-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(\S*?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)/g;
-const VIEWED_IMAGE_PATH =
+  /-\s+(.+?)\s+\(([A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+),\s+\d+\s+bytes\):\s+(\S*?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)/g;
+const VIEWED_ATTACHMENT_PATH =
   /^\s*(?:[└⎿L]\s*)?(?:\.aimux\/attachments\/|.+?\.aimux\/attachments\/)(att_[A-Za-z0-9_-]+)\.[^\s/]+\s*$/;
 
-type ImageLabels = { byId: Map<string, string>; next: number };
+type AttachmentLabels = { byId: Map<string, string>; nextImage: number; nextFile: number };
 
 function blockType(block: TranscriptBlock): string {
   return String(block.type ?? block.kind ?? "").trim();
@@ -69,26 +74,56 @@ function normalizeText(text: string): string {
   return text.replace(/\r/g, "").trim();
 }
 
-function labelFor(labels: ImageLabels, attachmentId: string): string {
+function attachmentKindForMimeType(mimeType?: string): AgentTranscriptAttachmentPart["kind"] | "image" {
+  const normalized = mimeType?.toLowerCase() ?? "";
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized.startsWith("text/") || normalized === "application/json") return "text";
+  return "file";
+}
+
+function labelFor(
+  labels: AttachmentLabels,
+  attachmentId: string,
+  kind: AgentTranscriptAttachmentPart["kind"] | "image",
+): string {
   const existing = labels.byId.get(attachmentId);
   if (existing) return existing;
-  const label = `[image #${labels.next}]`;
-  labels.next += 1;
+  const label = kind === "image" ? `[image #${labels.nextImage++}]` : `[file #${labels.nextFile++}]`;
   labels.byId.set(attachmentId, label);
   return label;
 }
 
 function imagePart(
-  labels: ImageLabels,
+  labels: AttachmentLabels,
   attachmentId: string,
   opts: { filename?: string; mimeType?: string } = {},
 ): AgentTranscriptImagePart {
   return {
     type: "image_reference",
-    label: labelFor(labels, attachmentId),
+    label: labelFor(labels, attachmentId, "image"),
     attachmentId,
     filename: opts.filename,
     mimeType: opts.mimeType,
+  };
+}
+
+function attachmentPart(
+  labels: AttachmentLabels,
+  attachmentId: string,
+  opts: { filename?: string; mimeType?: string } = {},
+): AgentTranscriptImagePart | AgentTranscriptAttachmentPart {
+  const kind = attachmentKindForMimeType(opts.mimeType);
+  if (kind === "image") return imagePart(labels, attachmentId, opts);
+  return {
+    type: "attachment_reference",
+    label: labelFor(labels, attachmentId, kind),
+    attachmentId,
+    filename: opts.filename,
+    mimeType: opts.mimeType,
+    kind,
   };
 }
 
@@ -152,12 +187,13 @@ function applyRichSpansToTextParts(
  * line-based reader below cannot see it, so whitespace is collapsed first and
  * the ids are recovered from the flattened text.
  */
-function partsFromFlattened(text: string, labels: ImageLabels): AgentTranscriptPart[] | null {
-  if (!text.includes("Attached image files:")) return null;
+function partsFromFlattened(text: string, labels: AttachmentLabels): AgentTranscriptPart[] | null {
+  if (!/\bAttached (?:image )?files:/.test(text)) return null;
 
   const flattened = text.replace(/\s+/g, " ").trim();
   const header = flattened.match(FLATTENED_ATTACHMENTS_HEADER);
   if (header?.index === undefined) return null;
+  const imageHeader = /\bAttached image files:/i.test(header[0]);
 
   const parts: AgentTranscriptPart[] = [];
   const head = flattened.slice(0, header.index).trim();
@@ -172,7 +208,7 @@ function partsFromFlattened(text: string, labels: ImageLabels): AgentTranscriptP
     if (!match[4] || match.index === undefined) continue;
     const between = tail.slice(cursor, match.index).trim();
     if (between) parts.push({ type: "text", text: between });
-    parts.push(imagePart(labels, match[4], { filename: match[1], mimeType: match[2] }));
+    parts.push(attachmentPart(labels, match[4], { filename: match[1], mimeType: match[2] }));
     cursor = match.index + match[0].length;
     matched = true;
   }
@@ -194,13 +230,13 @@ function partsFromFlattened(text: string, labels: ImageLabels): AgentTranscriptP
       sourceIndex.push(i);
     }
 
-    const recovered: AgentTranscriptImagePart[] = [];
+    const recovered: AgentTranscriptPart[] = [];
     const drop = new Set<number>();
     const PATH_CHAR = /[A-Za-z0-9_\-./~]/;
 
     for (const match of squashed.matchAll(/\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)(?:\.[A-Za-z0-9]{1,8})?/g)) {
       if (!match[1] || match.index === undefined) continue;
-      recovered.push(imagePart(labels, match[1]));
+      recovered.push(attachmentPart(labels, match[1], imageHeader ? { mimeType: "image/unknown" } : {}));
       // Walk back over the directories that led here, so the whole path goes.
       let from = match.index;
       while (from > 0 && PATH_CHAR.test(squashed[from - 1]!)) from -= 1;
@@ -228,7 +264,7 @@ function partsFromFlattened(text: string, labels: ImageLabels): AgentTranscriptP
   return parts;
 }
 
-function partsFromText(text: string, labels: ImageLabels): AgentTranscriptPart[] {
+function partsFromText(text: string, labels: AttachmentLabels): AgentTranscriptPart[] {
   const flattened = partsFromFlattened(text, labels);
   if (flattened) return flattened;
 
@@ -239,13 +275,13 @@ function partsFromText(text: string, labels: ImageLabels): AgentTranscriptPart[]
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
 
-    const inline = line.match(INLINE_ATTACHED_IMAGE);
+    const inline = line.match(INLINE_ATTACHED_FILE);
     if (inline?.[5]) {
       const prefix = inline[1]?.trim();
       if (prefix) textLines.push(prefix);
       flushText(parts, textLines);
       parts.push(
-        imagePart(labels, inline[5], {
+        attachmentPart(labels, inline[5], {
           filename: inline[2],
           mimeType: inline[3],
         }),
@@ -253,34 +289,37 @@ function partsFromText(text: string, labels: ImageLabels): AgentTranscriptPart[]
       continue;
     }
 
-    if (/^\s*Attached image files:\s*$/.test(line)) {
-      const images: AgentTranscriptImagePart[] = [];
+    if (/^\s*Attached (?:image )?files:\s*$/.test(line)) {
+      const attachments: AgentTranscriptPart[] = [];
       let next = index + 1;
       while (next < lines.length) {
-        const match = (lines[next] ?? "").match(ATTACHED_IMAGE_LINE);
+        const match = (lines[next] ?? "").match(ATTACHED_FILE_LINE);
         if (!match) break;
-        images.push(
-          imagePart(labels, match[4] ?? "", {
+        attachments.push(
+          attachmentPart(labels, match[4] ?? "", {
             filename: match[1],
             mimeType: match[2],
           }),
         );
         next += 1;
       }
-      if (images.length > 0) {
+      if (attachments.length > 0) {
         flushText(parts, textLines);
-        parts.push(...images);
+        parts.push(...attachments);
         index = next - 1;
         continue;
       }
     }
 
-    if (/^\s*Viewed Image\s*$/i.test(line)) {
+    const viewed = line.match(/^\s*Viewed (Image|File|Attachment)\s*$/i);
+    if (viewed) {
       const pathLine = index + 1;
-      const match = (lines[pathLine] ?? "").match(VIEWED_IMAGE_PATH);
+      const match = (lines[pathLine] ?? "").match(VIEWED_ATTACHMENT_PATH);
       if (match?.[1]) {
         flushText(parts, textLines);
-        parts.push(imagePart(labels, match[1]));
+        parts.push(
+          attachmentPart(labels, match[1], viewed[1]?.toLowerCase() === "image" ? { mimeType: "image/unknown" } : {}),
+        );
         index = pathLine;
         continue;
       }
@@ -312,7 +351,7 @@ export function messagesFromParsedAgentOutput(
 ): AgentTranscriptMessage[] {
   const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
   const messages: AgentTranscriptMessage[] = [];
-  const labels: ImageLabels = { byId: new Map(), next: 1 };
+  const labels: AttachmentLabels = { byId: new Map(), nextImage: 1, nextFile: 1 };
   // The same words twice is a legitimate conversation — "yes", "yes" — so a
   // repeat is numbered rather than allowed to collide.
   const seen = new Map<string, number>();

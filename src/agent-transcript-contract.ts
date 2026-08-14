@@ -18,6 +18,16 @@ export interface AgentTranscriptImagePart {
   attachmentId: string;
   filename?: string;
   mimeType?: string;
+  kind?: "image";
+}
+
+export interface AgentTranscriptAttachmentPart {
+  type: "attachment_reference";
+  label: string;
+  attachmentId: string;
+  filename?: string;
+  mimeType?: string;
+  kind?: "audio" | "video" | "pdf" | "text" | "file";
 }
 
 export interface AgentTranscriptTextPart {
@@ -26,7 +36,7 @@ export interface AgentTranscriptTextPart {
   spans?: RichTextSpan[];
 }
 
-export type AgentTranscriptPart = AgentTranscriptTextPart | AgentTranscriptImagePart;
+export type AgentTranscriptPart = AgentTranscriptTextPart | AgentTranscriptImagePart | AgentTranscriptAttachmentPart;
 
 export interface AgentTranscriptMessage {
   id: string;

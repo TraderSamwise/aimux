@@ -37,6 +37,32 @@ describe("toChatMessages", () => {
     });
   });
 
+  it("builds generic attachment urls", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          parts: [
+            {
+              type: "attachment_reference",
+              label: "[file #1]",
+              attachmentId: "att_pdf",
+              filename: "notes.pdf",
+              mimeType: "application/pdf",
+              kind: "pdf",
+            },
+          ],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts![0]).toMatchObject({
+      type: "attachment_reference",
+      attachmentId: "att_pdf",
+      contentUrl: "/attachments/att_pdf/content?sessionId=codex-1",
+    });
+  });
+
   it("escapes a session id rather than pasting it into the query", () => {
     const [chat] = toChatMessages(
       [message({ parts: [{ type: "image_reference", label: "x", attachmentId: "att_a" }] })],

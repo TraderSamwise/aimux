@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { getAttachmentsDir } from "./paths.js";
 import { atomicWrite, writeJsonAtomic } from "./atomic-write.js";
 
+export type AttachmentKind = "image" | "audio" | "video" | "pdf" | "text" | "file";
+
 export interface AttachmentRecord {
   id: string;
-  kind: "image";
+  kind: AttachmentKind;
   filename: string;
   mimeType: string;
   sizeBytes: number;
@@ -26,7 +28,7 @@ export interface AttachmentRecord {
 
 export interface PublicAttachmentRecord {
   id: string;
-  kind: "image";
+  kind: AttachmentKind;
   filename: string;
   mimeType: string;
   sizeBytes: number;
@@ -46,11 +48,37 @@ export interface CreateUploadedAttachmentInput {
 }
 
 const maxUploadBytes = 10 * 1024 * 1024;
-const allowedImageExtensions = new Map([
+const mimeExtensions = new Map([
   ["image/png", ".png"],
   ["image/jpeg", ".jpg"],
   ["image/webp", ".webp"],
   ["image/gif", ".gif"],
+  ["audio/aac", ".aac"],
+  ["audio/flac", ".flac"],
+  ["audio/m4a", ".m4a"],
+  ["audio/mp4", ".m4a"],
+  ["audio/mpeg", ".mp3"],
+  ["audio/ogg", ".ogg"],
+  ["audio/wav", ".wav"],
+  ["audio/webm", ".webm"],
+  ["video/mp4", ".mp4"],
+  ["video/quicktime", ".mov"],
+  ["video/webm", ".webm"],
+  ["application/pdf", ".pdf"],
+  ["application/json", ".json"],
+  ["text/csv", ".csv"],
+  ["text/markdown", ".md"],
+  ["text/plain", ".txt"],
+]);
+
+const activeMimeTypes = new Set([
+  "application/javascript",
+  "application/ecmascript",
+  "application/xhtml+xml",
+  "image/svg+xml",
+  "text/ecmascript",
+  "text/html",
+  "text/javascript",
 ]);
 
 /**
@@ -66,11 +94,8 @@ export function attachmentBelongsToSession(record: AttachmentRecord, sessionId: 
 }
 
 export function createUploadedAttachment(input: CreateUploadedAttachmentInput): PublicAttachmentRecord {
-  const mimeType = input.mimeType.trim().toLowerCase();
-  const extension = allowedImageExtensions.get(mimeType);
-  if (!extension) {
-    throw new Error("unsupported attachment mime type");
-  }
+  const mimeType = normalizeMimeType(input.mimeType);
+  const kind = inferAttachmentKind(mimeType);
 
   // Charset is checked at the HTTP boundary, which owns request validation.
   // This only refuses to write a record that would be unowned by accident.
@@ -93,10 +118,11 @@ export function createUploadedAttachment(input: CreateUploadedAttachmentInput): 
   mkdirSync(attachmentsDir, { recursive: true });
 
   const id = `att_${randomUUID().replaceAll("-", "")}`;
+  const extension = extensionForAttachment(mimeType, filename);
   const contentPath = join(attachmentsDir, `${id}${extension}`);
   const record: AttachmentRecord = {
     id,
-    kind: "image",
+    kind,
     filename,
     mimeType,
     sizeBytes: buffer.length,
@@ -185,7 +211,35 @@ export function getAttachmentRecord(id: string, sessionId?: string): AttachmentR
 
 function sanitizeFilename(filename: string): string {
   const safeName = basename(filename.trim()).replaceAll(/[\\/]/g, "").trim();
-  return safeName || "image";
+  return safeName || "attachment";
+}
+
+function normalizeMimeType(mimeType: string): string {
+  const normalized = mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(normalized)) {
+    throw new Error("attachment mime type is invalid");
+  }
+  if (activeMimeTypes.has(normalized)) {
+    throw new Error("unsupported attachment mime type");
+  }
+  return normalized;
+}
+
+export function inferAttachmentKind(mimeType: string): AttachmentKind {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType.startsWith("text/") || mimeType === "application/json") return "text";
+  return "file";
+}
+
+function extensionForAttachment(mimeType: string, filename: string): string {
+  const fromMime = mimeExtensions.get(mimeType);
+  if (fromMime) return fromMime;
+  const fromName = extname(filename).toLowerCase();
+  if (/^\.[a-z0-9]{1,12}$/.test(fromName)) return fromName;
+  return ".bin";
 }
 
 function normalizeBase64(dataBase64: string): string {

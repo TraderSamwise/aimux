@@ -88,6 +88,31 @@ describe("messagesFromParsedAgentOutput", () => {
     ]);
   });
 
+  it("reads a generic attachment block into a file part", () => {
+    const [message] = messagesFromParsedAgentOutput(
+      parsed([
+        {
+          type: "prompt",
+          text:
+            "use this source\n\nAttached files:\n" +
+            "- notes.pdf (application/pdf, 1234 bytes): /srv/x/.aimux/attachments/att_pdf123.pdf",
+        },
+      ]),
+    );
+
+    expect(message!.parts).toEqual([
+      { type: "text", text: "use this source" },
+      {
+        type: "attachment_reference",
+        label: "[file #1]",
+        attachmentId: "att_pdf123",
+        filename: "notes.pdf",
+        mimeType: "application/pdf",
+        kind: "pdf",
+      },
+    ]);
+  });
+
   it("still finds the attachment when tmux has reflowed the block", () => {
     const [message] = messagesFromParsedAgentOutput(
       parsed([
@@ -271,6 +296,7 @@ describe("transcriptMessageText", () => {
       transcriptMessageText([
         { type: "text", text: "before" },
         { type: "image_reference", label: "[image #1]", attachmentId: "att_a" },
+        { type: "attachment_reference", label: "[file #1]", attachmentId: "att_b", kind: "file" },
         { type: "text", text: "after" },
       ]),
     ).toBe("before\nafter");

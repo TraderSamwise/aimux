@@ -4741,7 +4741,7 @@ describe("MetadataServer threads API", () => {
     expect(sent).toEqual([]);
   });
 
-  it("uploads image attachments and serves their content over HTTP", async () => {
+  it("uploads attachments and serves their content over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
@@ -4775,7 +4775,61 @@ describe("MetadataServer threads API", () => {
     expect(contentBytes.equals(imageBytes)).toBe(true);
   });
 
-  it("rejects malformed uploaded image data", async () => {
+  it("uploads non-image attachments with a typed kind", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const fileBytes = Buffer.from("%PDF-file-bytes");
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "notes.pdf",
+        mimeType: "application/pdf",
+        dataBase64: fileBytes.toString("base64"),
+        sessionId: "codex-1",
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as {
+      ok: boolean;
+      attachment: { id: string; kind: string; filename: string; mimeType: string; contentUrl: string };
+    };
+
+    expect(uploadRes.ok).toBe(true);
+    expect(uploaded.attachment.kind).toBe("pdf");
+    expect(uploaded.attachment.filename).toBe("notes.pdf");
+    expect(uploaded.attachment.mimeType).toBe("application/pdf");
+
+    const contentRes = await fetch(`${base}${uploaded.attachment.contentUrl}`);
+    const contentBytes = Buffer.from(await contentRes.arrayBuffer());
+    expect(contentRes.ok).toBe(true);
+    expect(contentRes.headers.get("content-type")).toBe("application/pdf");
+    expect(contentBytes.equals(fileBytes)).toBe(true);
+  });
+
+  it("rejects active browser content uploads", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "page.html",
+        mimeType: "text/html",
+        dataBase64: Buffer.from("<script>alert(1)</script>").toString("base64"),
+        sessionId: "codex-1",
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as { ok: boolean; error: string };
+
+    expect(uploadRes.status).toBe(400);
+    expect(uploaded).toEqual({ ok: false, error: "unsupported attachment mime type" });
+  });
+
+  it("rejects malformed uploaded attachment data", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
@@ -4838,7 +4892,7 @@ describe("MetadataServer threads API", () => {
     expect(inputRes.ok).toBe(true);
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain("please inspect");
-    expect(sent[0]!.text).toContain("Attached image files:");
+    expect(sent[0]!.text).toContain("Attached files:");
     expect(sent[0]!.text).toContain("chart.webp (image/webp, 10 bytes):");
     expect(sent[0]!.text).toContain(join(repoRoot, ".aimux", "attachments", `${uploaded.attachment.id}.webp`));
   });
@@ -4879,7 +4933,7 @@ describe("MetadataServer threads API", () => {
     });
 
     expect(inputRes.ok).toBe(true);
-    expect(sent[0]!.text).toContain("Please review the attached image file(s).");
+    expect(sent[0]!.text).toContain("Please review the attached file(s).");
     expect(sent[0]!.text).toContain("chart.png");
   });
 

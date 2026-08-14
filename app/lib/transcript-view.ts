@@ -27,7 +27,7 @@ function toHistoryPart(
     if (text === part.text) return part;
     return { type: "text", text };
   }
-  if (part.type !== "image_reference") return part;
+  if (part.type !== "image_reference" && part.type !== "attachment_reference") return part;
   return {
     ...part,
     // Built here, not by the service. The same attachment sits at a

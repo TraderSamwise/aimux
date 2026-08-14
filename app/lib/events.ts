@@ -119,6 +119,16 @@ export interface HistoryImageReferencePart {
   contentUrl?: string;
 }
 
+export interface HistoryAttachmentReferencePart {
+  type: "attachment_reference";
+  label: string;
+  attachmentId?: string;
+  filename?: string;
+  mimeType?: string;
+  kind?: "audio" | "video" | "pdf" | "text" | "file";
+  contentUrl?: string;
+}
+
 export type HistoryTextMark = "bold" | "dim" | "italic" | "underline" | "strike";
 
 export interface HistoryTextColor {
@@ -136,7 +146,8 @@ export interface HistoryTextSpan {
 export type HistoryPart =
   | { type: "text"; text: string; spans?: HistoryTextSpan[] }
   | HistoryImagePart
-  | HistoryImageReferencePart;
+  | HistoryImageReferencePart
+  | HistoryAttachmentReferencePart;
 
 export interface ChatActor {
   userId: string;
