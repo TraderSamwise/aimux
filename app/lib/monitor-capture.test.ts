@@ -34,4 +34,18 @@ describe("monitor capture helpers", () => {
       "Monitor sample captured at 2026-08-14T01:02:03.456Z. A camera frame is attached. Audio sample rate: 16000 Hz. Speech transcript: ship the notes",
     );
   });
+
+  it("formats text-only monitor samples when a frame is intentionally not attached", () => {
+    expect(
+      formatMonitorSampleText({
+        capturedAt: "2026-08-14T01:02:03.456Z",
+        captureMode: "camera-audio",
+        frameSkippedReason: "shared chat image delivery is not enabled yet",
+        transcript: "debug the screen",
+        audioSampleRate: 16000,
+      }),
+    ).toBe(
+      "Monitor sample captured at 2026-08-14T01:02:03.456Z. Camera frame not attached: shared chat image delivery is not enabled yet. Audio sample rate: 16000 Hz. Speech transcript: debug the screen",
+    );
+  });
 });
