@@ -4664,7 +4664,7 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
-  it("rejects shared guest attachments and other-session input", async () => {
+  it("allows shared guest attachments only for the shared session", async () => {
     const calls: Array<{ sessionId: string; text: string; waitForSubmit?: boolean }> = [];
     const guestHeaders = {
       "content-type": "application/json",
@@ -4690,10 +4690,36 @@ describe("MetadataServer threads API", () => {
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
-    const attachmentRes = await fetch(`${base}/live-pane/input`, {
+    const uploadRes = await fetch(`${base}/attachments`, {
       method: "POST",
       headers: guestHeaders,
-      body: JSON.stringify({ sessionId: "codex-1", text: "inspect", attachmentIds: ["att_1"] }),
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        filename: "notes.pdf",
+        mimeType: "application/pdf",
+        dataBase64: Buffer.from("%PDF-shared").toString("base64"),
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as { ok: boolean; attachment: { id: string; contentUrl: string } };
+
+    const contentRes = await fetch(`${base}${uploaded.attachment.contentUrl}`, { headers: guestHeaders });
+    const metadataRes = await fetch(`${base}/attachments/${uploaded.attachment.id}?sessionId=codex-1`, {
+      headers: guestHeaders,
+    });
+    const otherUploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({
+        sessionId: "codex-2",
+        filename: "notes.pdf",
+        mimeType: "application/pdf",
+        dataBase64: Buffer.from("%PDF-shared").toString("base64"),
+      }),
+    });
+    const attachmentInputRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: guestHeaders,
+      body: JSON.stringify({ sessionId: "codex-1", text: "inspect", attachmentIds: [uploaded.attachment.id] }),
     });
     const otherSessionRes = await fetch(`${base}/live-pane/input`, {
       method: "POST",
@@ -4706,10 +4732,18 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ sessionId: "codex-1", text: "hello" }),
     });
 
-    expect(attachmentRes.status).toBe(403);
+    expect(uploadRes.ok).toBe(true);
+    expect(contentRes.ok).toBe(true);
+    expect(metadataRes.status).toBe(403);
+    expect(otherUploadRes.status).toBe(403);
+    expect(attachmentInputRes.ok).toBe(true);
     expect(otherSessionRes.status).toBe(403);
     expect(legacyRouteRes.status).toBe(403);
-    expect(calls).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.sessionId).toBe("codex-1");
+    expect(calls[0]!.text).toContain("[Ada Guest] inspect");
+    expect(calls[0]!.text).toContain("Attached files:");
+    expect(calls[0]!.text).toContain("notes.pdf (application/pdf, 11 bytes):");
   });
 
   it("rejects blank agent input over HTTP", async () => {

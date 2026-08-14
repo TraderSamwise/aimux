@@ -1106,6 +1106,7 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
   res.setHeader("content-type", mimeType);
   res.setHeader("content-length", body.byteLength);
   res.setHeader("cache-control", "private, max-age=31536000, immutable");
+  res.setHeader("x-content-type-options", "nosniff");
   if (!res.hasHeader("access-control-allow-origin")) {
     res.setHeader("access-control-allow-origin", "*");
   }
@@ -5471,19 +5472,15 @@ export class MetadataServer {
         const remoteActor = parseRemoteActor(requestHeaderRecord(req));
         if (remoteActor?.role === "guest") {
           if (url.pathname !== PROJECT_API_ROUTES.livePane.input) {
-            send(res, 403, { ok: false, error: "shared guests can only send text to their shared session" });
+            send(res, 403, { ok: false, error: "shared guests can only write to their shared session" });
             return;
           }
           if (!remoteActor.shareSessionId || remoteActor.shareSessionId !== sessionId) {
             send(res, 403, { ok: false, error: "shared guest cannot access another session" });
             return;
           }
-          if (!text.trim()) {
-            send(res, 403, { ok: false, error: "shared guest input requires text" });
-            return;
-          }
-          if (attachmentIds.length > 0) {
-            send(res, 403, { ok: false, error: "shared guests cannot send attachments" });
+          if (!text.trim() && attachmentIds.length === 0) {
+            send(res, 403, { ok: false, error: "shared guest input requires text or attachments" });
             return;
           }
         }
@@ -5623,6 +5620,14 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "sessionId is invalid" });
           return;
         }
+        const remoteActor = parseRemoteActor(requestHeaderRecord(req));
+        if (
+          remoteActor?.role === "guest" &&
+          (!remoteActor.shareSessionId || remoteActor.shareSessionId !== uploadSession.value)
+        ) {
+          send(res, 403, { ok: false, error: "shared guest cannot access another session" });
+          return;
+        }
         try {
           const attachment = createUploadedAttachment({
             filename: body.filename,
@@ -5648,6 +5653,21 @@ export class MetadataServer {
       if (req.method === "GET" && attachmentPathMatched && attachmentReadSession === "") {
         send(res, 400, { ok: false, error: "sessionId is invalid" });
         return;
+      }
+      const attachmentRemoteActor = parseRemoteActor(requestHeaderRecord(req));
+      if (req.method === "GET" && attachmentPathMatched && attachmentRemoteActor?.role === "guest") {
+        if (
+          !attachmentRemoteActor.shareSessionId ||
+          !attachmentReadSession ||
+          attachmentRemoteActor.shareSessionId !== attachmentReadSession
+        ) {
+          send(res, 403, { ok: false, error: "shared guest cannot access another session" });
+          return;
+        }
+        if (!/\/content$/.test(url.pathname)) {
+          send(res, 403, { ok: false, error: "shared guests cannot read attachment metadata" });
+          return;
+        }
       }
 
       const attachmentContentMatch = url.pathname.match(/^\/attachments\/([^/]+)\/content$/);

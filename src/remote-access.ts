@@ -45,7 +45,11 @@ const SHARED_GUEST_SESSION_READ_ROUTES = new Set<string>([
   PROJECT_API_ROUTES.livePane.output,
   PROJECT_API_ROUTES.events,
 ]);
-const SHARED_GUEST_SESSION_WRITE_ROUTES = new Set<string>([PROJECT_API_ROUTES.livePane.input]);
+const SHARED_GUEST_SESSION_WRITE_ROUTES = new Set<string>([
+  PROJECT_API_ROUTES.livePane.input,
+  PROJECT_API_ROUTES.attachments,
+]);
+const ATTACHMENT_CONTENT_ROUTE = /^\/attachments\/[A-Za-z0-9_-]{1,128}\/content$/;
 
 const PROXY_PATH_PATTERN = /^\/proxy\/[^/]+\/\d+(\/.*)$/;
 
@@ -338,24 +342,24 @@ export function assertRemoteAccessAllowed(
   if (!proxyMatch) return { ok: false, status: 403, error: "shared guests cannot access daemon routes" };
 
   const subPath = proxyMatch[1] || "/";
-  if (methodName === "GET" && SHARED_GUEST_SESSION_READ_ROUTES.has(subPath)) {
+  if (
+    methodName === "GET" &&
+    (SHARED_GUEST_SESSION_READ_ROUTES.has(subPath) || ATTACHMENT_CONTENT_ROUTE.test(subPath))
+  ) {
     return assertSharedGuestSession(actor, "GET", searchParams, context);
   }
 
   if (methodName === "POST" && SHARED_GUEST_SESSION_WRITE_ROUTES.has(subPath)) {
     const sessionDecision = assertSharedGuestSession(actor, "POST", searchParams, context);
     if (!sessionDecision.ok) return sessionDecision;
-    if (!bodyText(context.body)) {
-      return { ok: false, status: 403, error: "shared guest input requires text" };
-    }
-    if (bodyHasAttachments(context.body)) {
-      return { ok: false, status: 403, error: "shared guests cannot send attachments" };
+    if (subPath === PROJECT_API_ROUTES.livePane.input && !bodyText(context.body) && !bodyHasAttachments(context.body)) {
+      return { ok: false, status: 403, error: "shared guest input requires text or attachments" };
     }
     return { ok: true };
   }
 
   if (methodName !== "GET") {
-    return { ok: false, status: 403, error: "shared guests can only send text to their shared session" };
+    return { ok: false, status: 403, error: "shared guests can only write to their shared session" };
   }
-  return { ok: false, status: 403, error: "shared guests can only read shared session output" };
+  return { ok: false, status: 403, error: "shared guests can only read shared session output and attachments" };
 }

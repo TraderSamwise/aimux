@@ -195,6 +195,15 @@ describe("sharing state", () => {
     expect(
       isSharedRelayRequestAllowed({ method: "POST", path: "/live-pane/input", sessionId: "claude-abc" }, share),
     ).toBe(true);
+    expect(isSharedRelayRequestAllowed({ method: "POST", path: "/attachments", sessionId: "claude-abc" }, share)).toBe(
+      true,
+    );
+    expect(
+      isSharedRelayRequestAllowed(
+        { method: "GET", path: "/attachments/att_abc/content", sessionId: "claude-abc" },
+        share,
+      ),
+    ).toBe(true);
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/events", sessionId: "claude-abc" }, share)).toBe(true);
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/agents/history" }, share)).toBe(false);
     expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/input", sessionId: "claude-abc" }, share)).toBe(
@@ -202,6 +211,9 @@ describe("sharing state", () => {
     );
     expect(
       isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/file.png", sessionId: "claude-abc" }, share),
+    ).toBe(false);
+    expect(
+      isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/att_abc", sessionId: "claude-abc" }, share),
     ).toBe(false);
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments-private/file.png" }, share)).toBe(false);
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/../agents/input" }, share)).toBe(false);
@@ -238,6 +250,32 @@ describe("sharing state", () => {
         share,
       ),
     ).toMatchObject({ allowed: true, path: "/live-pane/input", sessionId: "claude-abc" });
+    expect(
+      sharedRelayRequestAccess(
+        { method: "POST", path: "/proxy/127.0.0.1/43192/attachments", body: { sessionId: "claude-abc" } },
+        share,
+      ),
+    ).toMatchObject({ allowed: true, path: "/attachments", sessionId: "claude-abc" });
+    expect(
+      sharedRelayRequestAccess(
+        { method: "GET", path: "/proxy/127.0.0.1/43192/attachments/att_abc/content?sessionId=claude-abc" },
+        share,
+      ),
+    ).toMatchObject({
+      allowed: true,
+      path: "/attachments/att_abc/content?sessionId=claude-abc",
+      sessionId: "claude-abc",
+    });
+    expect(
+      sharedRelayRequestAccess(
+        {
+          method: "POST",
+          path: "/proxy/127.0.0.1/43192/attachments?sessionId=other",
+          body: { sessionId: "claude-abc" },
+        },
+        share,
+      ),
+    ).toMatchObject({ allowed: false, path: "/attachments?sessionId=other", sessionId: undefined });
     expect(
       sharedRelayRequestAccess(
         { method: "POST", path: "/proxy/127.0.0.1/43192/agents/input", body: { sessionId: "other" } },

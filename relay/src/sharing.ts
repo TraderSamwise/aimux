@@ -306,13 +306,14 @@ export function isSharedRelayRequestAllowed(
   const sessionId = input.sessionId?.trim();
 
   if (!sessionId || sessionId !== share.sessionId) return false;
+  if (method === "GET" && /^\/attachments\/[A-Za-z0-9_-]{1,128}\/content$/.test(path)) return true;
   if (
     method === "GET" &&
     (path === "/agents/history" || path === "/agents/output" || path === "/live-pane/output" || path === "/events")
   ) {
     return true;
   }
-  if (method === "POST" && path === "/live-pane/input") return true;
+  if (method === "POST" && (path === "/live-pane/input" || path === "/attachments")) return true;
   return false;
 }
 
@@ -321,7 +322,7 @@ export function sharedRelayRequestAccess(
   share: SharedSessionRecord,
 ): { allowed: boolean; path: string; sessionId?: string } {
   const path = unwrapProxyPath(input.path);
-  const sessionId = sessionIdFromRequest(path, input.body);
+  const sessionId = sessionIdFromRequest(input.method, path, input.body);
   return {
     allowed: isSharedRelayRequestAllowed({ method: input.method, path, sessionId }, share),
     path,
@@ -480,14 +481,15 @@ function unwrapProxyPath(path: string): string {
   return `${unwrapped}${url.search}`;
 }
 
-function sessionIdFromRequest(path: string, body: unknown): string | undefined {
+function sessionIdFromRequest(method: string, path: string, body: unknown): string | undefined {
   const bodySessionId =
     body && typeof body === "object" && "sessionId" in body
       ? String((body as { sessionId?: unknown }).sessionId ?? "")
       : "";
-  if (bodySessionId.trim()) return bodySessionId.trim();
   const url = new URL(path, "https://relay.local");
-  return url.searchParams.get("sessionId")?.trim() || undefined;
+  const querySessionId = url.searchParams.get("sessionId")?.trim() || "";
+  if (bodySessionId.trim() && querySessionId && bodySessionId.trim() !== querySessionId) return undefined;
+  return method.toUpperCase() === "POST" ? bodySessionId.trim() || undefined : querySessionId || undefined;
 }
 
 function randomBase64Url(byteLength: number): string {

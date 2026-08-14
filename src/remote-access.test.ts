@@ -327,25 +327,44 @@ describe("existing roles are unaffected", () => {
     ).toBe(false);
   });
 
-  it("lets a shared guest send text only to its own live pane", () => {
+  it("lets a shared guest send text or attachments only to its own live pane", () => {
     expect(
       allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
         body: { sessionId: SESSION, text: "hello" },
       }),
     ).toEqual({ ok: true });
+    expect(
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
+        body: { sessionId: SESSION, attachmentIds: ["att_1"] },
+      }),
+    ).toEqual({ ok: true });
   });
 
-  it("rejects shared guest live-pane input without a real text message", () => {
+  it("rejects shared guest live-pane input without text or attachments", () => {
     expect(
       allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
         body: { sessionId: SESSION, text: "  \n\t " },
       }).ok,
     ).toBe(false);
+  });
+
+  it("lets a shared guest upload and read attachments for its own session", () => {
     expect(
-      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.livePane.input), {
-        body: { sessionId: SESSION, attachmentIds: ["att_1"] },
+      allow(guest(), "POST", PORT_PATH(PROJECT_API_ROUTES.attachments), {
+        body: { sessionId: SESSION },
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      allow(guest(), "GET", PORT_PATH("/attachments/att_abc123/content"), {
+        query: `?sessionId=${SESSION}`,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      allow(guest(), "GET", PORT_PATH("/attachments/att_abc123"), {
+        query: `?sessionId=${SESSION}`,
       }).ok,
     ).toBe(false);
+    expect(allow(guest(), "GET", PORT_PATH("/attachments/att_abc123/content")).ok).toBe(false);
   });
 
   it("rejects shared guest input for another session or conflicting session ids", () => {
@@ -366,7 +385,6 @@ describe("existing roles are unaffected", () => {
     for (const route of [
       PROJECT_API_ROUTES.agents.input,
       PROJECT_API_ROUTES.agents.interrupt,
-      PROJECT_API_ROUTES.attachments,
       PROJECT_API_ROUTES.agents.spawn,
     ]) {
       expect(
