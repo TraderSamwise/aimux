@@ -46,7 +46,18 @@ export function MonitorSidebar() {
             <View className="min-w-0 flex-1">
               <Text className="text-[13px] font-medium text-[#edeef0]">Speech to text</Text>
               <Text className="mt-0.5 text-[12px] text-[#787a83]">
-                {settings.speechToText ? "Enabled" : "Disabled"}
+                {settings.speechToText
+                  ? `${settings.speechLanguage} - ${settings.audioSampleRate} Hz`
+                  : "Disabled"}
+              </Text>
+            </View>
+          </View>
+          <View className="flex-row gap-3">
+            <Mic size={16} color={settings.speechOnDeviceOnly ? "#38bdf8" : "#a1a1aa"} />
+            <View className="min-w-0 flex-1">
+              <Text className="text-[13px] font-medium text-[#edeef0]">Recognition</Text>
+              <Text className="mt-0.5 text-[12px] text-[#787a83]">
+                {settings.speechOnDeviceOnly ? "On-device only" : "System default"}
               </Text>
             </View>
           </View>

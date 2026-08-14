@@ -13,6 +13,7 @@ export type AgentOutputViewMode = "chat" | "split" | "terminal";
 export type ExposePreviewMode = "chat" | "terminal";
 export type MonitorTargetKind = "project-agent" | "shared-chat";
 export type MonitorCaptureMode = "camera" | "audio" | "camera-audio";
+export type MonitorAudioSampleRate = 8000 | 16000 | 24000 | 44100 | 48000;
 export const DESKTOP_APP_ZOOM_VALUES = [80, 90, 100, 110, 120, 130, 140, 150] as const;
 export type DesktopAppZoom = (typeof DESKTOP_APP_ZOOM_VALUES)[number];
 
@@ -42,6 +43,10 @@ export interface MonitorSettings {
   targetKind: MonitorTargetKind;
   captureMode: MonitorCaptureMode;
   speechToText: boolean;
+  speechOnDeviceOnly: boolean;
+  speechInterimResults: boolean;
+  speechLanguage: string;
+  audioSampleRate: MonitorAudioSampleRate;
   projectPath: string | null;
   sessionId: string | null;
   shareOwnerUserId: string | null;
@@ -49,6 +54,7 @@ export interface MonitorSettings {
 }
 
 export const MONITOR_INTERVAL_SECONDS = [5, 10, 15, 30, 60] as const;
+export const MONITOR_AUDIO_SAMPLE_RATES = [8000, 16000, 24000, 44100, 48000] as const;
 
 export const defaultSettings = Object.freeze<AppSettings>({
   theme: "dark",
@@ -64,6 +70,10 @@ export const defaultSettings = Object.freeze<AppSettings>({
     targetKind: "project-agent",
     captureMode: "camera",
     speechToText: true,
+    speechOnDeviceOnly: true,
+    speechInterimResults: true,
+    speechLanguage: "en-US",
+    audioSampleRate: 16000,
     projectPath: null,
     sessionId: null,
     shareOwnerUserId: null,
@@ -157,11 +167,21 @@ function normalizeMonitorSettings(value: AppSettings["monitor"] | undefined): Mo
     targetKind,
     captureMode,
     speechToText: value?.speechToText !== false,
+    speechOnDeviceOnly: value?.speechOnDeviceOnly !== false,
+    speechInterimResults: value?.speechInterimResults !== false,
+    speechLanguage: sanitizeLocale(value?.speechLanguage),
+    audioSampleRate: normalizeMonitorAudioSampleRate(value?.audioSampleRate),
     projectPath: sanitizeNullableText(value?.projectPath),
     sessionId: sanitizeNullableText(value?.sessionId),
     shareOwnerUserId: sanitizeNullableText(value?.shareOwnerUserId),
     shareId: sanitizeNullableText(value?.shareId),
   };
+}
+
+function normalizeMonitorAudioSampleRate(value: unknown): MonitorAudioSampleRate {
+  return MONITOR_AUDIO_SAMPLE_RATES.includes(value as MonitorAudioSampleRate)
+    ? (value as MonitorAudioSampleRate)
+    : defaultSettings.monitor.audioSampleRate;
 }
 
 function normalizeActiveShare(value: AppSettings["activeShare"]): ActiveSharedSession | null {
@@ -199,4 +219,12 @@ function shareKey(share: ActiveSharedSession): string {
 
 function sanitizeNullableText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function sanitizeLocale(value: unknown): string {
+  if (typeof value !== "string") return defaultSettings.monitor.speechLanguage;
+  const trimmed = value.trim();
+  return /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(trimmed)
+    ? trimmed
+    : defaultSettings.monitor.speechLanguage;
 }

@@ -66,6 +66,24 @@ module.exports = {
           color: "#0a0a0c",
         },
       ],
+      [
+        "expo-camera",
+        {
+          cameraPermission: "Allow aimux to use the camera for Monitor mode snapshots.",
+          microphonePermission: "Allow aimux to use the microphone for Monitor mode audio notes.",
+          recordAudioAndroid: true,
+          barcodeScannerEnabled: false,
+        },
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          microphonePermission: "Allow aimux to use the microphone for Monitor mode audio notes.",
+          speechRecognitionPermission:
+            "Allow aimux to transcribe speech locally for Monitor mode notes.",
+          androidSpeechServicePackages: ["com.google.android.googlequicksearchbox"],
+        },
+      ],
       "./plugins/withAimuxAttachmentDropView",
       "./plugins/withAimuxNativeAppCommands",
       ...(HAS_REAL_EAS_PROJECT ? ["expo-updates"] : []),
