@@ -104,6 +104,7 @@ import {
   type ProjectLifecycleTransitionPhase,
   type ProjectLifecycleTransitionTargetKind,
   type ProjectApiView,
+  type ExposePreviewSnapshot,
   projectApiMutationReasonForRoute,
   projectApiViewsForMutationRoute,
 } from "./project-api-contract.js";
@@ -943,6 +944,54 @@ const DESKTOP_STATE_STALE_REFRESH_DELAY_MS = 1_000;
 const DESKTOP_STATE_PREVIEW_MAX_CHARS = 8_192;
 const DESKTOP_STATE_CHAT_PREVIEW_START_LINE = -80;
 const DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES = 3;
+
+function mergeExposePreviewSnapshots(
+  captureSnapshot: ExposePreviewSnapshot | undefined,
+  tapSnapshot:
+    | {
+        output: string;
+        capturedAt: string;
+        source: "tap";
+        windowId: string;
+      }
+    | undefined,
+): ExposePreviewSnapshot | undefined {
+  if (!tapSnapshot) return captureSnapshot;
+  if (!captureSnapshot) {
+    return {
+      output: tapSnapshot.output,
+      capturedAt: tapSnapshot.capturedAt,
+      source: tapSnapshot.source,
+      windowId: tapSnapshot.windowId,
+    };
+  }
+  if (!tapSnapshot.output) return captureSnapshot;
+  if (!captureSnapshot.output) {
+    return {
+      output: tapSnapshot.output,
+      capturedAt: tapSnapshot.capturedAt,
+      source: tapSnapshot.source,
+      windowId: tapSnapshot.windowId,
+    };
+  }
+  if (captureSnapshot.output.endsWith(tapSnapshot.output)) return captureSnapshot;
+  if (tapSnapshot.output.startsWith(captureSnapshot.output)) {
+    return {
+      output: tapSnapshot.output,
+      capturedAt: tapSnapshot.capturedAt,
+      source: tapSnapshot.source,
+      windowId: tapSnapshot.windowId,
+    };
+  }
+  const separator = captureSnapshot.output.endsWith("\n") || tapSnapshot.output.startsWith("\n") ? "" : "\n";
+  return {
+    output: `${captureSnapshot.output}${separator}${tapSnapshot.output}`,
+    capturedAt: tapSnapshot.capturedAt,
+    source: tapSnapshot.source,
+    windowId: tapSnapshot.windowId,
+  };
+}
+
 /**
  * How long a forced rebuild answers for the forced rebuilds behind it.
  *
@@ -1747,23 +1796,14 @@ export class MetadataServer {
     for (const item of rawItems) {
       tapSnapshots.set(item.target.windowId, this.exposePaneOutputTap?.read(item.target.windowId));
     }
-    const captureRepairItems = rawItems.filter((item) => !tapSnapshots.get(item.target.windowId));
-    this.exposePreviewCache?.trackItems(captureRepairItems);
-    for (const item of captureRepairItems) {
+    this.exposePreviewCache?.trackItems(rawItems);
+    for (const item of rawItems) {
       captureSnapshots.set(item.target.windowId, this.exposePreviewCache?.get(item.target.windowId));
     }
     return rawItems.map((item) => {
       const tapSnapshot = tapSnapshots.get(item.target.windowId);
-      const captureSnapshot = !tapSnapshot ? captureSnapshots.get(item.target.windowId) : undefined;
-      const previewSnapshot =
-        (tapSnapshot
-          ? {
-              output: tapSnapshot.output,
-              capturedAt: tapSnapshot.capturedAt,
-              source: tapSnapshot.source,
-              windowId: tapSnapshot.windowId,
-            }
-          : undefined) ?? captureSnapshot;
+      const captureSnapshot = captureSnapshots.get(item.target.windowId);
+      const previewSnapshot = mergeExposePreviewSnapshots(captureSnapshot, tapSnapshot);
       if (!previewSnapshot) return item;
       const output =
         options.maxOutputChars && previewSnapshot.output.length > options.maxOutputChars

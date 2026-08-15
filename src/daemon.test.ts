@@ -70,6 +70,13 @@ const tmuxRuntimeMock = vi.hoisted(() => ({
   openTarget: vi.fn(),
   isInsideTmux: vi.fn(),
   isAvailable: vi.fn(),
+  listSessionNames: vi.fn(),
+  getSessionOption: vi.fn(),
+  getProjectSession: vi.fn(),
+  listManagedWindows: vi.fn(),
+  isWindowAlive: vi.fn(),
+  isClientSessionName: vi.fn(),
+  listWindows: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -252,6 +259,7 @@ vi.mock("./tmux/runtime-stop.js", () => ({
 }));
 
 vi.mock("./tmux/runtime-manager.js", () => ({
+  isDashboardWindowName: () => false,
   TmuxRuntimeManager: class {
     isInsideTmux() {
       return tmuxRuntimeMock.isInsideTmux();
@@ -259,6 +267,34 @@ vi.mock("./tmux/runtime-manager.js", () => ({
 
     isAvailable() {
       return tmuxRuntimeMock.isAvailable();
+    }
+
+    listSessionNames() {
+      return tmuxRuntimeMock.listSessionNames();
+    }
+
+    getSessionOption(...args: unknown[]) {
+      return tmuxRuntimeMock.getSessionOption(...args);
+    }
+
+    getProjectSession(...args: unknown[]) {
+      return tmuxRuntimeMock.getProjectSession(...args);
+    }
+
+    listManagedWindows(...args: unknown[]) {
+      return tmuxRuntimeMock.listManagedWindows(...args);
+    }
+
+    isWindowAlive(...args: unknown[]) {
+      return tmuxRuntimeMock.isWindowAlive(...args);
+    }
+
+    isClientSessionName(...args: unknown[]) {
+      return tmuxRuntimeMock.isClientSessionName(...args);
+    }
+
+    listWindows(...args: unknown[]) {
+      return tmuxRuntimeMock.listWindows(...args);
     }
 
     openTarget(...args: unknown[]) {
@@ -493,6 +529,20 @@ describe("daemon supervision", () => {
     tmuxRuntimeMock.isInsideTmux.mockReturnValue(false);
     tmuxRuntimeMock.isAvailable.mockReset();
     tmuxRuntimeMock.isAvailable.mockReturnValue(true);
+    tmuxRuntimeMock.listSessionNames.mockReset();
+    tmuxRuntimeMock.listSessionNames.mockReturnValue([]);
+    tmuxRuntimeMock.getSessionOption.mockReset();
+    tmuxRuntimeMock.getSessionOption.mockReturnValue("");
+    tmuxRuntimeMock.getProjectSession.mockReset();
+    tmuxRuntimeMock.getProjectSession.mockReturnValue({ sessionName: "aimux-test" });
+    tmuxRuntimeMock.listManagedWindows.mockReset();
+    tmuxRuntimeMock.listManagedWindows.mockReturnValue([]);
+    tmuxRuntimeMock.isWindowAlive.mockReset();
+    tmuxRuntimeMock.isWindowAlive.mockReturnValue(true);
+    tmuxRuntimeMock.isClientSessionName.mockReset();
+    tmuxRuntimeMock.isClientSessionName.mockReturnValue(false);
+    tmuxRuntimeMock.listWindows.mockReset();
+    tmuxRuntimeMock.listWindows.mockReturnValue([]);
     loginFlowMock.mockReset();
     loginFlowMock.mockResolvedValue({ userId: "user_123" });
     execFileSyncMock.mockReset();
@@ -650,6 +700,55 @@ describe("daemon supervision", () => {
     expect(list.body).toEqual({ ok: false, error: "expose routes are loopback-only" });
     expect(focus.status).toBe(403);
     expect(focus.body).toEqual({ ok: false, error: "expose routes are loopback-only" });
+  });
+
+  it("serves persisted project hot snapshots in global expose responses", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const projectStateDir = getProjectStateDirFor(projectRoot);
+    writeHotExposeScopeView(
+      projectStateDir,
+      { projectRoot, scope: "project" },
+      {
+        scope: "project",
+        scopeLabel: "all worktrees",
+        sublabel: "worktree",
+        items: [
+          {
+            id: "agent-1",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: { kind: "agent", sessionId: "agent-1", command: "codex", worktreePath: projectRoot },
+            previewSnapshot: {
+              output: "persisted global preview\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@1",
+              startLine: -40,
+              lineCount: 40,
+            },
+          },
+        ],
+      },
+    );
+    tmuxRuntimeMock.listSessionNames.mockReturnValue(["aimux-test"]);
+    tmuxRuntimeMock.getSessionOption.mockReturnValue(projectRoot);
+    tmuxRuntimeMock.listManagedWindows.mockReturnValue([
+      {
+        target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+        metadata: { kind: "agent", sessionId: "agent-1", command: "codex", worktreePath: projectRoot },
+      },
+    ]);
+    tmuxRuntimeMock.listWindows.mockReturnValue([{ id: "@1", index: 1, name: "codex", active: true, activity: 1 }]);
+
+    const daemon = new AimuxDaemon();
+    const response = await daemon.routeRequest("GET", `${CORE_API_ROUTES.exposeItems}?includePreview=1`);
+    const body = response.body as { items: Array<{ previewSnapshot?: { output: string } }> };
+
+    expect(response.status).toBe(200);
+    expect(body.items[0]?.previewSnapshot?.output).toBe("persisted global preview\n");
   });
 
   it("mirrors project hot snapshots into a global expose hot snapshot", async () => {
@@ -4072,6 +4171,25 @@ describe("daemon routing (relay + proxy)", () => {
     coreActorMock.kills.mockReset();
     coreActorMock.instances.length = 0;
     execFileSyncMock.mockReset();
+    tmuxRuntimeMock.openTarget.mockReset();
+    tmuxRuntimeMock.isInsideTmux.mockReset();
+    tmuxRuntimeMock.isInsideTmux.mockReturnValue(false);
+    tmuxRuntimeMock.isAvailable.mockReset();
+    tmuxRuntimeMock.isAvailable.mockReturnValue(true);
+    tmuxRuntimeMock.listSessionNames.mockReset();
+    tmuxRuntimeMock.listSessionNames.mockReturnValue([]);
+    tmuxRuntimeMock.getSessionOption.mockReset();
+    tmuxRuntimeMock.getSessionOption.mockReturnValue("");
+    tmuxRuntimeMock.getProjectSession.mockReset();
+    tmuxRuntimeMock.getProjectSession.mockReturnValue({ sessionName: "aimux-test" });
+    tmuxRuntimeMock.listManagedWindows.mockReset();
+    tmuxRuntimeMock.listManagedWindows.mockReturnValue([]);
+    tmuxRuntimeMock.isWindowAlive.mockReset();
+    tmuxRuntimeMock.isWindowAlive.mockReturnValue(true);
+    tmuxRuntimeMock.isClientSessionName.mockReset();
+    tmuxRuntimeMock.isClientSessionName.mockReturnValue(false);
+    tmuxRuntimeMock.listWindows.mockReset();
+    tmuxRuntimeMock.listWindows.mockReturnValue([]);
     vi.mocked(requestJson).mockReset();
     mockHealthyRequests();
 

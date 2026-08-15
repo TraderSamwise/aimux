@@ -172,12 +172,16 @@ function ExposeTileCard({
                 <Text
                   key={`${tile.id}:${index}`}
                   className={cn("font-mono", hasPreview ? "text-[#d4d4d8]" : "text-[#666872]")}
-                  style={{ fontSize: 11.5, lineHeight: terminalLineHeight }}
+                  style={{
+                    fontSize: 11.5,
+                    lineHeight: terminalLineHeight,
+                    minHeight: terminalLineHeight,
+                  }}
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
                   {line.length === 0
-                    ? " "
+                    ? "\u00a0"
                     : line.map((span, spanIndex) => (
                         <RNText key={`${tile.id}:${index}:${spanIndex}`} style={span.style}>
                           {span.text}

@@ -2334,7 +2334,7 @@ describe("MetadataServer threads API", () => {
 
       expect(response.status).toBe(200);
       expect(body.items.find((item) => item.target.windowId === "@7")?.previewSnapshot).toEqual({
-        output: "live tap preview\n",
+        output: "capture preview\nlive tap preview\n",
         capturedAt: "2026-07-20T13:00:01.000Z",
         source: "tap",
         windowId: "@7",
@@ -2359,10 +2359,13 @@ describe("MetadataServer threads API", () => {
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@9" }) }),
       ]);
       expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([
+        expect.objectContaining({ target: expect.objectContaining({ windowId: "@7" }) }),
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@8" }) }),
+        expect.objectContaining({ target: expect.objectContaining({ windowId: "@9" }) }),
       ]);
-      expect(exposePreviewCache.get).not.toHaveBeenCalledWith("@7");
+      expect(exposePreviewCache.get).toHaveBeenCalledWith("@7");
       expect(exposePreviewCache.get).toHaveBeenCalledWith("@8");
+      expect(exposePreviewCache.get).toHaveBeenCalledWith("@9");
       expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@8");
       expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@7");
       expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@9");
@@ -2501,7 +2504,9 @@ describe("MetadataServer threads API", () => {
     expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
       expect.objectContaining({ id: "agent-1", target: expect.objectContaining({ windowId: "@7" }) }),
     ]);
-    expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([]);
+    expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "agent-1", target: expect.objectContaining({ windowId: "@7" }) }),
+    ]);
   });
 
   it("warms project and per-launch-window worktree expose snapshots in the project service", async () => {

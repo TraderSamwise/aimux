@@ -3,7 +3,14 @@ import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { join, resolve as pathResolve } from "node:path";
 import type { Worker } from "node:worker_threads";
-import { ensureProjectPaths, getAimuxDirFor, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
+import {
+  ensureProjectPaths,
+  getAimuxDirFor,
+  getProjectIdFor,
+  getProjectStateDirById,
+  getProjectStateDirFor,
+  initPaths,
+} from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestBinary, requestJson } from "./http-client.js";
@@ -21,7 +28,12 @@ import {
   parseRemoteActor,
   type RemoteActor,
 } from "./remote-access.js";
-import { isBinaryProjectRoute, PROJECT_API_ROUTES, type AgentLoopInput } from "./project-api-contract.js";
+import {
+  isBinaryProjectRoute,
+  PROJECT_API_ROUTES,
+  type AgentLoopInput,
+  type ExposePreviewSnapshot,
+} from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
 import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
 import { countActiveHostedPrincipals } from "./hosted-principals.js";
@@ -178,7 +190,7 @@ import { loadRecordingsConfig } from "./recording-config.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
-import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
+import { pruneExpiredHotExposeSnapshots, readHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -223,6 +235,24 @@ const RECORDING_CLEANUP_MAX_PER_SWEEP = 200;
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
+
+function hotPreviewSnapshotsForGlobalItems(items: GlobalExposeItem[]): Map<string, ExposePreviewSnapshot> {
+  const previewsByKey = new Map<string, ExposePreviewSnapshot>();
+  const projectRoots = new Set(items.map((item) => item.projectRoot));
+  for (const projectRoot of projectRoots) {
+    const view = readHotExposeScopeView(getProjectStateDirFor(projectRoot), {
+      projectRoot,
+      scope: "project",
+    });
+    if (!view) continue;
+    for (const item of view.items) {
+      if (!item.previewSnapshot) continue;
+      previewsByKey.set(`${projectRoot}\0${item.target.windowId}`, item.previewSnapshot);
+    }
+  }
+  return previewsByKey;
+}
+
 const LOCAL_AUTH_ROUTES = new Set<string>([
   CORE_API_ROUTES.loginStartText,
   CORE_API_ROUTES.loginWaitText,
@@ -939,6 +969,7 @@ export class AimuxDaemon {
         trackExposePreviewItems(projectRoot, projectItems);
       }
     }
+    const hotPreviewSnapshots = includePreview ? hotPreviewSnapshotsForGlobalItems(rawItems) : new Map();
     const sublabel = "project-worktree";
     const orderedItems = orderExposeItems(
       { scope: "global", items: rawItems, scopeLabel: "all projects", sublabel },
@@ -948,7 +979,10 @@ export class AimuxDaemon {
     const items = orderedItems.map((item) => {
       const windowId = item.target.windowId;
       const projectRoot = item.projectRoot;
-      const previewSnapshot = includePreview && windowId ? getExposePreviewSnapshot(projectRoot, windowId) : undefined;
+      const previewSnapshot =
+        includePreview && windowId
+          ? (hotPreviewSnapshots.get(`${projectRoot}\0${windowId}`) ?? getExposePreviewSnapshot(projectRoot, windowId))
+          : undefined;
       const itemWithPreview = previewSnapshot ? { ...item, previewSnapshot } : item;
       const chip = agentStatusChip(item.metadata);
       return {
