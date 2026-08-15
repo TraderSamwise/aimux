@@ -360,80 +360,123 @@ function ExposeSurface({
   onTilePress,
 }: ExposeSurfaceProps) {
   const visibleTiles = useMemo(() => filterExposeTiles(tiles, filter), [filter, tiles]);
+  const scopeOptions = useMemo(
+    () =>
+      [
+        { value: "project", label: "Project" },
+        { value: "global", label: "Global" },
+      ] satisfies Array<SegmentOption<ExposeScope>>,
+    [],
+  );
   const maxColumns = width >= 1440 ? 3 : width >= 900 ? 2 : 1;
   const columns = Math.min(maxColumns, Math.max(visibleTiles.length, 1));
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
   const tileRows = Math.max(1, Math.ceil(Math.max(visibleTiles.length, 1) / columns));
   const desktopLayout = width >= 900;
-  const compactTiles = desktopLayout && columns >= 3;
-  const exposeChromeHeight = desktopLayout ? 250 : 220;
+  const singleLineHeader = width >= 1360;
+  const compactTiles = desktopLayout && (columns >= 3 || tileRows >= 4);
+  const exposeChromeHeight = singleLineHeader ? 170 : desktopLayout ? 218 : 220;
   const gridGapHeight = Math.max(0, tileRows - 1) * 16;
   const targetGridHeight = Math.max(0, height - exposeChromeHeight);
-  const tileMinHeight = desktopLayout ? (tileRows === 1 ? 320 : compactTiles ? 210 : 240) : 240;
+  const tileMinHeight = desktopLayout ? (tileRows === 1 ? 360 : tileRows === 2 ? 340 : 320) : 260;
   const tileMaxHeight = desktopLayout
     ? tileRows === 1
-      ? 520
+      ? 620
       : tileRows === 2
-        ? 360
+        ? 480
         : compactTiles
-          ? 240
-          : 480
-    : 420;
+          ? 380
+          : 520
+    : 460;
   const tileHeight = Math.max(
     tileMinHeight,
     Math.min(tileMaxHeight, Math.floor((targetGridHeight - gridGapHeight) / tileRows)),
+  );
+  const scopeControl = (
+    <SegmentedControl
+      options={scopeOptions}
+      value={scope}
+      onChange={onScopeChange}
+      className="bg-card"
+    />
+  );
+  const previewControl = (
+    <SegmentedControl
+      options={PREVIEW_MODE_OPTIONS}
+      value={previewMode}
+      onChange={onPreviewModeChange}
+      className="bg-card"
+    />
+  );
+  const filterControl = (
+    <SegmentedControl
+      options={filterOptions}
+      value={filter}
+      onChange={onFilterChange}
+      className="bg-card"
+    />
+  );
+  const refreshButton = (
+    <Button
+      variant="outline"
+      size="icon"
+      disabled={pending}
+      onPress={onRefresh}
+      accessibilityLabel="Refresh Exposé"
+    >
+      <RefreshCw size={18} color={foregroundIconColor} />
+    </Button>
   );
 
   return (
     <View className="flex-1 bg-background">
       <ScrollView
         className="flex-1"
-        contentContainerClassName="px-4 py-5 md:px-8"
+        contentContainerClassName={cn("px-4 pb-5 md:px-8", singleLineHeader ? "pt-4" : "pt-5")}
         keyboardShouldPersistTaps="handled"
       >
-        <PageHeader
-          className="mb-3"
-          eyebrow="Exposé"
-          title={title}
-          subtitle={null}
-          actions={
-            <Button
-              variant="outline"
-              size="icon"
-              disabled={pending}
-              onPress={onRefresh}
-              accessibilityLabel="Refresh Exposé"
-            >
-              <RefreshCw size={18} color={foregroundIconColor} />
-            </Button>
-          }
-        />
-
-        <View className="mb-3 gap-2 md:flex-row md:items-center md:justify-between">
-          <View className="gap-2 sm:flex-row sm:items-center">
-            <SegmentedControl
-              options={[
-                { value: "project", label: "Project" },
-                { value: "global", label: "Global" },
-              ]}
-              value={scope}
-              onChange={onScopeChange}
-              className="bg-card"
-            />
-            <SegmentedControl
-              options={PREVIEW_MODE_OPTIONS}
-              value={previewMode}
-              onChange={onPreviewModeChange}
-              className="bg-card"
-            />
+        {singleLineHeader ? (
+          <View className="mb-3 flex-row items-center gap-3">
+            <View className="min-w-0 flex-1">
+              <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                Exposé
+              </Text>
+              <Text
+                className="mt-0.5 text-[28px] font-bold leading-tight text-foreground"
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {title}
+              </Text>
+            </View>
+            <View className="shrink-0 flex-row items-center gap-2">
+              {scopeControl}
+              {previewControl}
+            </View>
+            <View className="ml-auto shrink-0 flex-row items-center gap-2">
+              {filterControl}
+              {refreshButton}
+            </View>
           </View>
-          <SegmentedControl
-            options={filterOptions}
-            value={filter}
-            onChange={onFilterChange}
-            className="bg-card"
-          />
-        </View>
+        ) : (
+          <>
+            <PageHeader
+              className="mb-3"
+              eyebrow="Exposé"
+              title={title}
+              subtitle={null}
+              actions={refreshButton}
+            />
+
+            <View className="mb-3 gap-2 md:flex-row md:items-center md:justify-between">
+              <View className="gap-2 sm:flex-row sm:items-center">
+                {scopeControl}
+                {previewControl}
+              </View>
+              {filterControl}
+            </View>
+          </>
+        )}
 
         {offlineProjects.length > 0 ? (
           <View className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
