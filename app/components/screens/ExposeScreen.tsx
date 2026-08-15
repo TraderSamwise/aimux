@@ -214,7 +214,7 @@ function ExposeTileCard({
         onPress={onPress}
         style={{ height: tileHeight, borderColor: statusColors.border }}
         className={cn(
-          "rounded-lg border bg-[#17181d] p-0 overflow-hidden hover:bg-[#1c1d23]",
+          "rounded-lg border bg-[#17181d] p-0 overflow-hidden web:transition-[background-color,box-shadow] web:duration-150 web:hover:bg-[#1c1d23] web:hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_0_24px_rgba(56,189,248,0.22)]",
           statusTone.cardBorder,
         )}
       >
