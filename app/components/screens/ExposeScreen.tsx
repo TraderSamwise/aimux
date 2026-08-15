@@ -83,17 +83,24 @@ function ExposeTileCard({
   tile,
   tileWidth,
   tileHeight,
+  dense,
   previewMode,
   onPress,
 }: {
   tile: ExposeTile;
   tileWidth: number;
   tileHeight: number;
+  dense: boolean;
   previewMode: ExposePreviewMode;
   onPress: () => void;
 }) {
-  const terminalLineHeight = 20;
-  const previewLineCount = Math.max(6, Math.floor((tileHeight - 112) / terminalLineHeight));
+  const terminalFontSize = dense ? 11 : 11.5;
+  const terminalLineHeight = dense ? 14.5 : 18;
+  const previewChromeHeight = dense ? 56 : 104;
+  const previewLineCount = Math.max(
+    6,
+    Math.floor((tileHeight - previewChromeHeight) / terminalLineHeight),
+  );
   const terminalPreview =
     tile.terminalPreviewLines.length > 0
       ? tile.terminalPreviewLines.slice(-previewLineCount)
@@ -118,15 +125,18 @@ function ExposeTileCard({
           statusTone.cardBorder,
         )}
       >
-        <View className="flex-1 border-l-4 p-3.5" style={{ borderLeftColor: tile.tone }}>
-          <View className="flex-row items-start gap-2">
-            <View className="mt-1">
+        <View
+          className={cn("flex-1 border-l-4", dense ? "p-2.5" : "p-3.5")}
+          style={{ borderLeftColor: tile.tone }}
+        >
+          <View className={cn("flex-row items-start", dense ? "gap-1.5" : "gap-2")}>
+            <View className={dense ? "mt-0.5" : "mt-1"}>
               <StatusDotMini status={tile.statusKind ?? undefined} />
             </View>
             <View className="min-w-0 flex-1">
               <View className="flex-row items-baseline gap-2">
                 <Text
-                  className="min-w-0 shrink text-[15px] font-bold"
+                  className={cn("min-w-0 shrink font-bold", dense ? "text-[13px]" : "text-[15px]")}
                   style={{ color: tile.tone }}
                   numberOfLines={1}
                   ellipsizeMode="middle"
@@ -134,30 +144,44 @@ function ExposeTileCard({
                   {tile.semanticTitle || tile.label}
                 </Text>
                 <Text
-                  className="shrink-0 font-mono text-[11px] leading-4 text-[#8b8d97]"
+                  className={cn(
+                    "shrink-0 font-mono text-[#8b8d97]",
+                    dense ? "text-[10px]" : "text-[11px] leading-4",
+                  )}
                   numberOfLines={1}
                 >
                   {tile.label}
                 </Text>
               </View>
-              <Text
-                className="mt-1 font-mono text-[11px] leading-4 text-[#7c7e88]"
-                numberOfLines={1}
-                ellipsizeMode="middle"
-              >
-                {tile.contextSubtitle} · {tile.tool}
-              </Text>
+              {dense && previewMode === "terminal" ? null : (
+                <Text
+                  className="mt-1 font-mono text-[11px] leading-4 text-[#7c7e88]"
+                  numberOfLines={1}
+                  ellipsizeMode="middle"
+                >
+                  {tile.contextSubtitle} · {tile.tool}
+                </Text>
+              )}
             </View>
             {tile.status ? (
               <View
-                className={cn("rounded border px-2 py-0.5", statusTone.border, statusTone.bg)}
+                className={cn(
+                  "rounded border py-0.5",
+                  dense ? "px-1.5" : "px-2",
+                  statusTone.border,
+                  statusTone.bg,
+                )}
                 style={{
                   backgroundColor: statusColors.background,
                   borderColor: statusColors.border,
                 }}
               >
                 <Text
-                  className={cn("text-[10px] font-bold uppercase leading-[14px]", statusTone.text)}
+                  className={cn(
+                    "font-bold uppercase",
+                    dense ? "text-[9px] leading-3" : "text-[10px] leading-[14px]",
+                    statusTone.text,
+                  )}
                   style={{ color: statusColors.foreground }}
                 >
                   {tile.status}
@@ -166,21 +190,26 @@ function ExposeTileCard({
             ) : null}
           </View>
 
-          <View className="mt-3 flex-1 justify-end overflow-hidden border-t border-[#2a2b31] pt-3">
+          <View
+            className={cn(
+              "flex-1 justify-end overflow-hidden border-t border-[#2a2b31]",
+              dense ? "mt-2 pt-2" : "mt-3 pt-3",
+            )}
+          >
             {previewMode === "terminal" ? (
               terminalPreview.map((line, index) => (
                 <Text
                   key={`${tile.id}:${index}`}
                   className={cn("font-mono", hasPreview ? "text-[#d4d4d8]" : "text-[#666872]")}
                   style={{
-                    fontSize: 11.5,
+                    fontSize: terminalFontSize,
                     lineHeight: terminalLineHeight,
                     minHeight: terminalLineHeight,
                   }}
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
-                  {line.length === 0
+                  {line.every((span) => span.text.length === 0)
                     ? "\u00a0"
                     : line.map((span, spanIndex) => (
                         <RNText key={`${tile.id}:${index}:${spanIndex}`} style={span.style}>
@@ -216,10 +245,23 @@ function ExposeTileCard({
   );
 }
 
-function SummaryPill({ label, value }: { label: string; value: number }) {
+function SummaryPill({
+  label,
+  value,
+  dense = false,
+}: {
+  label: string;
+  value: number;
+  dense?: boolean;
+}) {
   return (
-    <View className="mr-2 mb-2 rounded-full border border-border bg-card px-3 py-1.5">
-      <Text className="text-[12px] font-semibold text-foreground">
+    <View
+      className={cn(
+        "mr-2 mb-2 rounded-full border border-border bg-card",
+        dense ? "px-2.5 py-1" : "px-3 py-1.5",
+      )}
+    >
+      <Text className={cn("font-semibold text-foreground", dense ? "text-[11px]" : "text-[12px]")}>
         {label} <Text className="text-muted-foreground">{value}</Text>
       </Text>
     </View>
@@ -311,7 +353,8 @@ export default function ExposeScreen() {
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
   const tileRows = Math.max(1, Math.ceil(Math.max(visibleTiles.length, 1) / columns));
   const desktopLayout = width >= 900;
-  const exposeChromeHeight = desktopLayout ? 330 : 280;
+  const denseTiles = desktopLayout && tileRows >= 3;
+  const exposeChromeHeight = desktopLayout ? (denseTiles ? 270 : 330) : 280;
   const gridGapHeight = Math.max(0, tileRows - 1) * 16;
   const targetGridHeight = Math.max(0, height - exposeChromeHeight);
   const tileMinHeight = desktopLayout ? (tileRows === 1 ? 320 : tileRows === 2 ? 240 : 210) : 240;
@@ -459,12 +502,15 @@ export default function ExposeScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <PageHeader
+          className={denseTiles ? "mb-3" : undefined}
           eyebrow="Exposé"
           title={scope === "global" ? "All Worktrees" : (currentProject?.name ?? "Project Exposé")}
           subtitle={
-            scope === "global"
-              ? "Projects are ordered by the sidebar; worktrees and sessions keep dashboard order."
-              : (currentProject?.path ?? "Select a project to inspect live panes.")
+            denseTiles
+              ? null
+              : scope === "global"
+                ? "Projects are ordered by the sidebar; worktrees and sessions keep dashboard order."
+                : (currentProject?.path ?? "Select a project to inspect live panes.")
           }
           actions={
             <Button
@@ -479,8 +525,13 @@ export default function ExposeScreen() {
           }
         />
 
-        <View className="mb-4 gap-3 md:flex-row md:items-center md:justify-between">
-          <View className="gap-3 sm:flex-row sm:items-center">
+        <View
+          className={cn(
+            "md:flex-row md:items-center md:justify-between",
+            denseTiles ? "mb-2 gap-2" : "mb-4 gap-3",
+          )}
+        >
+          <View className={cn("sm:flex-row sm:items-center", denseTiles ? "gap-2" : "gap-3")}>
             <SegmentedControl
               options={[
                 { value: "project", label: "Project" },
@@ -505,11 +556,11 @@ export default function ExposeScreen() {
           />
         </View>
 
-        <View className="mb-3 flex-row flex-wrap">
-          <SummaryPill label="Total" value={summary.total} />
-          <SummaryPill label="Working" value={summary.working} />
-          <SummaryPill label="Needs" value={summary.attention} />
-          <SummaryPill label="Ready" value={summary.ready} />
+        <View className={cn("flex-row flex-wrap", denseTiles ? "mb-2" : "mb-3")}>
+          <SummaryPill label="Total" value={summary.total} dense={denseTiles} />
+          <SummaryPill label="Working" value={summary.working} dense={denseTiles} />
+          <SummaryPill label="Needs" value={summary.attention} dense={denseTiles} />
+          <SummaryPill label="Ready" value={summary.ready} dense={denseTiles} />
         </View>
 
         {offlineProjects.length > 0 ? (
@@ -542,6 +593,7 @@ export default function ExposeScreen() {
                 tile={tile}
                 tileWidth={tileWidth}
                 tileHeight={tileHeight}
+                dense={denseTiles}
                 previewMode={exposePreviewMode}
                 onPress={() => openTile(tile)}
               />
