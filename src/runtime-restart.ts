@@ -444,6 +444,10 @@ function relinkDashboardToClientSessions(
   for (const sessionName of tmux.listSessionNames()) {
     if (!isTmuxClientSessionForHost(sessionName, hostSession)) continue;
     try {
+      const slotZero = tmux.listWindows(sessionName).find((window) => window.index === 0);
+      if (slotZero && slotZero.id !== dashboardTarget.windowId && !isDashboardWindowName(slotZero.name)) {
+        continue;
+      }
       const linked = tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
       if (linked.windowIndex !== 0) {
         throw new Error(`dashboard linked at index ${linked.windowIndex}, expected 0`);

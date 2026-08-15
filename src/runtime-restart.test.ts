@@ -1668,6 +1668,62 @@ describe("restartAimuxControlPlane", () => {
     expect(tmux.linkWindowToSession).toHaveBeenCalledTimes(1);
   });
 
+  it("skips client dashboard relink when slot zero contains an agent window", async () => {
+    const dashboardTarget = {
+      sessionName: "aimux-alpha-111",
+      windowId: "@10",
+      windowIndex: 0,
+      windowName: "dashboard",
+    };
+    const tmux = {
+      isAvailable: () => true,
+      hasWindow: vi.fn(() => true),
+      killWindow: vi.fn(),
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-alpha-111" })),
+      listSessionNames: vi.fn(() => ["aimux-alpha-111", "aimux-alpha-111-client-deadbeef"]),
+      listWindows: vi.fn((sessionName: string) =>
+        sessionName.endsWith("client-deadbeef")
+          ? [{ id: "@21", index: 0, name: "codex", active: true }]
+          : [{ id: "@10", index: 0, name: "dashboard", active: true }],
+      ),
+      linkWindowToSession: vi.fn((sessionName, target, windowIndex) => ({
+        ...target,
+        sessionName,
+        windowIndex: windowIndex ?? 0,
+      })),
+      selectWindow: vi.fn(),
+    };
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => tmux,
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget,
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(result.projects[0]?.dashboard.status).toBe("reloaded");
+    expect(tmux.linkWindowToSession).not.toHaveBeenCalled();
+    expect(tmux.selectWindow).toHaveBeenCalledWith({
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@21",
+      windowIndex: 0,
+      windowName: "codex",
+    });
+  });
+
   it("restores active agents even when one client dashboard relink fails", async () => {
     const dashboardTarget = {
       sessionName: "aimux-alpha-111",
