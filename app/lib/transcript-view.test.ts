@@ -63,6 +63,38 @@ describe("toChatMessages", () => {
     });
   });
 
+  it("upgrades legacy generic screenshot text into an inline image", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              text:
+                "Queue this up Attached files: - Screenshot 2026-08-15 at 7.17.12 PM.png " +
+                "(image/png, 330511 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_65a4b09dede14f52955c389683f3a3e5.png",
+            },
+          ],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts).toEqual([
+      { type: "text", text: "Queue this up" },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_65a4b09dede14f52955c389683f3a3e5",
+        filename: "Screenshot 2026-08-15 at 7.17.12 PM.png",
+        mimeType: "image/png",
+        contentUrl: "/attachments/att_65a4b09dede14f52955c389683f3a3e5/content?sessionId=codex-1",
+      },
+    ]);
+    expect(JSON.stringify(chat)).not.toContain("/Users/sam/cs/aimux/.aimux/attachments");
+  });
+
   it("escapes a session id rather than pasting it into the query", () => {
     const [chat] = toChatMessages(
       [message({ parts: [{ type: "image_reference", label: "x", attachmentId: "att_a" }] })],

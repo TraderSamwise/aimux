@@ -1,4 +1,9 @@
-import type { AgentTranscriptMessage, ChatMessage, HistoryPart } from "@/lib/events";
+import type {
+  AgentTranscriptMessage,
+  ChatMessage,
+  HistoryAttachmentReferencePart,
+  HistoryPart,
+} from "@/lib/events";
 
 interface ChatMessageOptions {
   shared?: boolean;
@@ -6,6 +11,12 @@ interface ChatMessageOptions {
 
 const LEGACY_SHARED_MESSAGE_RE = /^Message from ([^\n]+?) via Aimux shared chat:\s*([\s\S]*)$/;
 const BRACKETED_SHARED_MESSAGE_RE = /^\[[^\]\n]{1,120}\]\s+[\s\S]+$/;
+const ATTACHMENT_MIME_PATTERN = "[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+";
+const LEGACY_ATTACHMENTS_HEADER = /\bAttached (?:image )?files:\s*/i;
+const LEGACY_ATTACHMENT_ITEM = new RegExp(
+  `-\\s+(.+?)\\s+\\((${ATTACHMENT_MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(\\S*?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)`,
+  "g",
+);
 
 function normalizeSharedText(text: string): string {
   if (BRACKETED_SHARED_MESSAGE_RE.test(text)) return text;
@@ -17,11 +28,85 @@ function normalizeSharedText(text: string): string {
   return `[${speaker}] ${body}`;
 }
 
-function toHistoryPart(
-  part: AgentTranscriptMessage["parts"][number],
-  sessionId: string,
-  shared: boolean,
+function attachmentKindForMimeType(mimeType?: string): HistoryAttachmentReferencePart["kind"] {
+  const normalized = mimeType?.toLowerCase() ?? "";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized.startsWith("text/") || normalized === "application/json") return "text";
+  return "file";
+}
+
+function legacyAttachmentPart(
+  attachmentId: string,
+  opts: { filename?: string; mimeType?: string },
+  labels: { image: number; file: number },
 ): HistoryPart {
+  if ((opts.mimeType ?? "").toLowerCase().startsWith("image/")) {
+    return {
+      type: "image_reference",
+      label: `[image #${labels.image++}]`,
+      attachmentId,
+      filename: opts.filename,
+      mimeType: opts.mimeType,
+    };
+  }
+  return {
+    type: "attachment_reference",
+    label: `[file #${labels.file++}]`,
+    attachmentId,
+    filename: opts.filename,
+    mimeType: opts.mimeType,
+    kind: attachmentKindForMimeType(opts.mimeType),
+  };
+}
+
+function partsFromLegacyAttachmentText(
+  text: string,
+  labels: { image: number; file: number },
+): HistoryPart[] | null {
+  if (!LEGACY_ATTACHMENTS_HEADER.test(text)) return null;
+
+  const flattened = text.replace(/\s+/g, " ").trim();
+  const header = flattened.match(LEGACY_ATTACHMENTS_HEADER);
+  if (header?.index === undefined) return null;
+
+  const parts: HistoryPart[] = [];
+  const head = flattened.slice(0, header.index).trim();
+  const tail = flattened.slice(header.index + header[0].length);
+  if (head) parts.push({ type: "text", text: head });
+
+  let cursor = 0;
+  let matched = false;
+  LEGACY_ATTACHMENT_ITEM.lastIndex = 0;
+  for (const match of tail.matchAll(LEGACY_ATTACHMENT_ITEM)) {
+    if (!match[4] || match.index === undefined) continue;
+    const between = tail.slice(cursor, match.index).trim();
+    if (between) parts.push({ type: "text", text: between });
+    parts.push(legacyAttachmentPart(match[4], { filename: match[1], mimeType: match[2] }, labels));
+    cursor = match.index + match[0].length;
+    matched = true;
+  }
+
+  if (!matched) return null;
+
+  const suffix = tail.slice(cursor).trim();
+  if (suffix) parts.push({ type: "text", text: suffix });
+  return parts;
+}
+
+function normalizeLegacyAttachmentParts(
+  parts: readonly AgentTranscriptMessage["parts"][number][],
+): HistoryPart[] {
+  const labels = { image: 1, file: 1 };
+  return parts.flatMap((part): HistoryPart[] => {
+    if (part.type !== "text") return [part];
+    const legacyParts = partsFromLegacyAttachmentText(part.text, labels);
+    return legacyParts ?? [part];
+  });
+}
+
+function toHistoryPart(part: HistoryPart, sessionId: string, shared: boolean): HistoryPart {
   if (part.type === "text") {
     const text = shared ? normalizeSharedText(part.text) : part.text;
     if (text === part.text) return part;
@@ -54,7 +139,7 @@ export function toChatMessages(
     // down and build a new one on every poll, mid-read.
     id: message.latest ? `${sessionId}:latest` : message.id,
     role: message.role,
-    parts: message.parts.map(
+    parts: normalizeLegacyAttachmentParts(message.parts).map(
       (part): HistoryPart => toHistoryPart(part, sessionId, shared && message.role === "user"),
     ),
   }));

@@ -88,6 +88,30 @@ describe("messagesFromParsedAgentOutput", () => {
     ]);
   });
 
+  it("reads generic screenshot attachment text into an image part", () => {
+    const [message] = messagesFromParsedAgentOutput(
+      parsed([
+        {
+          type: "prompt",
+          text:
+            "Review previous work Attached files: - Screenshot 2026-08-15 at 7.17.12 PM.png " +
+            "(image/png, 330511 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_65a4b09dede14f52955c389683f3a3e5.png",
+        },
+      ]),
+    );
+
+    expect(message!.parts).toEqual([
+      { type: "text", text: "Review previous work" },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_65a4b09dede14f52955c389683f3a3e5",
+        filename: "Screenshot 2026-08-15 at 7.17.12 PM.png",
+        mimeType: "image/png",
+      },
+    ]);
+  });
+
   it("reads a generic attachment block into a file part", () => {
     const [message] = messagesFromParsedAgentOutput(
       parsed([

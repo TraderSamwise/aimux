@@ -754,6 +754,35 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toContain("Explain this codebase");
   });
 
+  it("keeps completed Codex composer chrome out of chat messages", () => {
+    const raw = [
+      "› Review recent work",
+      "",
+      "• The OTA path is working now.",
+      "",
+      "— Worked for 2m 52s",
+      "──────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+      "──────────────",
+      "›",
+      "──────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+      "──────────────",
+      "1 background terminal running · /ps to view · /stop to close",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+    const messages = messagesFromParsedAgentOutput(parsed);
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response", "status"]);
+    expect(parsed.blocks[2]?.text).toContain("Worked for 2m 52s");
+    expect(messages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "Review recent work"],
+      ["assistant", "The OTA path is working now."],
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("────");
+    expect(JSON.stringify(messages)).not.toContain("background terminal");
+    expect(JSON.stringify(messages)).not.toContain("Worked for");
+  });
+
   it("keeps completed-state Codex suggested prompts out of chat prompts", () => {
     const raw = [
       "• A spiral wakes in ember light,",

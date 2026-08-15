@@ -48,6 +48,28 @@ const looksLikeActivityProgressText = (text: string) => {
   );
 };
 
+const stripTerminalStatusMarker = (line: string) => line.trim().replace(/^[—–\-*✢✳✶✻✽·]\s+/, "");
+
+const looksLikeTerminalStatusText = (line: string) => {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  const unmarked = stripTerminalStatusMarker(trimmed);
+  return (
+    looksLikeActivityProgressText(unmarked) ||
+    /^\d+\s+background terminals? running\b.*\b\/ps\b.*\b\/stop\b/i.test(unmarked)
+  );
+};
+
+const looksLikeTerminalTailChromeStatusText = (line: string) => {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  const unmarked = stripTerminalStatusMarker(trimmed);
+  return (
+    /^Worked\s+for\s+\d+(?:ms|s|m|h)\b/i.test(unmarked) ||
+    /^\d+\s+background terminals? running\b.*\b\/ps\b.*\b\/stop\b/i.test(unmarked)
+  );
+};
+
 const looksLikeRanCommandText = (text: string) => {
   const trimmed = text.trim();
   return (
@@ -257,6 +279,7 @@ export function parseAgentOutput(
     const dotBulletText = trimmed.replace(/^•\s?/, "");
     const starBulletText = trimmed.replace(/^\*\s+/, "");
     const dashBulletText = trimmed.replace(/^-\s+/, "");
+    const terminalStatusText = stripTerminalStatusMarker(trimmed);
     const spinnerText = trimmed.replace(/^[✢✳✶✻✽·]\s+/, "");
     const conversationBulletText = trimmed.replace(/^(?:•|⏺)\s?/, "");
     return (
@@ -279,7 +302,9 @@ export function parseAgentOutput(
       /^⏵⏵\s/.test(trimmed) ||
       (/^\*\s+/.test(trimmed) && looksLikeActivityProgressText(starBulletText)) ||
       (/^-\s+/.test(trimmed) && looksLikeActivityProgressText(dashBulletText)) ||
+      (/^[—–]\s+/.test(trimmed) && looksLikeActivityProgressText(terminalStatusText)) ||
       (/^[✢✳✶✻✽·]\s+/.test(trimmed) && looksLikeActivityProgressText(spinnerText)) ||
+      looksLikeTerminalStatusText(trimmed) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
@@ -302,7 +327,7 @@ export function parseAgentOutput(
   // Frame set matches the collapse check below; a partial set left half the
   // spinner frames unclassified, so the same line was status or response
   // depending on which frame the pane happened to be showing.
-  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✢✳✶✻✽·]\s+)\s?/, "");
+  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[—–\-*✢✳✶✻✽·]\s+)\s?/, "");
   const isCodexPickerSelectionPrompt = (promptText: string) => {
     if (tool !== "codex" || sawPrompt || (current?.type !== "response" && current?.type !== "raw")) return false;
     const activeText = current.lines.map((line) => line.text).join("\n");
@@ -329,7 +354,8 @@ export function parseAgentOutput(
       isTitledDivider(trimmed) ||
       isWrappedDividerFragment(trimmed) ||
       isTodoPanelLine(trimmed) ||
-      isFooterLine(trimmed)
+      isFooterLine(trimmed) ||
+      looksLikeTerminalTailChromeStatusText(trimmed)
     );
   };
   let bodyEnd = lines.length;
