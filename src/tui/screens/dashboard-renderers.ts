@@ -280,6 +280,13 @@ interface WorktreeLike {
   pending?: boolean;
 }
 
+const WORKTREE_TITLE_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75", "38;5;209"];
+
+function worktreeTitle(text: string, index: number): string {
+  const tone = WORKTREE_TITLE_TONES[index % WORKTREE_TITLE_TONES.length] ?? WORKTREE_TITLE_TONES[0];
+  return `\x1b[1;${tone}m${text}\x1b[0m`;
+}
+
 function worktreeTone(worktree: WorktreeLike): Tone {
   if (worktree.operationFailure) return "danger";
   let best: StateRank = { rank: 0, tone: "muted" };
@@ -527,12 +534,11 @@ export function renderDashboardFrame(
       mainCheckout: state.mainCheckout,
     });
 
-    for (const worktree of quickJumpWorktrees) {
+    for (const [worktreeIndex, worktree] of quickJumpWorktrees.entries()) {
       const focused = worktree.path === state.focusedWorktreePath;
       const focusMark = focused && state.navLevel === "worktrees" ? `${style("▸", "accent")} ` : "";
-      const nameTone: Tone = focused ? "accent" : "strong";
       const badge = worktree.digit ? `[${worktree.digit}] ` : "";
-      let title = `${focusMark}${style(`${badge}${worktree.name}`, nameTone)}`;
+      let title = `${focusMark}${worktreeTitle(`${badge}${worktree.name}`, worktreeIndex)}`;
       if (worktree.branch) title += ` ${style(`· ${worktree.branch}`, "muted")}`;
       const summary = worktreeSummaryText(worktree);
       const tone = worktreeTone(worktree);

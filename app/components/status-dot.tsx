@@ -2,7 +2,7 @@ import React from "react";
 import { View } from "react-native";
 import { GitBranch } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
-import { appStatusClasses, appStatusColors } from "@/lib/status-tone";
+import { appStatusClasses, appStatusColors, normalizeAppStatusKind } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 
 // Visual status indicator used across the sidebar tree, main-panel cards, and
@@ -25,41 +25,47 @@ export function StatusDot({ status, size = "sm" }: { status: string; size?: "sm"
   );
 }
 
-// Restyle (Linear-style) dot used by the project view: green = running,
-// amber = waiting, muted otherwise; `hollow` renders an empty ring for
-// inactive/empty worktrees. Palette mirrors docs/mockups/project-view.html.
 // Shape encodes entity type (mirrors the TUI): circle = agent, square =
-// worktree, diamond = service. Fill encodes status (green = running, muted
-// otherwise); `hollow` is the empty/inactive ring.
+// worktree, diamond = service. Fill encodes status. Offline/service-off default
+// to a hollow muted ring so inactive rows do not look like active gray work.
 export function StatusDotMini({
   status,
   hollow,
   shape = "circle",
   outline,
+  color,
 }: {
   status?: string;
   hollow?: boolean;
   shape?: "circle" | "square" | "diamond";
   outline?: boolean;
+  color?: string;
 }) {
   const cornerClass = shape === "circle" ? "rounded-full" : "rounded-[1.5px]";
   const rotateClass = shape === "diamond" ? "rotate-45" : "";
+  const statusKind = normalizeAppStatusKind(status);
+  const effectiveHollow = hollow ?? (statusKind === "offline" || statusKind === "serviceOff");
   const colors = appStatusColors(status);
+  const foreground = color ?? colors.foreground;
 
-  // Outline = thick unfilled ring (used for worktrees); border color still
-  // encodes status: green = running, muted = idle, faint = empty.
+  // Outline keeps the worktree square shape visually stronger, but active
+  // states still fill with their semantic color so native surfaces do not read
+  // as black squares.
   if (outline) {
     const size = shape === "diamond" ? "h-[7px] w-[7px]" : "h-2 w-2";
     return (
       <View
         className={cn(size, cornerClass, rotateClass, "border-2")}
-        style={{ borderColor: hollow ? "#44464e" : colors.foreground }}
+        style={{
+          backgroundColor: effectiveHollow ? "transparent" : foreground,
+          borderColor: effectiveHollow ? "#44464e" : foreground,
+        }}
       />
     );
   }
 
   const sizeClass = shape === "diamond" ? "h-[6px] w-[6px]" : "h-[7px] w-[7px]";
-  if (hollow) {
+  if (effectiveHollow) {
     return (
       <View
         className={cn(sizeClass, cornerClass, rotateClass, "border-[1.5px] border-[#44464e]")}
@@ -69,7 +75,7 @@ export function StatusDotMini({
   return (
     <View
       className={cn(sizeClass, cornerClass, rotateClass)}
-      style={{ backgroundColor: colors.foreground }}
+      style={{ backgroundColor: foreground }}
     />
   );
 }

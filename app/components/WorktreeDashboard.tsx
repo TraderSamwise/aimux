@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useRouteProject } from "@/lib/use-route-project";
 import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
+import { WORKTREE_TONES } from "@/lib/worktree-tone";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
@@ -166,7 +167,7 @@ function AgentRow({
   const identity = (
     <>
       <SelectMark selected={selected} />
-      <View className="w-4 items-center justify-center">
+      <View className="w-4 shrink-0 items-center justify-center">
         <StatusDotMini status={state.kind} />
       </View>
       <IndexBadge digit={digit} />
@@ -266,7 +267,7 @@ function ServiceRow({
   const identity = (
     <>
       <SelectMark selected={false} />
-      <View className="w-4 items-center justify-center">
+      <View className="w-4 shrink-0 items-center justify-center">
         <StatusDotMini status={stateKind} shape="diamond" />
       </View>
       <IndexBadge digit={digit} />
@@ -393,6 +394,7 @@ function WorktreeCard({
   onPickSession,
   onPickService,
   onKillSession,
+  identityTone,
 }: {
   bucket: WorktreeBucket;
   projectPath: string;
@@ -400,14 +402,14 @@ function WorktreeCard({
   token: string | null;
   selectedSessionId: string | null;
   compact?: boolean;
+  identityTone: string;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
 }) {
   const aggregateKind = worktreeAggregateKind(bucket);
-  const aggregateTone = appStatusClasses(aggregateKind);
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
-  const barColor = containsSelected ? "#e0b341" : aggregateKind ? aggregateTone.hex : "#26272d";
+  const barColor = identityTone;
   const chips = worktreeCountChips(bucket);
 
   return (
@@ -427,17 +429,10 @@ function WorktreeCard({
       <View
         className={cn("flex-row items-center gap-2.5", compact ? "px-3 py-2" : "px-3.5 py-2.5")}
       >
-        <StatusDotMini
-          status={aggregateKind ?? undefined}
-          hollow={!aggregateKind || aggregateKind === "offline" || aggregateKind === "serviceOff"}
-          shape="square"
-          outline
-        />
+        <StatusDotMini color={identityTone} hollow={false} shape="square" outline />
         <Text
-          className={cn(
-            "shrink-0 text-[13.5px] font-bold",
-            containsSelected ? "text-[#e0b341]" : "text-[#edeef0]",
-          )}
+          className="shrink-0 text-[13.5px] font-bold"
+          style={{ color: identityTone }}
           numberOfLines={1}
         >
           {bucket.name}
@@ -554,12 +549,21 @@ export function WorktreeList({
     onPickService,
     onKillSession,
   };
+  const identityToneForBucket = (bucket: WorktreeBucket) =>
+    WORKTREE_TONES[Math.max(0, groups.indexOf(bucket)) % WORKTREE_TONES.length]!;
 
   return (
     <View className={cn("py-3", padded && "px-4")}>
-      {main ? <WorktreeCard bucket={main} {...cardProps} /> : null}
+      {main ? (
+        <WorktreeCard bucket={main} identityTone={identityToneForBucket(main)} {...cardProps} />
+      ) : null}
       {activeRest.map((bucket) => (
-        <WorktreeCard key={bucket.key} bucket={bucket} {...cardProps} />
+        <WorktreeCard
+          key={bucket.key}
+          bucket={bucket}
+          identityTone={identityToneForBucket(bucket)}
+          {...cardProps}
+        />
       ))}
 
       {emptyRest.length > 0 ? (
@@ -583,7 +587,12 @@ export function WorktreeList({
           </Pressable>
           {showEmpty
             ? emptyRest.map((bucket) => (
-                <WorktreeCard key={bucket.key} bucket={bucket} {...cardProps} />
+                <WorktreeCard
+                  key={bucket.key}
+                  bucket={bucket}
+                  identityTone={identityToneForBucket(bucket)}
+                  {...cardProps}
+                />
               ))
             : null}
         </View>
