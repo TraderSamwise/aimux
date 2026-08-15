@@ -152,6 +152,26 @@ describe("expose model", () => {
     expect(previewText(tile?.terminalPreviewLines ?? []).join("\n")).not.toContain("\x1b");
   });
 
+  it("preserves internal terminal preview blank lines", () => {
+    const [tile] = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("1", "main", 0),
+            previewSnapshot: {
+              source: "capture",
+              capturedAt: "2026-08-12T00:00:00.000Z",
+              output: ["", "heading", "", "body", "   "].join("\n"),
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(previewText(tile?.terminalPreviewLines ?? [])).toEqual(["heading", "", "body"]);
+  });
+
   it("preserves chat preview messages for the shared MessageBlock renderer", () => {
     const [tile] = buildExposeTiles([
       {

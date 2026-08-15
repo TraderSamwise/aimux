@@ -128,11 +128,10 @@ function normalizeStatusKind(kind: string | undefined): ExposeStatusKind | null 
 function previewLinesFor(item: ExposeSourceItem): AnsiSpan[][] {
   const output = item.previewSnapshot?.output ?? "";
   if (!output.trim()) return [];
-  return formatTerminalOutputForDisplay(output.replace(/\r/g, ""), {
+  const lines = formatTerminalOutputForDisplay(output.replace(/\r/g, ""), {
     dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
-  })
-    .map((line) => trimAnsiLineEnd(line))
-    .filter((line) => ansiLineText(line).trim().length > 0);
+  }).map((line) => trimAnsiLineEnd(line));
+  return trimBlankPreviewEdges(lines);
 }
 
 function chatPreviewMessagesFor(item: ExposeSourceItem, sessionId: string): ChatMessage[] {
@@ -158,6 +157,18 @@ function trimAnsiLineEnd(line: readonly AnsiSpan[]): AnsiSpan[] {
     else next.splice(index, 1);
   }
   return next;
+}
+
+function isBlankAnsiLine(line: readonly AnsiSpan[]): boolean {
+  return ansiLineText(line).trim().length === 0;
+}
+
+function trimBlankPreviewEdges(lines: readonly AnsiSpan[][]): AnsiSpan[][] {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && isBlankAnsiLine(lines[start]!)) start += 1;
+  while (end > start && isBlankAnsiLine(lines[end - 1]!)) end -= 1;
+  return lines.slice(start, end);
 }
 
 function toneFor(item: ExposeSourceItem, fallbackIndex: number): string {
