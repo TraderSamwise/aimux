@@ -393,6 +393,10 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatPaneWidth, setChatPaneWidth] = useState<number | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
+  const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
+    endpoint: ServiceEndpoint;
+    projectPath: string;
+  } | null>(null);
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const activeShareForRoute =
     activeShare && activeShare.sessionId === sessionId ? activeShare : null;
@@ -591,6 +595,33 @@ export default function ChatScreen() {
   const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
+  const displayServiceEndpoint =
+    serviceEndpoint ??
+    (lastConnectedEndpoint?.projectPath === stateProjectPath
+      ? lastConnectedEndpoint.endpoint
+      : null);
+  const serviceDisconnected =
+    !routeSessionMissing && !serviceEndpoint && Boolean(displayServiceEndpoint);
+
+  useEffect(() => {
+    if (!endpointHost || !endpointPort) return;
+    const timer = setTimeout(() => {
+      setLastConnectedEndpoint((current) => {
+        if (
+          current?.projectPath === stateProjectPath &&
+          current.endpoint.host === endpointHost &&
+          current.endpoint.port === endpointPort
+        ) {
+          return current;
+        }
+        return {
+          endpoint: { host: endpointHost, port: endpointPort },
+          projectPath: stateProjectPath,
+        };
+      });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [endpointHost, endpointPort, stateProjectPath]);
 
   const refreshOutputSnapshot = useCallback(async () => {
     if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
@@ -1672,7 +1703,16 @@ export default function ChatScreen() {
     </KeyboardStickyView>
   );
 
-  const chatScroller = serviceEndpoint ? (
+  const disconnectedPane = (
+    <View className="flex-1 bg-background p-4">
+      <Text className="text-sm text-muted-foreground">
+        Project service disconnected. Your draft is still here; sending will resume when the service
+        reconnects.
+      </Text>
+    </View>
+  );
+
+  const chatScroller = displayServiceEndpoint ? (
     usesNativeKeyboardController ? (
       <MobileTranscriptList
         composerEndPadding={visibleComposerScrollReserve}
@@ -1685,7 +1725,7 @@ export default function ChatScreen() {
         onEndVisible={handleNativeChatEndVisible}
         onScroll={handleNativeChatScroll}
         onScrollBeginDrag={handleNativeChatScrollBegin}
-        serviceEndpoint={serviceEndpoint}
+        serviceEndpoint={displayServiceEndpoint}
       />
     ) : (
       <KeyboardManagedScrollView
@@ -1705,12 +1745,14 @@ export default function ChatScreen() {
           messages={allMessages}
           restoreBlockedReason={restoreBlockedReason}
           sendError={sendError}
-          serviceEndpoint={serviceEndpoint}
+          serviceEndpoint={displayServiceEndpoint}
           visibleLastError={visibleLastError}
         />
       </KeyboardManagedScrollView>
     )
-  ) : null;
+  ) : (
+    disconnectedPane
+  );
 
   return (
     <View style={{ flex: 1 }}>
@@ -2067,6 +2109,19 @@ export default function ChatScreen() {
                 ) : null}
               </View>
             ) : null}
+            {serviceDisconnected ? (
+              <View
+                className="border-b border-border bg-card/80 px-4 py-2"
+                style={{ flexShrink: 0 }}
+              >
+                <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  Reconnecting
+                </Text>
+                <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+                  Project service disconnected. Composer state is preserved.
+                </Text>
+              </View>
+            ) : null}
 
             {routeSessionMissing ? (
               <View className="flex-1 p-4">
@@ -2081,7 +2136,7 @@ export default function ChatScreen() {
                   <Button className="mt-4 self-start" label="Back to project" onPress={goBack} />
                 </View>
               </View>
-            ) : !serviceEndpoint ? (
+            ) : !displayServiceEndpoint ? (
               <View className="flex-1 p-4">
                 <Text className="text-sm text-muted-foreground">
                   Project service not running. Start the project host to view this session.
