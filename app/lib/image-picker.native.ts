@@ -1,5 +1,6 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
+import * as ImagePicker from "expo-image-picker";
 
 export type PickedAttachmentKind = "image" | "audio" | "video" | "pdf" | "text" | "file";
 
@@ -47,6 +48,12 @@ function mimeTypeFromName(name: string | null | undefined): string {
 }
 
 export async function pickAttachment(): Promise<PickedAttachment | null> {
+  const image = await pickImageAttachment();
+  if (image) return image;
+  return null;
+}
+
+export async function pickFileAttachment(): Promise<PickedAttachment | null> {
   const result = await DocumentPicker.getDocumentAsync({
     copyToCacheDirectory: true,
     multiple: false,
@@ -73,7 +80,33 @@ export async function pickAttachment(): Promise<PickedAttachment | null> {
 }
 
 export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
-  return pickAttachment();
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsMultipleSelection: false,
+    base64: true,
+    mediaTypes: "images",
+    quality: 1,
+  });
+  if (result.canceled) return null;
+
+  const asset = result.assets[0];
+  if (!asset?.uri) throw new Error("Could not read image.");
+  const filename = asset.fileName || "image.jpg";
+  const mimeType = asset.mimeType ?? mimeTypeFromName(filename);
+  const dataBase64 =
+    asset.base64 ??
+    (await FileSystem.readAsStringAsync(asset.uri, {
+      encoding: "base64",
+    }));
+
+  return {
+    id: localId(),
+    kind: "image",
+    filename,
+    mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg",
+    dataBase64,
+    previewUri: asset.uri,
+    sizeBytes: asset.fileSize,
+  };
 }
 
 export async function attachmentsFromFiles(_files: Iterable<File>): Promise<PickedAttachment[]> {

@@ -5,7 +5,7 @@ export const sidebarOpenAtom = atom<boolean>(true);
 
 export type SidebarMode = "dashboard" | "views";
 
-export const sidebarModeAtom = atom<SidebarMode>("dashboard");
+export const sidebarModeAtom = atom<SidebarMode>("views");
 
 // When true, the sidebar shows the project picker even though a project is selected.
 // Reset to false by the picker click handler after the user picks a project, and by

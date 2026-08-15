@@ -129,7 +129,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               ) : isSharedShell ? (
                 <SharedSidebar />
               ) : (
-                <ProjectSidebar showPrimaryNav={false} />
+                <ProjectSidebar />
               )}
             </Animated.View>
           ) : null}

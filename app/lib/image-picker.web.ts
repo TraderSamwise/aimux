@@ -29,6 +29,7 @@ export async function pickAttachment(): Promise<PickedAttachment | null> {
   if (typeof document === "undefined") return null;
   const input = document.createElement("input");
   input.type = "file";
+  input.accept = "image/*";
 
   const file = await new Promise<File | null>((resolve) => {
     const cleanup = () => {
@@ -55,7 +56,7 @@ export async function pickImageAttachment(): Promise<PickedImageAttachment | nul
 }
 
 export function isAcceptedAttachmentFile(_file: Pick<File, "type">): boolean {
-  return true;
+  return isAcceptedImageFile(_file);
 }
 
 export function isAcceptedImageFile(file: Pick<File, "type">): boolean {
@@ -69,7 +70,7 @@ export async function attachmentsFromFiles(files: Iterable<File>): Promise<Picke
 export async function imageAttachmentsFromFiles(
   files: Iterable<File>,
 ): Promise<PickedImageAttachment[]> {
-  return attachmentsFromFiles(files);
+  return Promise.all(Array.from(files).filter(isAcceptedImageFile).map(attachmentFromFile));
 }
 
 async function attachmentFromFile(file: File): Promise<PickedAttachment> {
