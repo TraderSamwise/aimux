@@ -291,15 +291,19 @@ export default function ExposeScreen() {
     () => filterExposeTiles(currentTiles, filter),
     [currentTiles, filter],
   );
-  const columns = width >= 1440 ? 3 : width >= 900 ? 2 : 1;
+  const maxColumns = width >= 1440 ? 3 : width >= 900 ? 2 : 1;
+  const columns = Math.min(maxColumns, Math.max(visibleTiles.length, 1));
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
   const tileRows = Math.max(1, Math.ceil(Math.max(visibleTiles.length, 1) / columns));
-  const exposeChromeHeight = width >= 900 ? 330 : 280;
+  const desktopLayout = width >= 900;
+  const exposeChromeHeight = desktopLayout ? 330 : 280;
   const gridGapHeight = Math.max(0, tileRows - 1) * 16;
   const targetGridHeight = Math.max(0, height - exposeChromeHeight);
+  const tileMinHeight = desktopLayout ? (tileRows === 1 ? 320 : tileRows === 2 ? 240 : 210) : 240;
+  const tileMaxHeight = desktopLayout ? (tileRows === 1 ? 640 : 480) : 420;
   const tileHeight = Math.max(
-    width >= 900 ? 260 : 240,
-    Math.min(420, Math.floor((targetGridHeight - gridGapHeight) / tileRows)),
+    tileMinHeight,
+    Math.min(tileMaxHeight, Math.floor((targetGridHeight - gridGapHeight) / tileRows)),
   );
   const offlineProjects = currentProjectResults.filter((result) => result.error);
   const relayReadyForRequests = relayStatus !== "connecting";
