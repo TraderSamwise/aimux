@@ -82,7 +82,7 @@ import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
-import { worktreeIdentity } from "@/lib/worktree-tone";
+import { WORKTREE_TONES, worktreeIdentity } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
@@ -144,6 +144,12 @@ const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
+
+function basenamePath(path?: string | null): string | null {
+  const normalized = path?.trim().replace(/[\\/]+$/, "");
+  if (!normalized) return null;
+  return normalized.split(/[\\/]/).filter(Boolean).pop() ?? normalized;
+}
 
 function formatRelativeShareTime(value?: string): string {
   if (!value) return "not connected";
@@ -847,23 +853,48 @@ export default function ChatScreen() {
   // The worktree leads, as it does in Exposé: it is what the session is, where the
   // generated id is only how it is addressed. The tone comes from the project's
   // ordered worktree list so the colour agrees with the sidebar and the TUI.
+  const sessionWorktreePath = session?.worktreePath ?? null;
+  const isMainCheckoutSession =
+    Boolean(
+      sessionWorktreePath &&
+      desktopState?.mainCheckoutPath &&
+      sessionWorktreePath === desktopState.mainCheckoutPath,
+    ) ||
+    (!sessionWorktreePath && Boolean(desktopState?.mainCheckoutInfo));
+  const fallbackWorktreeName =
+    session?.worktreeName ??
+    (isMainCheckoutSession ? (desktopState?.mainCheckoutInfo?.name ?? "Main Checkout") : null) ??
+    basenamePath(sessionWorktreePath);
+  const fallbackWorktreeBranch =
+    session?.worktreeBranch ??
+    (isMainCheckoutSession ? desktopState?.mainCheckoutInfo?.branch : undefined);
   const worktree = routeSessionMissing
     ? undefined
     : worktreeIdentity(worktreeGroups, {
-        path: session?.worktreePath,
-        name: session?.worktreeName,
+        path: sessionWorktreePath ?? undefined,
+        name: fallbackWorktreeName ?? undefined,
       });
-  const headerTone = worktree?.tone;
+  const projectHeaderName =
+    project?.name ?? basenamePath(stateProjectPath) ?? basenamePath(sessionWorktreePath);
+  const headerTone = worktree?.tone ?? (isMainCheckoutSession ? WORKTREE_TONES[0] : undefined);
+  const headerWorktreeName = worktree?.name ?? fallbackWorktreeName;
+  const headerWorktreeBranch = worktree?.branch ?? fallbackWorktreeBranch;
   const sessionTitle = routeSessionMissing
     ? "Agent unavailable"
-    : worktree?.name || session?.label || sessionId || "Unknown session";
-  const sessionToolLabel = routeSessionMissing ? "" : (session?.command ?? "");
+    : [projectHeaderName, headerWorktreeName].filter(Boolean).join(" / ") ||
+      session?.label ||
+      sessionId ||
+      "Unknown session";
+  const sessionToolLabel =
+    routeSessionMissing || compactHeaderActions ? "" : (session?.command ?? "");
   // Status and branch, then the id last: the id is the only part that never helps
   // you tell two of these apart at a glance, but it is still what you quote in a
   // bug report, so it stays reachable rather than gone.
   const sessionSubtitle = routeSessionMissing
     ? `${sessionId} · not found`
-    : [session?.status ?? "unknown", worktree?.branch, sessionId].filter(Boolean).join(" · ");
+    : [headerWorktreeBranch, session?.status ?? "unknown", session?.command, sessionId]
+        .filter(Boolean)
+        .join(" · ");
   const composerSendText = getComposerSendText({
     draft,
     hasServiceEndpoint: Boolean(serviceEndpoint),
@@ -1712,7 +1743,11 @@ export default function ChatScreen() {
                   <Text
                     className="text-base font-semibold text-foreground"
                     numberOfLines={1}
-                    style={{ minWidth: 0, flexShrink: 1 }}
+                    ellipsizeMode="middle"
+                    style={[
+                      { minWidth: 0, flexShrink: 1 },
+                      headerTone ? { color: headerTone } : null,
+                    ]}
                   >
                     {sessionTitle}
                   </Text>
@@ -1726,7 +1761,11 @@ export default function ChatScreen() {
                     </Text>
                   ) : null}
                 </View>
-                <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                <Text
+                  className="text-xs text-muted-foreground"
+                  numberOfLines={1}
+                  ellipsizeMode="middle"
+                >
                   {sessionSubtitle}
                 </Text>
               </View>
