@@ -361,7 +361,7 @@ function ExposeSurface({
 }: ExposeSurfaceProps) {
   const visibleTiles = useMemo(() => filterExposeTiles(tiles, filter), [filter, tiles]);
   const maxColumns = width >= 1440 ? 3 : width >= 900 ? 2 : 1;
-  const columns = maxColumns;
+  const columns = Math.min(maxColumns, Math.max(visibleTiles.length, 1));
   const tileWidth = Math.max(280, Math.floor((width - (width >= 1024 ? 384 : 32)) / columns));
   const tileRows = Math.max(1, Math.ceil(Math.max(visibleTiles.length, 1) / columns));
   const desktopLayout = width >= 900;
@@ -369,8 +369,16 @@ function ExposeSurface({
   const exposeChromeHeight = desktopLayout ? 250 : 220;
   const gridGapHeight = Math.max(0, tileRows - 1) * 16;
   const targetGridHeight = Math.max(0, height - exposeChromeHeight);
-  const tileMinHeight = desktopLayout ? (compactTiles ? 210 : tileRows === 1 ? 320 : 240) : 240;
-  const tileMaxHeight = desktopLayout ? (compactTiles ? 240 : tileRows === 1 ? 640 : 480) : 420;
+  const tileMinHeight = desktopLayout ? (tileRows === 1 ? 320 : compactTiles ? 210 : 240) : 240;
+  const tileMaxHeight = desktopLayout
+    ? tileRows === 1
+      ? 520
+      : tileRows === 2
+        ? 360
+        : compactTiles
+          ? 240
+          : 480
+    : 420;
   const tileHeight = Math.max(
     tileMinHeight,
     Math.min(tileMaxHeight, Math.floor((targetGridHeight - gridGapHeight) / tileRows)),
