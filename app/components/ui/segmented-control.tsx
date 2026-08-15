@@ -38,12 +38,16 @@ export function SegmentedControl<T extends string>({
         return (
           <Pressable
             key={opt.value}
-            className={cn(fullWidth ? "flex-1 px-3 py-2" : "px-3 py-1.5", selected && "bg-primary")}
+            className={cn(
+              "items-center justify-center",
+              fullWidth ? "flex-1 px-3 py-2" : "px-3 py-1.5",
+              selected && "bg-primary",
+            )}
             onPress={() => onChange(opt.value)}
           >
             <Text
               className={cn(
-                "text-sm text-center",
+                "text-center text-sm leading-5",
                 selected ? "text-primary-foreground" : "text-foreground",
               )}
             >
@@ -51,7 +55,7 @@ export function SegmentedControl<T extends string>({
               {opt.count !== undefined ? (
                 <Text
                   className={cn(
-                    "text-sm",
+                    "text-sm leading-5",
                     selected ? "text-primary-foreground" : "text-muted-foreground",
                   )}
                 >
