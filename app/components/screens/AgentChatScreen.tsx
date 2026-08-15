@@ -137,6 +137,7 @@ const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 132;
 const COMPOSER_SCROLL_SAFETY_PADDING = 44;
 const COMPOSER_HIDE_ANIMATION_MS = 160;
+const COMPOSER_SEND_ACK_TIMEOUT_MS = 5000;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
@@ -186,6 +187,11 @@ function nextAgentOutputViewMode(
 
 type PendingAttachment = PickedAttachment & {
   uploadedAttachmentId?: string;
+};
+
+type PendingComposerAck = {
+  baselineUserMessageCount: number;
+  id: number;
 };
 
 type ScrollPaneKey = "chat" | "terminal";
@@ -368,6 +374,7 @@ export default function ChatScreen() {
   const [shareSummaryCheckedKey, setShareSummaryCheckedKey] = useState<string | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [pendingComposerAck, setPendingComposerAck] = useState<PendingComposerAck | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [interruptBusy, setInterruptBusy] = useState(false);
@@ -665,6 +672,32 @@ export default function ChatScreen() {
   const allMessages = useMemo<ChatMessage[]>(() => {
     return parsedMessages;
   }, [parsedMessages]);
+  const userMessageCount = useMemo(
+    () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
+    [allMessages],
+  );
+  const composerAwaitingAck = pendingComposerAck !== null;
+
+  useEffect(() => {
+    if (!pendingComposerAck) return;
+    if (userMessageCount <= pendingComposerAck.baselineUserMessageCount) return;
+    setDraft("");
+    setPendingAttachments([]);
+    setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
+    setPendingComposerAck(null);
+  }, [pendingComposerAck, userMessageCount]);
+
+  useEffect(() => {
+    if (!pendingComposerAck) return;
+    const pendingId = pendingComposerAck.id;
+    const timer = setTimeout(() => {
+      setDraft("");
+      setPendingAttachments([]);
+      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
+      setPendingComposerAck((current) => (current?.id === pendingId ? null : current));
+    }, COMPOSER_SEND_ACK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [pendingComposerAck]);
 
   const canShowTerminal = Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
@@ -843,6 +876,7 @@ export default function ChatScreen() {
     sessionId &&
     session &&
     !sendBusy &&
+    !composerAwaitingAck &&
     !ownerShareStatusPending &&
     (composerSendText || hasPendingAttachments),
   );
@@ -1109,14 +1143,16 @@ export default function ChatScreen() {
       !session ||
       ownerShareStatusPending ||
       sendBusyRef.current ||
+      pendingComposerAck ||
       (!text && attachments.length === 0)
     ) {
       return;
     }
     sendBusyRef.current = true;
-    setDraft("");
-    setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
-    setPendingAttachments([]);
+    setPendingComposerAck({
+      baselineUserMessageCount: userMessageCount,
+      id: Date.now(),
+    });
     setSendBusy(true);
     setSendError(null);
     try {
@@ -1148,6 +1184,7 @@ export default function ChatScreen() {
       });
       void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
+      setPendingComposerAck(null);
       setDraft(text);
       setPendingAttachments(attachments);
       setSendError(err instanceof Error ? err.message : String(err));
@@ -1158,7 +1195,7 @@ export default function ChatScreen() {
   }
 
   async function handleAttachAttachment() {
-    if (sendBusy || sendBusyRef.current) return;
+    if (sendBusy || sendBusyRef.current || composerAwaitingAck) return;
     setSendError(null);
     try {
       const picked = await pickAttachment();
@@ -1170,7 +1207,7 @@ export default function ChatScreen() {
   }
 
   function handleDropAttachments(attachments: PickedAttachment[]) {
-    if (sendBusy || sendBusyRef.current) return;
+    if (sendBusy || sendBusyRef.current || composerAwaitingAck) return;
     setSendError(null);
     appendPendingAttachments(attachments);
   }
@@ -1460,13 +1497,16 @@ export default function ChatScreen() {
       is the part that needs it.
     */}
       <AttachmentDropZone
-        disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+        disabled={
+          sendBusy || composerAwaitingAck || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+        }
         onDropAttachments={handleDropAttachments}
         onDropRejected={setSendError}
       >
         {({ dragging }) => (
           <ComposerFocusShell
             dragging={dragging}
+            sending={composerAwaitingAck}
             onLayout={(event: LayoutChangeEvent) =>
               setComposerWidth(event.nativeEvent.layout.width)
             }
@@ -1488,7 +1528,7 @@ export default function ChatScreen() {
                   placeholder="Ask the agent…"
                   placeholderTextColor="#71717a"
                   multiline
-                  editable={!sendBusy}
+                  editable={!sendBusy && !composerAwaitingAck}
                   scrollEnabled={composerInputOverflowHeight > COMPOSER_INPUT_MAX_HEIGHT}
                   className="text-sm text-foreground"
                   style={[
@@ -1500,6 +1540,7 @@ export default function ChatScreen() {
                       paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
                       paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
                       paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
+                      opacity: composerAwaitingAck ? 0.55 : 1,
                     },
                   ]}
                   textAlignVertical="top"
@@ -1510,7 +1551,11 @@ export default function ChatScreen() {
                     label="Attach"
                     accessibilityLabel="Attach a file"
                     icon={<Plus size={17} color={CONTROL_INK} />}
-                    disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+                    disabled={
+                      sendBusy ||
+                      composerAwaitingAck ||
+                      pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+                    }
                     onPress={handleAttachAttachment}
                   />
                   <View className="flex-1 px-1">
@@ -2045,25 +2090,82 @@ function ComposerFocusShell({
   children,
   dragging,
   onLayout,
+  sending = false,
 }: {
   children: (handlers: { onBlur: () => void; onFocus: () => void }) => React.ReactNode;
   dragging?: boolean;
   onLayout: (event: LayoutChangeEvent) => void;
+  sending?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
+  const [shellWidth, setShellWidth] = useState(0);
+  const [shimmerProgress] = useState(() => new Animated.Value(0));
   const onFocus = useCallback(() => setFocused(true), []);
   const onBlur = useCallback(() => setFocused(false), []);
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      setShellWidth(Math.ceil(event.nativeEvent.layout.width));
+      onLayout(event);
+    },
+    [onLayout],
+  );
+
+  useEffect(() => {
+    if (!sending) {
+      shimmerProgress.stopAnimation();
+      shimmerProgress.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(shimmerProgress, {
+        duration: 1100,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      shimmerProgress.setValue(0);
+    };
+  }, [sending, shimmerProgress]);
 
   return (
     <View
-      onLayout={onLayout}
+      onLayout={handleLayout}
       className={cn(
-        "gap-2 rounded-2xl border bg-card px-2.5 pb-2 pt-2.5",
+        "gap-2 overflow-hidden rounded-2xl border bg-card px-2.5 pb-2 pt-2.5",
         // The card is the object here, so the card shows focus. The field's own
         // ring would draw a second rounded rect inside it.
-        dragging ? "border-primary bg-accent" : focused ? "border-ring" : "border-border",
+        dragging
+          ? "border-primary bg-accent"
+          : sending
+            ? "border-primary/70"
+            : focused
+              ? "border-ring"
+              : "border-border",
       )}
     >
+      {sending ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            backgroundColor: "rgba(56, 189, 248, 0.18)",
+            bottom: 0,
+            position: "absolute",
+            top: 0,
+            transform: [
+              {
+                translateX: shimmerProgress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-96, Math.max(shellWidth, 320) + 96],
+                }),
+              },
+            ],
+            width: 96,
+          }}
+        />
+      ) : null}
       {children({ onBlur, onFocus })}
     </View>
   );
