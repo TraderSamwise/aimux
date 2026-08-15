@@ -8,7 +8,7 @@ import { MessageBlock } from "@/components/MessageBlock";
 import { PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { PressableCard } from "@/components/ui/card";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import { SegmentedControl, type SegmentOption } from "@/components/ui/segmented-control";
 import { StatusDotMini } from "@/components/status-dot";
 import { Text } from "@/components/ui/text";
 import { listGlobalExposeItems, listSwitchableAgents, type DaemonProject } from "@/lib/api";
@@ -38,7 +38,7 @@ interface ExposeProjectResult {
   error: string | null;
 }
 
-const FILTER_OPTIONS: Array<{ value: ExposeFilter; label: string }> = [
+const FILTER_OPTIONS: Array<SegmentOption<ExposeFilter>> = [
   { value: "all", label: "All" },
   { value: "working", label: "Working" },
   { value: "attention", label: "Needs" },
@@ -245,29 +245,6 @@ function ExposeTileCard({
   );
 }
 
-function SummaryPill({
-  label,
-  value,
-  dense = false,
-}: {
-  label: string;
-  value: number;
-  dense?: boolean;
-}) {
-  return (
-    <View
-      className={cn(
-        "mr-2 mb-2 rounded-full border border-border bg-card",
-        dense ? "px-2.5 py-1" : "px-3 py-1.5",
-      )}
-    >
-      <Text className={cn("font-semibold text-foreground", dense ? "text-[11px]" : "text-[12px]")}>
-        {label} <Text className="text-muted-foreground">{value}</Text>
-      </Text>
-    </View>
-  );
-}
-
 export default function ExposeScreen() {
   const { width, height } = useWindowDimensions();
   const { colorScheme } = useColorScheme();
@@ -344,6 +321,15 @@ export default function ExposeScreen() {
     [loadedViewKey, projectResults, viewKey],
   );
   const summary = useMemo(() => summarizeExposeTiles(currentTiles), [currentTiles]);
+  const filterOptions = useMemo<Array<SegmentOption<ExposeFilter>>>(
+    () => [
+      { value: "all", label: "All", count: summary.total },
+      { value: "working", label: "Working", count: summary.working },
+      { value: "attention", label: "Needs", count: summary.attention },
+      { value: "ready", label: "Ready", count: summary.ready },
+    ],
+    [summary],
+  );
   const visibleTiles = useMemo(
     () => filterExposeTiles(currentTiles, filter),
     [currentTiles, filter],
@@ -354,7 +340,7 @@ export default function ExposeScreen() {
   const tileRows = Math.max(1, Math.ceil(Math.max(visibleTiles.length, 1) / columns));
   const desktopLayout = width >= 900;
   const denseTiles = desktopLayout && tileRows >= 3;
-  const exposeChromeHeight = desktopLayout ? (denseTiles ? 270 : 330) : 280;
+  const exposeChromeHeight = desktopLayout ? (denseTiles ? 230 : 290) : 240;
   const gridGapHeight = Math.max(0, tileRows - 1) * 16;
   const targetGridHeight = Math.max(0, height - exposeChromeHeight);
   const tileMinHeight = desktopLayout ? (tileRows === 1 ? 320 : tileRows === 2 ? 240 : 210) : 240;
@@ -549,18 +535,11 @@ export default function ExposeScreen() {
             />
           </View>
           <SegmentedControl
-            options={FILTER_OPTIONS}
+            options={filterOptions}
             value={filter}
             onChange={setFilter}
             className="bg-card"
           />
-        </View>
-
-        <View className={cn("flex-row flex-wrap", denseTiles ? "mb-2" : "mb-3")}>
-          <SummaryPill label="Total" value={summary.total} dense={denseTiles} />
-          <SummaryPill label="Working" value={summary.working} dense={denseTiles} />
-          <SummaryPill label="Needs" value={summary.attention} dense={denseTiles} />
-          <SummaryPill label="Ready" value={summary.ready} dense={denseTiles} />
         </View>
 
         {offlineProjects.length > 0 ? (

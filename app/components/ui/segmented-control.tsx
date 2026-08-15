@@ -6,6 +6,7 @@ import { Text } from "./text";
 export interface SegmentOption<T extends string> {
   value: T;
   label: string;
+  count?: number | string;
 }
 
 interface SegmentedControlProps<T extends string> {
@@ -47,6 +48,17 @@ export function SegmentedControl<T extends string>({
               )}
             >
               {opt.label}
+              {opt.count !== undefined ? (
+                <Text
+                  className={cn(
+                    "text-sm",
+                    selected ? "text-primary-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {" "}
+                  {opt.count}
+                </Text>
+              ) : null}
             </Text>
           </Pressable>
         );
