@@ -24,6 +24,50 @@ function desktopState(overrides: Partial<DesktopState> = {}): DesktopState {
 }
 
 describe("desktop state resource lifecycle", () => {
+  it("uses server-composed worktree groups instead of regrouping raw sessions", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        mainCheckoutInfo: { name: "repo", branch: "main" },
+        mainCheckoutPath: "/repo",
+        sessions: [
+          { id: "raw-extra", status: "running", toolConfigKey: "codex" },
+          { id: "canonical", status: "running", toolConfigKey: "claude" },
+        ],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "main",
+            status: "active",
+            sessions: [{ id: "canonical", status: "running", toolConfigKey: "claude" }],
+            services: [],
+          },
+        ],
+      }),
+    );
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["canonical"]);
+  });
+
+  it("keeps overseer sessions out of legacy client-side worktree grouping", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        sessions: [
+          { id: "overseer-flag", status: "running", toolConfigKey: "codex", overseer: true },
+          {
+            id: "overseer-team",
+            status: "running",
+            toolConfigKey: "claude",
+            team: { role: "overseer" },
+          },
+          { id: "agent", status: "running", toolConfigKey: "codex" },
+        ],
+      }),
+    );
+
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["agent"]);
+  });
+
   it("preserves pending worktree flags through worktree grouping", () => {
     const groups = groupByWorktree(
       desktopState({

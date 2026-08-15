@@ -44,6 +44,7 @@ export interface DesktopSession {
   pendingAction?: string;
   loop?: { active?: boolean; goal?: string; since?: string } | null;
   overseer?: boolean;
+  team?: { role?: string };
   previewSnapshot?: ExposePreviewSnapshot;
   chatPreview?: ExposeChatPreview;
   optimistic?: boolean;
@@ -82,6 +83,8 @@ export interface DesktopWorktreeGroup {
   branch: string;
   path?: string;
   status: "active" | "offline";
+  pending?: boolean;
+  removing?: boolean;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -111,12 +114,33 @@ export interface WorktreeBucket {
 
 const MAIN_CHECKOUT_KEY = "__main_checkout__";
 
-// Group sessions + services into the same worktree-keyed buckets the TUI renders.
-// Main-checkout bucket holds anything without a worktreePath OR whose path matches
-// `state.mainCheckoutPath`. Other buckets come from `state.worktrees`, in the order
-// the server returned them. Any session/service with an unknown worktreePath falls
-// into a synthesized bucket so it isn't lost.
+function isDashboardHiddenSession(session: DesktopSession): boolean {
+  return session.overseer === true || session.team?.role === "overseer";
+}
+
+function bucketFromServerGroup(group: DesktopWorktreeGroup): WorktreeBucket {
+  const isMainCheckout = !group.path;
+  return {
+    key: group.path ?? MAIN_CHECKOUT_KEY,
+    name: group.name,
+    branch: group.branch,
+    path: group.path ?? null,
+    isMainCheckout,
+    pending: group.pending,
+    removing: group.removing,
+    sessions: group.sessions.filter((session) => !isDashboardHiddenSession(session)),
+    services: group.services,
+  };
+}
+
+// Prefer the server-composed worktree groups: they are the same dashboard model
+// the TUI renders. The regrouping path below is only for older desktop-state
+// payloads that do not include worktreeGroups.
 export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
+  if (Array.isArray(state.worktreeGroups)) {
+    return state.worktreeGroups.map(bucketFromServerGroup);
+  }
+
   const buckets = new Map<string, WorktreeBucket>();
   const mainPath = state.mainCheckoutPath;
 
@@ -166,6 +190,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
   }
 
   for (const session of state.sessions) {
+    if (isDashboardHiddenSession(session)) continue;
     bucketFor(session.worktreePath).sessions.push(session);
   }
   for (const service of state.services) {
