@@ -752,6 +752,7 @@ export function createSession(
       args: finalArgs,
       extraEnv: {
         ...(launchEnv ?? {}),
+        TERM: "tmux-256color",
         AIMUX_METADATA_ENDPOINT_FILE: `${getProjectStateDirFor(projectRoot)}/metadata-api.txt`,
         AIMUX_SESSION_ID: sessionId,
         AIMUX_PROJECT_ROOT: projectRoot,
@@ -964,6 +965,7 @@ export async function createSessionAsync(
       args: finalArgs,
       extraEnv: {
         ...(launchEnv ?? {}),
+        TERM: "tmux-256color",
         AIMUX_METADATA_ENDPOINT_FILE: `${getProjectStateDirFor(projectRoot)}/metadata-api.txt`,
         AIMUX_SESSION_ID: sessionId,
         AIMUX_PROJECT_ROOT: projectRoot,

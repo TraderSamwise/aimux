@@ -294,6 +294,7 @@ describe("createSession", () => {
 
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     expect(createWindowArgs[3]).toBe("env");
+    expect(createWindowArgs[4]).toContain("TERM=tmux-256color");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=codex-");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_METADATA_ENDPOINT_FILE=");
     expect(createWindowArgs[4].join(" ")).toContain("metadata-api.txt");
