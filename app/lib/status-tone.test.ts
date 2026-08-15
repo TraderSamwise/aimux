@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { agentStatusKind, aggregateStatusKind, serviceStatusKind } from "./status-tone";
+import {
+  agentStatusKind,
+  aggregateStatusKind,
+  appStatusColors,
+  serviceStatusKind,
+} from "./status-tone";
 
 describe("status-tone", () => {
   it("maps raw agent runtime status to TUI status semantics", () => {
@@ -24,5 +29,14 @@ describe("status-tone", () => {
     expect(aggregateStatusKind(["working", "needs", "offline"])).toBe("needs");
     expect(aggregateStatusKind(["done", "offline"])).toBe("done");
     expect(aggregateStatusKind(["serviceOff", "offline"])).toBe("serviceOff");
+  });
+
+  it("exposes inline colors for native status glyphs", () => {
+    expect(appStatusColors("needs")).toEqual({
+      background: "rgba(215, 175, 95, 0.12)",
+      border: "rgba(215, 175, 95, 0.35)",
+      foreground: "#d7af5f",
+    });
+    expect(appStatusColors("running").foreground).toBe("#00afd7");
   });
 });

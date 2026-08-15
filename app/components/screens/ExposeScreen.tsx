@@ -9,6 +9,7 @@ import { PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { PressableCard } from "@/components/ui/card";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { StatusDotMini } from "@/components/status-dot";
 import { Text } from "@/components/ui/text";
 import { listGlobalExposeItems, listSwitchableAgents, type DaemonProject } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -23,7 +24,7 @@ import {
 } from "@/lib/expose-model";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
-import { appStatusClasses } from "@/lib/status-tone";
+import { appStatusClasses, appStatusColors } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
@@ -106,11 +107,12 @@ function ExposeTileCard({
   const chatDividerWidth = Math.max(24, Math.floor((tileWidth * 0.9 - 24) / 8.5) - 2);
   const chatEndpoint = tile.serviceEndpoint;
   const statusTone = appStatusClasses(tile.statusKind);
+  const statusColors = appStatusColors(tile.statusKind);
   return (
     <View className="p-2" style={{ width: tileWidth }}>
       <PressableCard
         onPress={onPress}
-        style={{ height: tileHeight }}
+        style={{ height: tileHeight, borderColor: statusColors.border }}
         className={cn(
           "rounded-lg border bg-[#17181d] p-0 overflow-hidden hover:bg-[#1c1d23]",
           statusTone.cardBorder,
@@ -118,7 +120,9 @@ function ExposeTileCard({
       >
         <View className="flex-1 border-l-4 p-3.5" style={{ borderLeftColor: tile.tone }}>
           <View className="flex-row items-start gap-2">
-            <View className={cn("mt-1 h-2 w-2 rounded-full", statusTone.dot)} />
+            <View className="mt-1">
+              <StatusDotMini status={tile.statusKind ?? undefined} />
+            </View>
             <View className="min-w-0 flex-1">
               <View className="flex-row items-baseline gap-2">
                 <Text
@@ -145,9 +149,16 @@ function ExposeTileCard({
               </Text>
             </View>
             {tile.status ? (
-              <View className={cn("rounded border px-2 py-0.5", statusTone.border, statusTone.bg)}>
+              <View
+                className={cn("rounded border px-2 py-0.5", statusTone.border, statusTone.bg)}
+                style={{
+                  backgroundColor: statusColors.background,
+                  borderColor: statusColors.border,
+                }}
+              >
                 <Text
                   className={cn("text-[10px] font-bold uppercase leading-[14px]", statusTone.text)}
+                  style={{ color: statusColors.foreground }}
                 >
                   {tile.status}
                 </Text>

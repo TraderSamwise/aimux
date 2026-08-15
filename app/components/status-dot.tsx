@@ -2,7 +2,7 @@ import React from "react";
 import { View } from "react-native";
 import { GitBranch } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
-import { appStatusClasses } from "@/lib/status-tone";
+import { appStatusClasses, appStatusColors } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 
 // Visual status indicator used across the sidebar tree, main-panel cards, and
@@ -16,8 +16,13 @@ const SIZE_CLASS: Record<"sm" | "md" | "lg", string> = {
 };
 
 export function StatusDot({ status, size = "sm" }: { status: string; size?: "sm" | "md" | "lg" }) {
-  const tone = appStatusClasses(status);
-  return <View className={cn("rounded-full", SIZE_CLASS[size], tone.dot)} />;
+  const colors = appStatusColors(status);
+  return (
+    <View
+      className={cn("rounded-full", SIZE_CLASS[size])}
+      style={{ backgroundColor: colors.foreground }}
+    />
+  );
 }
 
 // Restyle (Linear-style) dot used by the project view: green = running,
@@ -39,13 +44,18 @@ export function StatusDotMini({
 }) {
   const cornerClass = shape === "circle" ? "rounded-full" : "rounded-[1.5px]";
   const rotateClass = shape === "diamond" ? "rotate-45" : "";
+  const colors = appStatusColors(status);
 
   // Outline = thick unfilled ring (used for worktrees); border color still
   // encodes status: green = running, muted = idle, faint = empty.
   if (outline) {
     const size = shape === "diamond" ? "h-[7px] w-[7px]" : "h-2 w-2";
-    const borderColor = hollow ? "border-[#44464e]" : appStatusClasses(status).ring;
-    return <View className={cn(size, cornerClass, rotateClass, "border-2", borderColor)} />;
+    return (
+      <View
+        className={cn(size, cornerClass, rotateClass, "border-2")}
+        style={{ borderColor: hollow ? "#44464e" : colors.foreground }}
+      />
+    );
   }
 
   const sizeClass = shape === "diamond" ? "h-[6px] w-[6px]" : "h-[7px] w-[7px]";
@@ -56,8 +66,12 @@ export function StatusDotMini({
       />
     );
   }
-  const tone = appStatusClasses(status);
-  return <View className={cn(sizeClass, cornerClass, rotateClass, tone.dot)} />;
+  return (
+    <View
+      className={cn(sizeClass, cornerClass, rotateClass)}
+      style={{ backgroundColor: colors.foreground }}
+    />
+  );
 }
 
 // Branch pill (revived from the pre-restyle design): a GitBranch glyph + the
@@ -89,9 +103,16 @@ export function TypeTag({ label }: { label: string }) {
 
 export function StatusPill({ status }: { status: string }) {
   const tone = appStatusClasses(status);
+  const colors = appStatusColors(status);
   return (
-    <View className={cn("px-1.5 py-0.5 rounded", tone.bg)}>
-      <Text className={cn("text-[10px] font-medium uppercase tracking-wide", tone.text)}>
+    <View
+      className={cn("rounded border px-1.5 py-0.5", tone.bg)}
+      style={{ backgroundColor: colors.background, borderColor: colors.border }}
+    >
+      <Text
+        className={cn("text-[10px] font-medium uppercase tracking-wide", tone.text)}
+        style={{ color: colors.foreground }}
+      >
         {status}
       </Text>
     </View>

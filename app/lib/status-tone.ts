@@ -23,6 +23,12 @@ export interface AppStatusClasses {
   text: string;
 }
 
+export interface AppStatusColors {
+  background: string;
+  border: string;
+  foreground: string;
+}
+
 export const APP_STATUS_CLASSES: Record<AppStatusKind, AppStatusClasses> = {
   working: {
     bg: "bg-cyan-500/10",
@@ -163,6 +169,24 @@ export function normalizeAppStatusKind(value: string | null | undefined): AppSta
 
 export function appStatusClasses(value: string | null | undefined): AppStatusClasses {
   return APP_STATUS_CLASSES[normalizeAppStatusKind(value) ?? "offline"];
+}
+
+function hexWithAlpha(hex: string, alpha: number): string {
+  const normalized = hex.replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return hex;
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+export function appStatusColors(value: string | null | undefined): AppStatusColors {
+  const tone = appStatusClasses(value);
+  return {
+    background: hexWithAlpha(tone.hex, 0.12),
+    border: hexWithAlpha(tone.hex, 0.35),
+    foreground: tone.hex,
+  };
 }
 
 export function agentStatusKind(session: {
