@@ -189,7 +189,8 @@ function ExposeTileCard({
 }) {
   const terminalFontSize = dense ? 11 : 11.5;
   const terminalLineHeight = dense ? 14.5 : 18;
-  const previewChromeHeight = dense ? 48 : 88;
+  const compactTileHeader = dense || tileWidth < 420;
+  const previewChromeHeight = compactTileHeader ? 48 : 88;
   const previewLineCount = Math.max(
     6,
     Math.floor((tileHeight - previewChromeHeight) / terminalLineHeight),
@@ -249,7 +250,7 @@ function ExposeTileCard({
                   {tile.label}
                 </Text>
               </View>
-              {dense && previewMode === "terminal" ? null : (
+              {compactTileHeader ? null : (
                 <Text
                   className="mt-0.5 font-mono text-[11px] leading-4 text-[#7c7e88]"
                   numberOfLines={1}
@@ -417,6 +418,20 @@ function ExposeSurface({
       className="bg-card"
     />
   );
+  const compactFilterControl = (
+    <SegmentedControl
+      options={[
+        { value: "all", label: "All", count: filterOptions[0]?.count },
+        { value: "working", label: "Work", count: filterOptions[1]?.count },
+        { value: "attention", label: "Need", count: filterOptions[2]?.count },
+        { value: "ready", label: "Ready", count: filterOptions[3]?.count },
+      ]}
+      value={filter}
+      onChange={onFilterChange}
+      fullWidth
+      className="bg-card"
+    />
+  );
   const refreshButton = (
     <Button
       variant="outline"
@@ -461,29 +476,24 @@ function ExposeSurface({
           </View>
         ) : compactHeader ? (
           <View className="mb-3 gap-2">
-            <View className="min-w-0">
+            <View className="min-w-0 flex-row items-center gap-2">
               <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                 Exposé
               </Text>
               <Text
-                className="mt-0.5 text-[21px] font-bold leading-6 text-foreground"
+                className="min-w-0 flex-1 text-[21px] font-bold leading-6 text-foreground"
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
                 {title}
               </Text>
+              <View className="shrink-0">{refreshButton}</View>
             </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerClassName="items-center gap-2 pr-4"
-              keyboardShouldPersistTaps="handled"
-            >
+            <View className="flex-row items-center gap-2">
               {scopeControl}
               {previewControl}
-              {filterControl}
-              {refreshButton}
-            </ScrollView>
+            </View>
+            {compactFilterControl}
           </View>
         ) : (
           <>

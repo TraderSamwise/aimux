@@ -78,6 +78,7 @@ function attachmentPartLabel(part: HistoryAttachmentReferencePart): string {
 
 function attachmentPreviewKind(part: HistoryAttachmentReferencePart): string {
   const mimeType = part.mimeType ?? "";
+  if (part.kind === "image" || mimeType.startsWith("image/")) return "image";
   if (part.kind === "audio" || mimeType.startsWith("audio/")) return "audio";
   if (part.kind === "video" || mimeType.startsWith("video/")) return "video";
   if (part.kind === "pdf" || mimeType === "application/pdf") return "pdf";
@@ -251,6 +252,19 @@ function AttachmentReferenceToken({
       {contentUrl && Platform.OS === "web" ? (
         <WebAttachmentPreview kind={previewKind} url={contentUrl} title={title} />
       ) : null}
+      {contentUrl && previewKind === "image" && Platform.OS !== "web" ? (
+        <Image
+          accessibilityLabel={title}
+          source={{ uri: contentUrl }}
+          className="mt-2 rounded"
+          resizeMode="contain"
+          style={{
+            width: 180,
+            height: 120,
+            backgroundColor: "rgba(0, 0, 0, 0.18)",
+          }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -278,6 +292,18 @@ function WebAttachmentPreview({ kind, title, url }: { kind: string; title: strin
         ...frameStyle,
         backgroundColor: "rgba(0, 0, 0, 0.18)",
         height: 220,
+      },
+    });
+  }
+  if (kind === "image") {
+    return React.createElement("img", {
+      alt: title,
+      src: url,
+      style: {
+        ...frameStyle,
+        backgroundColor: "rgba(0, 0, 0, 0.18)",
+        height: 180,
+        objectFit: "contain",
       },
     });
   }

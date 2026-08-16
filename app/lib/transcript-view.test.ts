@@ -95,6 +95,42 @@ describe("toChatMessages", () => {
     expect(JSON.stringify(chat)).not.toContain("/Users/sam/cs/aimux/.aimux/attachments");
   });
 
+  it("recovers wrapped legacy image attachment paths", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              text:
+                "Mobile expose titles still 2 rows. Attached image files: - IMG_0309.png " +
+                "(image/png, 267021 bytes): /Users/sam/cs/aimux/.aimux/attachments/\n" +
+                "att_bb2103cedb1e496b992f21ab5d341d9e.png",
+            },
+          ],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts).toEqual([
+      {
+        type: "text",
+        text: "Mobile expose titles still 2 rows.",
+      },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_bb2103cedb1e496b992f21ab5d341d9e",
+        filename: "IMG_0309.png",
+        mimeType: "image/png",
+        contentUrl: "/attachments/att_bb2103cedb1e496b992f21ab5d341d9e/content?sessionId=codex-1",
+      },
+    ]);
+    expect(JSON.stringify(chat)).not.toContain("/Users/sam/cs/aimux/.aimux/attachments");
+  });
+
   it("escapes a session id rather than pasting it into the query", () => {
     const [chat] = toChatMessages(
       [message({ parts: [{ type: "image_reference", label: "x", attachmentId: "att_a" }] })],

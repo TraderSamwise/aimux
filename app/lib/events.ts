@@ -125,7 +125,7 @@ export interface HistoryAttachmentReferencePart {
   attachmentId?: string;
   filename?: string;
   mimeType?: string;
-  kind?: "audio" | "video" | "pdf" | "text" | "file";
+  kind?: "image" | "audio" | "video" | "pdf" | "text" | "file";
   contentUrl?: string;
 }
 

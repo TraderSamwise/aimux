@@ -30,6 +30,7 @@ function normalizeSharedText(text: string): string {
 
 function attachmentKindForMimeType(mimeType?: string): HistoryAttachmentReferencePart["kind"] {
   const normalized = mimeType?.toLowerCase() ?? "";
+  if (normalized.startsWith("image/")) return "image";
   if (normalized.startsWith("audio/")) return "audio";
   if (normalized.startsWith("video/")) return "video";
   if (normalized === "application/pdf") return "pdf";
@@ -42,7 +43,7 @@ function legacyAttachmentPart(
   opts: { filename?: string; mimeType?: string },
   labels: { image: number; file: number },
 ): HistoryPart {
-  if ((opts.mimeType ?? "").toLowerCase().startsWith("image/")) {
+  if (attachmentKindForMimeType(opts.mimeType) === "image") {
     return {
       type: "image_reference",
       label: `[image #${labels.image++}]`,
@@ -65,6 +66,7 @@ function partsFromLegacyAttachmentText(
   text: string,
   labels: { image: number; file: number },
 ): HistoryPart[] | null {
+  const imageHeader = /\bAttached image files:\s*/i.test(text);
   if (!LEGACY_ATTACHMENTS_HEADER.test(text)) return null;
 
   const flattened = text.replace(/\s+/g, " ").trim();
@@ -88,11 +90,73 @@ function partsFromLegacyAttachmentText(
     matched = true;
   }
 
-  if (!matched) return null;
+  if (!matched) {
+    const recovered = recoverWrappedLegacyAttachments(tail, labels, imageHeader);
+    if (!recovered) return null;
+    const { parts: recoveredParts, prose } = recovered;
+    if (prose) parts.push({ type: "text", text: prose });
+    parts.push(...recoveredParts);
+    return parts;
+  }
 
   const suffix = tail.slice(cursor).trim();
   if (suffix) parts.push({ type: "text", text: suffix });
   return parts;
+}
+
+function recoverWrappedLegacyAttachments(
+  tail: string,
+  labels: { image: number; file: number },
+  imageHeader: boolean,
+): { parts: HistoryPart[]; prose: string } | null {
+  let squashed = "";
+  const sourceIndex: number[] = [];
+  for (let index = 0; index < tail.length; index += 1) {
+    if (/\s/.test(tail[index]!)) continue;
+    squashed += tail[index];
+    sourceIndex.push(index);
+  }
+
+  const parts: HistoryPart[] = [];
+  const drop = new Set<number>();
+
+  for (const match of squashed.matchAll(
+    /\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)(?:\.([A-Za-z0-9]{1,8}))?/g,
+  )) {
+    if (!match[1] || match.index === undefined) continue;
+    let from = match.index;
+    while (from > 0 && !/[-•]/.test(squashed[from - 1]!)) from -= 1;
+    if (from > 0) from -= 1;
+    const item = squashed.slice(from, match.index + match[0].length);
+    const itemMatch = item.match(
+      /^[-•]?(.+?)\(([A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+),\d+bytes\):/,
+    );
+    const mimeType = itemMatch?.[2] ?? (imageHeader ? "image/unknown" : undefined);
+    parts.push(
+      legacyAttachmentPart(
+        match[1],
+        {
+          filename: itemMatch?.[1],
+          mimeType,
+        },
+        labels,
+      ),
+    );
+    for (let index = from; index < match.index + match[0].length; index += 1) {
+      drop.add(sourceIndex[index]!);
+    }
+  }
+
+  if (parts.length === 0) return null;
+
+  const prose = tail
+    .split("")
+    .filter((_, index) => !drop.has(index))
+    .join("")
+    .replace(/[-•]\s*(?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { parts, prose };
 }
 
 function normalizeLegacyAttachmentParts(
