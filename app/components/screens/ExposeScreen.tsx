@@ -374,8 +374,9 @@ function ExposeSurface({
   const tileRows = Math.max(1, Math.ceil(Math.max(visibleTiles.length, 1) / columns));
   const desktopLayout = width >= 900;
   const singleLineHeader = width >= 1360;
+  const compactHeader = !desktopLayout;
   const compactTiles = desktopLayout && (columns >= 3 || tileRows >= 4);
-  const exposeChromeHeight = singleLineHeader ? 170 : desktopLayout ? 218 : 220;
+  const exposeChromeHeight = singleLineHeader ? 170 : desktopLayout ? 218 : 160;
   const gridGapHeight = Math.max(0, tileRows - 1) * 16;
   const targetGridHeight = Math.max(0, height - exposeChromeHeight);
   const tileMinHeight = desktopLayout ? (tileRows === 1 ? 360 : tileRows === 2 ? 340 : 320) : 260;
@@ -457,6 +458,32 @@ function ExposeSurface({
               {filterControl}
               {refreshButton}
             </View>
+          </View>
+        ) : compactHeader ? (
+          <View className="mb-3 gap-2">
+            <View className="min-w-0">
+              <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                Exposé
+              </Text>
+              <Text
+                className="mt-0.5 text-[21px] font-bold leading-6 text-foreground"
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {title}
+              </Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerClassName="items-center gap-2 pr-4"
+              keyboardShouldPersistTaps="handled"
+            >
+              {scopeControl}
+              {previewControl}
+              {filterControl}
+              {refreshButton}
+            </ScrollView>
           </View>
         ) : (
           <>
@@ -548,6 +575,7 @@ export default function ExposeScreen() {
   const { getToken } = useAuth();
   const mountedRequestRef = useRef(0);
   const activeControllerRef = useRef<AbortController | null>(null);
+  const projectsRef = useRef(projects);
   const [tiles, setTiles] = useState<ExposeTile[]>([]);
   const [projectResults, setProjectResults] = useState<ExposeProjectResult[]>([]);
   const [loadedViewKey, setLoadedViewKey] = useState<string | null>(null);
@@ -609,6 +637,10 @@ export default function ExposeScreen() {
   const offlineProjects = currentProjectResults.filter((result) => result.error);
   const relayReadyForRequests = relayStatus !== "connecting";
 
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
   const refresh = useCallback(async () => {
     const requestId = mountedRequestRef.current + 1;
     mountedRequestRef.current = requestId;
@@ -623,7 +655,7 @@ export default function ExposeScreen() {
         scope,
         token,
         includeChatPreview: exposePreviewMode === "chat",
-        projects,
+        projects: projectsRef.current,
         project: projectRequest,
         signal: controller.signal,
       });
@@ -646,15 +678,7 @@ export default function ExposeScreen() {
       if (mountedRequestRef.current === requestId) setPending(false);
       if (activeControllerRef.current === controller) activeControllerRef.current = null;
     }
-  }, [
-    exposePreviewMode,
-    getToken,
-    projectRequest,
-    projects,
-    relayReadyForRequests,
-    scope,
-    viewKey,
-  ]);
+  }, [exposePreviewMode, getToken, projectRequest, relayReadyForRequests, scope, viewKey]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
