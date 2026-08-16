@@ -93,7 +93,7 @@
     "tailwindcss": "3"
   },
   "devDependencies": {
-    "@tradersamwise/eas-release": "0.1.9",
+    "@tradersamwise/eas-release": "0.1.10",
     "@types/event-source-polyfill": "^1.0.5",
     "@types/react": "~19.1.0",
     "eas-cli": "^18.5.0",
