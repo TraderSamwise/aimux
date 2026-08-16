@@ -2,6 +2,7 @@ import type { SecurityEventRecord } from "./security.js";
 
 export interface Env {
   RELAY: DurableObjectNamespace;
+  ATTACHMENTS?: R2Bucket;
   // Secrets are configured via `wrangler secret put` at deploy time. They
   // may be unset in a dev/preview environment; callers must guard on
   // missing values rather than assume they're populated.
@@ -23,6 +24,7 @@ export interface Env {
   SECURITY_IP_HASH_SECRET?: string;
   COLLAB_EMAIL_FROM?: string;
   SHARE_INVITE_BASE_URL?: string;
+  HOSTED_ATTACHMENT_BASE_URL?: string;
 }
 
 export interface RelayRequest {

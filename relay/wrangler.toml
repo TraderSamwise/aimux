@@ -9,6 +9,10 @@ bindings = [
   { name = "RELAY", class_name = "RelayObject" }
 ]
 
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "aimux-relay-attachments-dev"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RelayObject"]
@@ -34,3 +38,7 @@ SHARE_INVITE_BASE_URL = "https://aimux.app"
 bindings = [
   { name = "RELAY", class_name = "RelayObject" }
 ]
+
+[[env.production.r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "aimux-relay-attachments"

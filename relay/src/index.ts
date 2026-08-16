@@ -1,5 +1,6 @@
 import { fetchClerkUserProfile, verifyWsToken } from "./auth.js";
 import { isDaemonToken, mintDaemonToken, verifyDaemonTokenPayload } from "./daemon-token.js";
+import { hostedAttachmentIdFromPath, serveHostedAttachment } from "./attachments.js";
 import type { Env } from "./types.js";
 
 export { RelayObject } from "./relay-object.js";
@@ -91,6 +92,11 @@ export default {
 
     if (url.pathname === "/health") {
       return corsResponse(JSON.stringify({ ok: true }), 200);
+    }
+
+    const hostedAttachmentId = hostedAttachmentIdFromPath(url.pathname);
+    if (hostedAttachmentId && request.method === "GET") {
+      return addCorsHeaders(await serveHostedAttachment(env, hostedAttachmentId));
     }
 
     if (url.pathname.startsWith("/security/action/")) {
