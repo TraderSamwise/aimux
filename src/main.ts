@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
@@ -64,6 +65,7 @@ import { raiseHostedCliEvent } from "./hosted-outbox.js";
 import {
   approveRemoteSecurityDevice,
   blockRemoteSecurityDevice,
+  listLivePendingRemoteSecurityDevices,
   listRemoteSecurityDevices,
   type RemoteSecurityDevice,
   unblockRemoteSecurityDevice,
@@ -1875,6 +1877,56 @@ securityCmd
     }
   });
 
+const securityDeviceCmd = securityCmd.command("device").description("Approve a live remote client device");
+
+securityDeviceCmd
+  .command("approve [deviceId]")
+  .description("Approve the most recent live remote client waiting for access")
+  .option("-y, --yes", "Approve the selected live pending device without prompting")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string | undefined, opts: { yes?: boolean; json?: boolean }) => {
+    try {
+      const devices = await listLivePendingRemoteSecurityDevices();
+      const candidates = deviceId
+        ? devices.filter((device) => device.id === deviceId || device.deviceId === deviceId)
+        : devices;
+      if (candidates.length === 0) {
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              { ok: false, devices: [], error: "No live remote clients are waiting for approval" },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+        console.log(
+          deviceId
+            ? `No live remote client is waiting for approval as ${deviceId}.`
+            : "No live remote clients are waiting for approval.",
+        );
+        return;
+      }
+
+      const approved = opts.yes
+        ? await approveRemoteSecurityDevice(candidates[0]!.id)
+        : await approveLiveRemoteSecurityDeviceInteractively(candidates);
+      if (!approved) {
+        if (opts.json) console.log(JSON.stringify({ ok: false, devices: candidates }, null, 2));
+        return;
+      }
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, device: approved }, null, 2));
+        return;
+      }
+      console.log(`Approved ${approved.name ?? approved.kind} (${approved.id})`);
+    } catch (err) {
+      console.error(`Could not approve remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
 securityCmd
   .command("approve <deviceId>")
   .description("Approve a remote client device")
@@ -1953,6 +2005,49 @@ function renderRemoteSecurityDevices(devices: RemoteSecurityDevice[]): string[] 
     const location = device.lastCountry ? ` ${device.lastCountry}` : "";
     return `${device.id}  ${state}  ${name}  ${device.platform ?? "-"}  last seen ${device.lastSeenAt}${location}`;
   });
+}
+
+async function approveLiveRemoteSecurityDeviceInteractively(
+  devices: RemoteSecurityDevice[],
+): Promise<RemoteSecurityDevice | null> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      "Interactive approval requires a TTY. Re-run with --yes to approve the newest live pending device.",
+    );
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (const device of devices) {
+      console.log("");
+      renderPendingRemoteSecurityDevice(device).forEach((line) => console.log(line));
+      const code = device.approvalCode;
+      if (!code) throw new Error("Relay did not return an approval code for the pending device");
+      const answer = (await rl.question(`Type ${code} to approve, Enter for next device, or q to quit: `)).trim();
+      if (!answer) continue;
+      if (answer.toLowerCase() === "q") return null;
+      if (answer.toUpperCase() !== code.toUpperCase()) {
+        console.log("Code did not match; device was not approved.");
+        continue;
+      }
+      return approveRemoteSecurityDevice(device.id);
+    }
+  } finally {
+    rl.close();
+  }
+  console.log("No device approved.");
+  return null;
+}
+
+function renderPendingRemoteSecurityDevice(device: RemoteSecurityDevice): string[] {
+  const name = device.name ?? device.kind;
+  const location = device.lastCountry ? ` from ${device.lastCountry}` : "";
+  return [
+    "Remote client waiting for approval",
+    `  Device   ${name}${location}`,
+    `  Platform ${device.platform ?? device.kind}`,
+    `  Seen     ${device.lastSeenAt}`,
+    `  Code     ${device.approvalCode ?? "unknown"}`,
+  ];
 }
 
 async function prepareProjectContext(requestedProject?: string): Promise<string> {

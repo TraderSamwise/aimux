@@ -174,6 +174,22 @@ describe("relay security events", () => {
     expect(isDeviceApproved(unblocked.device ?? undefined)).toBe(false);
   });
 
+  it("puts a short approval code on new-client events", () => {
+    const connected = recordClientConnection(
+      emptySecurityState(),
+      { deviceId: "client_123", kind: "ios", name: "iPhone", platform: "ios" },
+      { country: "SG" },
+      "2026-05-24T00:00:00.000Z",
+    );
+
+    expect(connected.events[1]).toMatchObject({
+      kind: "new_client_detected",
+      title: "Remote approval needed",
+      approvalCode: expect.stringMatching(/^[2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3}$/),
+    });
+    expect(connected.events[1]?.body).toContain("is waiting for approval");
+  });
+
   it("does not approve unknown devices", () => {
     const result = approveSecurityDevice(emptySecurityState(), "missing");
 

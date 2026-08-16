@@ -15,6 +15,7 @@ export interface RemoteSecurityDevice {
   lastCountry?: string;
   approved: boolean;
   blocked: boolean;
+  approvalCode?: string;
 }
 
 export interface RemoteSecurityDevicesResponse {
@@ -32,6 +33,14 @@ export interface RemoteSecurityDeviceResponse {
 export async function listRemoteSecurityDevices(): Promise<RemoteSecurityDevice[]> {
   const response = await securityRequest<RemoteSecurityDevicesResponse>("/security/devices", { method: "GET" });
   if (!response.ok || !response.devices) throw new Error(response.error ?? "Could not list remote devices");
+  return response.devices;
+}
+
+export async function listLivePendingRemoteSecurityDevices(): Promise<RemoteSecurityDevice[]> {
+  const response = await securityRequest<RemoteSecurityDevicesResponse>("/security/devices/pending", { method: "GET" });
+  if (!response.ok || !response.devices) {
+    throw new Error(response.error ?? "Could not list pending remote devices");
+  }
   return response.devices;
 }
 

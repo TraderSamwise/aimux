@@ -63,8 +63,18 @@ describe("projectStateErrorCopy", () => {
   it("turns pending security approval into actionable copy", () => {
     expect(projectStateErrorCopy("Remote client pending security approval")).toEqual({
       title: "Remote client pending approval.",
-      detail: "Open Inbox and approve this device, then refresh project state.",
+      detail: "Run `aimux security device approve`, match the code, then refresh project state.",
     });
+  });
+
+  it("surfaces pending security approval codes when the relay provides one", () => {
+    expect(projectStateErrorCopy("Remote client pending security approval. Code ABC-123.")).toEqual(
+      {
+        title: "Remote client pending approval.",
+        detail:
+          "Run `aimux security device approve`, match code ABC-123, then refresh project state.",
+      },
+    );
   });
 
   it("turns relay disconnection into reconnect guidance", () => {

@@ -219,6 +219,16 @@ describe("RelayObject owner device security", () => {
     const listedBody = (await listed.json()) as { devices: Array<{ id: string; approved: boolean }> };
     expect(listedBody.devices).toEqual([expect.objectContaining({ id: "client_1", approved: false })]);
 
+    const pending = await object.fetch(new Request("https://relay.aimux.app/security/devices/pending"));
+    expect(pending.status).toBe(200);
+    const pendingBody = (await pending.json()) as { devices: Array<{ id: string; approvalCode?: string }> };
+    expect(pendingBody.devices).toEqual([
+      expect.objectContaining({
+        id: "client_1",
+        approvalCode: expect.stringMatching(/^[2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3}$/),
+      }),
+    ]);
+
     const approved = await object.fetch(
       new Request("https://relay.aimux.app/security/devices/client_1/approve", { method: "POST" }),
     );
@@ -236,6 +246,39 @@ describe("RelayObject owner device security", () => {
     );
     expect(unblocked.status).toBe(200);
     expect(await unblocked.json()).toMatchObject({ device: { id: "client_1", approved: false, blocked: false } });
+  });
+
+  it("does not approve historical devices that are no longer connected", async () => {
+    const storage = storageWithSockets([]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "ios",
+          name: "iPhone",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      pushTokens: {},
+      actions: {},
+      events: [],
+    });
+    const object = createObject(storage, {
+      SECURITY_DEVICE_POLICY: "enforce",
+    } as unknown as Env);
+
+    const response = await object.fetch(
+      new Request("https://relay.aimux.app/security/devices/client_1/approve", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: "Device is not currently connected and waiting for approval",
+    });
   });
 
   it("rejects unapproved owner client requests under enforce mode", async () => {
@@ -256,6 +299,42 @@ describe("RelayObject owner device security", () => {
         body: { ok: false, error: "Remote client pending security approval" },
       }),
     );
+  });
+
+  it("includes the approval code when rejecting a live pending owner client request", async () => {
+    const clientSocket = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([clientSocket]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "ios",
+          name: "iPhone",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      pushTokens: {},
+      actions: {},
+      events: [],
+    });
+    const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
+
+    await object.webSocketMessage(
+      clientSocket,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects" }),
+    );
+
+    expect(clientSocket.send).toHaveBeenCalledWith(
+      expect.stringContaining("Remote client pending security approval. Code "),
+    );
+    const sent = JSON.parse(String(clientSocket.send.mock.calls.at(-1)?.[0])) as {
+      body: { approvalCode?: string; error?: string };
+    };
+    expect(sent.body.approvalCode).toMatch(/^[2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3}$/);
+    expect(sent.body.error).toContain(sent.body.approvalCode);
   });
 
   it("allows approved owner client requests to reach daemon routing", async () => {

@@ -19,6 +19,7 @@ export interface SecurityEventRecord {
   title: string;
   body: string;
   createdAt: string;
+  approvalCode?: string;
   country?: string;
   userAgent?: string;
 }

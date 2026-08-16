@@ -28,9 +28,14 @@ export function projectStateErrorCopy(error: string): {
     };
   }
   if (/pending security approval/i.test(error)) {
+    const approvalCode = error
+      .match(/\bCode\s+([2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3})\b/i)?.[1]
+      ?.toUpperCase();
     return {
       title: "Remote client pending approval.",
-      detail: "Open Inbox and approve this device, then refresh project state.",
+      detail: approvalCode
+        ? `Run \`aimux security device approve\`, match code ${approvalCode}, then refresh project state.`
+        : "Run `aimux security device approve`, match the code, then refresh project state.",
     };
   }
   if (/relay not connected/i.test(error)) {
@@ -65,7 +70,7 @@ export function relayUnavailableProjectCopy(status: RelayStatus): {
   if (status === "device_pending") {
     return {
       title: "Remote approval required.",
-      detail: "Run `aimux security devices`, approve this device, then refresh.",
+      detail: "Run `aimux security device approve`, match the code, then refresh.",
     };
   }
   if (status === "daemon_offline") {

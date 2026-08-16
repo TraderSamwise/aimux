@@ -33,6 +33,7 @@ interface RelayControl {
     body: string;
     deviceId?: string;
     createdAt: string;
+    approvalCode?: string;
   };
 }
 
@@ -206,7 +207,7 @@ export class RelayClient {
     }
 
     if (msg.type === "security_event") {
-      if (msg.event?.kind === "client_connected" || msg.event?.kind === "shared_client_connected") {
+      if (msg.event?.kind === "new_client_detected" || msg.event?.kind === "shared_client_connected") {
         const dedupeKey = `${msg.event.kind}:${msg.event.deviceId ?? `${msg.event.title}:${msg.event.body}`}`;
         if (this.shouldNotifyRemoteClientConnected(dedupeKey)) {
           notifyRemoteClientConnected({

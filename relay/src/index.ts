@@ -370,6 +370,7 @@ export default {
 function isOwnerSecurityPath(pathname: string): boolean {
   return (
     pathname === "/security/devices" ||
+    pathname === "/security/devices/pending" ||
     pathname === "/security/events" ||
     isOwnerSecurityMutationPath(pathname)
   );

@@ -24,6 +24,7 @@ import {
   type DeviceProofInput,
   sanitizeDeviceInfo,
   saveSecurityState,
+  securityDeviceApprovalCode,
   shouldEnforceDeviceProof,
   unblockSecurityDevice,
   verifyDeviceProof,
@@ -44,7 +45,7 @@ import {
   upsertAcceptedShare,
 } from "./sharing.js";
 import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
-import type { SecurityEventRecord, VerifiedDeviceProof } from "./security.js";
+import type { SecurityDeviceRecord, SecurityEventRecord, VerifiedDeviceProof } from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -91,6 +92,9 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (url.pathname === "/security/devices" && request.method === "GET") {
       return this.listSecurityDevices();
+    }
+    if (url.pathname === "/security/devices/pending" && request.method === "GET") {
+      return this.listPendingSecurityDevices();
     }
     if (url.pathname === "/security/events" && request.method === "GET") {
       return this.listSecurityEvents();
@@ -292,11 +296,20 @@ export class RelayObject extends DurableObject<Env> {
         return;
       }
       if (await this.shouldRejectClientRequest(ws)) {
+        const pendingDevice = await this.pendingSecurityDeviceForSocket(ws);
+        const approvalCode = pendingDevice ? securityDeviceApprovalCode(pendingDevice) : undefined;
         this.send(ws, {
           id: parsed.id,
           type: "response",
           status: 403,
-          body: { ok: false, error: "Remote client pending security approval" },
+          body: {
+            ok: false,
+            error: approvalCode
+              ? `Remote client pending security approval. Code ${approvalCode}.`
+              : "Remote client pending security approval",
+            deviceId: pendingDevice?.id,
+            approvalCode,
+          },
         });
         return;
       }
@@ -351,11 +364,14 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
     if (await this.shouldRejectClientRequest(ws)) {
+      const pendingDevice = await this.pendingSecurityDeviceForSocket(ws);
       this.send(ws, {
         id: message.id,
         type: "project_events_error",
         status: 403,
-        message: "Remote client pending security approval",
+        message: pendingDevice
+          ? `Remote client pending security approval. Code ${securityDeviceApprovalCode(pendingDevice)}.`
+          : "Remote client pending security approval",
       });
       return;
     }
@@ -777,12 +793,31 @@ export class RelayObject extends DurableObject<Env> {
     const devices = Object.values(state.devices)
       .filter((device) => !device.id.startsWith("shared:"))
       .sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt))
-      .map((device) => ({
-        ...device,
-        approved: isDeviceApproved(device),
-        blocked: Boolean(device.blockedAt),
-      }));
+      .map((device) => this.securityDeviceResponse(device));
     return json({ ok: true, devices }, 200);
+  }
+
+  private async listPendingSecurityDevices(): Promise<Response> {
+    const state = await loadSecurityState(this.ctx.storage);
+    const liveIds = this.liveOwnerDeviceIds();
+    const devices = [...liveIds]
+      .map((deviceId) => state.devices[deviceId])
+      .filter((device) => device && !isDeviceApproved(device) && !device.blockedAt)
+      .sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt))
+      .map((device) => this.securityDeviceResponse(device, { includeApprovalCode: true }));
+    return json({ ok: true, devices }, 200);
+  }
+
+  private securityDeviceResponse(
+    device: SecurityDeviceRecord,
+    opts: { includeApprovalCode?: boolean } = {},
+  ): SecurityDeviceRecord & { approved: boolean; blocked: boolean; approvalCode?: string } {
+    return {
+      ...device,
+      approved: isDeviceApproved(device),
+      blocked: Boolean(device.blockedAt),
+      approvalCode: opts.includeApprovalCode ? securityDeviceApprovalCode(device) : undefined,
+    };
   }
 
   private async listSecurityEvents(): Promise<Response> {
@@ -792,6 +827,9 @@ export class RelayObject extends DurableObject<Env> {
 
   private async updateSecurityDevice(deviceId: string, action: "approve" | "block" | "unblock"): Promise<Response> {
     const state = await loadSecurityState(this.ctx.storage);
+    if (action === "approve" && !this.isLivePendingSecurityDevice(state, deviceId)) {
+      return json({ ok: false, error: "Device is not currently connected and waiting for approval" }, 409);
+    }
     let event: SecurityEventRecord | null = null;
     const result = (() => {
       if (action === "approve") {
@@ -820,11 +858,7 @@ export class RelayObject extends DurableObject<Env> {
     return json(
       {
         ok: true,
-        device: {
-          ...result.device,
-          approved: isDeviceApproved(result.device),
-          blocked: Boolean(result.device.blockedAt),
-        },
+        device: this.securityDeviceResponse(result.device),
       },
       200,
     );
@@ -1202,6 +1236,32 @@ export class RelayObject extends DurableObject<Env> {
     if (!deviceId) return true;
     const state = await loadSecurityState(this.ctx.storage);
     return !isDeviceApproved(state.devices[deviceId]);
+  }
+
+  private async pendingSecurityDeviceForSocket(ws: WebSocket): Promise<SecurityDeviceRecord | null> {
+    const deviceId = this.clientDeviceIds.get(ws) ?? this.deviceIdFromTags(ws);
+    if (!deviceId) return null;
+    const state = await loadSecurityState(this.ctx.storage);
+    const device = state.devices[deviceId];
+    if (!device || isDeviceApproved(device) || device.blockedAt) return null;
+    return device;
+  }
+
+  private isLivePendingSecurityDevice(state: Awaited<ReturnType<typeof loadSecurityState>>, deviceId: string): boolean {
+    const device = state.devices[deviceId];
+    return Boolean(device && this.liveOwnerDeviceIds().has(deviceId) && !isDeviceApproved(device) && !device.blockedAt);
+  }
+
+  private liveOwnerDeviceIds(): Set<string> {
+    this.rehydrateSockets();
+    const ids = new Set<string>();
+    for (const ws of this.clientSockets) {
+      const tags = this.ctx.getTags(ws);
+      if (tags.some((tag) => tag.startsWith("share:"))) continue;
+      const deviceId = this.clientDeviceIds.get(ws) ?? this.deviceIdFromTags(ws);
+      if (deviceId) ids.add(deviceId);
+    }
+    return ids;
   }
 
   private async recordAndDeliverShareSecurityEvent(

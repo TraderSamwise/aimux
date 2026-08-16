@@ -93,6 +93,7 @@ export interface SecurityEventRecord {
   title: string;
   body: string;
   createdAt: string;
+  approvalCode?: string;
   country?: string;
   userAgent?: string;
 }
@@ -303,6 +304,29 @@ export function isDaemonTokenRevoked(state: SecurityState, issuedAtSeconds: numb
 
 export function isDeviceApproved(device: SecurityDeviceRecord | undefined): boolean {
   return Boolean(device?.approvedAt && !device.blockedAt);
+}
+
+export function securityDeviceApprovalCode(device: SecurityDeviceRecord | SecurityDeviceInfo): string {
+  const input = [
+    device.deviceId,
+    device.kind,
+    device.name ?? "",
+    device.platform ?? "",
+    "publicKeyJwk" in device && device.publicKeyJwk ? JSON.stringify(device.publicKeyJwk) : "",
+  ].join("\n");
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  let value = hash;
+  let code = "";
+  for (let index = 0; index < 6; index += 1) {
+    code += alphabet[value & 31];
+    value >>>= 5;
+  }
+  return `${code.slice(0, 3)}-${code.slice(3)}`;
 }
 
 export function shouldEnforceDeviceProof(policy: DeviceProofPolicy): boolean {
@@ -616,12 +640,25 @@ function buildSecurityEvent(
       userAgent: context.userAgent,
     };
   }
-  const title = kind === "new_client_detected" ? "New remote client detected" : "Remote client connected";
+  if (kind === "new_client_detected") {
+    const approvalCode = securityDeviceApprovalCode(device);
+    return {
+      id: randomBase64Url(16),
+      kind,
+      deviceId: device.id,
+      title: "Remote approval needed",
+      body: `${name}${location} is waiting for approval. Code ${approvalCode}.`,
+      createdAt: now,
+      approvalCode,
+      country: context.country,
+      userAgent: context.userAgent,
+    };
+  }
   return {
     id: randomBase64Url(16),
     kind,
     deviceId: device.id,
-    title,
+    title: "Remote client connected",
     body: `${name}${location}`,
     createdAt: now,
     country: context.country,

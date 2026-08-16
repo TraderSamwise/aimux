@@ -33,16 +33,17 @@ describe("RelayClient runtime compatibility", () => {
     expect(status.lastError).toContain("Node 24+");
   });
 
-  it("turns relay client_connected security events into local notifications", async () => {
+  it("turns relay new_client_detected security events into local approval notifications", async () => {
     const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
     const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
     const message = JSON.stringify({
       type: "security_event",
       event: {
-        kind: "client_connected",
+        kind: "new_client_detected",
         deviceId: "device-1",
-        title: "Remote client connected",
-        body: "iPhone from SG",
+        title: "Remote approval needed",
+        body: "iPhone from SG is waiting for approval. Code ABC-123.",
+        approvalCode: "ABC-123",
         createdAt: new Date().toISOString(),
       },
     });
@@ -50,12 +51,12 @@ describe("RelayClient runtime compatibility", () => {
     await (client as unknown as { handleMessage(data: string): Promise<void> }).handleMessage(message);
 
     expect(notifyRemoteClientConnected).toHaveBeenCalledWith({
-      title: "Remote client connected",
-      body: "iPhone from SG",
+      title: "Remote approval needed",
+      body: "iPhone from SG is waiting for approval. Code ABC-123.",
     });
   });
 
-  it("dedupes repeated client_connected notifications for a bouncing remote client", async () => {
+  it("dedupes repeated new-client notifications for a bouncing remote client", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-30T00:00:00.000Z"));
     const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
@@ -63,10 +64,11 @@ describe("RelayClient runtime compatibility", () => {
     const message = JSON.stringify({
       type: "security_event",
       event: {
-        kind: "client_connected",
+        kind: "new_client_detected",
         deviceId: "device-1",
-        title: "Remote client connected",
-        body: "iPhone from SG",
+        title: "Remote approval needed",
+        body: "iPhone from SG is waiting for approval. Code ABC-123.",
+        approvalCode: "ABC-123",
         createdAt: new Date().toISOString(),
       },
     });
