@@ -45,11 +45,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (isMobile) setSidebarOpen(false);
   }, [isMobile, setSidebarOpen]);
 
-  // Close the mobile drawer on navigation so picking an agent/service dismisses it.
-  useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
-  }, [pathname, isMobile, setSidebarOpen]);
-
   useEffect(() => {
     Animated.timing(translateX, {
       toValue: sidebarOpen ? 0 : -DRAWER_WIDTH,
