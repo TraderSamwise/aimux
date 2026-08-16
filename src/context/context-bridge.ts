@@ -15,6 +15,7 @@ const git = simpleGit();
 
 const MAX_LIVE_MD_BYTES = 50 * 1024;
 const MAX_LIVE_MD_LINES = 200;
+const livePaneSnapshotHashes = new Map<string, string>();
 
 function hasContextPrompt(tool: string, text: string): boolean {
   const normalizedTool = tool.trim().toLowerCase();
@@ -93,6 +94,37 @@ function boundLiveSnapshot(text: string): string {
     .subarray(buf.length - MAX_LIVE_MD_BYTES)
     .toString("utf-8")
     .trim();
+}
+
+export function writeLivePaneSnapshot(session: { id: string; command: string }, text: string): boolean {
+  const normalized = text
+    .split("\n")
+    .map(normalizeTerminalLine)
+    .filter((line) => !isLikelyUiChrome(line))
+    .join("\n")
+    .trim();
+  if (!normalized) return false;
+
+  const hash = simpleHash(normalized);
+  if (livePaneSnapshotHashes.get(session.id) === hash) return false;
+  livePaneSnapshotHashes.set(session.id, hash);
+
+  const sessionDir = join(getContextDir(), session.id);
+  if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+  const snapshotBody = boundLiveSnapshot(normalized);
+  const snapshot = [
+    `# ${session.id} (${session.command}) — Live Snapshot`,
+    "",
+    `Updated: ${new Date().toISOString()}`,
+    "",
+    "Recent terminal output:",
+    "",
+    snapshotBody,
+    "",
+  ].join("\n");
+  writeFileSync(join(sessionDir, "live.md"), snapshot);
+  debugContext("wrote", `${session.id}/live.md`, snapshot.length);
+  return true;
 }
 
 /**
@@ -284,21 +316,7 @@ export class ContextWatcher {
     if (this.paneSnapshotHashes.get(session.id) === hash) return;
     this.paneSnapshotHashes.set(session.id, hash);
 
-    const sessionDir = join(getContextDir(), session.id);
-    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
-    const snapshotBody = boundLiveSnapshot(normalized);
-    const snapshot = [
-      `# ${session.id} (${session.command}) — Live Snapshot`,
-      "",
-      `Updated: ${new Date().toISOString()}`,
-      "",
-      "Recent terminal output:",
-      "",
-      snapshotBody,
-      "",
-    ].join("\n");
-    writeFileSync(join(sessionDir, "live.md"), snapshot);
-    debugContext("wrote", `${session.id}/live.md`, snapshot.length);
+    writeLivePaneSnapshot(session, normalized);
 
     const turns = readHistory(session.id, { lastN: 1 });
     if (promptVisible) {

@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { initPaths } from "../paths.js";
+import { getContextDir, initPaths } from "../paths.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import { loadOfflineTopologySessions } from "./runtime-state.js";
@@ -414,6 +414,9 @@ describe("session runtime prompt submission", () => {
       await readAgentOutput(host, "claude-1");
       await readAgentOutput(host, "claude-1");
 
+      const livePath = join(getContextDir(), "claude-1", "live.md");
+      expect(existsSync(livePath)).toBe(true);
+      expect(readFileSync(livePath, "utf-8")).toContain("pane text");
       expect(tmuxRuntimeManager.captureTarget).toHaveBeenCalledTimes(3);
       // The first poll rechecks ownership; the rest ride the cached target.
       expect(tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledTimes(1);

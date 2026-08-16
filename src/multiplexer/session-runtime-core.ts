@@ -19,7 +19,7 @@ import { messagesFromParsedAgentOutput, type AgentTranscriptMessage } from "../a
 import { parseSgrRichTextLines } from "../rich-text.js";
 import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
-import { captureGitContext } from "../context/context-bridge.js";
+import { captureGitContext, writeLivePaneSnapshot } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import type { SessionTeamMetadata } from "../team.js";
@@ -427,12 +427,13 @@ export async function readAgentOutput(
   activity?: AgentActivityState;
   attention?: AgentAttentionState;
 }> {
-  resolveRunningSession(host, sessionId);
+  const runtime = resolveRunningSession(host, sessionId);
   const outputAnsi = captureSessionPane(host, sessionId, {
     startLine: startLine ?? -120,
     includeEscapes: true,
   });
   const output = stripSgr(outputAnsi);
+  writeLivePaneSnapshot({ id: sessionId, command: host.sessionToolKeys.get(sessionId) ?? runtime.command }, output);
 
   // Read every time rather than cached with the transcript below: activity
   // moves independently of the pane — an agent finishing leaves the last frame
