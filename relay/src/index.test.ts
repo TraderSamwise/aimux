@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import relay from "./index";
+import { mintDaemonToken } from "./daemon-token";
 import type { Env } from "./types";
 
 const authMocks = vi.hoisted(() => ({
@@ -12,6 +13,33 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 vi.mock("./auth.js", () => authMocks);
+
+class FakeR2Bucket {
+  objects = new Map<string, { body: Uint8Array; customMetadata?: Record<string, string> }>();
+
+  async put(
+    key: string,
+    value: ArrayBuffer | ArrayBufferView | string,
+    options?: { customMetadata?: Record<string, string> },
+  ) {
+    const body =
+      typeof value === "string"
+        ? new TextEncoder().encode(value)
+        : value instanceof ArrayBuffer
+          ? new Uint8Array(value)
+          : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    this.objects.set(key, { body, customMetadata: options?.customMetadata });
+    return null;
+  }
+
+  async get(key: string) {
+    return this.objects.get(key) ?? null;
+  }
+
+  async delete(key: string) {
+    this.objects.delete(key);
+  }
+}
 
 function allowHeaderSet(response: Response): Set<string> {
   return new Set(
@@ -208,5 +236,57 @@ describe("relay CORS", () => {
     expect(approve.status).toBe(403);
     expect(await approve.json()).toMatchObject({ ok: false, error: "Device approval requires local CLI auth" });
     expect(objectFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows daemon-token hosted attachment uploads", async () => {
+    const bucket = new FakeR2Bucket();
+    const secret = "relay-secret";
+    const token = await mintDaemonToken("user_owner", secret);
+    const response = await relay.fetch(
+      new Request("https://relay.aimux.app/attachments/hosted", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          filename: "shot.png",
+          mimeType: "image/png",
+          dataBase64: btoa("png-bytes"),
+          sessionId: "codex-1",
+        }),
+      }),
+      {
+        RELAY_TOKEN_SECRET: secret,
+        ATTACHMENTS: bucket as unknown as R2Bucket,
+      } as Env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      hostedAttachment: {
+        contentUrl: expect.stringMatching(
+          /^https:\/\/relay\.aimux\.app\/attachments\/hosted\/ha_[A-Za-z0-9_-]{43}\/content$/,
+        ),
+        sha256: "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+        sizeBytes: 9,
+      },
+    });
+    expect(bucket.objects.size).toBe(1);
+  });
+
+  it("rejects non-daemon hosted attachment uploads", async () => {
+    const response = await relay.fetch(
+      new Request("https://relay.aimux.app/attachments/hosted", {
+        method: "POST",
+        headers: { authorization: "Bearer clerk-token" },
+        body: JSON.stringify({}),
+      }),
+      { ATTACHMENTS: new FakeR2Bucket() as unknown as R2Bucket } as Env,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: "Hosted attachment upload requires local CLI auth",
+    });
   });
 });

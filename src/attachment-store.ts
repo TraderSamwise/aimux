@@ -66,6 +66,7 @@ export interface CreatePathAttachmentInput {
   allowedRoots?: string[];
   /** Required: an attachment with no owner cannot be reached by a remote operator. */
   sessionId: string;
+  hostedAttachment?: HostedAttachmentReference;
 }
 
 const maxUploadBytes = 10 * 1024 * 1024;
@@ -190,6 +191,13 @@ export function createPathAttachment(input: CreatePathAttachmentInput): PublicAt
   if (buffer.length > maxUploadBytes) {
     throw new Error("attachment exceeds 10 MB");
   }
+  const bufferSha256 = createHash("sha256").update(buffer).digest("hex");
+  const hostedAttachment = input.hostedAttachment
+    ? normalizeHostedAttachmentReference(input.hostedAttachment, {
+        sha256: bufferSha256,
+        sizeBytes: buffer.length,
+      })
+    : undefined;
 
   const filename = sanitizeFilename(input.filename || basename(sourcePath));
   const mimeType = normalizeMimeType(input.mimeType || mimeTypeFromFilename(filename));
@@ -206,11 +214,12 @@ export function createPathAttachment(input: CreatePathAttachmentInput): PublicAt
     filename,
     mimeType,
     sizeBytes: buffer.length,
-    sha256: createHash("sha256").update(buffer).digest("hex"),
+    sha256: hostedAttachment?.sha256 ?? bufferSha256,
     createdAt: new Date().toISOString(),
     source: "path",
     contentPath,
     sessionId,
+    ...(hostedAttachment ? { hostedAttachment } : {}),
   };
 
   atomicWrite(contentPath, buffer);

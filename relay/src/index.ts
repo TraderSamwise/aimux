@@ -1,6 +1,6 @@
 import { fetchClerkUserProfile, verifyWsToken } from "./auth.js";
 import { isDaemonToken, mintDaemonToken, verifyDaemonTokenPayload } from "./daemon-token.js";
-import { hostedAttachmentIdFromPath, serveHostedAttachment } from "./attachments.js";
+import { createHostedAttachment, hostedAttachmentIdFromPath, serveHostedAttachment } from "./attachments.js";
 import type { Env } from "./types.js";
 
 export { RelayObject } from "./relay-object.js";
@@ -97,6 +97,9 @@ export default {
     const hostedAttachmentId = hostedAttachmentIdFromPath(url.pathname);
     if (hostedAttachmentId && request.method === "GET") {
       return addCorsHeaders(await serveHostedAttachment(env, hostedAttachmentId));
+    }
+    if (url.pathname === "/attachments/hosted" && request.method === "POST") {
+      return addCorsHeaders(await handleHostedAttachmentUpload(request, env));
     }
 
     if (url.pathname.startsWith("/security/action/")) {
@@ -372,6 +375,70 @@ export default {
     return stub.fetch(new Request(doUrl.toString(), { headers }));
   },
 };
+
+async function handleHostedAttachmentUpload(request: Request, env: Env): Promise<Response> {
+  const authHeader = request.headers.get("Authorization");
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!bearerToken) return corsResponse(JSON.stringify({ ok: false, error: "Missing authorization" }), 401);
+  if (!isDaemonToken(bearerToken)) {
+    return corsResponse(JSON.stringify({ ok: false, error: "Hosted attachment upload requires local CLI auth" }), 403);
+  }
+  if (!env.RELAY_TOKEN_SECRET) {
+    return corsResponse(JSON.stringify({ ok: false, error: "Relay not configured: RELAY_TOKEN_SECRET unset" }), 500);
+  }
+  if (!env.ATTACHMENTS) {
+    return corsResponse(JSON.stringify({ ok: false, error: "Hosted attachments are not configured" }), 503);
+  }
+  let userId: string;
+  try {
+    userId = (await verifyDaemonTokenPayload(bearerToken, env.RELAY_TOKEN_SECRET)).sub;
+  } catch {
+    return corsResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401);
+  }
+  let body: {
+    filename?: unknown;
+    mimeType?: unknown;
+    dataBase64?: unknown;
+    sessionId?: unknown;
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return corsResponse(JSON.stringify({ ok: false, error: "Invalid JSON" }), 400);
+  }
+  if (typeof body.filename !== "string" || typeof body.mimeType !== "string" || typeof body.dataBase64 !== "string") {
+    return corsResponse(JSON.stringify({ ok: false, error: "filename, mimeType, and dataBase64 are required" }), 400);
+  }
+  try {
+    const hosted = await createHostedAttachment(env, request.url, {
+      ownerUserId: userId,
+      sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined,
+      filename: body.filename,
+      mimeType: body.mimeType,
+      dataBase64: body.dataBase64,
+    });
+    if (!hosted) {
+      return corsResponse(JSON.stringify({ ok: false, error: "Hosted attachments are not configured" }), 503);
+    }
+    return corsResponse(
+      JSON.stringify({
+        ok: true,
+        hostedAttachment: {
+          contentUrl: hosted.contentUrl,
+          expiresAt: hosted.expiresAt,
+          sha256: hosted.sha256,
+          sizeBytes: hosted.sizeBytes,
+        },
+      }),
+      200,
+    );
+  } catch (error) {
+    return corsResponse(
+      JSON.stringify({ ok: false, error: error instanceof Error ? error.message : "invalid attachment" }),
+      400,
+    );
+  }
+}
 
 function isOwnerSecurityPath(pathname: string): boolean {
   return (

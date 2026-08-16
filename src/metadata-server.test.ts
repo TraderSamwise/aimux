@@ -4924,6 +4924,42 @@ describe("MetadataServer threads API", () => {
     expect(Buffer.from(await contentRes.arrayBuffer()).toString("utf8")).toBe("published notes");
   });
 
+  it("persists hosted display metadata on published path attachments", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const sourcePath = join(repoRoot, "screen.png");
+    const bytes = Buffer.from("png-bytes");
+    writeFileSync(sourcePath, bytes);
+
+    const publishRes = await fetch(`${base}${PROJECT_API_ROUTES.attachmentsPublish}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        path: sourcePath,
+        sessionId: "codex-1",
+        hostedAttachment: {
+          contentUrl:
+            "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          sizeBytes: bytes.length,
+        },
+      }),
+    });
+    const published = (await publishRes.json()) as {
+      ok: boolean;
+      attachment: { hostedContentUrl?: string; hostedExpiresAt?: string };
+    };
+
+    expect(publishRes.ok).toBe(true);
+    expect(published.attachment).toMatchObject({
+      hostedContentUrl:
+        "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+      hostedExpiresAt: "2099-01-01T00:00:00.000Z",
+    });
+  });
+
   it("rejects remote attempts to publish local path attachments", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

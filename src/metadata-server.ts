@@ -125,6 +125,7 @@ import {
   getAttachmentContent,
   getAttachmentRecord,
   type AttachmentRecord,
+  type HostedAttachmentReference,
 } from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
@@ -1139,6 +1140,18 @@ function bodySharedChatActor(body: unknown): SharedChatActorForPrompt | null {
   const email = trimmedBodyString(record.email);
   if (!displayName && !email) return null;
   return { role, displayName, email };
+}
+
+function hostedAttachmentFromBody(value: unknown): HostedAttachmentReference | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.contentUrl !== "string" || typeof record.expiresAt !== "string") return undefined;
+  return {
+    contentUrl: record.contentUrl,
+    expiresAt: record.expiresAt,
+    sha256: typeof record.sha256 === "string" ? record.sha256 : undefined,
+    sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+  };
 }
 
 function safeSharedChatActorName(actor: SharedChatActorForPrompt): string {
@@ -5646,6 +5659,7 @@ export class MetadataServer {
           path?: unknown;
           sessionId?: unknown;
           sourcePath?: unknown;
+          hostedAttachment?: unknown;
         };
         const rawSessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
         if (!rawSessionId) {
@@ -5685,6 +5699,7 @@ export class MetadataServer {
             sourcePath,
             allowedRoots,
             sessionId: sessionId.value,
+            hostedAttachment: hostedAttachmentFromBody(body.hostedAttachment),
           });
           const record = getAttachmentRecord(attachment.id, sessionId.value);
           if (!record) {
@@ -5743,24 +5758,7 @@ export class MetadataServer {
             mimeType: body.mimeType,
             dataBase64: body.dataBase64,
             sessionId: uploadSession.value,
-            hostedAttachment:
-              body.hostedAttachment &&
-              typeof body.hostedAttachment === "object" &&
-              typeof (body.hostedAttachment as { contentUrl?: unknown }).contentUrl === "string" &&
-              typeof (body.hostedAttachment as { expiresAt?: unknown }).expiresAt === "string"
-                ? {
-                    contentUrl: (body.hostedAttachment as { contentUrl: string }).contentUrl,
-                    expiresAt: (body.hostedAttachment as { expiresAt: string }).expiresAt,
-                    sha256:
-                      typeof (body.hostedAttachment as { sha256?: unknown }).sha256 === "string"
-                        ? (body.hostedAttachment as { sha256: string }).sha256
-                        : undefined,
-                    sizeBytes:
-                      typeof (body.hostedAttachment as { sizeBytes?: unknown }).sizeBytes === "number"
-                        ? (body.hostedAttachment as { sizeBytes: number }).sizeBytes
-                        : undefined,
-                  }
-                : undefined,
+            hostedAttachment: hostedAttachmentFromBody(body.hostedAttachment),
           });
           send(res, 200, { ok: true, attachment });
         } catch (error) {
