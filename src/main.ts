@@ -635,6 +635,12 @@ function parsePortOption(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
+function parseStrictInteger(value: string): number | undefined {
+  if (!/^-?\d+$/.test(value.trim())) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
 function findCoreProject(projects: CoreStatusProject[], projectRoot: string): CoreStatusProject | null {
   const resolvedRoot = pathResolve(projectRoot);
   return projects.find((project) => pathResolve(project.path) === resolvedRoot) ?? null;
@@ -1195,13 +1201,18 @@ hostCmd
   .argument("<sessionId>", "Agent session ID")
   .option("--project <path>", "Project path")
   .option("--start-line <number>", "tmux capture-pane start line", "-120")
-  .action(async (sessionId: string, opts: { project?: string; startLine?: string }) => {
+  .option("--lines <number>", "Number of tail lines to read")
+  .action(async (sessionId: string, opts: { project?: string; startLine?: string; lines?: string }) => {
     await initPaths();
     const projectRoot = opts.project
       ? resolveProjectRoot(pathResolve(opts.project))
       : resolveProjectRoot(process.cwd());
-    const startLine = Number.parseInt(opts.startLine ?? "-120", 10);
-    if (Number.isNaN(startLine)) {
+    const lines = opts.lines === undefined ? undefined : parseStrictInteger(opts.lines);
+    if (lines !== undefined && lines <= 0) {
+      throw new Error("--lines must be a positive integer");
+    }
+    const startLine = lines === undefined ? parseStrictInteger(opts.startLine ?? "-120") : -lines;
+    if (startLine === undefined) {
       throw new Error("--start-line must be an integer");
     }
     const result = await getProjectServiceJson(
@@ -1220,60 +1231,67 @@ hostCmd
   .argument("<sessionId>", "Agent session ID")
   .option("--project <path>", "Project path")
   .option("--start-line <number>", "tmux capture-pane start line", "-120")
+  .option("--lines <number>", "Number of tail lines to stream")
   .option("--interval-ms <number>", "Polling interval in milliseconds", "500")
-  .action(async (sessionId: string, opts: { project?: string; startLine?: string; intervalMs?: string }) => {
-    await initPaths();
-    const projectRoot = opts.project
-      ? resolveProjectRoot(pathResolve(opts.project))
-      : resolveProjectRoot(process.cwd());
-    const startLine = Number.parseInt(opts.startLine ?? "-120", 10);
-    const intervalMs = Number.parseInt(opts.intervalMs ?? "500", 10);
-    if (Number.isNaN(startLine)) {
-      throw new Error("--start-line must be an integer");
-    }
-    if (Number.isNaN(intervalMs) || intervalMs < 100) {
-      throw new Error("--interval-ms must be an integer >= 100");
-    }
+  .action(
+    async (sessionId: string, opts: { project?: string; startLine?: string; lines?: string; intervalMs?: string }) => {
+      await initPaths();
+      const projectRoot = opts.project
+        ? resolveProjectRoot(pathResolve(opts.project))
+        : resolveProjectRoot(process.cwd());
+      const lines = opts.lines === undefined ? undefined : parseStrictInteger(opts.lines);
+      if (lines !== undefined && lines <= 0) {
+        throw new Error("--lines must be a positive integer");
+      }
+      const startLine = lines === undefined ? parseStrictInteger(opts.startLine ?? "-120") : -lines;
+      const intervalMs = parseStrictInteger(opts.intervalMs ?? "500");
+      if (startLine === undefined) {
+        throw new Error("--start-line must be an integer");
+      }
+      if (intervalMs === undefined || intervalMs < 100) {
+        throw new Error("--interval-ms must be an integer >= 100");
+      }
 
-    const endpoint = await getProjectServiceEndpoint(projectRoot);
-    const controller = new AbortController();
-    const shutdown = () => controller.abort();
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
+      const endpoint = await getProjectServiceEndpoint(projectRoot);
+      const controller = new AbortController();
+      const shutdown = () => controller.abort();
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
 
-    try {
-      const res = await fetch(
-        `http://${endpoint.host}:${endpoint.port}/agents/output/stream?sessionId=${encodeURIComponent(
-          sessionId,
-        )}&startLine=${encodeURIComponent(String(startLine))}&intervalMs=${encodeURIComponent(String(intervalMs))}`,
-        {
-          signal: controller.signal,
-          headers: {
-            accept: "text/event-stream",
+      try {
+        const res = await fetch(
+          `http://${endpoint.host}:${endpoint.port}/agents/output/stream?sessionId=${encodeURIComponent(
+            sessionId,
+          )}&startLine=${encodeURIComponent(String(startLine))}&intervalMs=${encodeURIComponent(String(intervalMs))}`,
+          {
+            signal: controller.signal,
+            headers: {
+              accept: "text/event-stream",
+            },
           },
-        },
-      );
-      if (!res.ok || !res.body) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json?.error || `request failed: ${res.status}`);
-      }
+        );
+        if (!res.ok || !res.body) {
+          const json = await res.json().catch(() => ({}));
+          throw new Error(json?.error || `request failed: ${res.status}`);
+        }
 
-      const decoder = new TextDecoder();
-      const textHandler = createAgentOutputSseTextHandler(sessionId, (text) => process.stdout.write(text));
+        const decoder = new TextDecoder();
+        const textHandler = createAgentOutputSseTextHandler(sessionId, (text) => process.stdout.write(text));
 
-      for await (const chunk of res.body) {
-        textHandler.pushChunkText(decoder.decode(chunk, { stream: true }));
+        for await (const chunk of res.body) {
+          textHandler.pushChunkText(decoder.decode(chunk, { stream: true }));
+        }
+      } catch (error) {
+        if ((error as Error).name === "AbortError") {
+          return;
+        }
+        throw error;
+      } finally {
+        process.off("SIGINT", shutdown);
+        process.off("SIGTERM", shutdown);
       }
-    } catch (error) {
-      if ((error as Error).name === "AbortError") {
-        return;
-      }
-      throw error;
-    } finally {
-      process.off("SIGINT", shutdown);
-      process.off("SIGTERM", shutdown);
-    }
-  });
+    },
+  );
 
 hostCmd.action(() => {
   console.log("Use `aimux host status` or `aimux host --help` to inspect project services.");

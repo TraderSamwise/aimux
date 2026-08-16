@@ -964,6 +964,48 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("serves host agent-read --lines through the fast path", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "pane output\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "agent-read", "claude-1", "--project=/repo", "--lines", "200"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("pane output\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("startLine=-200\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves host agent-read --lines= through the fast path", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "pane output\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "agent-read", "claude-1", "--project", "/repo", "--lines=160"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("pane output\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("startLine=-160\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("lets the Node launcher render host agent-read help even when the daemon matches", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "agent-read", "--help"], { NODE_EXIT: "42" });
+
+    expect(result.status).toBe(42);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js host agent-read --help\n`,
+    );
+    expect(existsSync(fixture.curlLog)).toBe(false);
+  });
+
   it("falls back to the Node launcher for host agent-read when daemon health is stale", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);

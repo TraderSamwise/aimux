@@ -105,6 +105,15 @@ aimux_args_include_help() {
   return 1
 }
 
+aimux_is_positive_integer() {
+  case "${1:-}" in
+    '' | *[!0-9]*)
+      return 1
+      ;;
+  esac
+  [ "$1" -gt 0 ] 2>/dev/null
+}
+
 aimux_metadata_help_requested() {
   [ "$#" -eq 1 ] && return 0
   [ "${2:-}" = "help" ] && return 0
@@ -470,6 +479,8 @@ aimux_try_host_agent_read() {
       --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
       --start-line) shift; aimux_require_inline_value "${1:-}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
       --start-line=*) aimux_require_inline_value "${1#--start-line=}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
+      --lines) shift; aimux_require_inline_value "${1:-}" || return 1; aimux_is_positive_integer "$AIMUX_ARG_VALUE" || return 1; start_line="-$AIMUX_ARG_VALUE" ;;
+      --lines=*) aimux_require_inline_value "${1#--lines=}" || return 1; aimux_is_positive_integer "$AIMUX_ARG_VALUE" || return 1; start_line="-$AIMUX_ARG_VALUE" ;;
       *) return 1 ;;
     esac
     shift
@@ -504,6 +515,8 @@ aimux_try_host_agent_stream() {
       --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
       --start-line) shift; aimux_require_inline_value "${1:-}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
       --start-line=*) aimux_require_inline_value "${1#--start-line=}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
+      --lines) shift; aimux_require_inline_value "${1:-}" || return 1; aimux_is_positive_integer "$AIMUX_ARG_VALUE" || return 1; start_line="-$AIMUX_ARG_VALUE" ;;
+      --lines=*) aimux_require_inline_value "${1#--lines=}" || return 1; aimux_is_positive_integer "$AIMUX_ARG_VALUE" || return 1; start_line="-$AIMUX_ARG_VALUE" ;;
       --interval-ms) shift; aimux_require_inline_value "${1:-}" || return 1; interval_ms="$AIMUX_ARG_VALUE" ;;
       --interval-ms=*) aimux_require_inline_value "${1#--interval-ms=}" || return 1; interval_ms="$AIMUX_ARG_VALUE" ;;
       *) return 1 ;;
@@ -2602,14 +2615,18 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "host agent-read")
-    if aimux_try_host_agent_read "$@"; then
+    if aimux_args_include_help "$@"; then
+      :
+    elif aimux_try_host_agent_read "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   "host agent-stream")
-    if aimux_try_host_agent_stream "$@"; then
+    if aimux_args_include_help "$@"; then
+      :
+    elif aimux_try_host_agent_stream "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
