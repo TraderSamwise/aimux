@@ -749,6 +749,22 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(stripAnsi(without.frame)).not.toContain("v1.2.3");
   });
 
+  it("shows a compact hidden-agent reminder in the header", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({ hideOfflineAgents: true, hiddenOfflineAgentCount: 7 }),
+      120,
+      40,
+    );
+    expect(stripAnsi(frame)).toContain("aimux · 7 hidden — agent multiplexer");
+
+    const inactive = renderDashboardFrame(
+      baseDashboardViewModel({ hideOfflineAgents: false, hiddenOfflineAgentCount: 7 }),
+      120,
+      40,
+    );
+    expect(stripAnsi(inactive.frame)).not.toContain("hidden");
+  });
+
   it("numbers agents within a worktree group for quick jump", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({

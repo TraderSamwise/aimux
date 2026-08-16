@@ -157,6 +157,7 @@ export interface DashboardViewModel {
   worktreeRemoval?: DashboardWorktreeRemovalInfo;
   operationFailures: DashboardOperationFailure[];
   hideOfflineAgents?: boolean;
+  hiddenOfflineAgentCount?: number;
   detailsPaneVisible: boolean;
   scrollOffset: number;
   derivedStatusLabel: typeof derivedStatusLabel;
@@ -185,6 +186,7 @@ export class Dashboard {
     worktreeRemoval: undefined,
     operationFailures: [],
     hideOfflineAgents: false,
+    hiddenOfflineAgentCount: 0,
     detailsPaneVisible: true,
     scrollOffset: 0,
     derivedStatusLabel,

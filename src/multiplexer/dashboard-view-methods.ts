@@ -26,7 +26,7 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
-import { filterDashboardVisibleModel } from "../dashboard/visibility.js";
+import { filterDashboardVisibleModel, isDashboardSessionOffline } from "../dashboard/visibility.js";
 
 function buildStaticDashboardRenderErrorFrame(message: string, cols: number, rows: number): string {
   const width = Math.max(24, Math.min(cols, 120));
@@ -186,6 +186,9 @@ export const dashboardViewMethods = {
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],
         hideOfflineAgents: this.dashboardState.hideOfflineAgents,
+        hiddenOfflineAgentCount: this.dashboardState.hideOfflineAgents
+          ? rawDashSessions.filter((session: any) => isDashboardSessionOffline(session)).length
+          : 0,
         worktreeRemoval: this.worktreeRemovalJob
           ? {
               path: this.worktreeRemovalJob.path,
