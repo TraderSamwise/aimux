@@ -1,15 +1,3 @@
-export const WORKTREE_COLOR_PALETTE = [
-  { hex: "#00afd7", xterm: "38;5;38" },
-  { hex: "#5faf5f", xterm: "38;5;71" },
-  { hex: "#d7af5f", xterm: "38;5;179" },
-  { hex: "#d787d7", xterm: "38;5;176" },
-  { hex: "#5fafff", xterm: "38;5;75" },
-  { hex: "#ff875f", xterm: "38;5;209" },
-] as const;
-
-export const WORKTREE_COLOR_HEXES = WORKTREE_COLOR_PALETTE.map((tone) => tone.hex);
-export const WORKTREE_COLOR_XTERM_CODES = WORKTREE_COLOR_PALETTE.map((tone) => tone.xterm);
-
 export interface WorktreeColorInput {
   path?: string | null;
   projectRoot?: string | null;
@@ -44,20 +32,77 @@ export function stableStringHash(value: string): number {
   return hash >>> 0;
 }
 
-export function worktreeColorIndexForKey(key: string | undefined, fallbackIndex = 0): number {
-  const size = WORKTREE_COLOR_PALETTE.length;
-  if (!key) return ((fallbackIndex % size) + size) % size;
-  return stableStringHash(key) % size;
+export interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
 }
 
-export function worktreeColorIndex(input: WorktreeColorInput, fallbackIndex = 0): number {
-  return worktreeColorIndexForKey(worktreeColorKey(input), fallbackIndex);
+function hueToRgb(p: number, q: number, t: number): number {
+  let next = t;
+  if (next < 0) next += 1;
+  if (next > 1) next -= 1;
+  if (next < 1 / 6) return p + (q - p) * 6 * next;
+  if (next < 1 / 2) return q;
+  if (next < 2 / 3) return p + (q - p) * (2 / 3 - next) * 6;
+  return p;
 }
 
-export function worktreeColorHex(input: WorktreeColorInput, fallbackIndex = 0): string {
-  return WORKTREE_COLOR_HEXES[worktreeColorIndex(input, fallbackIndex)]!;
+function hslToRgb(hue: number, saturation: number, lightness: number): RgbColor {
+  const h = ((hue % 360) + 360) / 360;
+  const s = Math.max(0, Math.min(100, saturation)) / 100;
+  const l = Math.max(0, Math.min(100, lightness)) / 100;
+  if (s === 0) {
+    const value = Math.round(l * 255);
+    return { r: value, g: value, b: value };
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return {
+    r: Math.round(hueToRgb(p, q, h + 1 / 3) * 255),
+    g: Math.round(hueToRgb(p, q, h) * 255),
+    b: Math.round(hueToRgb(p, q, h - 1 / 3) * 255),
+  };
 }
 
-export function worktreeColorXterm(input: WorktreeColorInput, fallbackIndex = 0): string {
-  return WORKTREE_COLOR_XTERM_CODES[worktreeColorIndex(input, fallbackIndex)]!;
+function rgbToCode({ r, g, b }: RgbColor): number {
+  return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);
+}
+
+export function rgbFromWorktreeColorCode(code: number): RgbColor {
+  return {
+    r: (code >> 16) & 0xff,
+    g: (code >> 8) & 0xff,
+    b: code & 0xff,
+  };
+}
+
+export function worktreeColorCodeForKey(key: string | undefined, fallbackKey = "default"): number {
+  const hash = stableStringHash(key ?? fallbackKey);
+  const hue = hash % 360;
+  const saturation = 62 + ((hash >>> 9) % 19);
+  const lightness = 56 + ((hash >>> 14) % 11);
+  return rgbToCode(hslToRgb(hue, saturation, lightness));
+}
+
+export function worktreeColorCode(input: WorktreeColorInput): number {
+  return worktreeColorCodeForKey(worktreeColorKey(input));
+}
+
+export function worktreeColorHexForCode(code: number): string {
+  const { r, g, b } = rgbFromWorktreeColorCode(code);
+  return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function worktreeColorHex(input: WorktreeColorInput): string {
+  return worktreeColorHexForCode(worktreeColorCode(input));
+}
+
+export function worktreeColorAnsiForCode(code: number): string {
+  const { r, g, b } = rgbFromWorktreeColorCode(code);
+  return `38;2;${r};${g};${b}`;
+}
+
+export function worktreeColorAnsi(input: WorktreeColorInput): string {
+  return worktreeColorAnsiForCode(worktreeColorCode(input));
 }

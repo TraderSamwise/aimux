@@ -2,7 +2,7 @@ import { basename, resolve as pathResolve } from "node:path";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 import type { ExposeScopeItem, ExposeScopeView, ExposeSublabel } from "./expose-model.js";
 import { listWorktrees, type WorktreeInfo } from "../worktree.js";
-import { worktreeColorIndex } from "../worktree-colors.js";
+import { worktreeColorCode } from "../worktree-colors.js";
 
 export interface ExposeOrderingOptions {
   worktreeOrderByProjectRoot?: Record<string, string[]>;
@@ -12,7 +12,7 @@ export interface ExposeTileContext {
   worktree: string;
   /** Only in the global scope, where project and worktree both identify the tile. */
   project?: string;
-  /** Index into Exposé's worktree tone palette. */
+  /** Deterministic 24-bit RGB worktree identity color. */
   tone?: number;
 }
 
@@ -130,7 +130,7 @@ export function assignWorktreeTones(items: ExposeScopeItem[], projectRoot: strin
   for (const item of items) {
     const root = item.projectRoot ?? projectRoot;
     const key = worktreeToneKey(item, root);
-    if (!tones.has(key)) tones.set(key, worktreeColorIndex({ path: key, projectRoot: root }));
+    if (!tones.has(key)) tones.set(key, worktreeColorCode({ path: key, projectRoot: root }));
   }
   return tones;
 }

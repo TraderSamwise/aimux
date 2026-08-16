@@ -11,7 +11,7 @@ import { TerminalHost } from "../terminal-host.js";
 import { truncateAnsi, wrapText } from "../tui/render/text.js";
 import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
 import { style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
-import { WORKTREE_COLOR_XTERM_CODES } from "../worktree-colors.js";
+import { worktreeColorAnsiForCode } from "../worktree-colors.js";
 import {
   focusExposeItem,
   initialExposeScope,
@@ -205,12 +205,13 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   };
 }
 
-// Tile titles tint their worktree from a small palette. These are deliberately distinct
-// from STATE_BORDER's meaning: a tone groups, it does not report state.
+// Tile titles tint their worktree from a deterministic identity color. This is
+// deliberately distinct from STATE_BORDER's meaning: a tone groups, it does not
+// report state.
 /** Bold text in a grouping tone; `undefined` falls back to the plain strong tone. */
 function toned(text: string, tone: number | undefined): string {
   if (tone === undefined) return style(text, "strong");
-  return `\x1b[1;${WORKTREE_COLOR_XTERM_CODES[tone % WORKTREE_COLOR_XTERM_CODES.length]}m${text}${RESET}`;
+  return `\x1b[1;${worktreeColorAnsiForCode(tone)}m${text}${RESET}`;
 }
 
 // 256-color tile borders tinted to the agent's state, matching the chip/pill tone from

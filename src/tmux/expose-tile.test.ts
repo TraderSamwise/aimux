@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
-import { worktreeColorIndex } from "../worktree-colors.js";
+import { worktreeColorAnsiForCode, worktreeColorCode } from "../worktree-colors.js";
 import { assignWorktreeTones, type ExposeTileContext } from "./expose-ordering.js";
 import { buildTileHeader, drawTile, fitHeaderRows, matchClientSize } from "./expose.js";
 
@@ -197,19 +197,23 @@ describe("drawTile", () => {
   });
 
   it("tints the worktree by its group tone, leaving the project prefix muted", () => {
-    const out = renderTile(60, false, needs, { project: "aimux", worktree: "beautify-tui", tone: 1 });
-    // Bold in BAND_TONES[1]; the badge borrows the same tone when unselected.
-    expect(out).toContain("\x1b[1;38;5;71mbeautify-tui\x1b[0m");
-    expect(out).toContain("\x1b[1;38;5;71m3\x1b[0m");
+    const tone = worktreeColorCode({ path: "/repo/.aimux/worktrees/beautify-tui" });
+    const ansi = worktreeColorAnsiForCode(tone);
+    const out = renderTile(60, false, needs, { project: "aimux", worktree: "beautify-tui", tone });
+    // The badge borrows the same truecolor tone when unselected.
+    expect(out).toContain(`\x1b[1;${ansi}mbeautify-tui\x1b[0m`);
+    expect(out).toContain(`\x1b[1;${ansi}m3\x1b[0m`);
     expect(out).toContain("\x1b[2maimux / \x1b[0m");
   });
 
   it("keeps the badge on the accent when selected so focus never reads as a group tone", () => {
-    const out = renderTile(60, true, needs, { project: "aimux", worktree: "beautify-tui", tone: 1 });
+    const tone = worktreeColorCode({ path: "/repo/.aimux/worktrees/beautify-tui" });
+    const ansi = worktreeColorAnsiForCode(tone);
+    const out = renderTile(60, true, needs, { project: "aimux", worktree: "beautify-tui", tone });
     expect(out).toContain("\x1b[1;33m3\x1b[0m");
-    expect(out).not.toContain("\x1b[1;38;5;71m3\x1b[0m");
+    expect(out).not.toContain(`\x1b[1;${ansi}m3\x1b[0m`);
     // The worktree still carries the tone; only the badge is claimed by selection.
-    expect(out).toContain("\x1b[1;38;5;71mbeautify-tui\x1b[0m");
+    expect(out).toContain(`\x1b[1;${ansi}mbeautify-tui\x1b[0m`);
   });
 
   it("falls back to a bold agent name when the scope has no worktree to show", () => {
@@ -223,7 +227,13 @@ describe("drawTile", () => {
   it("keeps the worktree in the rule under width pressure and drops the agent name below", () => {
     // The reverse of the old priority: the worktree now holds the rule (truncating if
     // it must) and the agent name is what gets a wrapped row.
-    const out = renderTile(34, true, needs, { worktree: "a-rather-long-worktree-name", tone: 0 }, 6);
+    const out = renderTile(
+      34,
+      true,
+      needs,
+      { worktree: "a-rather-long-worktree-name", tone: worktreeColorCode({ name: "a-rather-long-worktree-name" }) },
+      6,
+    );
     const rows = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
     expect(stripAnsi(rows[0]!)).toContain("a-rather-long-worktree-…");
     expect(stripAnsi(rows[1]!)).toContain("claude(coder)");
@@ -282,7 +292,7 @@ describe("assignWorktreeTones", () => {
   });
 
   it("falls back to the project root when an item carries no worktree path", () => {
-    expect(assignWorktreeTones([item("")], "/p").get("/p")).toBe(worktreeColorIndex({ path: "/p", projectRoot: "/p" }));
+    expect(assignWorktreeTones([item("")], "/p").get("/p")).toBe(worktreeColorCode({ path: "/p", projectRoot: "/p" }));
   });
 
   it("keeps later worktrees stable when earlier worktrees disappear", () => {

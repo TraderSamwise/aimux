@@ -4,7 +4,7 @@ import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "..
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionRecencyAnchor } from "../../session-recency.js";
 import { sanitizeExposePreviewOutput } from "../../tmux/expose-preview-sanitize.js";
-import { worktreeColorXterm } from "../../worktree-colors.js";
+import { worktreeColorAnsi } from "../../worktree-colors.js";
 import { composeScreenFrame } from "../render/screen-frame.js";
 import { center, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
 import {
@@ -282,7 +282,7 @@ interface WorktreeLike {
 }
 
 function worktreeTitle(text: string, worktree: { path?: string | null; name?: string | null }): string {
-  const tone = worktreeColorXterm({ path: worktree.path, name: worktree.name });
+  const tone = worktreeColorAnsi({ path: worktree.path, name: worktree.name });
   return `\x1b[1;${tone}m${text}\x1b[0m`;
 }
 

@@ -1,12 +1,5 @@
 import type { WorktreeBucket } from "@/lib/desktop-state";
-import {
-  WORKTREE_COLOR_HEXES,
-  worktreeColorHex,
-  type WorktreeColorInput,
-} from "../../src/worktree-colors";
-
-/** The same six deterministic worktree identity tones used by the TUI, as hex. */
-export const WORKTREE_TONES = WORKTREE_COLOR_HEXES;
+import { worktreeColorHex, type WorktreeColorInput } from "../../src/worktree-colors";
 
 export interface WorktreeIdentity {
   name: string;

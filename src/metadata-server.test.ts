@@ -29,7 +29,7 @@ import {
   TMUX_RUNTIME_OWNER_OPTION,
 } from "./runtime-owner.js";
 import { loadLastUsedState } from "./last-used.js";
-import { worktreeColorIndex } from "./worktree-colors.js";
+import { worktreeColorCode } from "./worktree-colors.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -2379,7 +2379,7 @@ describe("MetadataServer threads API", () => {
       expect(exposeBody.items.map((item) => item.target.windowId)).toEqual(["@7", "@8", "@9"]);
       expect(exposeBody.items[0]?.exposeContext).toEqual({
         worktree: "main",
-        tone: worktreeColorIndex({ path: repoRoot, projectRoot: repoRoot }),
+        tone: worktreeColorCode({ path: repoRoot, projectRoot: repoRoot }),
       });
       expect(exposeBody.items[0]?.exposeStatus).toBeUndefined();
     } finally {
