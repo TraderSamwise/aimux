@@ -70,7 +70,7 @@ export function formatPlainTextForDisplay(
   const formatted: string[] = [];
   let previousWasDivider = false;
 
-  for (const line of text.split("\n")) {
+  for (const line of trimTrailingTerminalChromeLines(text.split("\n"))) {
     if (isDividerLine(line)) {
       if (previousWasDivider) continue;
       const indent = line.match(/^\s*/)?.[0] ?? "";
@@ -97,7 +97,7 @@ export function formatRichTextSpansForDisplay(
   const formatted: HistoryTextSpan[][] = [];
   let previousWasDivider = false;
 
-  for (const lineSpans of splitRichTextLines(spans)) {
+  for (const lineSpans of trimTrailingTerminalChromeSpanLines(splitRichTextLines(spans))) {
     const line = richTextLineText(lineSpans);
     if (isDividerLine(line)) {
       if (previousWasDivider) continue;
@@ -140,6 +140,62 @@ function joinRichTextLines(lines: readonly (readonly HistoryTextSpan[])[]): Hist
     next.push(...line);
   });
   return next;
+}
+
+function trimTrailingTerminalChromeLines(lines: readonly string[]): string[] {
+  let end = lines.length;
+  let sawChrome = false;
+
+  while (end > 0) {
+    const line = lines[end - 1] ?? "";
+    if (!line.trim()) {
+      if (!sawChrome) break;
+      end -= 1;
+      continue;
+    }
+    if (!isTrailingTerminalChromeLine(line)) break;
+    sawChrome = true;
+    end -= 1;
+  }
+
+  return sawChrome ? lines.slice(0, end) : [...lines];
+}
+
+function trimTrailingTerminalChromeSpanLines(
+  lines: readonly (readonly HistoryTextSpan[])[],
+): HistoryTextSpan[][] {
+  let end = lines.length;
+  let sawChrome = false;
+
+  while (end > 0) {
+    const line = lines[end - 1] ?? [];
+    const text = richTextLineText(line);
+    if (!text.trim()) {
+      if (!sawChrome) break;
+      end -= 1;
+      continue;
+    }
+    if (!isTrailingTerminalChromeLine(text)) break;
+    sawChrome = true;
+    end -= 1;
+  }
+
+  return lines.slice(0, end).map((line) => [...line]);
+}
+
+function isTrailingTerminalChromeLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  return (
+    isDividerLine(trimmed) ||
+    isDividerContinuationLine(trimmed) ||
+    /^[›>❯]$/.test(trimmed) ||
+    /^[—–-]\s*Worked\s+for\s+\d+(?:ms|s|m|h)\b/i.test(trimmed) ||
+    /^\d+\s+background terminals? running\b.*\/ps\b.*\/stop\b/i.test(trimmed) ||
+    /^gpt-[\w.-]+\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
+    /^claude\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
+    /bypass permissions|shift\+tab|to cycle/i.test(trimmed)
+  );
 }
 
 function richTextLineText(spans: readonly HistoryTextSpan[]): string {

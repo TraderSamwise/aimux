@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COMPOSER_SEND_TIMEOUT_MESSAGE,
+  formatComposerSendFailure,
   getComposerSendText,
   normalizeComposerDraft,
   shouldSubmitComposerKey,
@@ -54,5 +56,13 @@ describe("composer protocol", () => {
         sendBusy: true,
       }),
     ).toBeNull();
+  });
+
+  it("formats send failure states for the composer", () => {
+    expect(COMPOSER_SEND_TIMEOUT_MESSAGE).toContain("not confirmed");
+    expect(formatComposerSendFailure(new Error("offline"))).toBe("Send failed: offline");
+    expect(formatComposerSendFailure("network down")).toBe("Send failed: network down");
+    expect(formatComposerSendFailure("")).toBe("Send failed. Check connection and retry.");
+    expect(formatComposerSendFailure(undefined)).toBe("Send failed. Check connection and retry.");
   });
 });

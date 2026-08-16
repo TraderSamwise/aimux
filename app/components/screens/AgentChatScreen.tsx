@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   FlatList,
   Image,
@@ -29,6 +30,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ArrowUp,
   ChevronLeft,
+  CircleAlert,
   Columns2,
   MessageSquare,
   Plus,
@@ -66,7 +68,12 @@ import {
   type SharedSessionSummary,
 } from "@/lib/api";
 import { pickAttachment, type PickedAttachment } from "@/lib/image-picker";
-import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
+import {
+  COMPOSER_SEND_TIMEOUT_MESSAGE,
+  formatComposerSendFailure,
+  getComposerSendText,
+  shouldSubmitComposerKey,
+} from "@/lib/composer-protocol";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -109,8 +116,8 @@ import {
 import type { ChatMessage } from "@/lib/events";
 
 const SPLIT_VIEW_MIN_WIDTH = 900;
-const NARROW_TERMINAL_DIVIDER_WIDTH = 36;
-const WIDE_TERMINAL_DIVIDER_WIDTH = 96;
+const NARROW_TERMINAL_DIVIDER_WIDTH = Platform.OS === "web" ? 36 : 24;
+const WIDE_TERMINAL_DIVIDER_WIDTH = Platform.OS === "web" ? 96 : 36;
 const MIN_TERMINAL_DIVIDER_WIDTH = 24;
 const TERMINAL_HORIZONTAL_PADDING = 32;
 const TERMINAL_FONT_SIZE = Platform.OS === "web" ? 11.6 : 10.8;
@@ -120,9 +127,10 @@ const APPROX_TERMINAL_CHAR_WIDTH = 7.2;
 const CHAT_SCROLL_HORIZONTAL_PADDING = 32;
 const CHAT_ASSISTANT_BUBBLE_MAX_RATIO = 0.9;
 const CHAT_MESSAGE_BUBBLE_HORIZONTAL_PADDING = 24;
-const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 8.8;
-const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 2;
+const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 12.4;
+const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
 const MIN_CHAT_DIVIDER_WIDTH = 16;
+const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 const SCROLL_BOTTOM_EPSILON = 24;
@@ -195,10 +203,30 @@ type PendingAttachment = PickedAttachment & {
   uploadedAttachmentId?: string;
 };
 
+type ComposerDraftSnapshot = {
+  draft: string;
+  inputContentHeight: number;
+  pendingAttachments: PendingAttachment[];
+};
+
 type PendingComposerAck = {
   baselineUserMessageCount: number;
   id: number;
 };
+
+const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
+
+function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
+  if (!key) return;
+  if (snapshot.draft.length === 0 && snapshot.pendingAttachments.length === 0) {
+    composerDraftsByKey.delete(key);
+    return;
+  }
+  composerDraftsByKey.set(key, {
+    ...snapshot,
+    pendingAttachments: [...snapshot.pendingAttachments],
+  });
+}
 
 type ScrollPaneKey = "chat" | "terminal";
 
@@ -522,6 +550,12 @@ export default function ChatScreen() {
     chat: null,
     terminal: null,
   });
+  const activeComposerDraftKeyRef = useRef<string | null>(null);
+  const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
+    draft: "",
+    inputContentHeight: COMPOSER_INPUT_MIN_HEIGHT,
+    pendingAttachments: [],
+  });
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ??
       (activeShareForRoute ? sessionFromActiveShare(activeShareForRoute) : null))
@@ -534,6 +568,51 @@ export default function ChatScreen() {
     session !== null &&
     session.status !== "offline" &&
     session.status !== "exited";
+  const composerDraftKey = useMemo(() => {
+    if (!sessionId) return null;
+    if (activeShareForRoute) {
+      return [
+        "share",
+        activeShareForRoute.ownerUserId,
+        activeShareForRoute.shareId,
+        activeShareForRoute.projectRoot,
+        sessionId,
+      ].join(":");
+    }
+    if (stateProjectPath) return ["project", stateProjectPath, sessionId].join(":");
+    return ["session", sessionId].join(":");
+  }, [activeShareForRoute, sessionId, stateProjectPath]);
+
+  useEffect(() => {
+    composerDraftSnapshotRef.current = {
+      draft,
+      inputContentHeight: composerInputContentHeight,
+      pendingAttachments,
+    };
+  }, [composerInputContentHeight, draft, pendingAttachments]);
+
+  useEffect(() => {
+    const previousKey = activeComposerDraftKeyRef.current;
+    if (previousKey && previousKey !== composerDraftKey) {
+      rememberComposerDraft(previousKey, composerDraftSnapshotRef.current);
+    }
+
+    activeComposerDraftKeyRef.current = composerDraftKey;
+    const saved = composerDraftKey ? composerDraftsByKey.get(composerDraftKey) : undefined;
+    setDraft(saved?.draft ?? "");
+    setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
+    setComposerInputContentHeight(saved?.inputContentHeight ?? COMPOSER_INPUT_MIN_HEIGHT);
+    setPendingComposerAck(null);
+    setSendBusy(false);
+    sendBusyRef.current = false;
+    setSendError(null);
+  }, [composerDraftKey]);
+
+  useEffect(() => {
+    return () => {
+      rememberComposerDraft(activeComposerDraftKeyRef.current, composerDraftSnapshotRef.current);
+    };
+  }, []);
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
@@ -722,16 +801,18 @@ export default function ChatScreen() {
     setPendingAttachments([]);
     setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     setPendingComposerAck(null);
-  }, [pendingComposerAck, userMessageCount]);
+    if (composerDraftKey) composerDraftsByKey.delete(composerDraftKey);
+  }, [composerDraftKey, pendingComposerAck, userMessageCount]);
 
   useEffect(() => {
     if (!pendingComposerAck) return;
     const pendingId = pendingComposerAck.id;
     const timer = setTimeout(() => {
-      setDraft("");
-      setPendingAttachments([]);
-      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
-      setPendingComposerAck((current) => (current?.id === pendingId ? null : current));
+      setPendingComposerAck((current) => {
+        if (current?.id !== pendingId) return current;
+        setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
+        return null;
+      });
     }, COMPOSER_SEND_ACK_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [pendingComposerAck]);
@@ -860,7 +941,10 @@ export default function ChatScreen() {
   );
   const chatDividerWidth = Math.max(
     MIN_CHAT_DIVIDER_WIDTH,
-    Math.floor(chatBubbleTextWidth / CHAT_DIVIDER_APPROX_CHAR_WIDTH) - CHAT_DIVIDER_WIDTH_SAFETY,
+    Math.min(
+      MAX_CHAT_DIVIDER_WIDTH,
+      Math.floor(chatBubbleTextWidth / CHAT_DIVIDER_APPROX_CHAR_WIDTH) - CHAT_DIVIDER_WIDTH_SAFETY,
+    ),
   );
   const terminalLines = useMemo(
     () =>
@@ -1259,7 +1343,7 @@ export default function ChatScreen() {
       setPendingComposerAck(null);
       setDraft(text);
       setPendingAttachments(attachments);
-      setSendError(err instanceof Error ? err.message : String(err));
+      setSendError(formatComposerSendFailure(err));
     } finally {
       sendBusyRef.current = false;
       setSendBusy(false);
@@ -1351,6 +1435,7 @@ export default function ChatScreen() {
   function handleDraftChange(text: string) {
     setDraft(text);
     if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
+    if (sendError) setSendError(null);
   }
 
   useEffect(() => {
@@ -1630,9 +1715,25 @@ export default function ChatScreen() {
                     }
                     onPress={handleAttachAttachment}
                   />
-                  <View className="flex-1 px-1">
-                    {activityLabel ? (
-                      <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
+                  <View className="min-w-0 flex-1 px-1">
+                    {sendError ? (
+                      <View className="min-w-0 flex-row items-center gap-1.5">
+                        <CircleAlert size={13} color="#f87171" />
+                        <Text className="min-w-0 flex-1 text-xs text-destructive" numberOfLines={1}>
+                          {sendError}
+                        </Text>
+                      </View>
+                    ) : composerAwaitingAck ? (
+                      <View className="min-w-0 flex-row items-center gap-1.5">
+                        <ActivityIndicator size="small" color="#a1a1aa" />
+                        <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                          Sending...
+                        </Text>
+                      </View>
+                    ) : activityLabel ? (
+                      <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                        {activityLabel}
+                      </Text>
                     ) : null}
                   </View>
                   {/*

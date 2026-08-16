@@ -83,6 +83,29 @@ describe("formatPlainTextForDisplay", () => {
     expect(formatPlainTextForDisplay("front\n---\nmatter")).toBe("front\n---\nmatter");
   });
 
+  it("trims trailing terminal composer chrome in chat text", () => {
+    const text = [
+      "Done.",
+      "",
+      "— Worked for 7m 59s",
+      "─".repeat(96),
+      "❯",
+      "─".repeat(96),
+      "1 background terminal running · /ps to view · /stop to close",
+    ].join("\n");
+
+    expect(formatPlainTextForDisplay(text, { dividerWidth: 24 })).toBe("Done.");
+  });
+
+  it("keeps body dividers while trimming only trailing terminal chrome", () => {
+    const divider = "─".repeat(80);
+    const text = ["Before", divider, "After", divider, "❯"].join("\n");
+
+    expect(formatPlainTextForDisplay(text, { dividerWidth: 12 })).toBe(
+      ["Before", "─".repeat(12), "After"].join("\n"),
+    );
+  });
+
   it("adds invisible break opportunities to long chat tokens", () => {
     expect(
       formatPlainTextForDisplay(
@@ -139,6 +162,22 @@ describe("formatRichTextSpansForDisplay", () => {
       { text: "\n" },
       { text: "next" },
     ]);
+  });
+
+  it("trims trailing terminal composer chrome in rich chat text", () => {
+    expect(
+      formatRichTextSpansForDisplay(
+        [
+          { text: "Done.", foreground: { model: "rgb", value: "#ffffff" } },
+          { text: "\n" },
+          { text: "\n— Worked for 7m 59s", foreground: { model: "rgb", value: "#808080" } },
+          { text: `\n${"─".repeat(80)}` },
+          { text: "\n❯" },
+          { text: `\n${"─".repeat(80)}` },
+        ],
+        { dividerWidth: 12 },
+      ),
+    ).toEqual([{ text: "Done.", foreground: { model: "rgb", value: "#ffffff" } }]);
   });
 
   it("adds invisible break opportunities without dropping rich span colours", () => {
