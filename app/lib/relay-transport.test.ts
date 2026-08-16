@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 vi.mock("@react-native-async-storage/async-storage", () => ({ default: {} }));
 vi.mock("expo-constants", () => ({ default: { expoConfig: { version: "test" } } }));
+vi.mock("expo-crypto", () => ({
+  getRandomBytesAsync: vi.fn(async (byteLength: number) => new Uint8Array(byteLength)),
+}));
 vi.mock("expo-secure-store", () => ({}));
 
 import { RelayTransport, type RelayStatus } from "@/lib/relay-transport";
@@ -31,6 +34,23 @@ class MockWebSocket {
   }
 }
 
+const testProofOptions = {
+  getDeviceProof: async () => ({
+    alg: "ES256" as const,
+    publicKeyJwk: {
+      kty: "EC",
+      crv: "P-256",
+      x: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      y: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      ext: true,
+      key_ops: ["verify"],
+    },
+    timestamp: "2026-05-24T00:00:00.000Z",
+    nonce: "nonce",
+    signature: "signature",
+  }),
+};
+
 describe("RelayTransport remote security state", () => {
   it("stops reconnecting when the relay rejects auth or lockdown state", async () => {
     vi.useFakeTimers();
@@ -56,6 +76,7 @@ describe("RelayTransport remote security state", () => {
           name: "Web browser",
           platform: "web",
         }),
+        testProofOptions,
       );
       transport.onStatusChange((status) => statuses.push(status));
 
@@ -97,6 +118,7 @@ describe("RelayTransport remote security state", () => {
           name: "Web browser",
           platform: "web",
         }),
+        testProofOptions,
       );
       transport.onStatusChange((status) => statuses.push(status));
 
@@ -135,6 +157,7 @@ describe("RelayTransport remote security state", () => {
           name: "Web browser",
           platform: "web",
         }),
+        testProofOptions,
       );
 
       await transport.connect();
@@ -200,6 +223,7 @@ describe("RelayTransport remote security state", () => {
           name: "Web browser",
           platform: "web",
         }),
+        testProofOptions,
       );
 
       await transport.connect();
@@ -235,4 +259,51 @@ describe("RelayTransport remote security state", () => {
       vi.stubGlobal("WebSocket", originalWebSocket);
     }
   });
+
+  it("includes a signed device proof in the client connection URL", async () => {
+    const originalWebSocket = globalThis.WebSocket;
+    const sockets: MockWebSocket[] = [];
+    try {
+      vi.stubGlobal(
+        "WebSocket",
+        class extends MockWebSocket {
+          constructor(url: string, protocols: string[]) {
+            super(url, protocols);
+            sockets.push(this);
+          }
+        },
+      );
+      const transport = new RelayTransport(
+        "wss://relay.example.test",
+        async () => "token",
+        async () => ({
+          deviceId: "client_1",
+          kind: "web",
+          name: "Web browser",
+          platform: "web",
+        }),
+        testProofOptions,
+      );
+
+      await transport.connect();
+
+      const url = new URL(sockets[0]!.url);
+      expect(url.searchParams.get("deviceKeyAlg")).toBe("ES256");
+      expect(url.searchParams.get("deviceProofTs")).toBe("2026-05-24T00:00:00.000Z");
+      expect(url.searchParams.get("deviceProofNonce")).toBe("nonce");
+      expect(url.searchParams.get("deviceProof")).toBe("signature");
+      const publicKey = JSON.parse(
+        base64UrlDecodeToText(url.searchParams.get("devicePublicKey")!),
+      ) as JsonWebKey;
+      expect(publicKey).toMatchObject({ kty: "EC", crv: "P-256" });
+    } finally {
+      vi.stubGlobal("WebSocket", originalWebSocket);
+    }
+  });
 });
+
+function base64UrlDecodeToText(value: string): string {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  return atob(padded);
+}

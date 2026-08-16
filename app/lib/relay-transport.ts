@@ -1,4 +1,9 @@
 import { getClientDeviceInfo, type ClientDeviceInfo } from "@/lib/client-device";
+import {
+  encodeDevicePublicKey,
+  getClientDeviceProof,
+  type ClientDeviceProof,
+} from "@/lib/client-device-proof";
 import type { SecurityEventRecord } from "@/stores/security";
 
 type PendingRequest = {
@@ -76,6 +81,7 @@ export type RelaySecurityEventListener = (event: SecurityEventRecord) => void;
 export interface RelayTransportOptions {
   ownerUserId?: string;
   shareId?: string;
+  getDeviceProof?: (device: ClientDeviceInfo) => Promise<ClientDeviceProof>;
 }
 
 export class RelayTransport {
@@ -137,7 +143,8 @@ export class RelayTransport {
 
     try {
       const deviceInfo = await this.getDeviceInfo();
-      const url = this.clientConnectUrl(deviceInfo);
+      const deviceProof = await (this.options.getDeviceProof ?? getClientDeviceProof)(deviceInfo);
+      const url = this.clientConnectUrl(deviceInfo, deviceProof);
       this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${token}`]);
     } catch {
       this.setStatus("disconnected");
@@ -342,13 +349,18 @@ export class RelayTransport {
     }
   }
 
-  private clientConnectUrl(device: ClientDeviceInfo): string {
+  private clientConnectUrl(device: ClientDeviceInfo, proof: ClientDeviceProof): string {
     const url = new URL(`${this.relayUrl}/client/connect`);
     url.searchParams.set("deviceId", device.deviceId);
     url.searchParams.set("deviceKind", device.kind);
     url.searchParams.set("deviceName", device.name);
     url.searchParams.set("devicePlatform", device.platform);
     if (device.appVersion) url.searchParams.set("appVersion", device.appVersion);
+    url.searchParams.set("deviceKeyAlg", proof.alg);
+    url.searchParams.set("devicePublicKey", encodeDevicePublicKey(proof.publicKeyJwk));
+    url.searchParams.set("deviceProofTs", proof.timestamp);
+    url.searchParams.set("deviceProofNonce", proof.nonce);
+    url.searchParams.set("deviceProof", proof.signature);
     if (this.options.ownerUserId) url.searchParams.set("ownerUserId", this.options.ownerUserId);
     if (this.options.shareId) url.searchParams.set("shareId", this.options.shareId);
     return url.toString();

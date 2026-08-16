@@ -7,9 +7,11 @@ import {
   appendSecurityEvent,
   approveSecurityDevice,
   blockSecurityDevice,
+  consumeDeviceProofNonce,
   createShareSecurityEvent,
   createSecurityActionToken,
   deactivateSecurityLockdown,
+  deviceProofMatchesRecord,
   findSecurityActionByToken,
   hashIpAddress,
   isDaemonTokenRevoked,
@@ -19,9 +21,12 @@ import {
   markSecurityActionUsed,
   notificationPushTokensForDevicePolicy,
   recordClientConnection,
+  type DeviceProofInput,
   sanitizeDeviceInfo,
   saveSecurityState,
+  shouldEnforceDeviceProof,
   unblockSecurityDevice,
+  verifyDeviceProof,
 } from "./security.js";
 import {
   acceptShareInvite,
@@ -39,7 +44,7 @@ import {
   upsertAcceptedShare,
 } from "./sharing.js";
 import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
-import type { SecurityEventRecord } from "./security.js";
+import type { SecurityEventRecord, VerifiedDeviceProof } from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -145,6 +150,7 @@ export class RelayObject extends DurableObject<Env> {
     }
 
     let clientDevice: ReturnType<typeof sanitizeDeviceInfo> | null = null;
+    let clientDeviceProof: VerifiedDeviceProof | undefined;
     let sharedClientTags: string[] = [];
     let sharedClientAuth: SharedClientAuth | undefined;
     if (role === "client") {
@@ -165,6 +171,18 @@ export class RelayObject extends DurableObject<Env> {
         if (!sharedAuth.ok) return new Response(sharedAuth.error, { status: sharedAuth.status });
         sharedClientTags = [`share:${shareId}`, `user:${sharedAuth.userId}`];
         sharedClientAuth = sharedAuth;
+      } else {
+        const proofInput = deviceProofInputFromUrl(url);
+        const proofResult = await verifyDeviceProof(
+          securityState.devices[clientDevice.deviceId],
+          clientDevice.deviceId,
+          proofInput,
+        );
+        if (proofResult.ok) {
+          clientDeviceProof = proofResult.proof;
+        } else if (shouldEnforceDeviceProof(this.env.SECURITY_DEVICE_PROOF_POLICY)) {
+          return new Response(`Invalid device proof: ${proofResult.reason}`, { status: 401 });
+        }
       }
     }
     const pair = new WebSocketPair();
@@ -198,7 +216,7 @@ export class RelayObject extends DurableObject<Env> {
       if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
       this.send(server, { type: "connected", role: "client" });
       this.send(server, { type: "daemon_status", online: this.daemonWs !== null });
-      await this.recordClientConnected(request, server, clientDevice!, sharedClientAuth);
+      await this.recordClientConnected(request, server, clientDevice!, sharedClientAuth, clientDeviceProof);
     }
 
     this.ensureHeartbeat();
@@ -421,13 +439,13 @@ export class RelayObject extends DurableObject<Env> {
     const ownerUserId = tags.find((tag) => tag.startsWith("user:"))?.slice("user:".length);
     const notification = message.notification;
     if (!ownerUserId || !notification?.title) return;
-      const state = await loadSecurityState(this.ctx.storage);
-      try {
-        await deliverNotificationPush({
-          userId: ownerUserId,
-          pushTokens: notificationPushTokensForDevicePolicy(state, this.env.SECURITY_DEVICE_POLICY),
-          title: notification.title,
-          body: notification.body,
+    const state = await loadSecurityState(this.ctx.storage);
+    try {
+      await deliverNotificationPush({
+        userId: ownerUserId,
+        pushTokens: notificationPushTokensForDevicePolicy(state, this.env.SECURITY_DEVICE_POLICY),
+        title: notification.title,
+        body: notification.body,
         kind: notification.kind,
         sessionId: notification.sessionId,
         projectId: notification.projectId,
@@ -594,15 +612,34 @@ export class RelayObject extends DurableObject<Env> {
     ws: WebSocket,
     device: ReturnType<typeof sanitizeDeviceInfo>,
     sharedClientAuth?: SharedClientAuth,
+    deviceProof?: VerifiedDeviceProof,
   ): Promise<void> {
     const connectingUserId = request.headers.get("X-Aimux-User-Id") ?? "";
     const securityRecipientUserId = sharedClientAuth?.share.ownerUserId ?? connectingUserId;
-    const state = await loadSecurityState(this.ctx.storage);
+    let state = await loadSecurityState(this.ctx.storage);
+    if (deviceProof) {
+      const existingDevice = state.devices[device.deviceId];
+      if (!deviceProofMatchesRecord(existingDevice, deviceProof)) {
+        try {
+          ws.close(1008, "Device proof key mismatch");
+        } catch {}
+        return;
+      }
+      const nonceResult = consumeDeviceProofNonce(state, device.deviceId, deviceProof);
+      if (!nonceResult.ok) {
+        try {
+          ws.close(1008, nonceResult.reason);
+        } catch {}
+        return;
+      }
+      state = nonceResult.state;
+    }
     const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"), this.env.SECURITY_IP_HASH_SECRET);
     const context = {
       ipHash,
       country: request.headers.get("CF-IPCountry") ?? undefined,
       userAgent: request.headers.get("User-Agent") ?? undefined,
+      deviceProof,
       shared: sharedClientAuth
         ? {
             shareId: sharedClientAuth.share.id,
@@ -613,7 +650,15 @@ export class RelayObject extends DurableObject<Env> {
           }
         : undefined,
     };
-    const result = recordClientConnection(state, device, context);
+    let result: ReturnType<typeof recordClientConnection>;
+    try {
+      result = recordClientConnection(state, device, context);
+    } catch (error) {
+      try {
+        ws.close(1008, error instanceof Error ? error.message : "Device proof rejected");
+      } catch {}
+      return;
+    }
     let emergencyUrl: string | undefined;
     if (result.firstSeen && securityRecipientUserId && !sharedClientAuth) {
       const action = await createSecurityActionToken("emergency_lockdown", { deviceId: result.device.id });
@@ -644,6 +689,11 @@ export class RelayObject extends DurableObject<Env> {
   private async registerPushToken(request: Request): Promise<Response> {
     let body: {
       deviceId?: string;
+      deviceKind?: string;
+      deviceName?: string;
+      devicePlatform?: string;
+      appVersion?: string;
+      deviceProof?: DeviceProofInput;
       token?: string;
       platform?: "ios" | "android" | "web" | "unknown";
       agentAlerts?: boolean;
@@ -659,10 +709,17 @@ export class RelayObject extends DurableObject<Env> {
       return json({ ok: false, error: "Missing deviceId or token" }, 400);
     }
     const now = new Date().toISOString();
-    const state = await loadSecurityState(this.ctx.storage);
+    let state = await loadSecurityState(this.ctx.storage);
     const userId = request.headers.get("X-Aimux-User-Id")?.trim() || undefined;
     const ownerUserId = request.headers.get("X-Aimux-Share-Owner-Id")?.trim();
     const shareId = request.headers.get("X-Aimux-Share-Id")?.trim();
+    const deviceInfo = sanitizeDeviceInfo({
+      deviceId,
+      kind: body.deviceKind ?? body.platform,
+      name: body.deviceName,
+      platform: body.devicePlatform ?? body.platform,
+      appVersion: body.appVersion,
+    });
     if (ownerUserId || shareId) {
       if (!userId || !ownerUserId || !shareId) {
         return json({ ok: false, error: "Missing shared push registration context" }, 401);
@@ -676,15 +733,35 @@ export class RelayObject extends DurableObject<Env> {
       if (!participant || participant.status !== "active") {
         return json({ ok: false, error: "Not a participant in this shared chat" }, 403);
       }
+    } else {
+      const proofResult = await verifyDeviceProof(
+        state.devices[deviceInfo.deviceId],
+        deviceInfo.deviceId,
+        body.deviceProof ?? {},
+      );
+      if (!proofResult.ok) {
+        if (shouldEnforceDeviceProof(this.env.SECURITY_DEVICE_PROOF_POLICY)) {
+          return json({ ok: false, error: `Invalid device proof: ${proofResult.reason}` }, 401);
+        }
+      } else {
+        const nonceResult = consumeDeviceProofNonce(state, deviceInfo.deviceId, proofResult.proof);
+        if (!nonceResult.ok) return json({ ok: false, error: nonceResult.reason }, 401);
+        state = nonceResult.state;
+        try {
+          state = recordClientConnection(state, deviceInfo, { deviceProof: proofResult.proof }, now).state;
+        } catch (error) {
+          return json({ ok: false, error: error instanceof Error ? error.message : "Device proof rejected" }, 401);
+        }
+      }
     }
-    const tokenKey = userId ? `${userId}:${deviceId}` : deviceId;
-    const createdAt = state.pushTokens[tokenKey]?.createdAt ?? state.pushTokens[deviceId]?.createdAt ?? now;
-    if (userId && state.pushTokens[deviceId]) {
-      delete state.pushTokens[deviceId];
+    const tokenKey = userId ? `${userId}:${deviceInfo.deviceId}` : deviceInfo.deviceId;
+    const createdAt = state.pushTokens[tokenKey]?.createdAt ?? state.pushTokens[deviceInfo.deviceId]?.createdAt ?? now;
+    if (userId && state.pushTokens[deviceInfo.deviceId]) {
+      delete state.pushTokens[deviceInfo.deviceId];
     }
     state.pushTokens[tokenKey] = {
       userId,
-      deviceId,
+      deviceId: deviceInfo.deviceId,
       token,
       platform: body.platform ?? "unknown",
       agentAlerts: body.agentAlerts !== false,
@@ -713,10 +790,7 @@ export class RelayObject extends DurableObject<Env> {
     return json({ ok: true, events: state.events }, 200);
   }
 
-  private async updateSecurityDevice(
-    deviceId: string,
-    action: "approve" | "block" | "unblock",
-  ): Promise<Response> {
+  private async updateSecurityDevice(deviceId: string, action: "approve" | "block" | "unblock"): Promise<Response> {
     const state = await loadSecurityState(this.ctx.storage);
     let event: SecurityEventRecord | null = null;
     const result = (() => {
@@ -1432,6 +1506,40 @@ function parseSecurityDeviceActionPath(
     deviceId: decodeURIComponent(match[1]),
     action: match[2] as "approve" | "block" | "unblock",
   };
+}
+
+function deviceProofInputFromUrl(url: URL): {
+  alg?: string | null;
+  publicKeyJwk?: unknown;
+  timestamp?: string | null;
+  nonce?: string | null;
+  signature?: string | null;
+} {
+  const encodedPublicKey = url.searchParams.get("devicePublicKey");
+  let publicKeyJwk: unknown;
+  if (encodedPublicKey) {
+    try {
+      publicKeyJwk = JSON.parse(base64UrlDecodeToText(encodedPublicKey));
+    } catch {
+      publicKeyJwk = undefined;
+    }
+  }
+  return {
+    alg: url.searchParams.get("deviceKeyAlg"),
+    publicKeyJwk,
+    timestamp: url.searchParams.get("deviceProofTs"),
+    nonce: url.searchParams.get("deviceProofNonce"),
+    signature: url.searchParams.get("deviceProof"),
+  };
+}
+
+function base64UrlDecodeToText(value: string): string {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
 }
 
 function parseParticipantPath(pathname: string): {

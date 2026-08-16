@@ -3,6 +3,8 @@ const SECURITY_ACTION_TOKEN_BYTES = 32;
 export const SECURITY_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SECURITY_EVENTS = 100;
 const MAX_SECURITY_ACTIONS = 100;
+const MAX_DEVICE_PROOF_NONCES = 1000;
+const DEVICE_PROOF_WINDOW_MS = 5 * 60 * 1000;
 
 export type SecurityDeviceKind = "web" | "ios" | "android" | "daemon" | "unknown";
 
@@ -18,6 +20,7 @@ export interface SecurityConnectionContext {
   ipHash?: string;
   country?: string;
   userAgent?: string;
+  deviceProof?: VerifiedDeviceProof;
   shared?: {
     shareId: string;
     sessionId: string;
@@ -33,10 +36,35 @@ export interface SecurityDeviceRecord extends SecurityDeviceInfo {
   lastSeenAt: string;
   approvedAt?: string;
   blockedAt?: string;
+  publicKeyAlg?: "ES256";
+  publicKeyJwk?: JsonWebKey;
+  publicKeyRegisteredAt?: string;
+  lastProofAt?: string;
   lastIpHash?: string;
   lastCountry?: string;
   lastUserAgent?: string;
 }
+
+export interface DeviceProofInput {
+  alg?: string | null;
+  publicKeyJwk?: unknown;
+  timestamp?: string | null;
+  nonce?: string | null;
+  signature?: string | null;
+}
+
+export interface VerifiedDeviceProof {
+  alg: "ES256";
+  publicKeyJwk: JsonWebKey;
+  verifiedAt: string;
+  nonce: string;
+}
+
+export type DeviceProofPolicy = "warn" | "enforce" | undefined;
+
+export type DeviceProofVerificationResult =
+  | { ok: true; proof: VerifiedDeviceProof; firstRegistration: boolean }
+  | { ok: false; reason: string };
 
 export type SecurityEventKind =
   | "client_connected"
@@ -102,9 +130,16 @@ export interface SecurityState {
   devices: Record<string, SecurityDeviceRecord>;
   pushTokens: Record<string, SecurityPushTokenRecord>;
   actions: Record<string, SecurityActionRecord>;
+  proofNonces?: Record<string, SecurityProofNonceRecord>;
   events: SecurityEventRecord[];
   lockdown?: SecurityLockdownRecord;
   revokedBefore?: string;
+}
+
+export interface SecurityProofNonceRecord {
+  deviceId: string;
+  nonce: string;
+  expiresAt: string;
 }
 
 export interface SecurityActionToken {
@@ -118,6 +153,7 @@ export function emptySecurityState(): SecurityState {
     devices: {},
     pushTokens: {},
     actions: {},
+    proofNonces: {},
     events: [],
   };
 }
@@ -144,12 +180,22 @@ export function normalizeSecurityState(state: SecurityState): SecurityState {
       .sort(([, a], [, b]) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, MAX_SECURITY_ACTIONS),
   );
+  const proofNonces = Object.fromEntries(
+    Object.entries(state.proofNonces ?? {})
+      .filter(([, nonce]) => {
+        const expiresAtMs = Date.parse(nonce.expiresAt);
+        return Number.isFinite(expiresAtMs) && expiresAtMs > nowMs;
+      })
+      .sort(([, a], [, b]) => Date.parse(b.expiresAt) - Date.parse(a.expiresAt))
+      .slice(0, MAX_DEVICE_PROOF_NONCES),
+  );
 
   return {
     version: 1,
     devices: state.devices ?? {},
     pushTokens: state.pushTokens ?? {},
     actions,
+    proofNonces,
     events: Array.isArray(state.events) ? state.events.slice(0, MAX_SECURITY_EVENTS) : [],
     lockdown: state.lockdown,
     revokedBefore: state.revokedBefore,
@@ -208,15 +254,28 @@ export function recordClientConnection(
       }
     : deviceInfo;
   const previous = next.devices[normalizedDeviceInfo.deviceId];
+  if (
+    context.deviceProof &&
+    previous?.publicKeyJwk &&
+    !sameDevicePublicKey(previous.publicKeyJwk, context.deviceProof.publicKeyJwk)
+  ) {
+    throw new Error("Device proof key mismatch");
+  }
   const firstSeen = !previous;
+  const firstProofRegistration = Boolean(context.deviceProof && !previous?.publicKeyJwk);
   const device: SecurityDeviceRecord = {
     ...previous,
     ...normalizedDeviceInfo,
     id: normalizedDeviceInfo.deviceId,
     firstSeenAt: previous?.firstSeenAt ?? now,
     lastSeenAt: now,
-    approvedAt: previous?.approvedAt,
+    approvedAt: firstProofRegistration ? undefined : previous?.approvedAt,
     blockedAt: previous?.blockedAt,
+    publicKeyAlg: context.deviceProof?.alg ?? previous?.publicKeyAlg,
+    publicKeyJwk: context.deviceProof?.publicKeyJwk ?? previous?.publicKeyJwk,
+    publicKeyRegisteredAt:
+      context.deviceProof && !previous?.publicKeyJwk ? context.deviceProof.verifiedAt : previous?.publicKeyRegisteredAt,
+    lastProofAt: context.deviceProof?.verifiedAt ?? previous?.lastProofAt,
     lastIpHash: context.ipHash ?? previous?.lastIpHash,
     lastCountry: context.country ?? previous?.lastCountry,
     lastUserAgent: context.userAgent ?? previous?.lastUserAgent,
@@ -244,6 +303,101 @@ export function isDaemonTokenRevoked(state: SecurityState, issuedAtSeconds: numb
 
 export function isDeviceApproved(device: SecurityDeviceRecord | undefined): boolean {
   return Boolean(device?.approvedAt && !device.blockedAt);
+}
+
+export function shouldEnforceDeviceProof(policy: DeviceProofPolicy): boolean {
+  return policy === "enforce";
+}
+
+export function deviceProofMatchesRecord(
+  device: SecurityDeviceRecord | undefined,
+  proof: VerifiedDeviceProof | undefined,
+): boolean {
+  if (!proof || !device?.publicKeyJwk) return true;
+  return sameDevicePublicKey(device.publicKeyJwk, proof.publicKeyJwk);
+}
+
+export function consumeDeviceProofNonce(
+  state: SecurityState,
+  deviceId: string,
+  proof: VerifiedDeviceProof,
+): { ok: true; state: SecurityState } | { ok: false; state: SecurityState; reason: string } {
+  const next = normalizeSecurityState(state);
+  const key = deviceProofNonceKey(deviceId, proof.nonce);
+  if (next.proofNonces?.[key]) {
+    return { ok: false, state: next, reason: "Device proof replay detected" };
+  }
+  const verifiedAtMs = Date.parse(proof.verifiedAt);
+  const expiresAt = new Date((Number.isFinite(verifiedAtMs) ? verifiedAtMs : Date.now()) + DEVICE_PROOF_WINDOW_MS);
+  next.proofNonces = {
+    ...(next.proofNonces ?? {}),
+    [key]: {
+      deviceId,
+      nonce: proof.nonce,
+      expiresAt: expiresAt.toISOString(),
+    },
+  };
+  return { ok: true, state: next };
+}
+
+export async function verifyDeviceProof(
+  device: SecurityDeviceRecord | undefined,
+  deviceId: string,
+  input: DeviceProofInput,
+  now = new Date(),
+): Promise<DeviceProofVerificationResult> {
+  if (input.alg !== "ES256") return { ok: false, reason: "Missing device proof algorithm" };
+  if (!isValidProofText(input.timestamp, 80)) return { ok: false, reason: "Missing device proof timestamp" };
+  if (!isValidProofText(input.nonce, 160)) return { ok: false, reason: "Missing device proof nonce" };
+  if (!isValidProofText(input.signature, 2000)) return { ok: false, reason: "Missing device proof signature" };
+  const timestampMs = Date.parse(input.timestamp);
+  if (!Number.isFinite(timestampMs)) return { ok: false, reason: "Invalid device proof timestamp" };
+  if (Math.abs(now.getTime() - timestampMs) > 5 * 60 * 1000) {
+    return { ok: false, reason: "Expired device proof timestamp" };
+  }
+  const publicKeyJwk = sanitizeDevicePublicKey(input.publicKeyJwk);
+  if (!publicKeyJwk) return { ok: false, reason: "Invalid device proof public key" };
+  if (device?.publicKeyJwk && !sameDevicePublicKey(device.publicKeyJwk, publicKeyJwk)) {
+    return { ok: false, reason: "Device proof key mismatch" };
+  }
+
+  let signature: Uint8Array;
+  try {
+    signature = base64UrlDecode(input.signature);
+  } catch {
+    return { ok: false, reason: "Invalid device proof signature encoding" };
+  }
+
+  const message = deviceProofMessage(deviceId, input.timestamp, input.nonce);
+  try {
+    const key = await crypto.subtle.importKey("jwk", publicKeyJwk, { name: "ECDSA", namedCurve: "P-256" }, false, [
+      "verify",
+    ]);
+    const verified = await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      signature,
+      new TextEncoder().encode(message),
+    );
+    if (!verified) return { ok: false, reason: "Invalid device proof signature" };
+  } catch {
+    return { ok: false, reason: "Invalid device proof public key" };
+  }
+
+  return {
+    ok: true,
+    firstRegistration: !device?.publicKeyJwk,
+    proof: {
+      alg: "ES256",
+      publicKeyJwk,
+      verifiedAt: new Date(timestampMs).toISOString(),
+      nonce: input.nonce,
+    },
+  };
+}
+
+export function deviceProofMessage(deviceId: string, timestamp: string, nonce: string): string {
+  return `aimux-device-proof-v1\n${deviceId}\n${timestamp}\n${nonce}`;
 }
 
 export function notificationPushTokensForDevicePolicy(
@@ -518,6 +672,32 @@ function randomBase64Url(byteLength: number): string {
   return base64UrlEncode(bytes);
 }
 
+function sanitizeDevicePublicKey(value: unknown): JsonWebKey | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const key = value as JsonWebKey;
+  if (key.kty !== "EC" || key.crv !== "P-256" || typeof key.x !== "string" || typeof key.y !== "string") return null;
+  return {
+    kty: "EC",
+    crv: "P-256",
+    x: key.x,
+    y: key.y,
+    ext: true,
+    key_ops: ["verify"],
+  };
+}
+
+function isValidProofText(value: string | null | undefined, maxLength: number): value is string {
+  return Boolean(value && value.length <= maxLength && !/[\r\n]/.test(value));
+}
+
+function sameDevicePublicKey(a: JsonWebKey, b: JsonWebKey): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function deviceProofNonceKey(deviceId: string, nonce: string): string {
+  return `${deviceId}:${nonce}`.slice(0, 320);
+}
+
 async function sha256Base64Url(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return base64UrlEncode(new Uint8Array(digest));
@@ -536,4 +716,13 @@ function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlDecode(value: string): Uint8Array {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }

@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { getClientDeviceInfo } from "@/lib/client-device";
+import { getClientDeviceProof } from "@/lib/client-device-proof";
 import {
   buildSecurityPushRegistrationUrl,
   buildSecurityPushTestUrl,
@@ -48,6 +49,7 @@ export async function registerSecurityPushToken(
     projectId ? { projectId } : undefined,
   );
   const device = await getClientDeviceInfo();
+  const deviceProof = await getClientDeviceProof(device);
   const token = await getToken();
   if (!token) return { status: "missing_auth" };
 
@@ -60,6 +62,11 @@ export async function registerSecurityPushToken(
     },
     body: JSON.stringify({
       deviceId: device.deviceId,
+      deviceKind: device.kind,
+      deviceName: device.name,
+      devicePlatform: device.platform,
+      appVersion: device.appVersion,
+      deviceProof,
       token: expoToken.data,
       platform: device.kind,
       agentAlerts: options.agentAlerts ?? true,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RelayObject } from "./relay-object";
+import { deviceProofMessage } from "./security";
 import type { Env } from "./types";
 
 vi.mock("cloudflare:workers", () => ({
@@ -54,9 +55,7 @@ describe("RelayObject sharing index repair", () => {
   it("fails invite acceptance when the receiver accepted-share index cannot be written", async () => {
     const object = createObject(storage, env);
     const invite = await createInvite(object);
-    receiverFetch.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: false, error: "broken" }), { status: 500 }),
-    );
+    receiverFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, error: "broken" }), { status: 500 }));
 
     const response = await object.fetch(
       request(`https://relay.aimux.app/shares/invite/user_owner/${invite.token}/accept`, {
@@ -124,30 +123,29 @@ describe("RelayObject shared security delivery", () => {
 
   it("sends shared participant connection events to owner sockets, not sharee sockets", async () => {
     const storage = storageWithSockets([]);
-    const object = createObject(
-      storage,
-      {
-        RELAY: {
-          idFromName: vi.fn((name: string) => ({ name })),
-          get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
-        },
-      } as unknown as Env,
-    );
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
     const shareId = await createAcceptedShareInOwnerObject(object);
     const ownerSocket = fakeSocket(["client", `share:${shareId}`, "user:user_owner"]);
     const shareeSocket = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
     const normalOwnerSocket = fakeSocket(["client", "user:user_owner"]);
     storage.sockets = [ownerSocket, shareeSocket, normalOwnerSocket];
 
-    const response = await object.fetch(
-      new Request(`https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=${shareId}`, {
-        headers: {
-          Upgrade: "websocket",
-          "X-Aimux-Share-Owner-Id": "user_owner",
-          "X-Aimux-User-Id": "user_guest",
-        },
-      }),
-    ).catch((error) => error);
+    const response = await object
+      .fetch(
+        new Request(`https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=${shareId}`, {
+          headers: {
+            Upgrade: "websocket",
+            "X-Aimux-Share-Owner-Id": "user_owner",
+            "X-Aimux-User-Id": "user_guest",
+          },
+        }),
+      )
+      .catch((error) => error);
 
     expect(response).toBeInstanceOf(RangeError);
     expect(ownerSocket.send).toHaveBeenCalledWith(expect.stringContaining("shared_client_connected"));
@@ -166,15 +164,17 @@ describe("RelayObject shared security delivery", () => {
 
     const shareId = await createAcceptedShareInOwnerObject(object);
     const before = await storage.get<{ actions: Record<string, unknown> }>("security-state:v1");
-    const response = await object.fetch(
-      new Request(`https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=${shareId}`, {
-        headers: {
-          Upgrade: "websocket",
-          "X-Aimux-Share-Owner-Id": "user_owner",
-          "X-Aimux-User-Id": "user_guest",
-        },
-      }),
-    ).catch((error) => error);
+    const response = await object
+      .fetch(
+        new Request(`https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=${shareId}`, {
+          headers: {
+            Upgrade: "websocket",
+            "X-Aimux-Share-Owner-Id": "user_owner",
+            "X-Aimux-User-Id": "user_guest",
+          },
+        }),
+      )
+      .catch((error) => error);
 
     expect(response).toBeInstanceOf(RangeError);
     const security = await storage.get<{ actions: Record<string, unknown> }>("security-state:v1");
@@ -199,19 +199,20 @@ describe("RelayObject owner device security", () => {
       SECURITY_DEVICE_POLICY: "enforce",
     } as unknown as Env);
 
-    await object.fetch(
-      new Request("https://relay.aimux.app/client/connect?deviceId=client_1&deviceKind=ios&deviceName=iPhone", {
-        headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
-      }),
-    ).catch((error) => error);
-    await object.fetch(
-      new Request(
-        "https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=share_1&deviceName=Guest",
-        {
+    await object
+      .fetch(
+        new Request("https://relay.aimux.app/client/connect?deviceId=client_1&deviceKind=ios&deviceName=iPhone", {
+          headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+        }),
+      )
+      .catch((error) => error);
+    await object
+      .fetch(
+        new Request("https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=share_1&deviceName=Guest", {
           headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_guest", "X-Aimux-Share-Owner-Id": "user_owner" },
-        },
-      ),
-    ).catch(() => undefined);
+        }),
+      )
+      .catch(() => undefined);
 
     const listed = await object.fetch(new Request("https://relay.aimux.app/security/devices"));
     expect(listed.status).toBe(200);
@@ -292,6 +293,87 @@ describe("RelayObject owner device security", () => {
       }),
     );
   });
+
+  it("rejects owner client connections without proof when proof enforcement is enabled", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      SECURITY_DEVICE_PROOF_POLICY: "enforce",
+    } as unknown as Env);
+
+    const response = await object.fetch(
+      new Request("https://relay.aimux.app/client/connect?deviceId=client_1", {
+        headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.text()).toContain("Invalid device proof");
+  });
+
+  it("records valid owner client device proof metadata", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      SECURITY_DEVICE_PROOF_POLICY: "enforce",
+    } as unknown as Env);
+    const proof = await createTestDeviceProof("client_1");
+
+    await object
+      .fetch(
+        new Request(`https://relay.aimux.app/client/connect?deviceId=client_1&${proof.query}`, {
+          headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+        }),
+      )
+      .catch((error) => error);
+
+    const security = await storage.get<{
+      devices: Record<string, { id: string; publicKeyAlg?: string; publicKeyJwk?: JsonWebKey; lastProofAt?: string }>;
+    }>("security-state:v1");
+    expect(security?.devices.client_1).toMatchObject({
+      id: "client_1",
+      publicKeyAlg: "ES256",
+      publicKeyJwk: proof.publicKeyJwk,
+      lastProofAt: proof.timestamp,
+    });
+  });
+
+  it("rejects owner push token registration without proof under proof enforcement", async () => {
+    const storage = storageWithSockets([]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "ios",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+          approvedAt: "2026-05-24T00:01:00.000Z",
+        },
+      },
+      pushTokens: {},
+      actions: {},
+      proofNonces: {},
+      events: [],
+    });
+    const object = createObject(storage, {
+      SECURITY_DEVICE_PROOF_POLICY: "enforce",
+    } as unknown as Env);
+
+    const response = await object.fetch(
+      new Request("https://relay.aimux.app/security/push-token", {
+        method: "POST",
+        headers: { "X-Aimux-User-Id": "user_owner", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceId: "client_1",
+          token: "ExponentPushToken[test]",
+          platform: "ios",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ ok: false, error: expect.stringContaining("Invalid device proof") });
+  });
 });
 
 function createObject(storage: MemoryStorage & { sockets?: Array<ReturnType<typeof fakeSocket>> }, env: Env) {
@@ -358,6 +440,44 @@ async function createInvite(object: RelayObject): Promise<{ token: string }> {
   expect(response.status).toBe(201);
   const body = (await response.json()) as { acceptUrl: string };
   return { token: new URL(body.acceptUrl).pathname.split("/").at(-2)! };
+}
+
+async function createTestDeviceProof(deviceId: string): Promise<{
+  timestamp: string;
+  publicKeyJwk: JsonWebKey;
+  query: string;
+}> {
+  const timestamp = new Date().toISOString();
+  const nonce = randomBase64Url(16);
+  const keyPair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+    "sign",
+    "verify",
+  ])) as CryptoKeyPair;
+  const publicKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    keyPair.privateKey,
+    new TextEncoder().encode(deviceProofMessage(deviceId, timestamp, nonce)),
+  );
+  const params = new URLSearchParams();
+  params.set("deviceKeyAlg", "ES256");
+  params.set("devicePublicKey", base64UrlEncode(new TextEncoder().encode(JSON.stringify(publicKeyJwk))));
+  params.set("deviceProofTs", timestamp);
+  params.set("deviceProofNonce", nonce);
+  params.set("deviceProof", base64UrlEncode(new Uint8Array(signature)));
+  return { timestamp, publicKeyJwk, query: params.toString() };
+}
+
+function randomBase64Url(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function request(

@@ -3,12 +3,15 @@ import {
   appendSecurityEvent,
   approveSecurityDevice,
   blockSecurityDevice,
+  consumeDeviceProofNonce,
   createShareSecurityEvent,
+  deviceProofMessage,
   emptySecurityState,
   isDeviceApproved,
   notificationPushTokensForDevicePolicy,
   recordClientConnection,
   unblockSecurityDevice,
+  verifyDeviceProof,
 } from "./security";
 
 describe("relay security events", () => {
@@ -210,12 +213,152 @@ describe("relay security events", () => {
       updatedAt: "2026-05-24T00:00:00.000Z",
     };
 
-    expect(notificationPushTokensForDevicePolicy(approved.state, "warn").map((token) => token.token).sort()).toEqual([
-      "approved-token",
-      "pending-token",
-    ]);
+    expect(
+      notificationPushTokensForDevicePolicy(approved.state, "warn")
+        .map((token) => token.token)
+        .sort(),
+    ).toEqual(["approved-token", "pending-token"]);
     expect(notificationPushTokensForDevicePolicy(approved.state, "enforce").map((token) => token.token)).toEqual([
       "approved-token",
     ]);
   });
+
+  it("verifies and records device proof public keys", async () => {
+    const proof = await createTestProof("client_123");
+    const verified = await verifyDeviceProof(undefined, "client_123", proof.input, new Date(proof.timestamp));
+
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) throw new Error(verified.reason);
+    expect(verified.firstRegistration).toBe(true);
+
+    const connected = recordClientConnection(
+      emptySecurityState(),
+      { deviceId: "client_123", kind: "web", name: "Web browser" },
+      { deviceProof: verified.proof },
+      proof.timestamp,
+    );
+    expect(connected.device).toMatchObject({
+      publicKeyAlg: "ES256",
+      publicKeyJwk: proof.publicKeyJwk,
+      publicKeyRegisteredAt: proof.timestamp,
+      lastProofAt: proof.timestamp,
+    });
+  });
+
+  it("rejects device proof key replacement", async () => {
+    const firstProof = await createTestProof("client_123");
+    const secondProof = await createTestProof("client_123");
+    const connected = recordClientConnection(
+      emptySecurityState(),
+      { deviceId: "client_123", kind: "web", name: "Web browser" },
+      {
+        deviceProof: {
+          alg: "ES256",
+          publicKeyJwk: firstProof.publicKeyJwk,
+          verifiedAt: firstProof.timestamp,
+          nonce: firstProof.input.nonce,
+        },
+      },
+      firstProof.timestamp,
+    );
+
+    const verified = await verifyDeviceProof(
+      connected.device,
+      "client_123",
+      secondProof.input,
+      new Date(secondProof.timestamp),
+    );
+
+    expect(verified).toEqual({ ok: false, reason: "Device proof key mismatch" });
+  });
+
+  it("clears inherited approval when a legacy device binds its first proof key", async () => {
+    const connected = recordClientConnection(
+      emptySecurityState(),
+      { deviceId: "client_123", kind: "web", name: "Web browser" },
+      {},
+      "2026-05-24T00:00:00.000Z",
+    );
+    const approved = approveSecurityDevice(connected.state, "client_123", "2026-05-24T00:01:00.000Z");
+    const proof = await createTestProof("client_123", new Date().toISOString());
+    const verified = await verifyDeviceProof(
+      approved.device ?? undefined,
+      "client_123",
+      proof.input,
+      new Date(proof.timestamp),
+    );
+    if (!verified.ok) throw new Error(verified.reason);
+
+    const rebound = recordClientConnection(
+      approved.state,
+      { deviceId: "client_123", kind: "web", name: "Web browser" },
+      { deviceProof: verified.proof },
+      proof.timestamp,
+    );
+
+    expect(rebound.device.approvedAt).toBeUndefined();
+    expect(isDeviceApproved(rebound.device)).toBe(false);
+  });
+
+  it("rejects reused proof nonces", async () => {
+    const proof = await createTestProof("client_123", new Date().toISOString());
+    const verified = await verifyDeviceProof(undefined, "client_123", proof.input, new Date(proof.timestamp));
+    if (!verified.ok) throw new Error(verified.reason);
+
+    const consumed = consumeDeviceProofNonce(emptySecurityState(), "client_123", verified.proof);
+    expect(consumed.ok).toBe(true);
+    const replayed = consumeDeviceProofNonce(consumed.state, "client_123", verified.proof);
+
+    expect(replayed).toMatchObject({ ok: false, reason: "Device proof replay detected" });
+  });
 });
+
+async function createTestProof(
+  deviceId: string,
+  timestamp = "2026-05-24T00:00:00.000Z",
+): Promise<{
+  timestamp: string;
+  publicKeyJwk: JsonWebKey;
+  input: {
+    alg: "ES256";
+    publicKeyJwk: JsonWebKey;
+    timestamp: string;
+    nonce: string;
+    signature: string;
+  };
+}> {
+  const nonce = randomBase64Url(16);
+  const keyPair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+    "sign",
+    "verify",
+  ])) as CryptoKeyPair;
+  const publicKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    keyPair.privateKey,
+    new TextEncoder().encode(deviceProofMessage(deviceId, timestamp, nonce)),
+  );
+  return {
+    timestamp,
+    publicKeyJwk,
+    input: {
+      alg: "ES256",
+      publicKeyJwk,
+      timestamp,
+      nonce,
+      signature: base64UrlEncode(new Uint8Array(signature)),
+    },
+  };
+}
+
+function randomBase64Url(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}

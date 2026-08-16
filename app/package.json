@@ -47,6 +47,8 @@
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.22",
     "@expo/vector-icons": "^15.0.3",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-navigation/native": "^7.1.8",
     "class-variance-authority": "^0.7.1",
@@ -57,6 +59,7 @@
     "expo-build-properties": "^55.0.13",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
+    "expo-crypto": "~15.0.9",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.23",
     "expo-image-manipulator": "~14.0.8",
