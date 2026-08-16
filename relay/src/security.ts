@@ -376,8 +376,8 @@ export async function verifyDeviceProof(
     const verified = await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       key,
-      signature,
-      new TextEncoder().encode(message),
+      exactArrayBuffer(signature),
+      exactArrayBuffer(new TextEncoder().encode(message)),
     );
     if (!verified) return { ok: false, reason: "Invalid device proof signature" };
   } catch {
@@ -725,4 +725,10 @@ function base64UrlDecode(value: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
