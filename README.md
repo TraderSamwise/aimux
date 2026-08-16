@@ -108,6 +108,11 @@ aimux login
 aimux remote enable
 ```
 
+Remote owner devices are approved from the local CLI and can be required to
+prove possession of a stored device key before proxying daemon requests. See
+[`docs/security.md`](docs/security.md) for the approval, proof, notification,
+and lockdown model.
+
 Shared chats are orthogonal to a receiver's own projects. A receiver can accept
 and use a shared chat from `aimux.app` even if they have no local Aimux install
 or daemon running. If they do run their own Aimux install, project workflows and

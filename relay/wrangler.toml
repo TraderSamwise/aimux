@@ -22,9 +22,10 @@ routes = [
 [env.production.vars]
 CLI_TOKEN_ALLOWED_ORIGINS = "https://aimux.app,https://www.aimux.app"
 SECURITY_ACTION_BASE_URL = "https://relay.aimux.app"
-# MVP default: record and alert on first-time devices without blocking them.
-# Switch to "enforce" after a device approval UI/flow is available.
-SECURITY_DEVICE_POLICY = "warn"
+# Owner devices must be both approved and bound to a signed device key before
+# they can proxy daemon requests or receive normal agent/project push alerts.
+SECURITY_DEVICE_POLICY = "enforce"
+SECURITY_DEVICE_PROOF_POLICY = "enforce"
 SECURITY_EMAIL_FROM = "aimux security <security@aimux.app>"
 COLLAB_EMAIL_FROM = "aimux invites <invites@aimux.app>"
 SHARE_INVITE_BASE_URL = "https://aimux.app"
