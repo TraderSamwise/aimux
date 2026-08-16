@@ -38,33 +38,6 @@ export interface RgbColor {
   b: number;
 }
 
-function hueToRgb(p: number, q: number, t: number): number {
-  let next = t;
-  if (next < 0) next += 1;
-  if (next > 1) next -= 1;
-  if (next < 1 / 6) return p + (q - p) * 6 * next;
-  if (next < 1 / 2) return q;
-  if (next < 2 / 3) return p + (q - p) * (2 / 3 - next) * 6;
-  return p;
-}
-
-function hslToRgb(hue: number, saturation: number, lightness: number): RgbColor {
-  const h = ((hue % 360) + 360) / 360;
-  const s = Math.max(0, Math.min(100, saturation)) / 100;
-  const l = Math.max(0, Math.min(100, lightness)) / 100;
-  if (s === 0) {
-    const value = Math.round(l * 255);
-    return { r: value, g: value, b: value };
-  }
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
-  return {
-    r: Math.round(hueToRgb(p, q, h + 1 / 3) * 255),
-    g: Math.round(hueToRgb(p, q, h) * 255),
-    b: Math.round(hueToRgb(p, q, h - 1 / 3) * 255),
-  };
-}
-
 function rgbToCode({ r, g, b }: RgbColor): number {
   return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);
 }
@@ -77,12 +50,37 @@ export function rgbFromWorktreeColorCode(code: number): RgbColor {
   };
 }
 
+function mix32(value: number): number {
+  let hash = value >>> 0;
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d);
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b);
+  hash ^= hash >>> 16;
+  return hash >>> 0;
+}
+
+function boostedRgbFromHash(hash: number): RgbColor {
+  let r = 80 + ((hash & 0xff) % 156);
+  let g = 80 + (((hash >>> 8) & 0xff) % 156);
+  let b = 80 + (((hash >>> 16) & 0xff) % 156);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max - min < 80) {
+    if (max === r) r = Math.min(255, r + 70);
+    else if (max === g) g = Math.min(255, g + 70);
+    else b = Math.min(255, b + 70);
+
+    if (min === r) r = Math.max(65, r - 45);
+    else if (min === g) g = Math.max(65, g - 45);
+    else b = Math.max(65, b - 45);
+  }
+  return { r, g, b };
+}
+
 export function worktreeColorCodeForKey(key: string | undefined, fallbackKey = "default"): number {
-  const hash = stableStringHash(key ?? fallbackKey);
-  const hue = hash % 360;
-  const saturation = 62 + ((hash >>> 9) % 19);
-  const lightness = 56 + ((hash >>> 14) % 11);
-  return rgbToCode(hslToRgb(hue, saturation, lightness));
+  const hash = mix32(stableStringHash(`aimux-worktree-color-rgb:v7490:${key ?? fallbackKey}`));
+  return rgbToCode(boostedRgbFromHash(hash));
 }
 
 export function worktreeColorCode(input: WorktreeColorInput): number {
