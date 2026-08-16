@@ -50,13 +50,24 @@ export function isProjectHostOfflineError(error: string) {
 }
 
 export function isRelayUnavailableForProjectDiscovery(status: RelayStatus): boolean {
-  return status === "daemon_offline" || status === "relay_unavailable" || status === "auth_failed";
+  return (
+    status === "device_pending" ||
+    status === "daemon_offline" ||
+    status === "relay_unavailable" ||
+    status === "auth_failed"
+  );
 }
 
 export function relayUnavailableProjectCopy(status: RelayStatus): {
   title: string;
   detail: string;
 } {
+  if (status === "device_pending") {
+    return {
+      title: "Remote approval required.",
+      detail: "Run `aimux security devices`, approve this device, then refresh.",
+    };
+  }
   if (status === "daemon_offline") {
     return {
       title: "Host offline.",

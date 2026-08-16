@@ -71,6 +71,7 @@ export type RelayStatus =
   | "disconnected"
   | "connecting"
   | "connected"
+  | "device_pending"
   | "daemon_offline"
   | "relay_unavailable"
   | "auth_failed";
@@ -91,6 +92,7 @@ export class RelayTransport {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private daemonOnline = false;
+  private deviceId: string | null = null;
   private consecutiveHandshakeFailures = 0;
   private _status: RelayStatus = "disconnected";
   private listeners = new Set<RelayStatusListener>();
@@ -143,6 +145,7 @@ export class RelayTransport {
 
     try {
       const deviceInfo = await this.getDeviceInfo();
+      this.deviceId = deviceInfo.deviceId;
       const deviceProof = await (this.options.getDeviceProof ?? getClientDeviceProof)(deviceInfo);
       const url = this.clientConnectUrl(deviceInfo, deviceProof);
       this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${token}`]);
@@ -303,6 +306,7 @@ export class RelayTransport {
 
     if (msg.type === "daemon_status") {
       this.daemonOnline = msg.online ?? false;
+      if (this._status === "device_pending") return;
       this.setStatus(this.daemonOnline ? "connected" : "daemon_offline");
       return;
     }
@@ -313,6 +317,13 @@ export class RelayTransport {
 
     if (msg.type === "security_event") {
       if (isSecurityEventRecord(msg.event)) {
+        if (msg.event.deviceId && msg.event.deviceId === this.deviceId) {
+          if (msg.event.kind === "device_approved") {
+            this.setStatus(this.daemonOnline ? "connected" : "daemon_offline");
+          } else if (msg.event.kind === "device_blocked") {
+            this.setStatus("auth_failed");
+          }
+        }
         for (const listener of this.securityEventListeners) {
           listener(msg.event);
         }
@@ -323,6 +334,9 @@ export class RelayTransport {
     if (msg.type === "response") {
       const entry = this.pending.get(msg.id);
       if (entry) {
+        if (isPendingSecurityApproval(msg.status, msg.body)) {
+          this.setStatus("device_pending");
+        }
         clearTimeout(entry.timer);
         this.pending.delete(msg.id);
         entry.resolve({ status: msg.status, body: msg.body });
@@ -343,6 +357,9 @@ export class RelayTransport {
     if (msg.type === "project_events_error") {
       const entry = this.projectEventSubscriptions.get(msg.id);
       if (entry) {
+        if (isPendingSecurityApproval(msg.status, { error: msg.message })) {
+          this.setStatus("device_pending");
+        }
         this.projectEventSubscriptions.delete(msg.id);
         entry.onError(new Error(msg.message || `project event stream failed (${msg.status ?? 0})`));
       }
@@ -389,6 +406,12 @@ export class RelayTransport {
     }, this.retryMs);
     this.retryMs = Math.min(this.retryMs * 2, MAX_RETRY_MS);
   }
+}
+
+function isPendingSecurityApproval(status: number | undefined, body: unknown): boolean {
+  if (status !== 403) return false;
+  if (!body || typeof body !== "object" || !("error" in body)) return false;
+  return /pending security approval/i.test(String((body as { error?: unknown }).error));
 }
 
 function isSecurityEventRecord(value: unknown): value is SecurityEventRecord {

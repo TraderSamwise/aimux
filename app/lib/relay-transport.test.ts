@@ -201,6 +201,69 @@ describe("RelayTransport remote security state", () => {
     }
   });
 
+  it("surfaces pending device approval and recovers when this device is approved", async () => {
+    const originalWebSocket = globalThis.WebSocket;
+    const sockets: MockWebSocket[] = [];
+    try {
+      vi.stubGlobal(
+        "WebSocket",
+        class extends MockWebSocket {
+          constructor(url: string, protocols: string[]) {
+            super(url, protocols);
+            sockets.push(this);
+          }
+        },
+      );
+      const statuses: RelayStatus[] = [];
+      const transport = new RelayTransport(
+        "wss://relay.example.test",
+        async () => "token",
+        async () => ({
+          deviceId: "client_1",
+          kind: "ios",
+          name: "iPhone",
+          platform: "ios",
+        }),
+        testProofOptions,
+      );
+      transport.onStatusChange((status) => statuses.push(status));
+
+      await transport.connect();
+      sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "daemon_status", online: true }) });
+      const request = transport.request("GET", "/projects");
+      const sent = JSON.parse(sockets[0]!.sent.at(-1)!) as { id: string };
+      sockets[0]!.onmessage?.({
+        data: JSON.stringify({
+          id: sent.id,
+          type: "response",
+          status: 403,
+          body: { ok: false, error: "Remote client pending security approval" },
+        }),
+      });
+      await request;
+
+      expect(statuses).toContain("device_pending");
+
+      sockets[0]!.onmessage?.({
+        data: JSON.stringify({
+          type: "security_event",
+          event: {
+            id: "event_1",
+            kind: "device_approved",
+            deviceId: "client_1",
+            title: "Remote device approved",
+            body: "iPhone approved.",
+            createdAt: "2026-05-24T00:00:00.000Z",
+          },
+        }),
+      });
+
+      expect(statuses.at(-1)).toBe("connected");
+    } finally {
+      vi.stubGlobal("WebSocket", originalWebSocket);
+    }
+  });
+
   it("drops relay project event subscriptions after stream errors", async () => {
     const originalWebSocket = globalThis.WebSocket;
     const sockets: MockWebSocket[] = [];
