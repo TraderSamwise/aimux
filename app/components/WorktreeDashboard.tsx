@@ -24,7 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useRouteProject } from "@/lib/use-route-project";
 import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
-import { WORKTREE_TONES } from "@/lib/worktree-tone";
+import { worktreeToneForBucket } from "@/lib/worktree-tone";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
@@ -550,7 +550,7 @@ export function WorktreeList({
     onKillSession,
   };
   const identityToneForBucket = (bucket: WorktreeBucket) =>
-    WORKTREE_TONES[Math.max(0, groups.indexOf(bucket)) % WORKTREE_TONES.length]!;
+    worktreeToneForBucket(bucket, projectPath);
 
   return (
     <View className={cn("py-3", padded && "px-4")}>

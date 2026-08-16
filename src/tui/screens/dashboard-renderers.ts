@@ -4,6 +4,7 @@ import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "..
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionRecencyAnchor } from "../../session-recency.js";
 import { sanitizeExposePreviewOutput } from "../../tmux/expose-preview-sanitize.js";
+import { worktreeColorXterm } from "../../worktree-colors.js";
 import { composeScreenFrame } from "../render/screen-frame.js";
 import { center, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
 import {
@@ -280,10 +281,8 @@ interface WorktreeLike {
   pending?: boolean;
 }
 
-const WORKTREE_TITLE_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75", "38;5;209"];
-
-function worktreeTitle(text: string, index: number): string {
-  const tone = WORKTREE_TITLE_TONES[index % WORKTREE_TITLE_TONES.length] ?? WORKTREE_TITLE_TONES[0];
+function worktreeTitle(text: string, worktree: { path?: string | null; name?: string | null }): string {
+  const tone = worktreeColorXterm({ path: worktree.path, name: worktree.name });
   return `\x1b[1;${tone}m${text}\x1b[0m`;
 }
 
@@ -548,11 +547,11 @@ export function renderDashboardFrame(
       includeEmptyMain: !state.hideOfflineAgents,
     });
 
-    for (const [worktreeIndex, worktree] of quickJumpWorktrees.entries()) {
+    for (const worktree of quickJumpWorktrees) {
       const focused = worktree.path === state.focusedWorktreePath;
       const focusMark = focused && state.navLevel === "worktrees" ? `${style("▸", "accent")} ` : "";
       const badge = worktree.digit ? `[${worktree.digit}] ` : "";
-      let title = `${focusMark}${worktreeTitle(`${badge}${worktree.name}`, worktreeIndex)}`;
+      let title = `${focusMark}${worktreeTitle(`${badge}${worktree.name}`, worktree)}`;
       if (worktree.branch) title += ` ${style(`· ${worktree.branch}`, "muted")}`;
       const summary = worktreeSummaryText(worktree);
       const tone = worktreeTone(worktree);

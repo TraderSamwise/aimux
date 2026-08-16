@@ -5,7 +5,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { firstTokenOf } from "@/lib/status-tone";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { toChatMessages } from "@/lib/transcript-view";
-import { WORKTREE_TONES } from "@/lib/worktree-tone";
+import { worktreeTone } from "@/lib/worktree-tone";
 import type { ExposeChatPreview, ExposePreviewSnapshot } from "../../src/project-api-contract";
 
 export type ExposeFilter = "all" | "working" | "attention" | "ready";
@@ -171,9 +171,18 @@ function trimBlankPreviewEdges(lines: readonly AnsiSpan[][]): AnsiSpan[][] {
   return lines.slice(start, end);
 }
 
-function toneFor(item: ExposeSourceItem, fallbackIndex: number): string {
-  const tone = item.exposeContext?.tone ?? fallbackIndex;
-  return WORKTREE_TONES[Math.max(0, tone) % WORKTREE_TONES.length]!;
+function toneFor(
+  item: ExposeSourceItem,
+  projectRoot: string,
+  worktreeName: string,
+  projectName: string,
+): string {
+  return worktreeTone({
+    path: item.metadata?.worktreePath ?? projectRoot,
+    name: worktreeName,
+    projectRoot,
+    projectName,
+  });
 }
 
 export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
@@ -215,7 +224,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         contextSubtitle: context.project ? projectName : source.project.name,
         sectionKey: `${projectRoot}:${semanticTitle}`,
         sectionLabel: semanticTitle,
-        tone: toneFor(item, index),
+        tone: toneFor(item, projectRoot, worktreeName, projectName),
         terminalPreviewLines: previewLinesFor(item),
         chatPreviewMessages: chatPreviewMessagesFor(item, sessionId),
       });

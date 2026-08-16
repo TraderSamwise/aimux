@@ -29,6 +29,7 @@ import {
   TMUX_RUNTIME_OWNER_OPTION,
 } from "./runtime-owner.js";
 import { loadLastUsedState } from "./last-used.js";
+import { worktreeColorIndex } from "./worktree-colors.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -2376,7 +2377,10 @@ describe("MetadataServer threads API", () => {
       const exposeBody = (await exposeResponse.json()) as { ok: boolean; items: Array<Record<string, any>> };
       expect(exposeResponse.status).toBe(200);
       expect(exposeBody.items.map((item) => item.target.windowId)).toEqual(["@7", "@8", "@9"]);
-      expect(exposeBody.items[0]?.exposeContext).toEqual({ worktree: "main", tone: 0 });
+      expect(exposeBody.items[0]?.exposeContext).toEqual({
+        worktree: "main",
+        tone: worktreeColorIndex({ path: repoRoot, projectRoot: repoRoot }),
+      });
       expect(exposeBody.items[0]?.exposeStatus).toBeUndefined();
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;

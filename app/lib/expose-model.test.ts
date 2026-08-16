@@ -7,6 +7,7 @@ import {
   summarizeExposeTiles,
   type ExposeSourceItem,
 } from "./expose-model";
+import { worktreeTone } from "./worktree-tone";
 
 function previewText(lines: readonly (readonly { text: string }[])[]): string[] {
   return lines.map((line) => line.map((span) => span.text).join(""));
@@ -57,7 +58,71 @@ describe("expose model", () => {
       "custom-modules",
       "e2e-audit",
     ]);
-    expect(tiles.map((tile) => tile.tone)).toEqual(["#00afd7", "#5faf5f", "#d7af5f"]);
+    expect(tiles.map((tile) => tile.tone)).toEqual([
+      worktreeTone({
+        path: "/repo/main",
+        name: "main",
+        projectRoot: project.path,
+        projectName: project.name,
+      }),
+      worktreeTone({
+        path: "/repo/custom-modules",
+        name: "custom-modules",
+        projectRoot: project.path,
+        projectName: project.name,
+      }),
+      worktreeTone({
+        path: "/repo/e2e-audit",
+        name: "e2e-audit",
+        projectRoot: project.path,
+        projectName: project.name,
+      }),
+    ]);
+  });
+
+  it("keeps Expose tones stable when the API order or server tone changes", () => {
+    const first = buildExposeTiles([
+      {
+        project,
+        items: [item("1", "main", 5), item("2", "custom-modules", 0)],
+      },
+    ]);
+    const second = buildExposeTiles([
+      {
+        project,
+        items: [item("2", "custom-modules", 3), item("1", "main", 1)],
+      },
+    ]);
+
+    expect(first.find((tile) => tile.worktreeName === "main")?.tone).toBe(
+      second.find((tile) => tile.worktreeName === "main")?.tone,
+    );
+    expect(first.find((tile) => tile.worktreeName === "custom-modules")?.tone).toBe(
+      second.find((tile) => tile.worktreeName === "custom-modules")?.tone,
+    );
+  });
+
+  it("uses the project root as the main checkout color fallback", () => {
+    const [tile] = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("1", "main", 5),
+            metadata: { ...item("1", "main", 5).metadata, worktreePath: undefined },
+          },
+        ],
+      },
+    ]);
+
+    expect(tile?.tone).toBe(
+      worktreeTone({
+        path: project.path,
+        name: "main",
+        projectRoot: project.path,
+        projectName: project.name,
+      }),
+    );
   });
 
   it("groups tiles by the server semantic title without reshuffling", () => {

@@ -2,6 +2,7 @@ import { basename, resolve as pathResolve } from "node:path";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 import type { ExposeScopeItem, ExposeScopeView, ExposeSublabel } from "./expose-model.js";
 import { listWorktrees, type WorktreeInfo } from "../worktree.js";
+import { worktreeColorIndex } from "../worktree-colors.js";
 
 export interface ExposeOrderingOptions {
   worktreeOrderByProjectRoot?: Record<string, string[]>;
@@ -123,22 +124,13 @@ export function dashboardWorktreeOrderPaths(projectRoot: string, worktrees = lis
   return [root, ...secondary.map((worktree) => worktree.path)];
 }
 
-/**
- * A tint per worktree, assigned in render order.
- *
- * Order of first appearance rather than a hash of the path: it guarantees the first
- * six worktrees on screen are mutually distinct, which is the whole point. A hash is
- * stable across renders but lets two adjacent worktrees collide, and Exposé is a
- * popup — nothing survives long enough for cross-render stability to be worth that.
- *
- * Keyed by resolved path, not by the displayed name, because every project's main
- * checkout renders as "main" and the global scope puts several of them on one grid.
- */
+/** A deterministic tint per worktree, keyed by identity rather than render order. */
 export function assignWorktreeTones(items: ExposeScopeItem[], projectRoot: string): Map<string, number> {
   const tones = new Map<string, number>();
   for (const item of items) {
-    const key = worktreeToneKey(item, item.projectRoot ?? projectRoot);
-    if (!tones.has(key)) tones.set(key, tones.size % 6);
+    const root = item.projectRoot ?? projectRoot;
+    const key = worktreeToneKey(item, root);
+    if (!tones.has(key)) tones.set(key, worktreeColorIndex({ path: key, projectRoot: root }));
   }
   return tones;
 }

@@ -82,7 +82,7 @@ import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
-import { WORKTREE_TONES, worktreeIdentity } from "@/lib/worktree-tone";
+import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
@@ -904,10 +904,20 @@ export default function ChatScreen() {
     : worktreeIdentity(worktreeGroups, {
         path: sessionWorktreePath ?? undefined,
         name: fallbackWorktreeName ?? undefined,
+        projectRoot: stateProjectPath,
       });
   const projectHeaderName =
     project?.name ?? basenamePath(stateProjectPath) ?? basenamePath(sessionWorktreePath);
-  const headerTone = worktree?.tone ?? (isMainCheckoutSession ? WORKTREE_TONES[0] : undefined);
+  const headerTone =
+    worktree?.tone ??
+    (isMainCheckoutSession
+      ? worktreeTone({
+          path: sessionWorktreePath ?? desktopState?.mainCheckoutPath,
+          name: fallbackWorktreeName ?? undefined,
+          projectRoot: stateProjectPath,
+          projectName: projectHeaderName,
+        })
+      : undefined);
   const headerWorktreeName = worktree?.name ?? fallbackWorktreeName;
   const headerWorktreeBranch = worktree?.branch ?? fallbackWorktreeBranch;
   const sessionTitle = routeSessionMissing

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
+import { worktreeColorIndex } from "../worktree-colors.js";
 import { assignWorktreeTones, type ExposeTileContext } from "./expose-ordering.js";
 import { buildTileHeader, drawTile, fitHeaderRows, matchClientSize } from "./expose.js";
 
@@ -259,12 +260,12 @@ describe("assignWorktreeTones", () => {
   const item = (worktreePath: string, projectRoot?: string) =>
     ({ metadata: { worktreePath }, ...(projectRoot ? { projectRoot } : {}) }) as never;
 
-  it("assigns tones in first-seen order so neighbouring worktrees differ", () => {
+  it("assigns tones by identity rather than first-seen order", () => {
     const tones = assignWorktreeTones([item("/p/a"), item("/p/b"), item("/p/a"), item("/p/c")], "/p");
-    expect([...tones.values()]).toEqual([0, 1, 2]);
-    expect(tones.get("/p/a")).toBe(0);
-    expect(tones.get("/p/b")).toBe(1);
-    expect(tones.get("/p/c")).toBe(2);
+    const reordered = assignWorktreeTones([item("/p/c"), item("/p/a"), item("/p/b")], "/p");
+    expect(tones.get("/p/a")).toBe(reordered.get("/p/a"));
+    expect(tones.get("/p/b")).toBe(reordered.get("/p/b"));
+    expect(tones.get("/p/c")).toBe(reordered.get("/p/c"));
   });
 
   it("gives every agent in one worktree the same tone", () => {
@@ -275,18 +276,20 @@ describe("assignWorktreeTones", () => {
   it("keys by resolved path, so each project's main checkout is its own group", () => {
     // Both render as "main"; keying by the displayed name would merge them.
     const tones = assignWorktreeTones([item("", "/one"), item("", "/two")], "/fallback");
-    expect(tones.get("/one")).toBe(0);
-    expect(tones.get("/two")).toBe(1);
+    expect(tones.has("/one")).toBe(true);
+    expect(tones.has("/two")).toBe(true);
+    expect(tones.size).toBe(2);
   });
 
   it("falls back to the project root when an item carries no worktree path", () => {
-    expect(assignWorktreeTones([item("")], "/p").get("/p")).toBe(0);
+    expect(assignWorktreeTones([item("")], "/p").get("/p")).toBe(worktreeColorIndex({ path: "/p", projectRoot: "/p" }));
   });
 
-  it("wraps around the palette rather than running out of tones", () => {
+  it("keeps later worktrees stable when earlier worktrees disappear", () => {
     const many = Array.from({ length: 7 }, (_, i) => item(`/p/w${i}`));
     const tones = assignWorktreeTones(many, "/p");
-    expect(tones.get("/p/w6")).toBe(0);
+    const filtered = assignWorktreeTones([item("/p/w6")], "/p");
+    expect(tones.get("/p/w6")).toBe(filtered.get("/p/w6"));
     expect(tones.size).toBe(7);
   });
 });

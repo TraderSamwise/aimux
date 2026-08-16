@@ -1,26 +1,30 @@
 import type { WorktreeBucket } from "@/lib/desktop-state";
+import {
+  WORKTREE_COLOR_HEXES,
+  worktreeColorHex,
+  type WorktreeColorInput,
+} from "../../src/worktree-colors";
 
-/**
- * The same six tones Exposé tints tiles with, as hex.
- *
- * Literally the same colours: these are the xterm-256 values of the TUI's
- * `BAND_TONES`, so a worktree does not change identity when you move between the
- * terminal and the app.
- */
-export const WORKTREE_TONES = [
-  "#00afd7",
-  "#5faf5f",
-  "#d7af5f",
-  "#d787d7",
-  "#5fafff",
-  "#ff875f",
-] as const;
+/** The same six deterministic worktree identity tones used by the TUI, as hex. */
+export const WORKTREE_TONES = WORKTREE_COLOR_HEXES;
 
 export interface WorktreeIdentity {
   name: string;
   branch: string;
-  /** By position in the project's group list; see below. */
+  /** Deterministic identity tone derived from the worktree path/name. */
   tone: string;
+}
+
+export function worktreeTone(input: WorktreeColorInput): string {
+  return worktreeColorHex(input);
+}
+
+export function worktreeToneForBucket(bucket: WorktreeBucket, projectRoot?: string | null): string {
+  return worktreeColorHex({
+    path: bucket.path,
+    name: bucket.name,
+    projectRoot,
+  });
 }
 
 /**
@@ -33,17 +37,12 @@ export interface WorktreeIdentity {
  * both the name and the tone from one lookup is also what keeps the chat
  * header's label and its coloured rail from ever naming different worktrees.
  *
- * The tone is order of appearance rather than a hash, matching Exposé: it
- * guarantees the first six worktrees in a project are mutually distinct, where
- * a hash lets two neighbours collide. Sharing the ordering with the sidebar is
- * what keeps the two surfaces agreeing about which colour a worktree is.
- *
  * Matched on path first because every project's main checkout is named "main";
  * name is the fallback for groups the service reports without one.
  */
 export function worktreeIdentity(
   groups: WorktreeBucket[] | undefined,
-  worktree: { path?: string; name?: string },
+  worktree: { path?: string; name?: string; projectRoot?: string | null },
 ): WorktreeIdentity | undefined {
   if (!groups?.length) return undefined;
   const index = groups.findIndex((group) =>
@@ -56,6 +55,6 @@ export function worktreeIdentity(
   return {
     name: group.name,
     branch: group.branch,
-    tone: WORKTREE_TONES[index % WORKTREE_TONES.length]!,
+    tone: worktreeToneForBucket(group, worktree.projectRoot),
   };
 }
