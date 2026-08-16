@@ -24,6 +24,14 @@ export interface AttachmentRecord {
    * every session for them — see its comment for why that is the safe default.
    */
   sessionId?: string;
+  hostedAttachment?: HostedAttachmentReference;
+}
+
+export interface HostedAttachmentReference {
+  contentUrl: string;
+  expiresAt: string;
+  sha256?: string;
+  sizeBytes?: number;
 }
 
 export interface PublicAttachmentRecord {
@@ -36,6 +44,8 @@ export interface PublicAttachmentRecord {
   createdAt: string;
   source: "path" | "upload";
   contentUrl: string;
+  hostedContentUrl?: string;
+  hostedExpiresAt?: string;
   sessionId?: string;
 }
 
@@ -45,6 +55,7 @@ export interface CreateUploadedAttachmentInput {
   dataBase64: string;
   /** Required: an attachment with no owner cannot be reached by a remote operator. */
   sessionId: string;
+  hostedAttachment?: HostedAttachmentReference;
 }
 
 export interface CreatePathAttachmentInput {
@@ -123,6 +134,12 @@ export function createUploadedAttachment(input: CreateUploadedAttachmentInput): 
   if (buffer.length > maxUploadBytes) {
     throw new Error("attachment exceeds 10 MB");
   }
+  const hostedAttachment = input.hostedAttachment
+    ? normalizeHostedAttachmentReference(input.hostedAttachment, {
+        sha256: createHash("sha256").update(buffer).digest("hex"),
+        sizeBytes: buffer.length,
+      })
+    : undefined;
 
   const attachmentsDir = getAttachmentsDir();
   mkdirSync(attachmentsDir, { recursive: true });
@@ -136,11 +153,12 @@ export function createUploadedAttachment(input: CreateUploadedAttachmentInput): 
     filename,
     mimeType,
     sizeBytes: buffer.length,
-    sha256: createHash("sha256").update(buffer).digest("hex"),
+    sha256: hostedAttachment?.sha256 ?? createHash("sha256").update(buffer).digest("hex"),
     createdAt: new Date().toISOString(),
     source: "upload",
     contentPath,
     sessionId,
+    ...(hostedAttachment ? { hostedAttachment } : {}),
   };
 
   atomicWrite(contentPath, buffer);
@@ -355,6 +373,48 @@ function toPublicAttachment(record: AttachmentRecord): PublicAttachmentRecord {
     contentUrl: record.sessionId
       ? `/attachments/${record.id}/content?sessionId=${encodeURIComponent(record.sessionId)}`
       : `/attachments/${record.id}/content`,
+    ...(record.hostedAttachment
+      ? {
+          hostedContentUrl: record.hostedAttachment.contentUrl,
+          hostedExpiresAt: record.hostedAttachment.expiresAt,
+        }
+      : {}),
     sessionId: record.sessionId,
+  };
+}
+
+function normalizeHostedAttachmentReference(
+  input: HostedAttachmentReference,
+  expected: { sha256: string; sizeBytes: number },
+): HostedAttachmentReference {
+  const contentUrl = input.contentUrl?.trim();
+  if (!contentUrl) throw new Error("hosted attachment contentUrl is required");
+  let parsed: URL;
+  try {
+    parsed = new URL(contentUrl);
+  } catch {
+    throw new Error("hosted attachment contentUrl is invalid");
+  }
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && parsed.hostname === "localhost")) {
+    throw new Error("hosted attachment contentUrl must be HTTPS");
+  }
+  const expiresAt = input.expiresAt?.trim();
+  if (!expiresAt || !Number.isFinite(Date.parse(expiresAt))) {
+    throw new Error("hosted attachment expiresAt is invalid");
+  }
+  if (Date.parse(expiresAt) <= Date.now()) {
+    throw new Error("hosted attachment is expired");
+  }
+  if (input.sha256 && input.sha256 !== expected.sha256) {
+    throw new Error("hosted attachment checksum mismatch");
+  }
+  if (input.sizeBytes !== undefined && input.sizeBytes !== expected.sizeBytes) {
+    throw new Error("hosted attachment size mismatch");
+  }
+  return {
+    contentUrl,
+    expiresAt,
+    ...(input.sha256 ? { sha256: input.sha256 } : {}),
+    ...(input.sizeBytes !== undefined ? { sizeBytes: input.sizeBytes } : {}),
   };
 }

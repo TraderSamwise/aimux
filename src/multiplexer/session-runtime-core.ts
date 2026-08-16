@@ -16,6 +16,7 @@ import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { activityTextFromParsedAgentOutput, parseAgentOutput } from "../agent-output-parser.js";
 import { messagesFromParsedAgentOutput, type AgentTranscriptMessage } from "../agent-transcript.js";
+import { getAttachment } from "../attachment-store.js";
 import { parseSgrRichTextLines } from "../rich-text.js";
 import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
@@ -470,6 +471,14 @@ export async function readAgentOutput(
   // copy of this mapping and the copies had already drifted.
   const messages = messagesFromParsedAgentOutput(parsedForMessages, {
     richLines,
+    attachmentContentForId: (attachmentId) => {
+      const attachment = getAttachment(attachmentId, sessionId);
+      if (!attachment?.hostedContentUrl) return undefined;
+      return {
+        contentUrl: attachment.hostedContentUrl,
+        hostedExpiresAt: attachment.hostedExpiresAt,
+      };
+    },
   });
   // Cached beside the transcript, not recomputed on the hit path: the verb lives
   // in the pane text this cache is keyed on, so identical output means an

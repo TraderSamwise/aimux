@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
+import { createHostedAttachment } from "./attachments.js";
 import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery.js";
 import { deliverShareInvite } from "./sharing-delivery.js";
 import {
@@ -916,7 +917,8 @@ export class RelayObject extends DurableObject<Env> {
     ws: WebSocket,
     request: Extract<RelayMessage, { type: "request" }>,
   ): Promise<
-    { ok: true; requestPatch?: { headers?: Record<string, string> } } | { ok: false; status: number; error: string }
+    | { ok: true; requestPatch?: { headers?: Record<string, string>; body?: unknown } }
+    | { ok: false; status: number; error: string }
   > {
     const tags = this.ctx.getTags(ws);
     const shareId = tagValue(tags, "share:");
@@ -934,6 +936,8 @@ export class RelayObject extends DurableObject<Env> {
     if (!access.allowed) {
       return { ok: false, status: 403, error: "Route is not allowed for this shared chat" };
     }
+    const bodyPatch = await this.hostedAttachmentPatchForSharedRequest(request, share, participant);
+    if (!bodyPatch.ok) return bodyPatch;
     return {
       ok: true,
       requestPatch: {
@@ -947,8 +951,61 @@ export class RelayObject extends DurableObject<Env> {
           "X-Aimux-Actor-Role": participant.role,
           ...(participant.email ? { "X-Aimux-Actor-Email": participant.email } : {}),
         },
+        ...(bodyPatch.body !== undefined ? { body: bodyPatch.body } : {}),
       },
     };
+  }
+
+  private async hostedAttachmentPatchForSharedRequest(
+    request: Extract<RelayMessage, { type: "request" }>,
+    share: SharedSessionRecord,
+    participant: ShareParticipantRecord,
+  ): Promise<{ ok: true; body?: unknown } | { ok: false; status: number; error: string }> {
+    if (request.method.toUpperCase() !== "POST") return { ok: true };
+    if (request.path !== "/attachments" && !/\/attachments(?:\?|$)/.test(request.path)) return { ok: true };
+    const body = request.body;
+    if (!body || typeof body !== "object") return { ok: true };
+    const upload = body as {
+      filename?: unknown;
+      mimeType?: unknown;
+      dataBase64?: unknown;
+      sessionId?: unknown;
+    };
+    if (
+      typeof upload.filename !== "string" ||
+      typeof upload.mimeType !== "string" ||
+      typeof upload.dataBase64 !== "string"
+    ) {
+      return { ok: true };
+    }
+    if (!this.env.ATTACHMENTS) {
+      return { ok: false, status: 503, error: "Hosted attachments are not configured" };
+    }
+    try {
+      const hosted = await createHostedAttachment(this.env, "https://relay.aimux.app", {
+        ownerUserId: share.ownerUserId,
+        shareId: share.id,
+        sessionId: share.sessionId,
+        filename: upload.filename,
+        mimeType: upload.mimeType,
+        dataBase64: upload.dataBase64,
+      });
+      if (!hosted) return { ok: false, status: 503, error: "Hosted attachments are not configured" };
+      return {
+        ok: true,
+        body: {
+          ...body,
+          hostedAttachment: {
+            contentUrl: hosted.contentUrl,
+            expiresAt: hosted.expiresAt,
+            sha256: hosted.sha256,
+            sizeBytes: hosted.sizeBytes,
+          },
+        },
+      };
+    } catch (error) {
+      return { ok: false, status: 400, error: error instanceof Error ? error.message : "invalid attachment" };
+    }
   }
 
   private async listShares(request: Request): Promise<Response> {

@@ -179,10 +179,10 @@ function toHistoryPart(part: HistoryPart, sessionId: string, shared: boolean): H
   if (part.type !== "image_reference" && part.type !== "attachment_reference") return part;
   return {
     ...part,
-    // Built here, not by the service. The same attachment sits at a
-    // different address depending on whether we are talking to a local
-    // daemon or through the relay, and only this side knows which.
-    contentUrl: `/attachments/${part.attachmentId}/content?sessionId=${encodeURIComponent(sessionId)}`,
+    // Built here only when the service did not provide a durable hosted URL.
+    contentUrl:
+      part.contentUrl ??
+      `/attachments/${part.attachmentId}/content?sessionId=${encodeURIComponent(sessionId)}`,
   };
 }
 

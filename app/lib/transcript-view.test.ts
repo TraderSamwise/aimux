@@ -37,6 +37,29 @@ describe("toChatMessages", () => {
     });
   });
 
+  it("preserves service-provided hosted attachment urls", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          parts: [
+            {
+              type: "image_reference",
+              label: "[image #1]",
+              attachmentId: "att_a1",
+              contentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
+            },
+          ],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts![0]).toMatchObject({
+      attachmentId: "att_a1",
+      contentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
+    });
+  });
+
   it("builds generic attachment urls", () => {
     const [chat] = toChatMessages(
       [

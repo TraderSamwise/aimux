@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createPathAttachment, getAttachmentContent, getAttachmentRecord } from "./attachment-store.js";
+import {
+  createPathAttachment,
+  createUploadedAttachment,
+  getAttachmentContent,
+  getAttachmentRecord,
+} from "./attachment-store.js";
 import { initPaths } from "./paths.js";
 
 describe("attachment-store path attachments", () => {
@@ -75,5 +80,48 @@ describe("attachment-store path attachments", () => {
     } finally {
       rmSync(outsideRoot, { recursive: true, force: true });
     }
+  });
+
+  it("stores hosted attachment display metadata on uploaded attachments", () => {
+    const attachment = createUploadedAttachment({
+      filename: "screen.png",
+      mimeType: "image/png",
+      dataBase64: Buffer.from("png-bytes").toString("base64"),
+      sessionId: "codex-1",
+      hostedAttachment: {
+        contentUrl: "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        sha256: "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+        sizeBytes: 9,
+      },
+    });
+
+    expect(attachment).toMatchObject({
+      hostedContentUrl:
+        "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+      hostedExpiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    expect(getAttachmentRecord(attachment.id, "codex-1")?.hostedAttachment).toMatchObject({
+      contentUrl: attachment.hostedContentUrl,
+      expiresAt: attachment.hostedExpiresAt,
+    });
+  });
+
+  it("rejects uploaded hosted metadata that does not match the bytes", () => {
+    expect(() =>
+      createUploadedAttachment({
+        filename: "screen.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from("other").toString("base64"),
+        sessionId: "codex-1",
+        hostedAttachment: {
+          contentUrl:
+            "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          sha256: "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+          sizeBytes: 9,
+        },
+      }),
+    ).toThrow("hosted attachment checksum mismatch");
   });
 });

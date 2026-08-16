@@ -88,6 +88,35 @@ describe("messagesFromParsedAgentOutput", () => {
     ]);
   });
 
+  it("can attach a hosted display URL to parsed attachment refs", () => {
+    const [message] = messagesFromParsedAgentOutput(
+      parsed([
+        {
+          type: "prompt",
+          text:
+            "look at this\n\nAttached image files:\n" +
+            "- shot.png (image/png, 1234 bytes): /srv/x/.aimux/attachments/att_abc123.png",
+        },
+      ]),
+      {
+        attachmentContentForId: (attachmentId) =>
+          attachmentId === "att_abc123"
+            ? {
+                contentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
+                hostedExpiresAt: "2099-01-01T00:00:00.000Z",
+              }
+            : undefined,
+      },
+    );
+
+    expect(message!.parts[1]).toMatchObject({
+      type: "image_reference",
+      attachmentId: "att_abc123",
+      contentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
+      hostedExpiresAt: "2099-01-01T00:00:00.000Z",
+    });
+  });
+
   it("reads generic screenshot attachment text into an image part", () => {
     const [message] = messagesFromParsedAgentOutput(
       parsed([

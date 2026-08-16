@@ -19,6 +19,8 @@ export interface AgentTranscriptImagePart {
   filename?: string;
   mimeType?: string;
   kind?: "image";
+  contentUrl?: string;
+  hostedExpiresAt?: string;
 }
 
 export interface AgentTranscriptAttachmentPart {
@@ -28,6 +30,8 @@ export interface AgentTranscriptAttachmentPart {
   filename?: string;
   mimeType?: string;
   kind?: "audio" | "video" | "pdf" | "text" | "file";
+  contentUrl?: string;
+  hostedExpiresAt?: string;
 }
 
 export interface AgentTranscriptTextPart {

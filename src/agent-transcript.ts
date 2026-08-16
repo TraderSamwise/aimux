@@ -65,6 +65,8 @@ const VIEWED_ATTACHMENT_PATH =
   /^\s*(?:[└⎿L]\s*)?(?:\.aimux\/attachments\/|.+?\.aimux\/attachments\/)(att_[A-Za-z0-9_-]+)\.[^\s/]+\s*$/;
 
 type AttachmentLabels = { byId: Map<string, string>; nextImage: number; nextFile: number };
+type AttachmentContent = { contentUrl?: string; hostedExpiresAt?: string };
+type AttachmentContentResolver = (attachmentId: string) => AttachmentContent | null | undefined;
 
 function blockType(block: TranscriptBlock): string {
   return String(block.type ?? block.kind ?? "").trim();
@@ -347,7 +349,10 @@ function contentId(role: string, text: string): string {
 
 export function messagesFromParsedAgentOutput(
   parsed?: ParsedAgentOutputLike | null,
-  options: { richLines?: readonly (readonly RichTextSpan[])[] } = {},
+  options: {
+    richLines?: readonly (readonly RichTextSpan[])[];
+    attachmentContentForId?: AttachmentContentResolver;
+  } = {},
 ): AgentTranscriptMessage[] {
   const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
   const messages: AgentTranscriptMessage[] = [];
@@ -368,6 +373,7 @@ export function messagesFromParsedAgentOutput(
     seen.set(base, count);
 
     const parts = partsFromText(raw, labels);
+    applyAttachmentContent(parts, options.attachmentContentForId);
     applyRichSpansToTextParts(parts, raw, richSpansFromSourceLines(block.sourceLines, options.richLines));
     messages.push({
       id: count === 1 ? base : `${base}#${count}`,
@@ -381,6 +387,17 @@ export function messagesFromParsedAgentOutput(
   if (newest) newest.latest = true;
 
   return messages;
+}
+
+function applyAttachmentContent(parts: AgentTranscriptPart[], resolver: AttachmentContentResolver | undefined): void {
+  if (!resolver) return;
+  for (const part of parts) {
+    if (part.type !== "image_reference" && part.type !== "attachment_reference") continue;
+    const content = resolver(part.attachmentId);
+    if (!content?.contentUrl) continue;
+    part.contentUrl = content.contentUrl;
+    if (content.hostedExpiresAt) part.hostedExpiresAt = content.hostedExpiresAt;
+  }
 }
 
 export function messagesFromAgentOutput(input: {

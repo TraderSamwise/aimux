@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectStateDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
@@ -4816,6 +4817,43 @@ describe("MetadataServer threads API", () => {
     expect(contentRes.ok).toBe(true);
     expect(contentRes.headers.get("content-type")).toBe("image/png");
     expect(contentBytes.equals(imageBytes)).toBe(true);
+  });
+
+  it("persists hosted attachment display metadata on uploads", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const imageBytes = Buffer.from("uploaded-image-bytes");
+    const sha256 = createHash("sha256").update(imageBytes).digest("hex");
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "shot.png",
+        mimeType: "image/png",
+        dataBase64: imageBytes.toString("base64"),
+        sessionId: "codex-1",
+        hostedAttachment: {
+          contentUrl:
+            "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          sha256,
+          sizeBytes: imageBytes.length,
+        },
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as {
+      ok: boolean;
+      attachment: { hostedContentUrl?: string; hostedExpiresAt?: string };
+    };
+
+    expect(uploadRes.ok).toBe(true);
+    expect(uploaded.attachment).toMatchObject({
+      hostedContentUrl:
+        "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+      hostedExpiresAt: "2099-01-01T00:00:00.000Z",
+    });
   });
 
   it("uploads non-image attachments with a typed kind", async () => {

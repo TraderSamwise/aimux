@@ -5706,6 +5706,7 @@ export class MetadataServer {
           mimeType?: unknown;
           dataBase64?: unknown;
           sessionId?: unknown;
+          hostedAttachment?: unknown;
         };
         if (
           typeof body.filename !== "string" ||
@@ -5742,6 +5743,24 @@ export class MetadataServer {
             mimeType: body.mimeType,
             dataBase64: body.dataBase64,
             sessionId: uploadSession.value,
+            hostedAttachment:
+              body.hostedAttachment &&
+              typeof body.hostedAttachment === "object" &&
+              typeof (body.hostedAttachment as { contentUrl?: unknown }).contentUrl === "string" &&
+              typeof (body.hostedAttachment as { expiresAt?: unknown }).expiresAt === "string"
+                ? {
+                    contentUrl: (body.hostedAttachment as { contentUrl: string }).contentUrl,
+                    expiresAt: (body.hostedAttachment as { expiresAt: string }).expiresAt,
+                    sha256:
+                      typeof (body.hostedAttachment as { sha256?: unknown }).sha256 === "string"
+                        ? (body.hostedAttachment as { sha256: string }).sha256
+                        : undefined,
+                    sizeBytes:
+                      typeof (body.hostedAttachment as { sizeBytes?: unknown }).sizeBytes === "number"
+                        ? (body.hostedAttachment as { sizeBytes: number }).sizeBytes
+                        : undefined,
+                  }
+                : undefined,
           });
           send(res, 200, { ok: true, attachment });
         } catch (error) {

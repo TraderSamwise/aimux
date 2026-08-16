@@ -919,6 +919,8 @@ export interface UploadAttachmentResponse {
     createdAt: string;
     source: "path" | "upload";
     contentUrl: string;
+    hostedContentUrl?: string;
+    hostedExpiresAt?: string;
   };
 }
 

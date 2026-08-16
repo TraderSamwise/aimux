@@ -29,6 +29,29 @@ class MemoryStorage {
   setAlarm = vi.fn(async (_time: number) => undefined);
 }
 
+class FakeR2Bucket {
+  objects = new Map<string, { body: Uint8Array; customMetadata?: Record<string, string> }>();
+
+  async put(key: string, value: ArrayBuffer | ArrayBufferView | string, options?: { customMetadata?: Record<string, string> }) {
+    const body =
+      typeof value === "string"
+        ? new TextEncoder().encode(value)
+        : value instanceof ArrayBuffer
+          ? new Uint8Array(value)
+          : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    this.objects.set(key, { body, customMetadata: options?.customMetadata });
+    return null;
+  }
+
+  async get(key: string) {
+    return this.objects.get(key) ?? null;
+  }
+
+  async delete(key: string) {
+    this.objects.delete(key);
+  }
+}
+
 describe("RelayObject sharing index repair", () => {
   let storage: MemoryStorage;
   let receiverFetch: ReturnType<typeof vi.fn>;
@@ -107,6 +130,111 @@ describe("RelayObject sharing index repair", () => {
       id: acceptedBody.share.id,
       ownerUserId: "user_owner",
     });
+  });
+});
+
+describe("RelayObject shared hosted attachments", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "WebSocketPair",
+      class TestWebSocketPair {
+        0 = fakeSocket([]);
+        1 = fakeSocket([]);
+      },
+    );
+  });
+
+  it("adds a hosted attachment pointer to allowed shared uploads", async () => {
+    const storage = new MemoryStorage();
+    const bucket = new FakeR2Bucket();
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) })),
+      },
+      ATTACHMENTS: bucket as unknown as R2Bucket,
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const ws = fakeSocket([`share:${shareId}`, "user:user_guest"]);
+
+    const result = await (
+      object as unknown as {
+        prepareSharedClientRequest: (
+          ws: WebSocket,
+          request: {
+            id: string;
+            type: "request";
+            method: string;
+            path: string;
+            body?: unknown;
+          },
+        ) => Promise<{ ok: true; requestPatch?: { body?: unknown } } | { ok: false; error: string }>;
+      }
+    ).prepareSharedClientRequest(ws, {
+      id: "req_1",
+      type: "request",
+      method: "POST",
+      path: "/proxy/127.0.0.1/43192/attachments",
+      body: {
+        filename: "screen.png",
+        mimeType: "image/png",
+        dataBase64: btoa("png-bytes"),
+        sessionId: "claude-k4lihz",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.requestPatch?.body : null).toMatchObject({
+      hostedAttachment: {
+        contentUrl: expect.stringMatching(
+          /^https:\/\/relay\.aimux\.app\/attachments\/hosted\/ha_[A-Za-z0-9_-]{43}\/content$/,
+        ),
+        expiresAt: expect.any(String),
+        sha256: "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+        sizeBytes: 9,
+      },
+    });
+    expect(bucket.objects.size).toBe(1);
+  });
+
+  it("fails shared uploads closed when hosted storage is unavailable", async () => {
+    const storage = new MemoryStorage();
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const ws = fakeSocket([`share:${shareId}`, "user:user_guest"]);
+
+    const result = await (
+      object as unknown as {
+        prepareSharedClientRequest: (
+          ws: WebSocket,
+          request: {
+            id: string;
+            type: "request";
+            method: string;
+            path: string;
+            body?: unknown;
+          },
+        ) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
+      }
+    ).prepareSharedClientRequest(ws, {
+      id: "req_1",
+      type: "request",
+      method: "POST",
+      path: "/proxy/127.0.0.1/43192/attachments",
+      body: {
+        filename: "screen.png",
+        mimeType: "image/png",
+        dataBase64: btoa("png-bytes"),
+        sessionId: "claude-k4lihz",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 503, error: "Hosted attachments are not configured" });
   });
 });
 
