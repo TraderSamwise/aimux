@@ -83,6 +83,7 @@ describe("Dashboard", () => {
       mainCheckout: { name: "Main Checkout", branch: "master" },
       worktreeRemoval: undefined,
       operationFailures: [],
+      hideOfflineAgents: false,
       derivedStatusLabel: (session) => session.status,
     });
 
@@ -242,6 +243,7 @@ describe("Dashboard", () => {
       mainCheckout: { name: "Main Checkout", branch: "master" },
       worktreeRemoval: undefined,
       operationFailures: [],
+      hideOfflineAgents: false,
       derivedStatusLabel,
     });
 

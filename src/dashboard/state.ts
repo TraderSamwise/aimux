@@ -29,6 +29,7 @@ export class DashboardState {
   worktreeSessions: DashboardSession[] = [];
   worktreeEntries: DashboardWorktreeEntry[] = [];
   quickJumpDigits = "";
+  hideOfflineAgents = false;
 
   isScreen(screen: DashboardScreen): boolean {
     return this.screen === screen;
@@ -61,6 +62,7 @@ export class DashboardState {
       `sessions:${this.worktreeSessions.length}`,
       `entries:${this.worktreeEntries.length}`,
       `quick:${this.quickJumpDigits}`,
+      `hideOffline:${this.hideOfflineAgents ? 1 : 0}`,
     ].join("|");
   }
 }

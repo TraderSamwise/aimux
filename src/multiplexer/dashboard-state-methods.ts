@@ -16,6 +16,7 @@ import {
 } from "./dashboard-model.js";
 import { hydrateDashboardArchiveScreenState } from "./archives.js";
 import { hydrateDashboardNotificationScreenState } from "./notifications.js";
+import { filterDashboardVisibleModel } from "../dashboard/visibility.js";
 import { recede } from "../tui/render/theme.js";
 import type { TmuxTarget } from "../tmux/runtime-manager.js";
 
@@ -103,8 +104,14 @@ export const dashboardStateMethods = {
   },
 
   reconcileDashboardRenderState(this: any): void {
-    const dashSessions = this.dashboardSessionsCache;
-    const worktreeGroups = this.dashboardWorktreeGroupsCache;
+    const visibleDashboardModel = filterDashboardVisibleModel({
+      hideOfflineAgents: this.dashboardState.hideOfflineAgents,
+      sessions: this.dashboardSessionsCache,
+      services: this.dashboardServicesCache,
+      worktreeGroups: this.dashboardWorktreeGroupsCache,
+    });
+    const dashSessions = visibleDashboardModel.sessions;
+    const worktreeGroups = visibleDashboardModel.worktreeGroups;
     const hasWorktrees = worktreeGroups.length > 0;
 
     this.dashboardState.worktreeNavOrder = worktreeGroups.map((wt: any) => wt.path);
@@ -114,6 +121,10 @@ export const dashboardStateMethods = {
     }
     if (hasWorktrees) {
       this.updateWorktreeSessions();
+    } else {
+      this.dashboardState.worktreeSessions = [];
+      this.dashboardState.worktreeEntries = [];
+      this.dashboardState.level = "worktrees";
     }
     this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
   },

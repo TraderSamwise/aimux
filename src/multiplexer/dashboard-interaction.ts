@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import { DASHBOARD_QUICK_JUMP_TIMEOUT_MS, buildDashboardQuickJumpWorktrees } from "../dashboard/quick-jump.js";
+import { filterDashboardVisibleModel, isDashboardSessionOffline } from "../dashboard/visibility.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { commandKey, isShiftedLetterCommand, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
@@ -202,7 +203,8 @@ function stepIntoFocusedDashboardWorktree(host: any): void {
 
 function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: boolean): boolean {
   if (!hasWorktrees) {
-    const totalCount = host.getDashboardSessions().length;
+    const dashSessions = getVisibleDashboardSessions(host);
+    const totalCount = dashSessions.length;
     switch (key) {
       case "down":
       case "j":
@@ -221,7 +223,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       case "enter":
       case "right":
       case "l": {
-        const entry = host.getDashboardSessions()[host.activeIndex];
+        const entry = dashSessions[host.activeIndex];
         if (entry) {
           void host.activateDashboardEntry(entry);
           return true;
@@ -307,6 +309,14 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       return true;
   }
   return false;
+}
+
+function getVisibleDashboardSessions(host: any): DashboardSession[] {
+  const sessions: DashboardSession[] = host
+    .getDashboardSessions()
+    .filter((session: DashboardSession) => !isOverseerSession(session));
+  if (!host.dashboardState.hideOfflineAgents) return sessions;
+  return sessions.filter((session) => !isDashboardSessionOffline(session));
 }
 
 function failedWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
@@ -529,11 +539,18 @@ export const dashboardInteractionMethods = {
     // A first digit always addresses a worktree, at either level. Digits are the one
     // gesture that has to work without knowing where the pointer currently sits.
 
-    const worktrees = buildDashboardQuickJumpWorktrees({
+    const visibleDashboardModel = filterDashboardVisibleModel({
+      hideOfflineAgents: this.dashboardState.hideOfflineAgents,
       sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
       services: this.dashboardServicesCache,
       worktreeGroups: this.dashboardWorktreeGroupsCache,
+    });
+    const worktrees = buildDashboardQuickJumpWorktrees({
+      sessions: visibleDashboardModel.sessions,
+      services: visibleDashboardModel.services,
+      worktreeGroups: visibleDashboardModel.worktreeGroups,
       mainCheckout: this.dashboardMainCheckoutInfoCache,
+      includeEmptyMain: !this.dashboardState.hideOfflineAgents,
     });
 
     const worktree = worktrees.find((entry) => entry.digit === digit);
@@ -630,6 +647,16 @@ export const dashboardInteractionMethods = {
       this.dashboardState.toggleDetailsSidebar();
       this.dashboard.toggleDetailsPane();
       this.renderCurrentDashboardView();
+      return;
+    }
+
+    if (this.isDashboardScreen("dashboard") && key === "a") {
+      this.dashboardState.hideOfflineAgents = !this.dashboardState.hideOfflineAgents;
+      this.clearDashboardQuickJump();
+      this.reconcileDashboardRenderState();
+      this.footerFlash = this.dashboardState.hideOfflineAgents ? "Offline agents hidden" : "Offline agents shown";
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
       return;
     }
 

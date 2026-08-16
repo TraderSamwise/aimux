@@ -14,6 +14,7 @@ import { resolveDashboardTarget } from "../dashboard/targets.js";
 import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { isOverseerSession } from "../team.js";
+import { isDashboardSessionOffline } from "../dashboard/visibility.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { TmuxRuntimeManager, type TmuxClientInfo } from "../tmux/runtime-manager.js";
 import { openManagedServiceWindow, openManagedSessionWindow, type TmuxServiceTarget } from "../tmux/window-open.js";
@@ -137,12 +138,14 @@ export function updateWorktreeSessions(host: DashboardControlHost): void {
     sortDashboardEntriesByCreatedAt(
       allDash.filter((s: DashboardSession) => {
         if (isOverseerSession(s)) return false;
+        if (host.dashboardState.hideOfflineAgents && isDashboardSessionOffline(s)) return false;
         return (s.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
       }),
     ),
     host.dashboardState.focusedWorktreePath,
   );
   const filteredServices: DashboardService[] = host.getDashboardServices().filter((service: DashboardService) => {
+    if (host.dashboardState.hideOfflineAgents && host.dashboardState.worktreeSessions.length === 0) return false;
     return (service.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
   });
   const worktreeServices = host.dashboardUiStateStore.orderServicesForWorktree(

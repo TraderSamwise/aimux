@@ -51,6 +51,31 @@ describe("dashboardInteractionMethods", () => {
     dashboardApiClientMock.refreshDashboardModelThroughApi.mockClear();
   });
 
+  it("toggles hidden offline agents from the dashboard", () => {
+    const host: any = {
+      dashboardState: {
+        hideOfflineAgents: false,
+        quickJumpDigits: "",
+        hasWorktrees: () => true,
+      },
+      dashboardQuickJumpTimeout: null,
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      reconcileDashboardRenderState: vi.fn(),
+      renderDashboard: vi.fn(),
+      clearDashboardQuickJump: dashboardInteractionMethods.clearDashboardQuickJump,
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("a"));
+
+    expect(host.dashboardState.hideOfflineAgents).toBe(true);
+    expect(host.reconcileDashboardRenderState).toHaveBeenCalledOnce();
+    expect(host.footerFlash).toBe("Offline agents hidden");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
   it("requests reviews through the project service", async () => {
     const host: any = {
       activeSession: { id: "codex-1", command: "codex" },

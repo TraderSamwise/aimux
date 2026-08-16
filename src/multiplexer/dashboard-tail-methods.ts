@@ -57,6 +57,7 @@ import type { DashboardMutationResult } from "./dashboard-ops.js";
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
+import { isDashboardSessionOffline } from "../dashboard/visibility.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import { loadConfig } from "../config.js";
 import { getRepoRoot } from "../paths.js";
@@ -77,6 +78,7 @@ import { shouldMarkFreshRelaunchAllowed } from "../session-fresh-relaunch.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
+  dashboardState: { hideOfflineAgents: boolean };
   dashboardSessionsCache: DashboardSession[];
   dashboardServicesCache: DashboardService[];
   dashboardWorktreeGroupsCache: Array<{ sessions: DashboardSession[] }>;
@@ -1094,7 +1096,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   getDashboardSessionsInVisualOrder() {
     const mux = this as unknown as DashboardTailHost;
-    const allDash = this.getDashboardSessions();
+    const allDash = this.getDashboardSessions().filter((session) => {
+      return !(mux.mode === "dashboard" && mux.dashboardState.hideOfflineAgents && isDashboardSessionOffline(session));
+    });
     if (mux.mode === "dashboard") {
       const mainSessions = allDash.filter((session) => !session.worktreePath);
       const ordered = [...mainSessions];

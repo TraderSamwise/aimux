@@ -60,6 +60,7 @@ export function buildDashboardQuickJumpWorktrees(input: {
   services: DashboardService[];
   worktreeGroups: WorktreeGroup[];
   mainCheckout: MainCheckoutInfo;
+  includeEmptyMain?: boolean;
 }): DashboardQuickJumpWorktree[] {
   const wtSessionMap = new Map<string, DashboardSession[]>();
   const wtServiceMap = new Map<string, DashboardService[]>();
@@ -116,7 +117,7 @@ export function buildDashboardQuickJumpWorktrees(input: {
       sessions: entriesForGroup(mainGroup.sessions, sortDashboardEntriesByCreatedAt(mainSessions)),
       services: entriesForGroup(mainGroup.services, sortDashboardEntriesByCreatedAt(mainServices)),
     });
-  } else {
+  } else if (input.includeEmptyMain !== false || mainSessions.length > 0 || mainServices.length > 0) {
     pushWorktree({
       path: undefined,
       name: input.mainCheckout.name,

@@ -156,6 +156,7 @@ export interface DashboardViewModel {
   mainCheckout: MainCheckoutInfo;
   worktreeRemoval?: DashboardWorktreeRemovalInfo;
   operationFailures: DashboardOperationFailure[];
+  hideOfflineAgents?: boolean;
   detailsPaneVisible: boolean;
   scrollOffset: number;
   derivedStatusLabel: typeof derivedStatusLabel;
@@ -183,6 +184,7 @@ export class Dashboard {
     mainCheckout: { name: "Main Checkout", branch: "" },
     worktreeRemoval: undefined,
     operationFailures: [],
+    hideOfflineAgents: false,
     detailsPaneVisible: true,
     scrollOffset: 0,
     derivedStatusLabel,

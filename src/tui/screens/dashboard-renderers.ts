@@ -398,6 +398,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     ["?", "help"],
     ["q", "quit"],
   ];
+  const visibility: FooterHint[] = [["a", state.hideOfflineAgents ? "show offline" : "hide offline"]];
 
   // Worktrees present, focused at session level: the full set.
   if (state.hasWorktrees && state.navLevel === "sessions") {
@@ -415,6 +416,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["n", "agent"],
       ["v", "service"],
       ["f", "fork"],
+      ...visibility,
       ...talk,
       ...manage,
       ...system,
@@ -433,6 +435,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["v", "service"],
       ["f", "fork"],
       ["w", "worktree"],
+      ...visibility,
       ...system,
     ];
   }
@@ -451,6 +454,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["v", "service"],
       ["f", "fork"],
       ["w", "worktree"],
+      ...visibility,
       ...talk,
       ...manage,
       ...system,
@@ -458,7 +462,16 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   }
 
   // No sessions and no worktrees: nothing to navigate.
-  return [["Tab", "details"], ["u", "attention"], ["n", "agent"], ["v", "service"], ["f", "fork"], ...talk, ...system];
+  return [
+    ["Tab", "details"],
+    ["u", "attention"],
+    ["n", "agent"],
+    ["v", "service"],
+    ["f", "fork"],
+    ...visibility,
+    ...talk,
+    ...system,
+  ];
 }
 
 export function renderDashboardFrame(
@@ -532,6 +545,7 @@ export function renderDashboardFrame(
       services: state.services,
       worktreeGroups: state.worktreeGroups,
       mainCheckout: state.mainCheckout,
+      includeEmptyMain: !state.hideOfflineAgents,
     });
 
     for (const [worktreeIndex, worktree] of quickJumpWorktrees.entries()) {

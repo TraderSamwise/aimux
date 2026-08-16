@@ -20,6 +20,7 @@ function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): Dashboa
     mainCheckout: { name: "Main Checkout", branch: "master" },
     worktreeRemoval: undefined,
     operationFailures: [],
+    hideOfflineAgents: false,
     detailsPaneVisible: true,
     scrollOffset: 0,
     derivedStatusLabel,
@@ -91,11 +92,11 @@ describe("buildDashboardFooterHints", () => {
   it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
-      new Set(["u", "Tab", "n", "v", "f", "s", "H", "T", "o", "O", "R", "?", "q"]),
+      new Set(["u", "Tab", "n", "v", "f", "a", "s", "H", "T", "o", "O", "R", "?", "q"]),
     );
     // worktree level
     expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
-      new Set(["↑↓/jk", "1-9", "Enter/→/l", "u", "Tab", "n", "v", "f", "w", "?", "q"]),
+      new Set(["↑↓/jk", "1-9", "Enter/→/l", "u", "Tab", "n", "v", "f", "w", "a", "?", "q"]),
     );
     // session level with worktrees + a selected session + a teammate
     expect(
@@ -118,6 +119,7 @@ describe("buildDashboardFooterHints", () => {
         "n",
         "v",
         "f",
+        "a",
         "s",
         "H",
         "T",
@@ -134,8 +136,37 @@ describe("buildDashboardFooterHints", () => {
     );
     // flat session list with a selected session
     expect(keys({ hasWorktrees: false, navLevel: "sessions", sessions: sess(), selectedSessionId: "a" })).toEqual(
-      new Set(["↑↓/jk", "Enter/→/l", "u", "Tab", "n", "v", "f", "w", "s", "H", "T", "o", "O", "R", "x", "r", "?", "q"]),
+      new Set([
+        "↑↓/jk",
+        "Enter/→/l",
+        "u",
+        "Tab",
+        "n",
+        "v",
+        "f",
+        "w",
+        "a",
+        "s",
+        "H",
+        "T",
+        "o",
+        "O",
+        "R",
+        "x",
+        "r",
+        "?",
+        "q",
+      ]),
     );
+  });
+
+  it("labels the offline visibility toggle by current state", () => {
+    expect(
+      buildDashboardFooterHints(baseDashboardViewModel({ hideOfflineAgents: false })).find((h) => h[0] === "a"),
+    ).toEqual(["a", "hide offline"]);
+    expect(
+      buildDashboardFooterHints(baseDashboardViewModel({ hideOfflineAgents: true })).find((h) => h[0] === "a"),
+    ).toEqual(["a", "show offline"]);
   });
 });
 

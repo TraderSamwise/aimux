@@ -26,6 +26,7 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { filterDashboardVisibleModel } from "../dashboard/visibility.js";
 
 function buildStaticDashboardRenderErrorFrame(message: string, cols: number, rows: number): string {
   const width = Math.max(24, Math.min(cols, 120));
@@ -139,10 +140,17 @@ export const dashboardViewMethods = {
       const { cols, rows } = this.getViewportSize();
       const allDashSessions = this.dashboardSessionsCache;
       const overseerSessions = allDashSessions.filter((session: any) => isOverseerSession(session));
-      const dashSessions = allDashSessions.filter((session: any) => !isOverseerSession(session));
+      const rawDashSessions = allDashSessions.filter((session: any) => !isOverseerSession(session));
       const dashTeammates = this.dashboardTeammatesCache ?? [];
-      const dashServices = this.dashboardServicesCache;
-      const worktreeGroups = this.dashboardWorktreeGroupsCache;
+      const visibleDashboardModel = filterDashboardVisibleModel({
+        hideOfflineAgents: this.dashboardState.hideOfflineAgents,
+        sessions: rawDashSessions,
+        services: this.dashboardServicesCache,
+        worktreeGroups: this.dashboardWorktreeGroupsCache,
+      });
+      const dashSessions = visibleDashboardModel.sessions;
+      const dashServices = visibleDashboardModel.services;
+      const worktreeGroups = visibleDashboardModel.worktreeGroups;
       const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
 
       const hasWorktrees = worktreeGroups.length > 0;
@@ -177,6 +185,7 @@ export const dashboardViewMethods = {
         version: AIMUX_VERSION,
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],
+        hideOfflineAgents: this.dashboardState.hideOfflineAgents,
         worktreeRemoval: this.worktreeRemovalJob
           ? {
               path: this.worktreeRemovalJob.path,
