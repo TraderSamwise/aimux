@@ -248,6 +248,25 @@ describe("RelayObject owner device security", () => {
     expect(await unblocked.json()).toMatchObject({ device: { id: "client_1", approved: false, blocked: false } });
   });
 
+  it("sends the approval event to the waiting owner client", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      SECURITY_DEVICE_POLICY: "enforce",
+    } as unknown as Env);
+
+    await object
+      .fetch(
+        new Request("https://relay.aimux.app/client/connect?deviceId=client_1&deviceKind=ios&deviceName=iPhone", {
+          headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+        }),
+      )
+      .catch((error) => error);
+
+    const clientSocket = storage.sockets?.at(-1);
+    expect(clientSocket?.send).toHaveBeenCalledWith(expect.stringContaining("Remote approval needed"));
+    expect(clientSocket?.send).toHaveBeenCalledWith(expect.stringContaining("approvalCode"));
+  });
+
   it("does not approve historical devices that are no longer connected", async () => {
     const storage = storageWithSockets([]);
     await storage.put("security-state:v1", {

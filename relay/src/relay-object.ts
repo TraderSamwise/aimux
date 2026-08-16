@@ -688,6 +688,11 @@ export class RelayObject extends DurableObject<Env> {
           this.send(this.daemonWs, { type: "security_event", event });
         } catch {}
       }
+      if (event.kind === "new_client_detected") {
+        try {
+          this.send(ws, { type: "security_event", event });
+        } catch {}
+      }
       if (event.kind === "new_client_detected" || event.kind === "shared_client_connected") {
         this.broadcastToOwnerClients({ type: "security_event", event }, securityRecipientUserId, ws);
         await deliverSecurityAlert({
