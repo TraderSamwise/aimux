@@ -153,11 +153,11 @@ changed, and always bump the version first.
 cd app
 # OTA update — JavaScript / asset changes only
 yarn version:bump-ota && yarn update              # testflight
-yarn version:bump-ota && yarn update:production   # production
+yarn version:bump-ota production && yarn update:production   # production
 
 # Native build — native deps, Expo plugins, permissions, icons, splash, native config
-yarn version:bump-build && yarn build:testflight   # testflight
-yarn version:bump-build && yarn build:production    # production
+yarn version:bump-build && yarn build              # testflight
+yarn version:bump-build production && yarn build:production    # production
 ```
 
 OTA covers JS and assets; a native rebuild is required for anything that changes the

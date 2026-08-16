@@ -144,8 +144,18 @@ Native app releases use the shared release scripts from `app/`:
 
 ```bash
 cd app
-yarn version:bump-ota && yarn update:production
-yarn version:bump-build && yarn build:production
+yarn version:bump-ota && yarn update
+yarn version:bump-build && yarn build
+```
+
+The default native release lane is TestFlight. Use `production`-targeted
+version and release commands only when intentionally shipping an App Store
+production-channel build:
+
+```bash
+cd app
+yarn version:bump-ota production && yarn update:production
+yarn version:bump-build production && yarn build:production
 ```
 
 OTA is for JavaScript and asset changes only. Use a native build when native
