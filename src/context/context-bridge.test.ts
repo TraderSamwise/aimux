@@ -49,6 +49,25 @@ describe("ContextWatcher tmux continuity", () => {
     expect(readHistory("claude-live")).toEqual([]);
   });
 
+  it("seeds live.md as soon as a tmux-backed managed session is registered", () => {
+    const capture = vi.fn(() => ["Registered session output", "No history file yet"].join("\n"));
+    const watcher = new ContextWatcher(capture);
+
+    watcher.updateSessions([
+      {
+        id: "claude-registered",
+        command: "claude",
+        tmuxTarget: target("@11"),
+      },
+    ]);
+
+    const livePath = join(getContextDir(), "claude-registered", "live.md");
+    const live = readFileSync(livePath, "utf-8");
+    expect(live).toContain("# claude-registered (claude) — Live Snapshot");
+    expect(live).toContain("Registered session output");
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
   it("does not write live.md when disabled", async () => {
     const watcher = new ContextWatcher(() => ["Streaming output"].join("\n"), { enabled: false });
     watcher.updateSessions([

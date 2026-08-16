@@ -825,5 +825,6 @@ export function updateContextWatcherSessions(host: SessionRuntimeHost): void {
         };
       }),
     );
+    host.contextWatcher.start?.();
   });
 }

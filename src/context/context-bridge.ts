@@ -61,6 +61,18 @@ function simpleHash(str: string): string {
   return hash.toString(36);
 }
 
+function sessionSignature(session: { id: string; command: string; tmuxTarget?: TmuxTarget }): string {
+  const target = session.tmuxTarget;
+  return [
+    session.id,
+    session.command,
+    target?.sessionName ?? "",
+    target?.windowId ?? "",
+    target?.windowIndex ?? "",
+    target?.windowName ?? "",
+  ].join("\0");
+}
+
 function boundLiveSnapshot(text: string): string {
   const lines = text.split("\n").slice(-MAX_LIVE_MD_LINES);
   let bounded = lines.join("\n").trim();
@@ -113,15 +125,26 @@ export class ContextWatcher {
   /** Track last pane snapshot hash per session for tmux-backed live context. */
   private paneSnapshotHashes = new Map<string, string>();
   private panePromptVisible = new Map<string, boolean>();
+  private sessionSignatures = new Map<string, string>();
 
   updateSessions(
     sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[]; tmuxTarget?: TmuxTarget }>,
   ): void {
     if (this.options.enabled === false) {
       this.sessions = [];
+      this.sessionSignatures.clear();
       return;
     }
     this.sessions = sessions;
+    const nextSignatures = new Map<string, string>();
+    for (const session of sessions) {
+      const signature = sessionSignature(session);
+      nextSignatures.set(session.id, signature);
+      if (!session.tmuxTarget || this.sessionSignatures.get(session.id) === signature) continue;
+      if (!this.readOffsets.has(session.id)) this.initOffset(session.id);
+      this.capturePaneSnapshot(session);
+    }
+    this.sessionSignatures = nextSignatures;
   }
 
   start(intervalMs = 1_000): void {

@@ -17,6 +17,7 @@ import {
   resizeAgentPane,
   sendAgentInput,
   syncTmuxWindowMetadata,
+  updateContextWatcherSessions,
   updateSessionLabel,
 } from "./session-runtime-core.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -25,6 +26,40 @@ import { SessionBootstrapService } from "../session-bootstrap.js";
 describe("session runtime prompt submission", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("keeps the context watcher running for managed tmux sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-context-"));
+    await initPaths(repoRoot);
+    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
+    const host: any = {
+      sessions: [{ id: "claude-live", command: "claude" }],
+      sessionToolKeys: new Map([["claude-live", "claude"]]),
+      sessionTmuxTargets: new Map([["claude-live", target]]),
+      tmuxRuntimeManager: {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-live" })),
+        listProjectManagedWindows: vi.fn(),
+        isWindowAlive: vi.fn(() => true),
+      },
+      contextWatcher: {
+        updateSessions: vi.fn(),
+        start: vi.fn(),
+      },
+      projectRoot: "/repo",
+    };
+
+    updateContextWatcherSessions(host);
+
+    expect(host.contextWatcher.updateSessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: "claude-live",
+        command: "claude",
+        tmuxTarget: target,
+      }),
+    ]);
+    expect(host.contextWatcher.start).toHaveBeenCalledOnce();
+    rmSync(repoRoot, { recursive: true, force: true });
   });
 
   it("does not apply dashboard rename locally when project-service rename fails", async () => {
