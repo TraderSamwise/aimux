@@ -182,6 +182,118 @@ describe("RelayObject shared security delivery", () => {
   });
 });
 
+describe("RelayObject owner device security", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "WebSocketPair",
+      class TestWebSocketPair {
+        0 = fakeSocket([]);
+        1 = fakeSocket([]);
+      },
+    );
+  });
+
+  it("lists, approves, blocks, and unblocks owner devices", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      SECURITY_DEVICE_POLICY: "enforce",
+    } as unknown as Env);
+
+    await object.fetch(
+      new Request("https://relay.aimux.app/client/connect?deviceId=client_1&deviceKind=ios&deviceName=iPhone", {
+        headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+      }),
+    ).catch((error) => error);
+    await object.fetch(
+      new Request(
+        "https://relay.aimux.app/client/connect?deviceId=guest-browser&shareId=share_1&deviceName=Guest",
+        {
+          headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_guest", "X-Aimux-Share-Owner-Id": "user_owner" },
+        },
+      ),
+    ).catch(() => undefined);
+
+    const listed = await object.fetch(new Request("https://relay.aimux.app/security/devices"));
+    expect(listed.status).toBe(200);
+    const listedBody = (await listed.json()) as { devices: Array<{ id: string; approved: boolean }> };
+    expect(listedBody.devices).toEqual([expect.objectContaining({ id: "client_1", approved: false })]);
+
+    const approved = await object.fetch(
+      new Request("https://relay.aimux.app/security/devices/client_1/approve", { method: "POST" }),
+    );
+    expect(approved.status).toBe(200);
+    expect(await approved.json()).toMatchObject({ device: { id: "client_1", approved: true, blocked: false } });
+
+    const blocked = await object.fetch(
+      new Request("https://relay.aimux.app/security/devices/client_1/block", { method: "POST" }),
+    );
+    expect(blocked.status).toBe(200);
+    expect(await blocked.json()).toMatchObject({ device: { id: "client_1", approved: false, blocked: true } });
+
+    const unblocked = await object.fetch(
+      new Request("https://relay.aimux.app/security/devices/client_1/unblock", { method: "POST" }),
+    );
+    expect(unblocked.status).toBe(200);
+    expect(await unblocked.json()).toMatchObject({ device: { id: "client_1", approved: false, blocked: false } });
+  });
+
+  it("rejects unapproved owner client requests under enforce mode", async () => {
+    const clientSocket = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([clientSocket]);
+    const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
+
+    await object.webSocketMessage(
+      clientSocket,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects" }),
+    );
+
+    expect(clientSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        id: "req-1",
+        type: "response",
+        status: 403,
+        body: { ok: false, error: "Remote client pending security approval" },
+      }),
+    );
+  });
+
+  it("allows approved owner client requests to reach daemon routing", async () => {
+    const clientSocket = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([clientSocket]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "web",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+          approvedAt: "2026-05-24T00:01:00.000Z",
+        },
+      },
+      pushTokens: {},
+      actions: {},
+      events: [],
+    });
+    const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
+
+    await object.webSocketMessage(
+      clientSocket,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects" }),
+    );
+
+    expect(clientSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        id: "req-1",
+        type: "response",
+        status: 503,
+        body: { ok: false, error: "Daemon not connected" },
+      }),
+    );
+  });
+});
+
 function createObject(storage: MemoryStorage & { sockets?: Array<ReturnType<typeof fakeSocket>> }, env: Env) {
   const tags = new Map<WebSocket, string[]>();
   return new RelayObject(

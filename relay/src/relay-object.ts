@@ -5,6 +5,8 @@ import { deliverShareInvite } from "./sharing-delivery.js";
 import {
   activateSecurityLockdown,
   appendSecurityEvent,
+  approveSecurityDevice,
+  blockSecurityDevice,
   createShareSecurityEvent,
   createSecurityActionToken,
   deactivateSecurityLockdown,
@@ -15,9 +17,11 @@ import {
   isSecurityLockedDown,
   loadSecurityState,
   markSecurityActionUsed,
+  notificationPushTokensForDevicePolicy,
   recordClientConnection,
   sanitizeDeviceInfo,
   saveSecurityState,
+  unblockSecurityDevice,
 } from "./security.js";
 import {
   acceptShareInvite,
@@ -79,6 +83,17 @@ export class RelayObject extends DurableObject<Env> {
     if (url.pathname === "/security/status" && request.method === "GET") {
       const state = await loadSecurityState(this.ctx.storage);
       return json({ ok: true, locked: isSecurityLockedDown(state), lockdown: state.lockdown }, 200);
+    }
+    if (url.pathname === "/security/devices" && request.method === "GET") {
+      return this.listSecurityDevices();
+    }
+    if (url.pathname === "/security/events" && request.method === "GET") {
+      return this.listSecurityEvents();
+    }
+    const securityDeviceAction = parseSecurityDeviceActionPath(url.pathname);
+    if (securityDeviceAction && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.updateSecurityDevice(securityDeviceAction.deviceId, securityDeviceAction.action);
     }
     if (url.pathname === "/security/push-token" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
@@ -406,13 +421,13 @@ export class RelayObject extends DurableObject<Env> {
     const ownerUserId = tags.find((tag) => tag.startsWith("user:"))?.slice("user:".length);
     const notification = message.notification;
     if (!ownerUserId || !notification?.title) return;
-    const state = await loadSecurityState(this.ctx.storage);
-    try {
-      await deliverNotificationPush({
-        userId: ownerUserId,
-        pushTokens: Object.values(state.pushTokens),
-        title: notification.title,
-        body: notification.body,
+      const state = await loadSecurityState(this.ctx.storage);
+      try {
+        await deliverNotificationPush({
+          userId: ownerUserId,
+          pushTokens: notificationPushTokensForDevicePolicy(state, this.env.SECURITY_DEVICE_POLICY),
+          title: notification.title,
+          body: notification.body,
         kind: notification.kind,
         sessionId: notification.sessionId,
         projectId: notification.projectId,
@@ -678,6 +693,67 @@ export class RelayObject extends DurableObject<Env> {
     };
     await saveSecurityState(this.ctx.storage, state);
     return json({ ok: true }, 200);
+  }
+
+  private async listSecurityDevices(): Promise<Response> {
+    const state = await loadSecurityState(this.ctx.storage);
+    const devices = Object.values(state.devices)
+      .filter((device) => !device.id.startsWith("shared:"))
+      .sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt))
+      .map((device) => ({
+        ...device,
+        approved: isDeviceApproved(device),
+        blocked: Boolean(device.blockedAt),
+      }));
+    return json({ ok: true, devices }, 200);
+  }
+
+  private async listSecurityEvents(): Promise<Response> {
+    const state = await loadSecurityState(this.ctx.storage);
+    return json({ ok: true, events: state.events }, 200);
+  }
+
+  private async updateSecurityDevice(
+    deviceId: string,
+    action: "approve" | "block" | "unblock",
+  ): Promise<Response> {
+    const state = await loadSecurityState(this.ctx.storage);
+    let event: SecurityEventRecord | null = null;
+    const result = (() => {
+      if (action === "approve") {
+        const approved = approveSecurityDevice(state, deviceId);
+        event = approved.event;
+        return { state: approved.state, device: approved.device };
+      }
+      if (action === "block") {
+        const blocked = blockSecurityDevice(state, deviceId);
+        event = blocked.event;
+        return { state: blocked.state, device: blocked.device };
+      }
+      return unblockSecurityDevice(state, deviceId);
+    })();
+    if (!result.device) return json({ ok: false, error: "Device not found" }, 404);
+    await saveSecurityState(this.ctx.storage, result.state);
+    if (event) {
+      this.broadcastToClients({ type: "security_event", event });
+      if (this.daemonWs) {
+        try {
+          this.send(this.daemonWs, { type: "security_event", event });
+        } catch {}
+      }
+    }
+    if (action === "block") this.closeClientSocketsForDevice(result.device.id, "Remote device blocked");
+    return json(
+      {
+        ok: true,
+        device: {
+          ...result.device,
+          approved: isDeviceApproved(result.device),
+          blocked: Boolean(result.device.blockedAt),
+        },
+      },
+      200,
+    );
   }
 
   private async sendTestPush(request: Request): Promise<Response> {
@@ -1046,6 +1122,8 @@ export class RelayObject extends DurableObject<Env> {
 
   private async shouldRejectClientRequest(ws: WebSocket): Promise<boolean> {
     if (this.env.SECURITY_DEVICE_POLICY !== "enforce") return false;
+    const tags = this.ctx.getTags(ws);
+    if (tags.some((tag) => tag.startsWith("share:"))) return false;
     const deviceId = this.clientDeviceIds.get(ws) ?? this.deviceIdFromTags(ws);
     if (!deviceId) return true;
     const state = await loadSecurityState(this.ctx.storage);
@@ -1257,6 +1335,18 @@ export class RelayObject extends DurableObject<Env> {
       this.clientDeviceIds.delete(ws);
     }
   }
+
+  private closeClientSocketsForDevice(deviceId: string, reason: string): void {
+    for (const ws of this.clientSockets) {
+      const tags = this.ctx.getTags(ws);
+      if (!tags.includes(`device:${deviceId}`)) continue;
+      try {
+        ws.close(1008, reason);
+      } catch {}
+      this.clientSockets.delete(ws);
+      this.clientDeviceIds.delete(ws);
+    }
+  }
 }
 
 function json(body: unknown, status: number): Response {
@@ -1330,6 +1420,17 @@ function parseOwnerSharePath(pathname: string): { ownerUserId: string; shareId: 
   return {
     ownerUserId: decodeURIComponent(match[1]),
     shareId: decodeURIComponent(match[2]),
+  };
+}
+
+function parseSecurityDeviceActionPath(
+  pathname: string,
+): { deviceId: string; action: "approve" | "block" | "unblock" } | null {
+  const match = pathname.match(/^\/security\/devices\/([^/]+)\/(approve|block|unblock)$/);
+  if (!match) return null;
+  return {
+    deviceId: decodeURIComponent(match[1]),
+    action: match[2] as "approve" | "block" | "unblock",
   };
 }
 

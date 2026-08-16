@@ -62,6 +62,13 @@ import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
 import { hostedLockdownState, setHostedLockdown } from "./hosted-lockdown.js";
 import { raiseHostedCliEvent } from "./hosted-outbox.js";
 import {
+  approveRemoteSecurityDevice,
+  blockRemoteSecurityDevice,
+  listRemoteSecurityDevices,
+  type RemoteSecurityDevice,
+  unblockRemoteSecurityDevice,
+} from "./security-devices-client.js";
+import {
   createHostedPrincipal,
   grantHostedSession,
   listHostedPrincipals,
@@ -1851,6 +1858,79 @@ remoteCmd
   });
 
 securityCmd
+  .command("devices")
+  .description("List remote client devices")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    try {
+      const devices = await listRemoteSecurityDevices();
+      if (opts.json) {
+        console.log(JSON.stringify({ devices }, null, 2));
+        return;
+      }
+      renderRemoteSecurityDevices(devices).forEach((line) => console.log(line));
+    } catch (err) {
+      console.error(`Could not list remote devices: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
+  .command("approve <deviceId>")
+  .description("Approve a remote client device")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string, opts: { json?: boolean }) => {
+    try {
+      const device = await approveRemoteSecurityDevice(deviceId);
+      if (opts.json) {
+        console.log(JSON.stringify({ device }, null, 2));
+        return;
+      }
+      console.log(`Approved ${device.id} (${device.name ?? device.kind})`);
+    } catch (err) {
+      console.error(`Could not approve remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
+  .command("block <deviceId>")
+  .alias("revoke")
+  .description("Block a remote client device")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string, opts: { json?: boolean }) => {
+    try {
+      const device = await blockRemoteSecurityDevice(deviceId);
+      if (opts.json) {
+        console.log(JSON.stringify({ device }, null, 2));
+        return;
+      }
+      console.log(`Blocked ${device.id} (${device.name ?? device.kind})`);
+    } catch (err) {
+      console.error(`Could not block remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
+  .command("unblock <deviceId>")
+  .description("Unblock a remote client device without approving it")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string, opts: { json?: boolean }) => {
+    try {
+      const device = await unblockRemoteSecurityDevice(deviceId);
+      if (opts.json) {
+        console.log(JSON.stringify({ device }, null, 2));
+        return;
+      }
+      console.log(`Unblocked ${device.id} (${device.name ?? device.kind})`);
+    } catch (err) {
+      console.error(`Could not unblock remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
   .command("unlock")
   .description("Clear relay security lockdown after re-authenticating")
   .option("--web-app-url <url>", "Override the web app URL")
@@ -1864,6 +1944,16 @@ securityCmd
       process.exit(1);
     }
   });
+
+function renderRemoteSecurityDevices(devices: RemoteSecurityDevice[]): string[] {
+  if (devices.length === 0) return ["No remote client devices have connected."];
+  return devices.map((device) => {
+    const state = device.blocked ? "blocked" : device.approved ? "approved" : "pending";
+    const name = device.name ?? device.kind;
+    const location = device.lastCountry ? ` ${device.lastCountry}` : "";
+    return `${device.id}  ${state}  ${name}  ${device.platform ?? "-"}  last seen ${device.lastSeenAt}${location}`;
+  });
+}
 
 async function prepareProjectContext(requestedProject?: string): Promise<string> {
   const requestedPath = pathResolve(requestedProject ?? process.cwd());

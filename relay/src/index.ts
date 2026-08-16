@@ -101,6 +101,45 @@ export default {
       return addCorsHeaders(await stub.fetch(request));
     }
 
+    if (isOwnerSecurityPath(url.pathname)) {
+      const authHeader = request.headers.get("Authorization");
+      const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      if (!bearerToken) {
+        return corsResponse(JSON.stringify({ ok: false, error: "Missing authorization" }), 401);
+      }
+      const tokenIsDaemon = isDaemonToken(bearerToken);
+      if (isOwnerSecurityMutationPath(url.pathname) && !tokenIsDaemon) {
+        return corsResponse(JSON.stringify({ ok: false, error: "Device approval requires local CLI auth" }), 403);
+      }
+      let userId: string;
+      try {
+        if (tokenIsDaemon) {
+          if (!env.RELAY_TOKEN_SECRET) {
+            return corsResponse(
+              JSON.stringify({ ok: false, error: "Relay not configured: RELAY_TOKEN_SECRET unset" }),
+              500,
+            );
+          }
+          userId = (await verifyDaemonTokenPayload(bearerToken, env.RELAY_TOKEN_SECRET)).sub;
+        } else {
+          if (!env.CLERK_SECRET_KEY) {
+            return corsResponse(
+              JSON.stringify({ ok: false, error: "Relay not configured: CLERK_SECRET_KEY unset" }),
+              500,
+            );
+          }
+          userId = await verifyWsToken(bearerToken, env);
+        }
+      } catch {
+        return corsResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401);
+      }
+      const relayId = env.RELAY.idFromName(userId);
+      const stub = env.RELAY.get(relayId);
+      const headers = new Headers(request.headers);
+      headers.set("X-Aimux-User-Id", userId);
+      return addCorsHeaders(await stub.fetch(new Request(request, { headers })));
+    }
+
     if (
       (url.pathname === "/security/push-token" || url.pathname === "/security/test-push") &&
       request.method === "POST"
@@ -327,3 +366,15 @@ export default {
     return stub.fetch(new Request(doUrl.toString(), { headers }));
   },
 };
+
+function isOwnerSecurityPath(pathname: string): boolean {
+  return (
+    pathname === "/security/devices" ||
+    pathname === "/security/events" ||
+    isOwnerSecurityMutationPath(pathname)
+  );
+}
+
+function isOwnerSecurityMutationPath(pathname: string): boolean {
+  return /^\/security\/devices\/[^/]+\/(?:approve|block|unblock)$/.test(pathname);
+}

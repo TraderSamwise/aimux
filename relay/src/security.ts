@@ -246,6 +246,68 @@ export function isDeviceApproved(device: SecurityDeviceRecord | undefined): bool
   return Boolean(device?.approvedAt && !device.blockedAt);
 }
 
+export function notificationPushTokensForDevicePolicy(
+  state: SecurityState,
+  policy: "warn" | "enforce" | undefined,
+): SecurityPushTokenRecord[] {
+  const tokens = Object.values(state.pushTokens);
+  if (policy !== "enforce") return tokens;
+  return tokens.filter((record) => isDeviceApproved(state.devices[record.deviceId]));
+}
+
+export function approveSecurityDevice(
+  state: SecurityState,
+  deviceId: string,
+  now = new Date().toISOString(),
+): { state: SecurityState; device: SecurityDeviceRecord | null; event: SecurityEventRecord | null } {
+  const next = normalizeSecurityState(state);
+  const device = next.devices[sanitizeId(deviceId) ?? ""];
+  if (!device) return { state: next, device: null, event: null };
+  const approvedDevice: SecurityDeviceRecord = {
+    ...device,
+    approvedAt: now,
+    blockedAt: undefined,
+  };
+  next.devices[approvedDevice.id] = approvedDevice;
+  const event = buildDeviceActionEvent("device_approved", approvedDevice, now);
+  appendSecurityEvent(next, event);
+  return { state: next, device: approvedDevice, event };
+}
+
+export function blockSecurityDevice(
+  state: SecurityState,
+  deviceId: string,
+  now = new Date().toISOString(),
+): { state: SecurityState; device: SecurityDeviceRecord | null; event: SecurityEventRecord | null } {
+  const next = normalizeSecurityState(state);
+  const device = next.devices[sanitizeId(deviceId) ?? ""];
+  if (!device) return { state: next, device: null, event: null };
+  const blockedDevice: SecurityDeviceRecord = {
+    ...device,
+    approvedAt: undefined,
+    blockedAt: now,
+  };
+  next.devices[blockedDevice.id] = blockedDevice;
+  const event = buildDeviceActionEvent("device_blocked", blockedDevice, now);
+  appendSecurityEvent(next, event);
+  return { state: next, device: blockedDevice, event };
+}
+
+export function unblockSecurityDevice(
+  state: SecurityState,
+  deviceId: string,
+): { state: SecurityState; device: SecurityDeviceRecord | null } {
+  const next = normalizeSecurityState(state);
+  const device = next.devices[sanitizeId(deviceId) ?? ""];
+  if (!device) return { state: next, device: null };
+  const unblockedDevice: SecurityDeviceRecord = {
+    ...device,
+    blockedAt: undefined,
+  };
+  next.devices[unblockedDevice.id] = unblockedDevice;
+  return { state: next, device: unblockedDevice };
+}
+
 export async function createSecurityActionToken(
   kind: SecurityActionKind,
   opts: { deviceId?: string; now?: string } = {},
@@ -410,6 +472,25 @@ function buildSecurityEvent(
     createdAt: now,
     country: context.country,
     userAgent: context.userAgent,
+  };
+}
+
+function buildDeviceActionEvent(
+  kind: "device_approved" | "device_blocked",
+  device: SecurityDeviceRecord,
+  now: string,
+): SecurityEventRecord {
+  const name = device.name || device.platform || device.kind;
+  const verb = kind === "device_approved" ? "approved" : "blocked";
+  return {
+    id: randomBase64Url(16),
+    kind,
+    deviceId: device.id,
+    title: kind === "device_approved" ? "Remote device approved" : "Remote device blocked",
+    body: `${name} was ${verb}.`,
+    createdAt: now,
+    country: device.lastCountry,
+    userAgent: device.lastUserAgent,
   };
 }
 

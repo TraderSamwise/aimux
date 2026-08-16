@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { appendSecurityEvent, createShareSecurityEvent, emptySecurityState, recordClientConnection } from "./security";
+import {
+  appendSecurityEvent,
+  approveSecurityDevice,
+  blockSecurityDevice,
+  createShareSecurityEvent,
+  emptySecurityState,
+  isDeviceApproved,
+  notificationPushTokensForDevicePolicy,
+  recordClientConnection,
+  unblockSecurityDevice,
+} from "./security";
 
 describe("relay security events", () => {
   it("builds share acceptance events with participant metadata", () => {
@@ -116,5 +126,96 @@ describe("relay security events", () => {
       kind: "shared_client_connected",
       createdAt: "2026-05-24T00:05:00.000Z",
     });
+  });
+
+  it("approves and blocks owner remote devices", () => {
+    const connected = recordClientConnection(
+      emptySecurityState(),
+      { deviceId: "client_123", kind: "ios", name: "iPhone" },
+      { country: "SG" },
+      "2026-05-24T00:00:00.000Z",
+    );
+
+    const approved = approveSecurityDevice(connected.state, "client_123", "2026-05-24T00:01:00.000Z");
+    expect(approved.device).toMatchObject({
+      id: "client_123",
+      approvedAt: "2026-05-24T00:01:00.000Z",
+      blockedAt: undefined,
+    });
+    expect(isDeviceApproved(approved.device ?? undefined)).toBe(true);
+    expect(approved.event).toMatchObject({
+      kind: "device_approved",
+      deviceId: "client_123",
+      title: "Remote device approved",
+    });
+
+    const blocked = blockSecurityDevice(approved.state, "client_123", "2026-05-24T00:02:00.000Z");
+    expect(blocked.device).toMatchObject({
+      id: "client_123",
+      approvedAt: undefined,
+      blockedAt: "2026-05-24T00:02:00.000Z",
+    });
+    expect(isDeviceApproved(blocked.device ?? undefined)).toBe(false);
+    expect(blocked.event).toMatchObject({
+      kind: "device_blocked",
+      deviceId: "client_123",
+      title: "Remote device blocked",
+    });
+
+    const unblocked = unblockSecurityDevice(blocked.state, "client_123");
+    expect(unblocked.device).toMatchObject({
+      id: "client_123",
+      approvedAt: undefined,
+      blockedAt: undefined,
+    });
+    expect(isDeviceApproved(unblocked.device ?? undefined)).toBe(false);
+  });
+
+  it("does not approve unknown devices", () => {
+    const result = approveSecurityDevice(emptySecurityState(), "missing");
+
+    expect(result.device).toBeNull();
+    expect(result.event).toBeNull();
+    expect(result.state.events).toEqual([]);
+  });
+
+  it("filters normal notification tokens to approved devices under enforce policy", () => {
+    const connected = recordClientConnection(
+      emptySecurityState(),
+      { deviceId: "approved-device", kind: "ios", name: "iPhone" },
+      {},
+      "2026-05-24T00:00:00.000Z",
+    );
+    const withPending = recordClientConnection(
+      connected.state,
+      { deviceId: "pending-device", kind: "android", name: "Android" },
+      {},
+      "2026-05-24T00:01:00.000Z",
+    );
+    const approved = approveSecurityDevice(withPending.state, "approved-device", "2026-05-24T00:02:00.000Z");
+    approved.state.pushTokens["user:approved-device"] = {
+      userId: "user",
+      deviceId: "approved-device",
+      token: "approved-token",
+      platform: "ios",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+    };
+    approved.state.pushTokens["user:pending-device"] = {
+      userId: "user",
+      deviceId: "pending-device",
+      token: "pending-token",
+      platform: "android",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+    };
+
+    expect(notificationPushTokensForDevicePolicy(approved.state, "warn").map((token) => token.token).sort()).toEqual([
+      "approved-token",
+      "pending-token",
+    ]);
+    expect(notificationPushTokensForDevicePolicy(approved.state, "enforce").map((token) => token.token)).toEqual([
+      "approved-token",
+    ]);
   });
 });

@@ -171,4 +171,42 @@ describe("relay CORS", () => {
     expect(proxied.headers.get("X-Aimux-Share-Owner-Id")).toBe("user_owner");
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
+
+  it("allows Clerk tokens to read but not mutate owner device security", async () => {
+    authMocks.verifyWsToken.mockResolvedValue("user_owner");
+    const objectFetch = vi.fn(async (_request: Request) => {
+      return new Response(JSON.stringify({ ok: true, devices: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const env = {
+      CLERK_SECRET_KEY: "sk_test",
+      RELAY: {
+        idFromName: vi.fn(() => ({ name: "user_owner" })),
+        get: vi.fn(() => ({ fetch: objectFetch })),
+      },
+    } as unknown as Env;
+
+    const read = await relay.fetch(
+      new Request("https://relay.aimux.app/security/devices", {
+        method: "GET",
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+      env,
+    );
+    expect(read.status).toBe(200);
+    expect(objectFetch).toHaveBeenCalledTimes(1);
+
+    const approve = await relay.fetch(
+      new Request("https://relay.aimux.app/security/devices/client_1/approve", {
+        method: "POST",
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+      env,
+    );
+    expect(approve.status).toBe(403);
+    expect(await approve.json()).toMatchObject({ ok: false, error: "Device approval requires local CLI auth" });
+    expect(objectFetch).toHaveBeenCalledTimes(1);
+  });
 });
