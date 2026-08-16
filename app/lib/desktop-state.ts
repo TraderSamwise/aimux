@@ -114,6 +114,28 @@ export interface WorktreeBucket {
 
 const MAIN_CHECKOUT_KEY = "__main_checkout__";
 
+export function isDesktopSessionOffline(
+  session: Pick<DesktopSession, "pendingAction" | "status">,
+): boolean {
+  if (session.pendingAction) return false;
+  return session.status === "offline" || session.status === "exited";
+}
+
+export function isDesktopServiceOffline(
+  service: Pick<DesktopService, "pendingAction" | "status">,
+): boolean {
+  if (service.pendingAction) return false;
+  return service.status === "offline" || service.status === "exited";
+}
+
+export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): WorktreeBucket | null {
+  const sessions = bucket.sessions.filter((session) => !isDesktopSessionOffline(session));
+  const services = bucket.services.filter((service) => !isDesktopServiceOffline(service));
+  const keepOperational = Boolean(bucket.pending || bucket.removing);
+  if (sessions.length === 0 && services.length === 0 && !keepOperational) return null;
+  return { ...bucket, sessions, services };
+}
+
 function isDashboardHiddenSession(session: DesktopSession): boolean {
   return session.overseer === true || session.team?.role === "overseer";
 }

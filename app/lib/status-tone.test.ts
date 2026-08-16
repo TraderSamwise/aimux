@@ -20,6 +20,12 @@ describe("status-tone", () => {
     expect(agentStatusKind({ status: "running", attention: "error" })).toBe("error");
   });
 
+  it("treats offline as offline before stale attention or activity", () => {
+    expect(agentStatusKind({ status: "offline", attention: "needs_input" })).toBe("offline");
+    expect(agentStatusKind({ status: "offline", activity: "done" })).toBe("offline");
+    expect(agentStatusKind({ status: "exited", attention: "error" })).toBe("offline");
+  });
+
   it("keeps services on service-specific semantics", () => {
     expect(serviceStatusKind({ status: "running" })).toBe("service");
     expect(serviceStatusKind({ status: "offline" })).toBe("serviceOff");

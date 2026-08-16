@@ -196,6 +196,7 @@ export function agentStatusKind(session: {
   status?: string | null;
 }): AppStatusKind {
   if (session.pendingAction) return "needs";
+  if (session.status === "offline" || session.status === "exited") return "offline";
   const attentionKind = normalizeAppStatusKind(session.attention);
   if (attentionKind) return attentionKind;
   const activityKind = normalizeAppStatusKind(session.activity);

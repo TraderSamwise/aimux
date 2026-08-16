@@ -13,9 +13,9 @@ import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
+import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
 import {
   agentStatusKind,
-  aggregateStatusKind,
   appStatusClasses,
   firstTokenOf,
   serviceStatusKind,
@@ -44,17 +44,6 @@ function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
 }
 
-// "Active" = the agent/service is live in tmux (anything but offline/exited).
-// Used to focus the sidebar on live worktrees; the full dashboard always shows
-// everything, including stopped agents.
-function isLiveStatus(status: string): boolean {
-  return status !== "offline" && status !== "exited";
-}
-
-function worktreeIsActive(bucket: WorktreeBucket): boolean {
-  return [...bucket.sessions, ...bucket.services].some((entry) => isLiveStatus(entry.status));
-}
-
 function cap(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
@@ -71,6 +60,8 @@ interface AgentState {
 function deriveAgentState(session: DesktopSession): AgentState {
   if (session.pendingAction)
     return { label: cap(session.pendingAction), kind: agentStatusKind(session), pill: false };
+  if (session.status === "offline") return { label: "Offline", kind: "offline", pill: false };
+  if (session.status === "exited") return { label: "Exited", kind: "offline", pill: false };
   switch (session.attention) {
     case "error":
       return { label: "Error", kind: "error", pill: true };
@@ -376,14 +367,6 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   return chips;
 }
 
-function worktreeAggregateKind(bucket: WorktreeBucket): AppStatusKind | null {
-  return aggregateStatusKind([
-    ...bucket.sessions.map(agentStatusKind),
-    ...bucket.services.map(serviceStatusKind),
-    bucket.pending || bucket.removing ? "needs" : null,
-  ]);
-}
-
 function WorktreeCard({
   bucket,
   projectPath,
@@ -407,7 +390,6 @@ function WorktreeCard({
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
 }) {
-  const aggregateKind = worktreeAggregateKind(bucket);
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
   const barColor = identityTone;
   const chips = worktreeCountChips(bucket);
@@ -525,7 +507,12 @@ export function WorktreeList({
 }) {
   const [showEmpty, setShowEmpty] = useState(false);
 
-  const shown = activeOnly ? groups.filter(worktreeIsActive) : groups;
+  const shown = activeOnly
+    ? groups.flatMap((bucket) => {
+        const activeBucket = filterWorktreeBucketToActiveEntries(bucket);
+        return activeBucket ? [activeBucket] : [];
+      })
+    : groups;
   const main = shown.find((g) => g.isMainCheckout);
   const rest = shown.filter((g) => !g.isMainCheckout);
   const activeRest = rest.filter(worktreeHasChildren);

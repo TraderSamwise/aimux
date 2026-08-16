@@ -2,7 +2,7 @@ import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 
 import type { DesktopState } from "@/lib/desktop-state";
-import { groupByWorktree } from "@/lib/desktop-state";
+import { filterWorktreeBucketToActiveEntries, groupByWorktree } from "@/lib/desktop-state";
 import {
   applyDesktopStateFailureAtom,
   applyDesktopStateSuccessAtom,
@@ -90,6 +90,45 @@ describe("desktop state resource lifecycle", () => {
 
     expect(groups[1]).toMatchObject({ name: "feature", pending: true });
     expect(groups[2]).toMatchObject({ name: "remove-me", removing: true });
+  });
+
+  it("filters sidebar buckets to active entries like TUI hidden-offline mode", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        mainCheckoutInfo: { name: "Main Checkout", branch: "main" },
+        mainCheckoutPath: "/repo",
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "main",
+            status: "active",
+            sessions: [
+              { id: "needs-live", status: "running", attention: "needs_input" },
+              { id: "stale-needs", status: "offline", attention: "needs_input" },
+              { id: "stopped", status: "offline" },
+            ],
+            services: [{ id: "dead-service", command: "dev", args: [], status: "offline" }],
+          },
+          {
+            name: "dead",
+            branch: "dead",
+            path: "/repo/.aimux/worktrees/dead",
+            status: "offline",
+            sessions: [{ id: "only-offline", status: "offline" }],
+            services: [],
+          },
+        ],
+      }),
+    );
+
+    const shown = groups.flatMap((bucket) => {
+      const activeBucket = filterWorktreeBucketToActiveEntries(bucket);
+      return activeBucket ? [activeBucket] : [];
+    });
+
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.sessions.map((session) => session.id)).toEqual(["needs-live"]);
+    expect(shown[0]?.services).toEqual([]);
   });
 
   it("marks an in-flight refresh stale when a previous desktop-state exists", () => {
