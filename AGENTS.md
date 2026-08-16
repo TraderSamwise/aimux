@@ -35,6 +35,10 @@ Aimux separates local execution from shared product state. See
   shared project state and lifecycle mutations.
 - The managed tmux runtime owns terminal execution: panes, windows, PTYs,
   scrollback, attach/detach, and same-machine focus behavior.
+- Managed session liveness is determined by project-service/runtime inventory
+  such as `aimux ps` and `aimux host agent-read <session-id>`, not by the
+  presence of `.aimux/context/*` or `.aimux/history/*` files. Those files are
+  continuity artifacts and may lag, be absent, or be compacted.
 - Clients include the terminal dashboard, Expo web/mobile app, CLI helpers,
   scripts, and plugins. They should use daemon and project-service APIs for
   shared reads and mutations.

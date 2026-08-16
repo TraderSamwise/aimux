@@ -75,6 +75,13 @@ state.
 - Project service APIs - source of truth for shared workflow state such as
   tasks, threads, handoffs, reviews, notifications, and lifecycle records.
 
+Managed session liveness comes from project-service/runtime inventory, not
+repo-local artifacts. Use `aimux ps`, `aimux host agent-read <session-id>`, or
+project-service API state to decide whether a session is managed and alive.
+Missing `.aimux/context/<session-id>/live.md` or `.aimux/history/<session-id>.jsonl`
+means continuity artifacts are absent or stale; it does not mean the session is
+outside Aimux.
+
 `statusline.json` is a derived/debug artifact. It is not the primary transport
 for app, CLI, or dashboard state.
 

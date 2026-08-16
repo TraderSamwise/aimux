@@ -56,7 +56,10 @@ export function buildAimuxAgentInstructions(
     `- .aimux/plans/${sessionPath}.md — optional shared plan for long-running or delegated work\n` +
     `- .aimux/status/${sessionPath}.md — optional brief status note for long-running or delegated work\n` +
     "- .aimux/context/{other-session-id}/ — other agents' context when needed\n" +
-    "- .aimux/history/ — full raw conversation history (JSONL)\n" +
+    "- .aimux/history/ — raw conversation history artifacts when available (JSONL)\n" +
+    "\n" +
+    "Treat these files as continuity artifacts, not as the source of truth for whether a session is managed or alive. " +
+    "Use `aimux ps`, `aimux host agent-read <session-id>`, or project-service/runtime state for liveness.\n" +
     "\n" +
     "Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks. " +
     "Only update those files when the user asks for coordination/delegation, when the task is explicitly long-running, or when state would materially help another agent continue the work.\n" +
