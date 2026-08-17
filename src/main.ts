@@ -1900,9 +1900,8 @@ const securityDeviceCmd = securityCmd.command("device").description("Approve a l
 securityDeviceCmd
   .command("approve [deviceId]")
   .description("Approve the most recent live remote client waiting for access")
-  .option("-y, --yes", "Approve the selected live pending device without prompting")
   .option("--json", "Emit JSON")
-  .action(async (deviceId: string | undefined, opts: { yes?: boolean; json?: boolean }) => {
+  .action(async (deviceId: string | undefined, opts: { json?: boolean }) => {
     try {
       const devices = await listLivePendingRemoteSecurityDevices();
       const candidates = deviceId
@@ -1927,9 +1926,7 @@ securityDeviceCmd
         return;
       }
 
-      const approved = opts.yes
-        ? await approveRemoteSecurityDevice(candidates[0]!.id)
-        : await approveLiveRemoteSecurityDeviceInteractively(candidates);
+      const approved = await approveLiveRemoteSecurityDeviceInteractively(candidates);
       if (!approved) {
         if (opts.json) console.log(JSON.stringify({ ok: false, devices: candidates }, null, 2));
         return;
@@ -1948,10 +1945,11 @@ securityDeviceCmd
 securityCmd
   .command("approve <deviceId>")
   .description("Approve a remote client device")
+  .option("--code <code>", "Approval code shown on the waiting device")
   .option("--json", "Emit JSON")
-  .action(async (deviceId: string, opts: { json?: boolean }) => {
+  .action(async (deviceId: string, opts: { code?: string; json?: boolean }) => {
     try {
-      const device = await approveRemoteSecurityDevice(deviceId);
+      const device = await approveRemoteSecurityDevice(deviceId, opts.code);
       if (opts.json) {
         console.log(JSON.stringify({ device }, null, 2));
         return;
@@ -2030,7 +2028,7 @@ async function approveLiveRemoteSecurityDeviceInteractively(
 ): Promise<RemoteSecurityDevice | null> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
-      "Interactive approval requires a TTY. Re-run with --yes to approve the newest live pending device.",
+      "Interactive approval requires a TTY. Run `aimux security device approve` in a terminal and type the code shown on the waiting device.",
     );
   }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -2038,16 +2036,17 @@ async function approveLiveRemoteSecurityDeviceInteractively(
     for (const device of devices) {
       console.log("");
       renderPendingRemoteSecurityDevice(device).forEach((line) => console.log(line));
-      const code = device.approvalCode;
-      if (!code) throw new Error("Relay did not return an approval code for the pending device");
-      const answer = (await rl.question(`Type ${code} to approve, Enter for next device, or q to quit: `)).trim();
+      const answer = (
+        await rl.question("Type the code shown on that device, Enter for next device, or q to quit: ")
+      ).trim();
       if (!answer) continue;
       if (answer.toLowerCase() === "q") return null;
-      if (answer.toUpperCase() !== code.toUpperCase()) {
-        console.log("Code did not match; device was not approved.");
+      try {
+        return await approveRemoteSecurityDevice(device.id, answer);
+      } catch (error) {
+        console.log(error instanceof Error ? error.message : "Code did not match; device was not approved.");
         continue;
       }
-      return approveRemoteSecurityDevice(device.id);
     }
   } finally {
     rl.close();
@@ -2064,7 +2063,7 @@ function renderPendingRemoteSecurityDevice(device: RemoteSecurityDevice): string
     `  Device   ${name}${location}`,
     `  Platform ${device.platform ?? device.kind}`,
     `  Seen     ${device.lastSeenAt}`,
-    `  Code     ${device.approvalCode ?? "unknown"}`,
+    "  Code     shown on the waiting device",
   ];
 }
 

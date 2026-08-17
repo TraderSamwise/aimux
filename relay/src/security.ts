@@ -14,6 +14,7 @@ export interface SecurityDeviceInfo {
   name?: string;
   platform?: string;
   appVersion?: string;
+  approvalCode?: string;
 }
 
 export interface SecurityConnectionContext {
@@ -211,6 +212,7 @@ export function sanitizeDeviceInfo(
         name?: string;
         platform?: string;
         appVersion?: string;
+        approvalCode?: string;
       }
     | null
     | undefined,
@@ -228,6 +230,7 @@ export function sanitizeDeviceInfo(
     name: sanitizeText(input?.name, 80),
     platform: sanitizeText(input?.platform, 80),
     appVersion: sanitizeText(input?.appVersion, 40),
+    approvalCode: sanitizeApprovalCode(input?.approvalCode),
   };
 }
 
@@ -307,6 +310,7 @@ export function isDeviceApproved(device: SecurityDeviceRecord | undefined): bool
 }
 
 export function securityDeviceApprovalCode(device: SecurityDeviceRecord | SecurityDeviceInfo): string {
+  if (device.approvalCode) return device.approvalCode;
   const input = [
     device.deviceId,
     device.kind,
@@ -327,6 +331,10 @@ export function securityDeviceApprovalCode(device: SecurityDeviceRecord | Securi
     value >>>= 5;
   }
   return `${code.slice(0, 3)}-${code.slice(3)}`;
+}
+
+export function normalizeSecurityDeviceApprovalCode(value: string | undefined | null): string | undefined {
+  return sanitizeApprovalCode(value);
 }
 
 export function shouldEnforceDeviceProof(policy: DeviceProofPolicy): boolean {
@@ -689,6 +697,14 @@ function sanitizeId(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   return trimmed.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 120) || undefined;
+}
+
+function sanitizeApprovalCode(value: string | undefined | null): string | undefined {
+  const trimmed = value?.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  const compact = trimmed.replace(/[^2-9A-HJ-NP-Z]/g, "");
+  if (compact.length !== 6) return undefined;
+  return `${compact.slice(0, 3)}-${compact.slice(3)}`;
 }
 
 function sharedDeviceId(shared: NonNullable<SecurityConnectionContext["shared"]>, deviceId: string): string {

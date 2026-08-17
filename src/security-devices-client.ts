@@ -44,8 +44,11 @@ export async function listLivePendingRemoteSecurityDevices(): Promise<RemoteSecu
   return response.devices;
 }
 
-export async function approveRemoteSecurityDevice(deviceId: string): Promise<RemoteSecurityDevice> {
-  return updateRemoteSecurityDevice(deviceId, "approve");
+export async function approveRemoteSecurityDevice(
+  deviceId: string,
+  approvalCode?: string,
+): Promise<RemoteSecurityDevice> {
+  return updateRemoteSecurityDevice(deviceId, "approve", approvalCode ? { approvalCode } : undefined);
 }
 
 export async function blockRemoteSecurityDevice(deviceId: string): Promise<RemoteSecurityDevice> {
@@ -59,10 +62,11 @@ export async function unblockRemoteSecurityDevice(deviceId: string): Promise<Rem
 async function updateRemoteSecurityDevice(
   deviceId: string,
   action: "approve" | "block" | "unblock",
+  body?: unknown,
 ): Promise<RemoteSecurityDevice> {
   const response = await securityRequest<RemoteSecurityDeviceResponse>(
     `/security/devices/${encodeURIComponent(deviceId)}/${action}`,
-    { method: "POST" },
+    { method: "POST", body },
   );
   if (!response.ok || !response.device) throw new Error(response.error ?? `Could not ${action} remote device`);
   return response.device;
@@ -70,7 +74,7 @@ async function updateRemoteSecurityDevice(
 
 async function securityRequest<T extends { ok?: boolean; error?: string }>(
   path: string,
-  options: { method: "GET" | "POST" },
+  options: { method: "GET" | "POST"; body?: unknown },
 ): Promise<T> {
   const creds = loadCredentials();
   if (!creds) throw new Error("Not logged in. Run `aimux login` first.");
@@ -78,7 +82,9 @@ async function securityRequest<T extends { ok?: boolean; error?: string }>(
     method: options.method,
     headers: {
       Authorization: `Bearer ${creds.token}`,
+      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
     },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
     timeoutMs: 15_000,
   });
   if (response.status >= 400) {

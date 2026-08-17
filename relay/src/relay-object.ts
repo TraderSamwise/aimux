@@ -21,6 +21,7 @@ import {
   loadSecurityState,
   markSecurityActionUsed,
   notificationPushTokensForDevicePolicy,
+  normalizeSecurityDeviceApprovalCode,
   recordClientConnection,
   type DeviceProofInput,
   sanitizeDeviceInfo,
@@ -103,7 +104,7 @@ export class RelayObject extends DurableObject<Env> {
     const securityDeviceAction = parseSecurityDeviceActionPath(url.pathname);
     if (securityDeviceAction && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
-      return this.updateSecurityDevice(securityDeviceAction.deviceId, securityDeviceAction.action);
+      return this.updateSecurityDevice(securityDeviceAction.deviceId, securityDeviceAction.action, request);
     }
     if (url.pathname === "/security/push-token" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
@@ -166,6 +167,7 @@ export class RelayObject extends DurableObject<Env> {
           name: url.searchParams.get("deviceName") ?? undefined,
           platform: url.searchParams.get("devicePlatform") ?? undefined,
           appVersion: url.searchParams.get("appVersion") ?? undefined,
+          approvalCode: url.searchParams.get("approvalCode") ?? undefined,
         });
       } catch {
         return new Response("Missing or invalid deviceId", { status: 400 });
@@ -298,18 +300,16 @@ export class RelayObject extends DurableObject<Env> {
       }
       if (await this.shouldRejectClientRequest(ws)) {
         const pendingDevice = await this.pendingSecurityDeviceForSocket(ws);
-        const approvalCode = pendingDevice ? securityDeviceApprovalCode(pendingDevice) : undefined;
+        const approval = pendingApprovalPayload(pendingDevice);
         this.send(ws, {
           id: parsed.id,
           type: "response",
           status: 403,
           body: {
             ok: false,
-            error: approvalCode
-              ? `Remote client pending security approval. Code ${approvalCode}.`
-              : "Remote client pending security approval",
-            deviceId: pendingDevice?.id,
-            approvalCode,
+            error: approval.message,
+            deviceId: approval.deviceId,
+            approvalCode: approval.approvalCode,
           },
         });
         return;
@@ -366,13 +366,14 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (await this.shouldRejectClientRequest(ws)) {
       const pendingDevice = await this.pendingSecurityDeviceForSocket(ws);
+      const approval = pendingApprovalPayload(pendingDevice);
       this.send(ws, {
         id: message.id,
         type: "project_events_error",
         status: 403,
-        message: pendingDevice
-          ? `Remote client pending security approval. Code ${securityDeviceApprovalCode(pendingDevice)}.`
-          : "Remote client pending security approval",
+        message: approval.message,
+        deviceId: approval.deviceId,
+        approvalCode: approval.approvalCode,
       });
       return;
     }
@@ -810,7 +811,7 @@ export class RelayObject extends DurableObject<Env> {
       .map((deviceId) => state.devices[deviceId])
       .filter((device) => device && !isDeviceApproved(device) && !device.blockedAt)
       .sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt))
-      .map((device) => this.securityDeviceResponse(device, { includeApprovalCode: true }));
+      .map((device) => this.securityDeviceResponse(device));
     return json({ ok: true, devices }, 200);
   }
 
@@ -831,10 +832,22 @@ export class RelayObject extends DurableObject<Env> {
     return json({ ok: true, events: state.events }, 200);
   }
 
-  private async updateSecurityDevice(deviceId: string, action: "approve" | "block" | "unblock"): Promise<Response> {
+  private async updateSecurityDevice(
+    deviceId: string,
+    action: "approve" | "block" | "unblock",
+    request?: Request,
+  ): Promise<Response> {
     const state = await loadSecurityState(this.ctx.storage);
     if (action === "approve" && !this.isLivePendingSecurityDevice(state, deviceId)) {
       return json({ ok: false, error: "Device is not currently connected and waiting for approval" }, 409);
+    }
+    if (action === "approve") {
+      const device = state.devices[deviceId];
+      const bodyCode = await approvalCodeFromRequest(request);
+      const expectedCode = device ? securityDeviceApprovalCode(device) : undefined;
+      if (!expectedCode || bodyCode !== expectedCode) {
+        return json({ ok: false, error: "Approval code did not match the live device" }, 403);
+      }
     }
     let event: SecurityEventRecord | null = null;
     const result = (() => {
@@ -1653,6 +1666,30 @@ function deviceProofInputFromUrl(url: URL): {
     nonce: url.searchParams.get("deviceProofNonce"),
     signature: url.searchParams.get("deviceProof"),
   };
+}
+
+function pendingApprovalPayload(device: SecurityDeviceRecord | null): {
+  message: string;
+  deviceId?: string;
+  approvalCode?: string;
+} {
+  if (!device) return { message: "Remote client pending security approval" };
+  const approvalCode = securityDeviceApprovalCode(device);
+  return {
+    message: `Remote client pending security approval. Code ${approvalCode}.`,
+    deviceId: device.id,
+    approvalCode,
+  };
+}
+
+async function approvalCodeFromRequest(request: Request | undefined): Promise<string | undefined> {
+  if (!request) return undefined;
+  try {
+    const body = (await request.json()) as { approvalCode?: string; code?: string } | null;
+    return normalizeSecurityDeviceApprovalCode(body?.approvalCode ?? body?.code);
+  } catch {
+    return undefined;
+  }
 }
 
 function base64UrlDecodeToText(value: string): string {

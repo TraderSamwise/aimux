@@ -65,7 +65,7 @@ import {
   projectUpdateTouchesNotificationFeed,
   projectUpdateTouchesProjectApiView,
 } from "@/stores/projectViews";
-import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import {
   activeSharedSessionAtom,
   acceptedSharedSessionsAtom,
@@ -186,6 +186,7 @@ export default function MainLayout() {
     if (!relayUrl) {
       store.set(relayConfiguredAtom, false);
       store.set(relayStatusAtom, "disconnected");
+      store.set(relayPendingApprovalAtom, null);
       return;
     }
     store.set(relayConfiguredAtom, true);
@@ -200,6 +201,9 @@ export default function MainLayout() {
       activeShareRelayOptions,
     );
     const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
+    const unsubPendingApproval = transport.onPendingApprovalChange((approval) =>
+      store.set(relayPendingApprovalAtom, approval),
+    );
     const unsubSecurity = transport.onSecurityEvent((event) => {
       store.set(addSecurityEventAtom, event);
       if (!isBrowserDocumentVisible()) {
@@ -217,10 +221,12 @@ export default function MainLayout() {
     void transport.connect();
     return () => {
       unsub();
+      unsubPendingApproval();
       unsubSecurity();
       setApiRelay(null);
       transport.disconnect();
       store.set(relayStatusAtom, "disconnected");
+      store.set(relayPendingApprovalAtom, null);
     };
   }, [activeShareOwnerUserId, activeShareRelayKey, activeShareShareId, relayUrl, store]);
 

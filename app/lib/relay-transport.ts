@@ -43,6 +43,8 @@ interface RelayProjectEventsError {
   type: "project_events_error";
   status?: number;
   message: string;
+  deviceId?: string;
+  approvalCode?: string;
 }
 
 interface RelayControl {
@@ -77,6 +79,9 @@ export type RelayStatus =
   | "auth_failed";
 
 export type RelayStatusListener = (status: RelayStatus) => void;
+export type RelayPendingApprovalListener = (
+  approval: { deviceId?: string; approvalCode?: string } | null,
+) => void;
 export type RelaySecurityEventListener = (event: SecurityEventRecord) => void;
 
 export interface RelayTransportOptions {
@@ -95,7 +100,9 @@ export class RelayTransport {
   private deviceId: string | null = null;
   private consecutiveHandshakeFailures = 0;
   private _status: RelayStatus = "disconnected";
+  private pendingApproval: { deviceId?: string; approvalCode?: string } | null = null;
   private listeners = new Set<RelayStatusListener>();
+  private pendingApprovalListeners = new Set<RelayPendingApprovalListener>();
   private securityEventListeners = new Set<RelaySecurityEventListener>();
   private projectEventSubscriptions = new Map<string, ProjectEventSubscription>();
 
@@ -119,6 +126,11 @@ export class RelayTransport {
     return () => this.listeners.delete(listener);
   }
 
+  onPendingApprovalChange(listener: RelayPendingApprovalListener): () => void {
+    this.pendingApprovalListeners.add(listener);
+    return () => this.pendingApprovalListeners.delete(listener);
+  }
+
   onSecurityEvent(listener: RelaySecurityEventListener): () => void {
     this.securityEventListeners.add(listener);
     return () => this.securityEventListeners.delete(listener);
@@ -127,8 +139,22 @@ export class RelayTransport {
   private setStatus(status: RelayStatus): void {
     if (this._status === status) return;
     this._status = status;
+    if (status !== "device_pending") this.setPendingApproval(null);
     for (const listener of this.listeners) {
       listener(status);
+    }
+  }
+
+  private setPendingApproval(approval: { deviceId?: string; approvalCode?: string } | null): void {
+    if (
+      this.pendingApproval?.deviceId === approval?.deviceId &&
+      this.pendingApproval?.approvalCode === approval?.approvalCode
+    ) {
+      return;
+    }
+    this.pendingApproval = approval;
+    for (const listener of this.pendingApprovalListeners) {
+      listener(approval);
     }
   }
 
@@ -322,6 +348,12 @@ export class RelayTransport {
             this.setStatus(this.daemonOnline ? "connected" : "daemon_offline");
           } else if (msg.event.kind === "device_blocked") {
             this.setStatus("auth_failed");
+          } else if (msg.event.kind === "new_client_detected") {
+            this.setPendingApproval({
+              deviceId: msg.event.deviceId,
+              approvalCode: msg.event.approvalCode,
+            });
+            this.setStatus("device_pending");
           }
         }
         for (const listener of this.securityEventListeners) {
@@ -334,7 +366,9 @@ export class RelayTransport {
     if (msg.type === "response") {
       const entry = this.pending.get(msg.id);
       if (entry) {
-        if (isPendingSecurityApproval(msg.status, msg.body)) {
+        const pendingApproval = pendingSecurityApprovalFromResponse(msg.status, msg.body);
+        if (pendingApproval) {
+          this.setPendingApproval(pendingApproval);
           this.setStatus("device_pending");
         }
         clearTimeout(entry.timer);
@@ -357,7 +391,13 @@ export class RelayTransport {
     if (msg.type === "project_events_error") {
       const entry = this.projectEventSubscriptions.get(msg.id);
       if (entry) {
-        if (isPendingSecurityApproval(msg.status, { error: msg.message })) {
+        const pendingApproval = pendingSecurityApprovalFromResponse(msg.status, {
+          error: msg.message,
+          deviceId: msg.deviceId,
+          approvalCode: msg.approvalCode,
+        });
+        if (pendingApproval) {
+          this.setPendingApproval(pendingApproval);
           this.setStatus("device_pending");
         }
         this.projectEventSubscriptions.delete(msg.id);
@@ -373,6 +413,7 @@ export class RelayTransport {
     url.searchParams.set("deviceName", device.name);
     url.searchParams.set("devicePlatform", device.platform);
     if (device.appVersion) url.searchParams.set("appVersion", device.appVersion);
+    if (device.approvalCode) url.searchParams.set("approvalCode", device.approvalCode);
     url.searchParams.set("deviceKeyAlg", proof.alg);
     url.searchParams.set("devicePublicKey", encodeDevicePublicKey(proof.publicKeyJwk));
     url.searchParams.set("deviceProofTs", proof.timestamp);
@@ -408,10 +449,24 @@ export class RelayTransport {
   }
 }
 
-function isPendingSecurityApproval(status: number | undefined, body: unknown): boolean {
-  if (status !== 403) return false;
-  if (!body || typeof body !== "object" || !("error" in body)) return false;
-  return /pending security approval/i.test(String((body as { error?: unknown }).error));
+function pendingSecurityApprovalFromResponse(
+  status: number | undefined,
+  body: unknown,
+): { deviceId?: string; approvalCode?: string } | null {
+  if (status !== 403) return null;
+  if (!body || typeof body !== "object" || !("error" in body)) return null;
+  const payload = body as { error?: unknown; deviceId?: unknown; approvalCode?: unknown };
+  if (!/pending security approval/i.test(String(payload.error))) return null;
+  const approvalCode =
+    typeof payload.approvalCode === "string"
+      ? payload.approvalCode
+      : String(payload.error)
+          .match(/\bCode\s+([2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3})\b/i)?.[1]
+          ?.toUpperCase();
+  return {
+    deviceId: typeof payload.deviceId === "string" ? payload.deviceId : undefined,
+    approvalCode,
+  };
 }
 
 function isSecurityEventRecord(value: unknown): value is SecurityEventRecord {

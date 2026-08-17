@@ -329,9 +329,12 @@ describe("RelayObject owner device security", () => {
 
     await object
       .fetch(
-        new Request("https://relay.aimux.app/client/connect?deviceId=client_1&deviceKind=ios&deviceName=iPhone", {
-          headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
-        }),
+        new Request(
+          "https://relay.aimux.app/client/connect?deviceId=client_1&deviceKind=ios&deviceName=iPhone&approvalCode=QTE-WK4",
+          {
+            headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+          },
+        ),
       )
       .catch((error) => error);
     await object
@@ -353,12 +356,23 @@ describe("RelayObject owner device security", () => {
     expect(pendingBody.devices).toEqual([
       expect.objectContaining({
         id: "client_1",
-        approvalCode: expect.stringMatching(/^[2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3}$/),
       }),
     ]);
+    expect(pendingBody.devices[0]?.approvalCode).toBeUndefined();
+
+    const rejected = await object.fetch(
+      new Request("https://relay.aimux.app/security/devices/client_1/approve", {
+        method: "POST",
+        body: JSON.stringify({ approvalCode: "BAD-BAD" }),
+      }),
+    );
+    expect(rejected.status).toBe(403);
 
     const approved = await object.fetch(
-      new Request("https://relay.aimux.app/security/devices/client_1/approve", { method: "POST" }),
+      new Request("https://relay.aimux.app/security/devices/client_1/approve", {
+        method: "POST",
+        body: JSON.stringify({ approvalCode: "QTE-WK4" }),
+      }),
     );
     expect(approved.status).toBe(200);
     expect(await approved.json()).toMatchObject({ device: { id: "client_1", approved: true, blocked: false } });

@@ -65,6 +65,8 @@ export interface RelayProjectEventsError {
   type: "project_events_error";
   status?: number;
   message: string;
+  deviceId?: string;
+  approvalCode?: string;
 }
 
 export interface RelayResponse {

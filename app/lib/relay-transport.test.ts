@@ -215,6 +215,7 @@ describe("RelayTransport remote security state", () => {
         },
       );
       const statuses: RelayStatus[] = [];
+      const pendingApprovals: Array<{ deviceId?: string; approvalCode?: string } | null> = [];
       const transport = new RelayTransport(
         "wss://relay.example.test",
         async () => "token",
@@ -227,6 +228,7 @@ describe("RelayTransport remote security state", () => {
         testProofOptions,
       );
       transport.onStatusChange((status) => statuses.push(status));
+      transport.onPendingApprovalChange((approval) => pendingApprovals.push(approval));
 
       await transport.connect();
       sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "daemon_status", online: true }) });
@@ -237,12 +239,18 @@ describe("RelayTransport remote security state", () => {
           id: sent.id,
           type: "response",
           status: 403,
-          body: { ok: false, error: "Remote client pending security approval" },
+          body: {
+            ok: false,
+            error: "Remote client pending security approval. Code QTE-WK4.",
+            deviceId: "client_1",
+            approvalCode: "QTE-WK4",
+          },
         }),
       });
       await request;
 
       expect(statuses).toContain("device_pending");
+      expect(pendingApprovals).toContainEqual({ deviceId: "client_1", approvalCode: "QTE-WK4" });
 
       sockets[0]!.onmessage?.({
         data: JSON.stringify({
@@ -259,6 +267,7 @@ describe("RelayTransport remote security state", () => {
       });
 
       expect(statuses.at(-1)).toBe("connected");
+      expect(pendingApprovals.at(-1)).toBeNull();
     } finally {
       vi.stubGlobal("WebSocket", originalWebSocket);
     }
@@ -344,6 +353,7 @@ describe("RelayTransport remote security state", () => {
           kind: "web",
           name: "Web browser",
           platform: "web",
+          approvalCode: "QTE-WK4",
         }),
         testProofOptions,
       );
@@ -355,6 +365,7 @@ describe("RelayTransport remote security state", () => {
       expect(url.searchParams.get("deviceProofTs")).toBe("2026-05-24T00:00:00.000Z");
       expect(url.searchParams.get("deviceProofNonce")).toBe("nonce");
       expect(url.searchParams.get("deviceProof")).toBe("signature");
+      expect(url.searchParams.get("approvalCode")).toBe("QTE-WK4");
       const publicKey = JSON.parse(
         base64UrlDecodeToText(url.searchParams.get("devicePublicKey")!),
       ) as JsonWebKey;
