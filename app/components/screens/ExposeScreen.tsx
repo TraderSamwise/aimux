@@ -378,7 +378,7 @@ function ExposeSurface({
   const singleLineHeader = width >= 1360;
   const compactHeader = !desktopLayout;
   const compactTiles = desktopLayout && (columns >= 3 || tileRows >= 4);
-  const exposeChromeHeight = singleLineHeader ? 170 : desktopLayout ? 218 : 160;
+  const exposeChromeHeight = singleLineHeader ? 170 : desktopLayout ? 218 : 124;
   const gridGapHeight = Math.max(0, tileRows - 1) * 16;
   const targetGridHeight = Math.max(0, height - exposeChromeHeight);
   const tileMinHeight = desktopLayout ? (tileRows === 1 ? 360 : tileRows === 2 ? 340 : 320) : 260;
@@ -429,7 +429,6 @@ function ExposeSurface({
       ]}
       value={filter}
       onChange={onFilterChange}
-      fullWidth
       className="bg-card"
     />
   );
@@ -437,12 +436,24 @@ function ExposeSurface({
     <Button
       variant="outline"
       size="icon"
-      disabled={pending}
-      onPress={onRefresh}
+      onPress={pending ? undefined : onRefresh}
       accessibilityLabel="Refresh Exposé"
+      accessibilityState={{ busy: pending }}
     >
       <RefreshCw size={18} color={foregroundIconColor} />
     </Button>
+  );
+  const compactControls = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerClassName="flex-row items-center gap-2 pr-2"
+      keyboardShouldPersistTaps="handled"
+    >
+      {scopeControl}
+      {previewControl}
+      {compactFilterControl}
+    </ScrollView>
   );
 
   return (
@@ -476,7 +487,7 @@ function ExposeSurface({
             </View>
           </View>
         ) : compactHeader ? (
-          <View className="mb-3 gap-2">
+          <View className="mb-2 gap-2">
             <View className="min-w-0 flex-row items-center gap-2">
               <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                 Exposé
@@ -490,11 +501,7 @@ function ExposeSurface({
               </Text>
               <View className="shrink-0">{refreshButton}</View>
             </View>
-            <View className="flex-row items-center gap-2">
-              {scopeControl}
-              {previewControl}
-            </View>
-            {compactFilterControl}
+            {compactControls}
           </View>
         ) : (
           <>

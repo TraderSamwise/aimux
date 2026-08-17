@@ -320,7 +320,13 @@ function SidebarModeTabs({
   );
 }
 
-function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
+function SidebarPrimaryNav({
+  projectPath,
+  onNavigate,
+}: {
+  projectPath: string | null;
+  onNavigate: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
@@ -342,6 +348,7 @@ function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
               const href = buildViewHref(MAIN_TAB_ROUTES[tabId].href, {
                 project: routeProjectPath,
               });
+              onNavigate();
               router.push(href);
             }}
             className={cn(
@@ -444,6 +451,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     blurWebActiveElement();
     selectProject(path);
     setShowPicker(false);
+    setSidebarOpen(false);
     // Selecting a project always lands on the Project screen's Dashboard section.
     router.replace(buildViewHref("/project", { project: path }));
   }
@@ -457,6 +465,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   function handlePickService(serviceId: string) {
     blurWebActiveElement();
+    setSidebarOpen(false);
     router.push(detailHrefForPath(pathname, "service", serviceId, routeProjectPath));
   }
 
@@ -514,7 +523,10 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
               <>
                 <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
                 {sidebarMode === "views" ? (
-                  <SidebarPrimaryNav projectPath={routeProjectPath} />
+                  <SidebarPrimaryNav
+                    projectPath={routeProjectPath}
+                    onNavigate={() => setSidebarOpen(false)}
+                  />
                 ) : (
                   <WorktreeTree
                     projectPath={effectiveProject!.path}
