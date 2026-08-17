@@ -86,6 +86,66 @@ describe("toChatMessages", () => {
     });
   });
 
+  it("upgrades structured image attachments that arrived as generic file refs", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          role: "user",
+          parts: [
+            {
+              type: "attachment_reference",
+              label: "[file #1]",
+              attachmentId: "att_image",
+              filename: "Screenshot 2026-08-17.png",
+              mimeType: "image/png",
+              kind: "file",
+            },
+          ],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts).toEqual([
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_image",
+        filename: "Screenshot 2026-08-17.png",
+        mimeType: "image/png",
+        contentUrl: "/attachments/att_image/content?sessionId=codex-1",
+        hostedExpiresAt: undefined,
+      },
+    ]);
+  });
+
+  it("infers an image attachment from the filename when older events omit the mime type", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          role: "user",
+          parts: [
+            {
+              type: "attachment_reference",
+              label: "[file #1]",
+              attachmentId: "att_old_image",
+              filename: "mockup.webp",
+              kind: "file",
+            },
+          ],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts![0]).toMatchObject({
+      type: "image_reference",
+      label: "[image #1]",
+      attachmentId: "att_old_image",
+      filename: "mockup.webp",
+    });
+  });
+
   it("upgrades legacy generic screenshot text into an inline image", () => {
     const [chat] = toChatMessages(
       [

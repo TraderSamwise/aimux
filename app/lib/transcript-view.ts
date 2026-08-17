@@ -38,6 +38,31 @@ function attachmentKindForMimeType(mimeType?: string): HistoryAttachmentReferenc
   return "file";
 }
 
+function filenameLooksLikeImage(filename?: string): boolean {
+  return /\.(?:png|jpe?g|gif|webp|heic|heif|bmp|tiff?)$/i.test(filename?.trim() ?? "");
+}
+
+function partLooksLikeImage(part: HistoryAttachmentReferencePart): boolean {
+  return (
+    part.kind === "image" ||
+    part.mimeType?.toLowerCase().startsWith("image/") === true ||
+    filenameLooksLikeImage(part.filename)
+  );
+}
+
+function normalizeAttachmentReferencePart(part: HistoryPart): HistoryPart {
+  if (part.type !== "attachment_reference" || !partLooksLikeImage(part)) return part;
+  return {
+    type: "image_reference",
+    label: part.label.replace(/^\[file\b/i, "[image"),
+    attachmentId: part.attachmentId,
+    filename: part.filename,
+    mimeType: part.mimeType,
+    contentUrl: part.contentUrl,
+    hostedExpiresAt: part.hostedExpiresAt,
+  };
+}
+
 function legacyAttachmentPart(
   attachmentId: string,
   opts: { filename?: string; mimeType?: string },
@@ -203,9 +228,11 @@ export function toChatMessages(
     // down and build a new one on every poll, mid-read.
     id: message.latest ? `${sessionId}:latest` : message.id,
     role: message.role,
-    parts: normalizeLegacyAttachmentParts(message.parts).map(
-      (part): HistoryPart => toHistoryPart(part, sessionId, shared && message.role === "user"),
-    ),
+    parts: normalizeLegacyAttachmentParts(message.parts)
+      .map(normalizeAttachmentReferencePart)
+      .map(
+        (part): HistoryPart => toHistoryPart(part, sessionId, shared && message.role === "user"),
+      ),
   }));
 }
 

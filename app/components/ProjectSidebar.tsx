@@ -41,7 +41,7 @@ import {
   selectedSessionIdAtom,
   selectProjectAtom,
 } from "@/stores/projects";
-import { sidebarModeAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
+import { sidebarModeAtom, sidebarOpenAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
 import {
   getProjectServiceEndpoint,
   isRelayUnavailableForProjectDiscovery,
@@ -58,19 +58,6 @@ const SIDEBAR_WIDTH = 320;
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 type SidebarMode = "dashboard" | "views";
-
-function routePrefersViews(tab: MainTabId): boolean {
-  return (
-    tab === "project" ||
-    tab === "coordination" ||
-    tab === "expose" ||
-    tab === "loops" ||
-    tab === "topology" ||
-    tab === "library" ||
-    tab === "inbox" ||
-    tab === "threads"
-  );
-}
 
 // ─── Project picker ───────────────────────────────────────────────────────
 
@@ -227,7 +214,7 @@ function WorktreeTree({
   desktopState: DesktopState | null;
   desktopStateError: string | null;
   selectedSessionId: string | null;
-  onPickSession: (sessionId: string) => void;
+  onPickSession: (sessionId: string, projectPath: string) => void;
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
 }) {
@@ -276,7 +263,7 @@ function WorktreeTree({
         compact
         activeOnly
         selectedSessionId={selectedSessionId}
-        onPickSession={onPickSession}
+        onPickSession={(sessionId) => onPickSession(sessionId, projectPath)}
         onPickService={onPickService}
         onKillSession={onKillSession}
       />
@@ -390,9 +377,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const showPicker = useAtomValue(sidebarShowProjectPickerAtom);
   const setShowPicker = useSetAtom(sidebarShowProjectPickerAtom);
+  const setSidebarOpen = useSetAtom(sidebarOpenAtom);
   const router = useRouter();
   const pathname = usePathname();
-  const routeTab = mainTabForPath(pathname);
   const [sidebarMode, setSidebarMode] = useAtom(sidebarModeAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
   const effectiveProjectPath =
@@ -440,13 +427,6 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     }
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
-  usePrePaintEffect(() => {
-    if (!showPrimaryNav) return;
-    if (routePrefersViews(routeTab)) {
-      setSidebarMode("views");
-    }
-  }, [routeTab, setSidebarMode, showPrimaryNav]);
-
   const desktopState = useAtomValue(desktopStateFamily(routeProjectPath ?? EMPTY_PROJECT_PATH));
   const desktopStateError = useAtomValue(
     desktopStateErrorFamily(routeProjectPath ?? EMPTY_PROJECT_PATH),
@@ -468,10 +448,11 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     router.replace(buildViewHref("/project", { project: path }));
   }
 
-  function handlePickSession(sessionId: string) {
+  function handlePickSession(sessionId: string, sessionProjectPath = routeProjectPath) {
     blurWebActiveElement();
     setSelectedSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, routeProjectPath));
+    setSidebarOpen(false);
+    router.push(detailHrefForPath(pathname, "agent", sessionId, sessionProjectPath));
   }
 
   function handlePickService(serviceId: string) {
