@@ -452,7 +452,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   useEffect(() => {
     if (previousPickerModeRef.current === pickerMode) return;
-    setMenuDirection(pickerMode ? 1 : -1);
+    setMenuDirection(pickerMode ? -1 : 1);
     previousPickerModeRef.current = pickerMode;
     menuProgress.setValue(0);
     Animated.timing(menuProgress, {
@@ -482,7 +482,6 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     blurWebActiveElement();
     selectProject(path);
     setShowPicker(false);
-    setSidebarOpen(false);
     // Selecting a project always lands on the Project screen's Dashboard section.
     router.replace(buildViewHref("/project", { project: path }));
   }
