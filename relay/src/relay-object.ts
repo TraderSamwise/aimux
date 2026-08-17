@@ -288,13 +288,13 @@ export class RelayObject extends DurableObject<Env> {
     } else if (!isDaemon && parsed.type === "project_events_unsubscribe") {
       this.handleClientProjectEventsUnsubscribe(ws, parsed.id);
     } else if (!isDaemon && parsed.type === "request") {
-      const sharedResult = await this.prepareSharedClientRequest(ws, parsed);
-      if (!sharedResult.ok) {
+      const clientResult = await this.prepareClientRequest(ws, parsed);
+      if (!clientResult.ok) {
         this.send(ws, {
           id: parsed.id,
           type: "response",
-          status: sharedResult.status,
-          body: { ok: false, error: sharedResult.error },
+          status: clientResult.status,
+          body: { ok: false, error: clientResult.error },
         });
         return;
       }
@@ -321,7 +321,7 @@ export class RelayObject extends DurableObject<Env> {
           clientRequestId: parsed.id,
           expiresAt: Date.now() + PENDING_REQUEST_TTL_MS,
         });
-        const daemonMessage = JSON.stringify({ ...parsed, ...sharedResult.requestPatch, id: relayRequestId });
+        const daemonMessage = JSON.stringify({ ...parsed, ...clientResult.requestPatch, id: relayRequestId });
         try {
           this.daemonWs.send(daemonMessage);
         } catch {
@@ -348,19 +348,19 @@ export class RelayObject extends DurableObject<Env> {
     ws: WebSocket,
     message: Extract<RelayMessage, { type: "project_events_subscribe" }>,
   ): Promise<void> {
-    const sharedResult = await this.prepareSharedClientRequest(ws, {
+    const clientResult = await this.prepareClientRequest(ws, {
       id: message.id,
       type: "request",
       method: "GET",
       path: message.path,
       headers: message.headers,
     });
-    if (!sharedResult.ok) {
+    if (!clientResult.ok) {
       this.send(ws, {
         id: message.id,
         type: "project_events_error",
-        status: sharedResult.status,
-        message: sharedResult.error,
+        status: clientResult.status,
+        message: clientResult.error,
       });
       return;
     }
@@ -396,7 +396,7 @@ export class RelayObject extends DurableObject<Env> {
           id: relaySubscriptionId,
           type: "project_events_subscribe",
           path: message.path,
-          headers: sharedResult.requestPatch?.headers ?? message.headers,
+          headers: clientResult.requestPatch?.headers ?? message.headers,
         }),
       );
     } catch {
@@ -926,7 +926,7 @@ export class RelayObject extends DurableObject<Env> {
     return { ok: true, userId, share, participant };
   }
 
-  private async prepareSharedClientRequest(
+  private async prepareClientRequest(
     ws: WebSocket,
     request: Extract<RelayMessage, { type: "request" }>,
   ): Promise<
@@ -935,7 +935,13 @@ export class RelayObject extends DurableObject<Env> {
   > {
     const tags = this.ctx.getTags(ws);
     const shareId = tagValue(tags, "share:");
-    if (!shareId) return { ok: true };
+    if (!shareId) {
+      const bodyPatch = await this.hostedAttachmentPatchForClientRequest(request, undefined);
+      if (!bodyPatch.ok) return bodyPatch;
+      return bodyPatch.body === undefined
+        ? { ok: true }
+        : { ok: true, requestPatch: { body: bodyPatch.body } };
+    }
     const userId = tagValue(tags, "user:");
     if (!userId) return { ok: false, status: 401, error: "Missing shared user context" };
     const state = await loadSharingState(this.ctx.storage);
@@ -949,7 +955,7 @@ export class RelayObject extends DurableObject<Env> {
     if (!access.allowed) {
       return { ok: false, status: 403, error: "Route is not allowed for this shared chat" };
     }
-    const bodyPatch = await this.hostedAttachmentPatchForSharedRequest(request, share, participant);
+    const bodyPatch = await this.hostedAttachmentPatchForClientRequest(request, share);
     if (!bodyPatch.ok) return bodyPatch;
     return {
       ok: true,
@@ -969,10 +975,9 @@ export class RelayObject extends DurableObject<Env> {
     };
   }
 
-  private async hostedAttachmentPatchForSharedRequest(
+  private async hostedAttachmentPatchForClientRequest(
     request: Extract<RelayMessage, { type: "request" }>,
-    share: SharedSessionRecord,
-    participant: ShareParticipantRecord,
+    share: SharedSessionRecord | undefined,
   ): Promise<{ ok: true; body?: unknown } | { ok: false; status: number; error: string }> {
     if (request.method.toUpperCase() !== "POST") return { ok: true };
     if (request.path !== "/attachments" && !/\/attachments(?:\?|$)/.test(request.path)) return { ok: true };
@@ -983,31 +988,37 @@ export class RelayObject extends DurableObject<Env> {
       mimeType?: unknown;
       dataBase64?: unknown;
       sessionId?: unknown;
+      hostedAttachment?: unknown;
     };
+    const bodyWithoutHostedAttachment = stripHostedAttachment(body);
     if (
       typeof upload.filename !== "string" ||
       typeof upload.mimeType !== "string" ||
       typeof upload.dataBase64 !== "string"
     ) {
-      return { ok: true };
+      return bodyWithoutHostedAttachment === body ? { ok: true } : { ok: true, body: bodyWithoutHostedAttachment };
     }
     if (!this.env.ATTACHMENTS) {
-      return { ok: false, status: 503, error: "Hosted attachments are not configured" };
+      if (share) return { ok: false, status: 503, error: "Hosted attachments are not configured" };
+      return bodyWithoutHostedAttachment === body ? { ok: true } : { ok: true, body: bodyWithoutHostedAttachment };
     }
     try {
       const hosted = await createHostedAttachment(this.env, "https://relay.aimux.app", {
-        ownerUserId: share.ownerUserId,
-        shareId: share.id,
-        sessionId: share.sessionId,
+        ownerUserId: share?.ownerUserId,
+        shareId: share?.id,
+        sessionId: share?.sessionId ?? (typeof upload.sessionId === "string" ? upload.sessionId : undefined),
         filename: upload.filename,
         mimeType: upload.mimeType,
         dataBase64: upload.dataBase64,
       });
-      if (!hosted) return { ok: false, status: 503, error: "Hosted attachments are not configured" };
+      if (!hosted) {
+        if (share) return { ok: false, status: 503, error: "Hosted attachments are not configured" };
+        return bodyWithoutHostedAttachment === body ? { ok: true } : { ok: true, body: bodyWithoutHostedAttachment };
+      }
       return {
         ok: true,
         body: {
-          ...body,
+          ...bodyWithoutHostedAttachment,
           hostedAttachment: {
             contentUrl: hosted.contentUrl,
             expiresAt: hosted.expiresAt,
@@ -1017,6 +1028,7 @@ export class RelayObject extends DurableObject<Env> {
         },
       };
     } catch (error) {
+      if (!share) return bodyWithoutHostedAttachment === body ? { ok: true } : { ok: true, body: bodyWithoutHostedAttachment };
       return { ok: false, status: 400, error: error instanceof Error ? error.message : "invalid attachment" };
     }
   }
@@ -1567,6 +1579,13 @@ function json(body: unknown, status: number): Response {
 
 function tagValue(tags: string[], prefix: string): string | undefined {
   return tags.find((tag) => tag.startsWith(prefix))?.slice(prefix.length);
+}
+
+function stripHostedAttachment(body: object): object {
+  if (!Object.prototype.hasOwnProperty.call(body, "hostedAttachment")) return body;
+  const next = { ...(body as Record<string, unknown>) };
+  delete next.hostedAttachment;
+  return next;
 }
 
 function securityActionConfirmPage(userId: string, token: string): Response {

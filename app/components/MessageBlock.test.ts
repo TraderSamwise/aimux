@@ -96,6 +96,39 @@ describe("MessageBlock image URLs", () => {
     ).toBe("https://example.test/shot.png");
   });
 
+  it("prefers hosted image URLs over local attachment URLs in relay mode", () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
+    process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay.example.test";
+
+    expect(
+      resolveImageUrl(
+        {
+          type: "image",
+          attachmentId: "att_1",
+          contentUrl: "/attachments/att_1/content?sessionId=codex-1",
+          hostedContentUrl: "https://relay.example.test/attachments/hosted/ha_123/content",
+        },
+        endpoint,
+      ),
+    ).toBe("https://relay.example.test/attachments/hosted/ha_123/content");
+  });
+
+  it("prefers durable local attachment URLs over hosted URLs in local mode", () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "local";
+
+    expect(
+      resolveImageUrl(
+        {
+          type: "image",
+          attachmentId: "att_1",
+          contentUrl: "/attachments/att_1/content?sessionId=codex-1",
+          hostedContentUrl: "https://relay.example.test/attachments/hosted/ha_123/content",
+        },
+        endpoint,
+      ),
+    ).toBe("http://127.0.0.1:43210/attachments/att_1/content?sessionId=codex-1");
+  });
+
   it("omits images without a content URL", () => {
     process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "local";
 

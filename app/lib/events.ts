@@ -108,6 +108,7 @@ export interface HistoryImagePart {
   filename?: string;
   mimeType?: string;
   contentUrl?: string;
+  hostedContentUrl?: string;
   hostedExpiresAt?: string;
 }
 
@@ -118,6 +119,7 @@ export interface HistoryImageReferencePart {
   filename?: string;
   mimeType?: string;
   contentUrl?: string;
+  hostedContentUrl?: string;
   hostedExpiresAt?: string;
 }
 
@@ -129,6 +131,7 @@ export interface HistoryAttachmentReferencePart {
   mimeType?: string;
   kind?: "image" | "audio" | "video" | "pdf" | "text" | "file";
   contentUrl?: string;
+  hostedContentUrl?: string;
   hostedExpiresAt?: string;
 }
 

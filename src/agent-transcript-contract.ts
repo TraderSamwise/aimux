@@ -20,6 +20,7 @@ export interface AgentTranscriptImagePart {
   mimeType?: string;
   kind?: "image";
   contentUrl?: string;
+  hostedContentUrl?: string;
   hostedExpiresAt?: string;
 }
 
@@ -31,6 +32,7 @@ export interface AgentTranscriptAttachmentPart {
   mimeType?: string;
   kind?: "audio" | "video" | "pdf" | "text" | "file";
   contentUrl?: string;
+  hostedContentUrl?: string;
   hostedExpiresAt?: string;
 }
 

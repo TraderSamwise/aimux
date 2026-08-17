@@ -99,6 +99,8 @@ describe("toChatMessages", () => {
               filename: "Screenshot 2026-08-17.png",
               mimeType: "image/png",
               kind: "file",
+              hostedContentUrl: "https://relay.example.test/attachments/hosted/ha_123/content",
+              hostedExpiresAt: "2026-08-24T00:00:00.000Z",
             },
           ],
         }),
@@ -114,7 +116,8 @@ describe("toChatMessages", () => {
         filename: "Screenshot 2026-08-17.png",
         mimeType: "image/png",
         contentUrl: "/attachments/att_image/content?sessionId=codex-1",
-        hostedExpiresAt: undefined,
+        hostedContentUrl: "https://relay.example.test/attachments/hosted/ha_123/content",
+        hostedExpiresAt: "2026-08-24T00:00:00.000Z",
       },
     ]);
   });

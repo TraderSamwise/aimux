@@ -128,7 +128,8 @@ describe("messagesFromParsedAgentOutput", () => {
         attachmentContentForId: (attachmentId) =>
           attachmentId === "att_abc123"
             ? {
-                contentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
+                contentUrl: "/attachments/att_abc123/content?sessionId=claude-1",
+                hostedContentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
                 hostedExpiresAt: "2099-01-01T00:00:00.000Z",
               }
             : undefined,
@@ -138,7 +139,8 @@ describe("messagesFromParsedAgentOutput", () => {
     expect(message!.parts[1]).toMatchObject({
       type: "image_reference",
       attachmentId: "att_abc123",
-      contentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
+      contentUrl: "/attachments/att_abc123/content?sessionId=claude-1",
+      hostedContentUrl: "https://relay.aimux.app/attachments/hosted/ha_123/content",
       hostedExpiresAt: "2099-01-01T00:00:00.000Z",
     });
   });

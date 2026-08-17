@@ -59,6 +59,7 @@ function normalizeAttachmentReferencePart(part: HistoryPart): HistoryPart {
     filename: part.filename,
     mimeType: part.mimeType,
     contentUrl: part.contentUrl,
+    hostedContentUrl: part.hostedContentUrl,
     hostedExpiresAt: part.hostedExpiresAt,
   };
 }

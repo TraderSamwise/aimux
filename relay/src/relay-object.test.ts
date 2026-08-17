@@ -133,7 +133,7 @@ describe("RelayObject sharing index repair", () => {
   });
 });
 
-describe("RelayObject shared hosted attachments", () => {
+describe("RelayObject hosted attachments", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "WebSocketPair",
@@ -159,7 +159,7 @@ describe("RelayObject shared hosted attachments", () => {
 
     const result = await (
       object as unknown as {
-        prepareSharedClientRequest: (
+        prepareClientRequest: (
           ws: WebSocket,
           request: {
             id: string;
@@ -170,7 +170,7 @@ describe("RelayObject shared hosted attachments", () => {
           },
         ) => Promise<{ ok: true; requestPatch?: { body?: unknown } } | { ok: false; error: string }>;
       }
-    ).prepareSharedClientRequest(ws, {
+    ).prepareClientRequest(ws, {
       id: "req_1",
       type: "request",
       method: "POST",
@@ -197,6 +197,219 @@ describe("RelayObject shared hosted attachments", () => {
     expect(bucket.objects.size).toBe(1);
   });
 
+  it("replaces client-supplied hosted attachment pointers on shared uploads", async () => {
+    const storage = new MemoryStorage();
+    const bucket = new FakeR2Bucket();
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) })),
+      },
+      ATTACHMENTS: bucket as unknown as R2Bucket,
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const ws = fakeSocket([`share:${shareId}`, "user:user_guest"]);
+
+    const result = await (
+      object as unknown as {
+        prepareClientRequest: (
+          ws: WebSocket,
+          request: {
+            id: string;
+            type: "request";
+            method: string;
+            path: string;
+            body?: unknown;
+          },
+        ) => Promise<{ ok: true; requestPatch?: { body?: unknown } } | { ok: false; error: string }>;
+      }
+    ).prepareClientRequest(ws, {
+      id: "req_1",
+      type: "request",
+      method: "POST",
+      path: "/proxy/127.0.0.1/43192/attachments",
+      body: {
+        filename: "screen.png",
+        mimeType: "image/png",
+        dataBase64: btoa("png-bytes"),
+        sessionId: "claude-k4lihz",
+        hostedAttachment: {
+          contentUrl: "https://attacker.example.test/screen.png",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      },
+    });
+
+    const body = result.ok ? (result.requestPatch?.body as { hostedAttachment?: { contentUrl?: string } }) : null;
+    expect(result.ok).toBe(true);
+    expect(body).toMatchObject({
+      hostedAttachment: {
+        contentUrl: expect.stringMatching(/^https:\/\/relay\.aimux\.app\/attachments\/hosted\/ha_/),
+      },
+    });
+    expect(body?.hostedAttachment?.contentUrl).not.toBe("https://attacker.example.test/screen.png");
+    expect(bucket.objects.size).toBe(1);
+  });
+
+  it("adds a hosted attachment pointer to owner uploads when storage is available", async () => {
+    const storage = new MemoryStorage();
+    const bucket = new FakeR2Bucket();
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) })),
+      },
+      ATTACHMENTS: bucket as unknown as R2Bucket,
+    } as unknown as Env);
+    const ws = fakeSocket(["client", "device:client_phone"]);
+
+    const result = await (
+      object as unknown as {
+        prepareClientRequest: (
+          ws: WebSocket,
+          request: {
+            id: string;
+            type: "request";
+            method: string;
+            path: string;
+            body?: unknown;
+          },
+        ) => Promise<{ ok: true; requestPatch?: { body?: unknown } } | { ok: false; error: string }>;
+      }
+    ).prepareClientRequest(ws, {
+      id: "req_1",
+      type: "request",
+      method: "POST",
+      path: "/proxy/127.0.0.1/43192/attachments",
+      body: {
+        filename: "screen.png",
+        mimeType: "image/png",
+        dataBase64: btoa("png-bytes"),
+        sessionId: "claude-k4lihz",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.requestPatch?.body : null).toMatchObject({
+      hostedAttachment: {
+        contentUrl: expect.stringMatching(
+          /^https:\/\/relay\.aimux\.app\/attachments\/hosted\/ha_[A-Za-z0-9_-]{43}\/content$/,
+        ),
+        expiresAt: expect.any(String),
+        sha256: "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+        sizeBytes: 9,
+      },
+    });
+    expect(bucket.objects.size).toBe(1);
+  });
+
+  it("lets owner uploads continue when hosted storage is unavailable", async () => {
+    const object = createObject(new MemoryStorage(), {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const ws = fakeSocket(["client", "device:client_phone"]);
+
+    const result = await (
+      object as unknown as {
+        prepareClientRequest: (
+          ws: WebSocket,
+          request: {
+            id: string;
+            type: "request";
+            method: string;
+            path: string;
+            body?: unknown;
+          },
+        ) => Promise<{ ok: true; requestPatch?: { body?: unknown } } | { ok: false; error: string }>;
+      }
+    ).prepareClientRequest(ws, {
+      id: "req_1",
+      type: "request",
+      method: "POST",
+      path: "/proxy/127.0.0.1/43192/attachments",
+      body: {
+        filename: "screen.png",
+        mimeType: "image/png",
+        dataBase64: btoa("png-bytes"),
+        sessionId: "claude-k4lihz",
+        hostedAttachment: {
+          contentUrl: "https://stale.example.test/screen.png",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      requestPatch: {
+        body: {
+          filename: "screen.png",
+          mimeType: "image/png",
+          dataBase64: btoa("png-bytes"),
+          sessionId: "claude-k4lihz",
+        },
+      },
+    });
+  });
+
+  it("lets owner uploads continue when hosted storage writes fail", async () => {
+    const bucket = new FakeR2Bucket();
+    vi.spyOn(bucket, "put").mockRejectedValueOnce(new Error("r2 unavailable"));
+    const object = createObject(new MemoryStorage(), {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) })),
+      },
+      ATTACHMENTS: bucket as unknown as R2Bucket,
+    } as unknown as Env);
+    const ws = fakeSocket(["client", "device:client_phone"]);
+
+    const result = await (
+      object as unknown as {
+        prepareClientRequest: (
+          ws: WebSocket,
+          request: {
+            id: string;
+            type: "request";
+            method: string;
+            path: string;
+            body?: unknown;
+          },
+        ) => Promise<{ ok: true; requestPatch?: { body?: unknown } } | { ok: false; error: string }>;
+      }
+    ).prepareClientRequest(ws, {
+      id: "req_1",
+      type: "request",
+      method: "POST",
+      path: "/proxy/127.0.0.1/43192/attachments",
+      body: {
+        filename: "screen.png",
+        mimeType: "image/png",
+        dataBase64: btoa("png-bytes"),
+        sessionId: "claude-k4lihz",
+        hostedAttachment: {
+          contentUrl: "https://stale.example.test/screen.png",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      requestPatch: {
+        body: {
+          filename: "screen.png",
+          mimeType: "image/png",
+          dataBase64: btoa("png-bytes"),
+          sessionId: "claude-k4lihz",
+        },
+      },
+    });
+  });
+
   it("fails shared uploads closed when hosted storage is unavailable", async () => {
     const storage = new MemoryStorage();
     const object = createObject(storage, {
@@ -210,7 +423,7 @@ describe("RelayObject shared hosted attachments", () => {
 
     const result = await (
       object as unknown as {
-        prepareSharedClientRequest: (
+        prepareClientRequest: (
           ws: WebSocket,
           request: {
             id: string;
@@ -221,7 +434,7 @@ describe("RelayObject shared hosted attachments", () => {
           },
         ) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
       }
-    ).prepareSharedClientRequest(ws, {
+    ).prepareClientRequest(ws, {
       id: "req_1",
       type: "request",
       method: "POST",

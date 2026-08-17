@@ -65,7 +65,7 @@ const VIEWED_ATTACHMENT_PATH =
   /^\s*(?:[└⎿L]\s*)?(?:\.aimux\/attachments\/|.+?\.aimux\/attachments\/)(att_[A-Za-z0-9_-]+)\.[^\s/]+\s*$/;
 
 type AttachmentLabels = { byId: Map<string, string>; nextImage: number; nextFile: number };
-type AttachmentContent = { contentUrl?: string; hostedExpiresAt?: string };
+type AttachmentContent = { contentUrl?: string; hostedContentUrl?: string; hostedExpiresAt?: string };
 type AttachmentContentResolver = (attachmentId: string) => AttachmentContent | null | undefined;
 
 function blockType(block: TranscriptBlock): string {
@@ -424,6 +424,7 @@ function applyAttachmentContent(parts: AgentTranscriptPart[], resolver: Attachme
     const content = resolver(part.attachmentId);
     if (!content?.contentUrl) continue;
     part.contentUrl = content.contentUrl;
+    if (content.hostedContentUrl) part.hostedContentUrl = content.hostedContentUrl;
     if (content.hostedExpiresAt) part.hostedExpiresAt = content.hostedExpiresAt;
   }
 }

@@ -50,11 +50,15 @@ export function resolveImageUrl(
   part: HistoryImagePart | HistoryImageReferencePart | HistoryAttachmentReferencePart,
   endpoint: ServiceEndpoint,
 ): string | null {
-  if (!part.contentUrl) return null;
-  if (part.contentUrl.startsWith("http://") || part.contentUrl.startsWith("https://")) {
-    return part.contentUrl;
+  const contentUrl =
+    env.AIMUX_CONNECTION_MODE === "relay" && part.hostedContentUrl
+      ? part.hostedContentUrl
+      : (part.contentUrl ?? part.hostedContentUrl);
+  if (!contentUrl) return null;
+  if (contentUrl.startsWith("http://") || contentUrl.startsWith("https://")) {
+    return contentUrl;
   }
-  const path = part.contentUrl.startsWith("/") ? part.contentUrl : `/${part.contentUrl}`;
+  const path = contentUrl.startsWith("/") ? contentUrl : `/${contentUrl}`;
   if (env.AIMUX_CONNECTION_MODE === "relay") return getRelayServiceUrl(endpoint, path);
   return `${getServiceUrl(endpoint)}${path}`;
 }
