@@ -2015,12 +2015,20 @@ securityCmd
 
 function renderRemoteSecurityDevices(devices: RemoteSecurityDevice[]): string[] {
   if (devices.length === 0) return ["No remote client devices have connected."];
-  return devices.map((device) => {
+  const lines = ["Remote client devices (most recent first)"];
+  for (const device of devices) {
     const state = device.blocked ? "blocked" : device.approved ? "approved" : "pending";
     const name = device.name ?? device.kind;
-    const location = device.lastCountry ? ` ${device.lastCountry}` : "";
-    return `${device.id}  ${state}  ${name}  ${device.platform ?? "-"}  last seen ${device.lastSeenAt}${location}`;
-  });
+    const location = device.lastCountry ? ` from ${device.lastCountry}` : "";
+    lines.push(
+      "",
+      `${state.padEnd(8)} ${name}${location}`,
+      `  id       ${device.id}`,
+      `  platform ${device.platform ?? device.kind}`,
+      `  seen     ${device.lastSeenAt}`,
+    );
+  }
+  return lines;
 }
 
 async function approveLiveRemoteSecurityDeviceInteractively(
@@ -2033,11 +2041,11 @@ async function approveLiveRemoteSecurityDeviceInteractively(
   }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    for (const device of devices) {
+    for (const [index, device] of devices.entries()) {
       console.log("");
-      renderPendingRemoteSecurityDevice(device).forEach((line) => console.log(line));
+      renderPendingRemoteSecurityDevice(device, index + 1, devices.length).forEach((line) => console.log(line));
       const answer = (
-        await rl.question("Type the code shown on that device, Enter for next device, or q to quit: ")
+        await rl.question("Type the code shown on the waiting device here, Enter for not this device, or q to quit: ")
       ).trim();
       if (!answer) continue;
       if (answer.toLowerCase() === "q") return null;
@@ -2045,6 +2053,7 @@ async function approveLiveRemoteSecurityDeviceInteractively(
         return await approveRemoteSecurityDevice(device.id, answer);
       } catch (error) {
         console.log(error instanceof Error ? error.message : "Code did not match; device was not approved.");
+        console.log("Leaving this device pending; showing the next live device if there is one.");
         continue;
       }
     }
@@ -2055,15 +2064,16 @@ async function approveLiveRemoteSecurityDeviceInteractively(
   return null;
 }
 
-function renderPendingRemoteSecurityDevice(device: RemoteSecurityDevice): string[] {
+function renderPendingRemoteSecurityDevice(device: RemoteSecurityDevice, index: number, total: number): string[] {
   const name = device.name ?? device.kind;
   const location = device.lastCountry ? ` from ${device.lastCountry}` : "";
   return [
-    "Remote client waiting for approval",
+    `Remote client waiting for approval (${index} of ${total})`,
     `  Device   ${name}${location}`,
+    `  ID       ${device.id}`,
     `  Platform ${device.platform ?? device.kind}`,
     `  Seen     ${device.lastSeenAt}`,
-    "  Code     shown on the waiting device",
+    "  Confirm  Read the code on that waiting device, then type it here.",
   ];
 }
 
