@@ -2303,37 +2303,14 @@ function ComposerFocusShell({
   sending?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
-  const [shellWidth, setShellWidth] = useState(0);
-  const [shimmerProgress] = useState(() => new Animated.Value(0));
   const onFocus = useCallback(() => setFocused(true), []);
   const onBlur = useCallback(() => setFocused(false), []);
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      setShellWidth(Math.ceil(event.nativeEvent.layout.width));
       onLayout(event);
     },
     [onLayout],
   );
-
-  useEffect(() => {
-    if (!sending) {
-      shimmerProgress.stopAnimation();
-      shimmerProgress.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.timing(shimmerProgress, {
-        duration: 800,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => {
-      loop.stop();
-      shimmerProgress.setValue(0);
-    };
-  }, [sending, shimmerProgress]);
 
   return (
     <View
@@ -2344,60 +2321,25 @@ function ComposerFocusShell({
         // ring would draw a second rounded rect inside it.
         dragging
           ? "border-primary bg-accent"
-          : focused && !sending
-            ? "border-ring"
-            : "border-border",
+          : sending
+            ? "border-primary/40 bg-card"
+            : focused
+              ? "border-ring"
+              : "border-border",
       )}
     >
       {sending ? (
-        <Animated.View
+        <View
           pointerEvents="none"
           style={{
             bottom: 0,
+            left: 0,
             position: "absolute",
             top: 0,
-            transform: [
-              {
-                translateX: shimmerProgress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [-220, Math.max(shellWidth, 320) + 220],
-                }),
-              },
-            ],
-            width: 220,
+            width: 3,
+            backgroundColor: "rgba(125, 211, 252, 0.75)",
           }}
-        >
-          <View
-            style={{
-              backgroundColor: "rgba(255, 255, 255, 0.003)",
-              bottom: 0,
-              left: 0,
-              position: "absolute",
-              top: 0,
-              width: 220,
-            }}
-          />
-          <View
-            style={{
-              backgroundColor: "rgba(255, 255, 255, 0.008)",
-              bottom: 0,
-              left: 54,
-              position: "absolute",
-              top: 0,
-              width: 112,
-            }}
-          />
-          <View
-            style={{
-              backgroundColor: "rgba(255, 255, 255, 0.015)",
-              bottom: 0,
-              left: 92,
-              position: "absolute",
-              top: 0,
-              width: 36,
-            }}
-          />
-        </Animated.View>
+        />
       ) : null}
       {children({ onBlur, onFocus })}
     </View>

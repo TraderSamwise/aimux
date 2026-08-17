@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Animated, Platform, Pressable, ScrollView, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -446,6 +446,36 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     relayConfigured &&
     isRelayUnavailableForProjectDiscovery(relayStatus);
   const pickerMode = !effectiveProject || showPicker;
+  const [menuProgress] = useState(() => new Animated.Value(1));
+  const [menuDirection, setMenuDirection] = useState(1);
+  const previousPickerModeRef = useRef(pickerMode);
+
+  useEffect(() => {
+    if (previousPickerModeRef.current === pickerMode) return;
+    setMenuDirection(pickerMode ? 1 : -1);
+    previousPickerModeRef.current = pickerMode;
+    menuProgress.setValue(0);
+    Animated.timing(menuProgress, {
+      duration: 180,
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [menuProgress, pickerMode]);
+
+  const menuAnimationStyle = {
+    opacity: menuProgress.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.86, 1],
+    }),
+    transform: [
+      {
+        translateX: menuProgress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [menuDirection * 18, 0],
+        }),
+      },
+    ],
+  };
 
   function handlePickProject(path: string) {
     blurWebActiveElement();
@@ -483,79 +513,81 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
       style={{ width: SIDEBAR_WIDTH, height: "100%" }}
     >
       <ScrollView className="flex-1">
-        {routeRelayUnavailable && !showPicker ? (
-          <>
-            <View className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4">
-              <View className="flex-row items-center gap-1.5">
-                <ChevronLeft size={14} color="#787a83" />
-                <Text className="text-[12.5px] font-medium text-[#787a83]">All projects</Text>
+        <Animated.View style={menuAnimationStyle}>
+          {routeRelayUnavailable && !showPicker ? (
+            <>
+              <View className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4">
+                <View className="flex-row items-center gap-1.5">
+                  <ChevronLeft size={14} color="#787a83" />
+                  <Text className="text-[12.5px] font-medium text-[#787a83]">All projects</Text>
+                </View>
+                <Text className="mt-2 text-[16px] font-semibold text-[#edeef0]">
+                  Remote unavailable
+                </Text>
+                <Text
+                  className="mt-0.5 font-mono text-[12px] text-[#787a83]"
+                  numberOfLines={1}
+                  ellipsizeMode="middle"
+                >
+                  {routeProjectPath}
+                </Text>
               </View>
-              <Text className="mt-2 text-[16px] font-semibold text-[#edeef0]">
-                Remote unavailable
-              </Text>
-              <Text
-                className="mt-0.5 font-mono text-[12px] text-[#787a83]"
-                numberOfLines={1}
-                ellipsizeMode="middle"
-              >
-                {routeProjectPath}
-              </Text>
-            </View>
-            <SidebarStateCard
-              title={relayUnavailableProjectCopy(relayStatus).title}
-              detail={relayUnavailableProjectCopy(relayStatus).detail}
-              tone="warning"
-            />
-          </>
-        ) : pickerMode ? (
-          <ProjectPicker
-            projects={projects}
-            selectedPath={effectiveProjectPath}
-            onSelect={handlePickProject}
-          />
-        ) : (
-          <>
-            <ProjectHeader
-              project={effectiveProject!}
-              onSwitchProject={() => setShowPicker(true)}
-            />
-            {showPrimaryNav ? (
-              <>
-                <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
-                {sidebarMode === "views" ? (
-                  <SidebarPrimaryNav
-                    projectPath={routeProjectPath}
-                    onNavigate={() => setSidebarOpen(false)}
-                  />
-                ) : (
-                  <WorktreeTree
-                    projectPath={effectiveProject!.path}
-                    endpoint={endpoint}
-                    token={token}
-                    desktopState={desktopState}
-                    desktopStateError={desktopStateError}
-                    selectedSessionId={selectedSessionId}
-                    onPickSession={handlePickSession}
-                    onPickService={handlePickService}
-                    onKillSession={handleKillSession}
-                  />
-                )}
-              </>
-            ) : (
-              <WorktreeTree
-                projectPath={effectiveProject!.path}
-                endpoint={endpoint}
-                token={token}
-                desktopState={desktopState}
-                desktopStateError={desktopStateError}
-                selectedSessionId={selectedSessionId}
-                onPickSession={handlePickSession}
-                onPickService={handlePickService}
-                onKillSession={handleKillSession}
+              <SidebarStateCard
+                title={relayUnavailableProjectCopy(relayStatus).title}
+                detail={relayUnavailableProjectCopy(relayStatus).detail}
+                tone="warning"
               />
-            )}
-          </>
-        )}
+            </>
+          ) : pickerMode ? (
+            <ProjectPicker
+              projects={projects}
+              selectedPath={effectiveProjectPath}
+              onSelect={handlePickProject}
+            />
+          ) : (
+            <>
+              <ProjectHeader
+                project={effectiveProject!}
+                onSwitchProject={() => setShowPicker(true)}
+              />
+              {showPrimaryNav ? (
+                <>
+                  <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
+                  {sidebarMode === "views" ? (
+                    <SidebarPrimaryNav
+                      projectPath={routeProjectPath}
+                      onNavigate={() => setSidebarOpen(false)}
+                    />
+                  ) : (
+                    <WorktreeTree
+                      projectPath={effectiveProject!.path}
+                      endpoint={endpoint}
+                      token={token}
+                      desktopState={desktopState}
+                      desktopStateError={desktopStateError}
+                      selectedSessionId={selectedSessionId}
+                      onPickSession={handlePickSession}
+                      onPickService={handlePickService}
+                      onKillSession={handleKillSession}
+                    />
+                  )}
+                </>
+              ) : (
+                <WorktreeTree
+                  projectPath={effectiveProject!.path}
+                  endpoint={endpoint}
+                  token={token}
+                  desktopState={desktopState}
+                  desktopStateError={desktopStateError}
+                  selectedSessionId={selectedSessionId}
+                  onPickSession={handlePickSession}
+                  onPickService={handlePickService}
+                  onKillSession={handleKillSession}
+                />
+              )}
+            </>
+          )}
+        </Animated.View>
       </ScrollView>
     </View>
   );

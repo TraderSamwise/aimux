@@ -97,12 +97,35 @@ describe("formatPlainTextForDisplay", () => {
     expect(formatPlainTextForDisplay(text, { dividerWidth: 24 })).toBe("Done.");
   });
 
+  it("trims trailing prompt chrome even when blank rows separate the pieces", () => {
+    const text = [
+      "Useful answer.",
+      "",
+      "─".repeat(96),
+      "",
+      "❯",
+      "",
+      "─".repeat(96),
+      "",
+      "sam@MacBook-Pro-4 /Users/sam/cs/aimux master",
+      "▸▸ bypass permissions on · 1 shell · ← for agents",
+    ].join("\n");
+
+    expect(formatPlainTextForDisplay(text, { dividerWidth: 24 })).toBe("Useful answer.");
+  });
+
   it("keeps body dividers while trimming only trailing terminal chrome", () => {
     const divider = "─".repeat(80);
     const text = ["Before", divider, "After", divider, "❯"].join("\n");
 
     expect(formatPlainTextForDisplay(text, { dividerWidth: 12 })).toBe(
       ["Before", "─".repeat(12), "After"].join("\n"),
+    );
+  });
+
+  it("does not trim legitimate final prose that mentions agents", () => {
+    expect(formatPlainTextForDisplay("This checklist is for agents")).toBe(
+      "This checklist is for agents",
     );
   });
 
@@ -178,6 +201,22 @@ describe("formatRichTextSpansForDisplay", () => {
         { dividerWidth: 12 },
       ),
     ).toEqual([{ text: "Done.", foreground: { model: "rgb", value: "#ffffff" } }]);
+  });
+
+  it("trims split trailing prompt chrome in rich chat text", () => {
+    expect(
+      formatRichTextSpansForDisplay(
+        [
+          { text: "Useful answer.", foreground: { model: "rgb", value: "#ffffff" } },
+          { text: `\n\n${"─".repeat(80)}` },
+          { text: "\n\n❯" },
+          { text: `\n\n${"─".repeat(80)}` },
+          { text: "\n\nsam@MacBook-Pro-4 /Users/sam/cs/aimux master" },
+          { text: "\n▸▸ bypass permissions on · 1 shell · ← for agents" },
+        ],
+        { dividerWidth: 12 },
+      ),
+    ).toEqual([{ text: "Useful answer.", foreground: { model: "rgb", value: "#ffffff" } }]);
   });
 
   it("adds invisible break opportunities without dropping rich span colours", () => {

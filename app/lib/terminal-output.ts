@@ -192,9 +192,12 @@ function isTrailingTerminalChromeLine(line: string): boolean {
     /^[›>❯]$/.test(trimmed) ||
     /^[—–-]\s*Worked\s+for\s+\d+(?:ms|s|m|h)\b/i.test(trimmed) ||
     /^\d+\s+background terminals? running\b.*\/ps\b.*\/stop\b/i.test(trimmed) ||
+    /^[\w.-]+@[\w.-]+\s+.*(?:~\/|\/Users\/|\/home\/|\/)\S+\s+(?:[\w./-]+\s+)?(?:master|main|feat\/|fix\/|chore\/|release\/|\([^)]+\))/i.test(
+      trimmed,
+    ) ||
     /^gpt-[\w.-]+\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
     /^claude\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
-    /bypass permissions|shift\+tab|to cycle/i.test(trimmed)
+    /bypass permissions|shift\+tab|to cycle|←\s*for agents/i.test(trimmed)
   );
 }
 
