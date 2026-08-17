@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DaemonProject } from "@/lib/api";
 import {
   buildExposeTiles,
+  cropExposeTerminalPreviewFooter,
   filterExposeTiles,
   groupExposeTiles,
   summarizeExposeTiles,
@@ -235,6 +236,28 @@ describe("expose model", () => {
     ]);
 
     expect(previewText(tile?.terminalPreviewLines ?? [])).toEqual(["heading", "", "body"]);
+  });
+
+  it("slides terminal preview above the footer when the Expose tile is short", () => {
+    const lines = ["content 1", "content 2", "content 3", "footer 1", "footer 2", "footer 3"].map(
+      (text) => [{ text, style: {} }],
+    );
+
+    expect(previewText(cropExposeTerminalPreviewFooter(lines, 3))).toEqual([
+      "content 1",
+      "content 2",
+      "content 3",
+    ]);
+  });
+
+  it("keeps normal-height terminal previews anchored to the real tail", () => {
+    const lines = Array.from({ length: 16 }, (_, index) => [
+      { text: `line ${index + 1}`, style: {} },
+    ]);
+
+    expect(previewText(cropExposeTerminalPreviewFooter(lines, 15))).toEqual(
+      Array.from({ length: 15 }, (_, index) => `line ${index + 2}`),
+    );
   });
 
   it("preserves chat preview messages for the shared MessageBlock renderer", () => {

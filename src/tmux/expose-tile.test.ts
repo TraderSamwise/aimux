@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
 import { worktreeColorAnsiForCode, worktreeColorCode } from "../worktree-colors.js";
 import { assignWorktreeTones, type ExposeTileContext } from "./expose-ordering.js";
-import { buildTileHeader, drawTile, fitHeaderRows, matchClientSize } from "./expose.js";
+import { buildTileHeader, drawTile, fitHeaderRows, matchClientSize, tilePreview } from "./expose.js";
 
 const PILL = "[PILL]";
 
@@ -48,6 +48,20 @@ describe("fitHeaderRows", () => {
 
   it("truncates from the end when there is no pill", () => {
     expect(fitHeaderRows(["a", "b", "c"], 2, false)).toEqual(["a", "b"]);
+  });
+});
+
+describe("tilePreview", () => {
+  it("slides above the terminal footer when preview capacity is cramped", () => {
+    const raw = ["content 1", "content 2", "content 3", "footer 1", "footer 2", "footer 3"].join("\n");
+
+    expect(tilePreview(raw, 3)).toEqual(["content 1", "content 2", "content 3"]);
+  });
+
+  it("keeps normal-height previews anchored to the true tail", () => {
+    const raw = Array.from({ length: 16 }, (_, index) => `line ${index + 1}`).join("\n");
+
+    expect(tilePreview(raw, 15)).toEqual(Array.from({ length: 15 }, (_, index) => `line ${index + 2}`));
   });
 });
 

@@ -7,6 +7,7 @@ import { log } from "../debug.js";
 import { resolveScopedWorktreePath, type FastControlContext } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { formatRelativeRecency } from "../recency.js";
+import { cropExposePreviewFooter } from "../expose-preview-crop.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncateAnsi, wrapText } from "../tui/render/text.js";
 import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
@@ -157,9 +158,9 @@ function writeSelectedWindow(options: TmuxExposeOptions, item: ExposeScopeItem):
   }
 }
 
-function tilePreview(raw: string, count: number): string[] {
+export function tilePreview(raw: string, count: number): string[] {
   const lines = sanitizeExposePreviewOutput(raw);
-  const tail = lines.slice(-count);
+  const tail = cropExposePreviewFooter(lines, count);
   while (tail.length < count) tail.push("");
   return tail;
 }

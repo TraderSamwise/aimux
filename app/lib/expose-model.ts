@@ -6,6 +6,7 @@ import { firstTokenOf } from "@/lib/status-tone";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { toChatMessages } from "@/lib/transcript-view";
 import { worktreeTone } from "@/lib/worktree-tone";
+import { cropExposePreviewFooter } from "../../src/expose-preview-crop";
 import type { ExposeChatPreview, ExposePreviewSnapshot } from "../../src/project-api-contract";
 
 export type ExposeFilter = "all" | "working" | "attention" | "ready";
@@ -132,6 +133,13 @@ function previewLinesFor(item: ExposeSourceItem): AnsiSpan[][] {
     dividerWidth: EXPOSE_TERMINAL_PREVIEW_DIVIDER_WIDTH,
   }).map((line) => trimAnsiLineEnd(line));
   return trimBlankPreviewEdges(lines);
+}
+
+export function cropExposeTerminalPreviewFooter(
+  lines: readonly AnsiSpan[][],
+  visibleLineCount: number,
+): AnsiSpan[][] {
+  return cropExposePreviewFooter(lines, visibleLineCount);
 }
 
 function chatPreviewMessagesFor(item: ExposeSourceItem, sessionId: string): ChatMessage[] {

@@ -16,6 +16,7 @@ import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   buildExposeTiles,
+  cropExposeTerminalPreviewFooter,
   filterExposeTiles,
   summarizeExposeTiles,
   type ExposeFilter,
@@ -197,7 +198,7 @@ function ExposeTileCard({
   );
   const terminalPreview =
     tile.terminalPreviewLines.length > 0
-      ? tile.terminalPreviewLines.slice(-previewLineCount)
+      ? cropExposeTerminalPreviewFooter(tile.terminalPreviewLines, previewLineCount)
       : [[{ text: "No recent pane output.", style: {} }]];
   const chatPreview = tile.chatPreviewMessages;
   const chatPreviewTail = chatPreview.slice(-4);
