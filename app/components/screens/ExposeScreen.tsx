@@ -31,6 +31,7 @@ import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-l
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
 import { exposePreviewModeAtom, type ExposePreviewMode } from "@/stores/settings";
+import { sidebarOpenAtom } from "@/stores/ui";
 
 type ExposeScope = "project" | "global";
 
@@ -447,6 +448,7 @@ function ExposeSurface({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={{ maxHeight: 36 }}
       contentContainerClassName="flex-row items-center gap-2 pr-2"
       keyboardShouldPersistTaps="handled"
     >
@@ -585,6 +587,7 @@ export default function ExposeScreen() {
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
+  const setSidebarOpen = useSetAtom(sidebarOpenAtom);
   const searchParams = useGlobalSearchParams<{
     project?: string | string[];
     scope?: string | string[];
@@ -733,6 +736,7 @@ export default function ExposeScreen() {
 
   function openTile(tile: ExposeTile) {
     blurWebActiveElement();
+    setSidebarOpen(false);
     if (tile.kind === "agent") {
       setSelectedSession(tile.sessionId);
       router.push(detailHrefForPath(pathname, "agent", tile.sessionId, tile.projectRoot));

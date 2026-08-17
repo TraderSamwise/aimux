@@ -50,6 +50,7 @@ export function SegmentedControl<T extends string>({
                 "text-center text-sm leading-5",
                 selected ? "text-primary-foreground" : "text-foreground",
               )}
+              numberOfLines={1}
             >
               {opt.label}
               {opt.count !== undefined ? (
@@ -58,6 +59,7 @@ export function SegmentedControl<T extends string>({
                     "text-sm leading-5",
                     selected ? "text-primary-foreground" : "text-muted-foreground",
                   )}
+                  numberOfLines={1}
                 >
                   {" "}
                   {opt.count}

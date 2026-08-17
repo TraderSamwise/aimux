@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Animated, Platform, Pressable, ScrollView, View } from "react-native";
+import { Animated, Easing, Platform, Pressable, ScrollView, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -456,7 +456,8 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     previousPickerModeRef.current = pickerMode;
     menuProgress.setValue(0);
     Animated.timing(menuProgress, {
-      duration: 180,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
       toValue: 1,
       useNativeDriver: true,
     }).start();
@@ -471,7 +472,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
       {
         translateX: menuProgress.interpolate({
           inputRange: [0, 1],
-          outputRange: [menuDirection * 18, 0],
+          outputRange: [menuDirection * 24, 0],
         }),
       },
     ],
