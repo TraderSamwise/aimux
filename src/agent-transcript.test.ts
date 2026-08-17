@@ -29,6 +29,32 @@ describe("messagesFromParsedAgentOutput", () => {
     expect(messages[1]!.text).toBe("Published events: 21");
   });
 
+  it("strips terminal completion chrome that leaked into a response block", () => {
+    const messages = messagesFromParsedAgentOutput(
+      parsed([
+        { type: "prompt", text: "Review recent commits" },
+        {
+          type: "response",
+          text: [
+            "Fixed the sidebar default and image attachment preview path.",
+            "",
+            "Verification passed.",
+            "",
+            "— Worked for 14m 24s",
+            "────────────────────────────────────────────",
+            "────────────────────────────────────────────",
+          ].join("\n"),
+        },
+      ]),
+    );
+
+    expect(messages[1]!.text).toBe(
+      "Fixed the sidebar default and image attachment preview path.\n\nVerification passed.",
+    );
+    expect(messages[1]!.text).not.toContain("Worked for");
+    expect(messages[1]!.text).not.toContain("────");
+  });
+
   it("identifies a message by content, so a sliding window does not renumber it", () => {
     const blocks = [
       { type: "prompt", text: "one" },

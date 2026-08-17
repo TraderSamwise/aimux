@@ -76,6 +76,31 @@ function normalizeText(text: string): string {
   return text.replace(/\r/g, "").trim();
 }
 
+function isDividerOnlyLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length >= 3 && /^[\u2500-\u257f\-_=\s]+$/.test(trimmed);
+}
+
+function isTerminalCompletionLine(line: string): boolean {
+  const trimmed = line.trim().replace(/^[—–-]\s+/, "");
+  return /^Worked\s+for\s+\d+(?:ms|s|m|h)\b/i.test(trimmed);
+}
+
+function stripTrailingTerminalChrome(text: string): string {
+  const lines = normalizeText(text).split("\n");
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1]!.trim() === "" || isDividerOnlyLine(lines[end - 1]!))) {
+    end -= 1;
+  }
+  if (end > 0 && isTerminalCompletionLine(lines[end - 1]!)) {
+    return lines
+      .slice(0, end - 1)
+      .join("\n")
+      .trim();
+  }
+  return lines.join("\n").trim();
+}
+
 function attachmentKindForMimeType(mimeType?: string): AgentTranscriptAttachmentPart["kind"] | "image" {
   const normalized = mimeType?.toLowerCase() ?? "";
   if (normalized.startsWith("image/")) return "image";
@@ -364,7 +389,10 @@ export function messagesFromParsedAgentOutput(
   for (const block of blocks) {
     const type = blockType(block);
     if (type !== "prompt" && type !== "response") continue;
-    const raw = normalizeText(String(block.text ?? ""));
+    const raw =
+      type === "response"
+        ? stripTrailingTerminalChrome(String(block.text ?? ""))
+        : normalizeText(String(block.text ?? ""));
     if (!raw) continue;
 
     const role = type === "prompt" ? "user" : "assistant";
