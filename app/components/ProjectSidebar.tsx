@@ -446,33 +446,23 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     relayConfigured &&
     isRelayUnavailableForProjectDiscovery(relayStatus);
   const pickerMode = !effectiveProject || showPicker;
-  const [menuProgress] = useState(() => new Animated.Value(1));
-  const [menuDirection, setMenuDirection] = useState(1);
-  const previousPickerModeRef = useRef(pickerMode);
+  const [menuProgress] = useState(() => new Animated.Value(pickerMode ? 0 : 1));
 
   useEffect(() => {
-    if (previousPickerModeRef.current === pickerMode) return;
-    setMenuDirection(pickerMode ? -1 : 1);
-    previousPickerModeRef.current = pickerMode;
-    menuProgress.setValue(0);
     Animated.timing(menuProgress, {
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      toValue: 1,
+      duration: 260,
+      easing: Easing.bezier(0.22, 1, 0.36, 1),
+      toValue: pickerMode ? 0 : 1,
       useNativeDriver: true,
     }).start();
   }, [menuProgress, pickerMode]);
 
   const menuAnimationStyle = {
-    opacity: menuProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0.86, 1],
-    }),
     transform: [
       {
         translateX: menuProgress.interpolate({
           inputRange: [0, 1],
-          outputRange: [menuDirection * 24, 0],
+          outputRange: [0, -SIDEBAR_WIDTH],
         }),
       },
     ],
@@ -509,86 +499,94 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   return (
     <View
-      className="border-r border-[#2a2b31] bg-[#161719]"
+      className="overflow-hidden border-r border-[#2a2b31] bg-[#161719]"
       style={{ width: SIDEBAR_WIDTH, height: "100%" }}
     >
-      <ScrollView className="flex-1">
-        <Animated.View style={menuAnimationStyle}>
-          {routeRelayUnavailable && !showPicker ? (
-            <>
-              <View className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4">
-                <View className="flex-row items-center gap-1.5">
-                  <ChevronLeft size={14} color="#787a83" />
-                  <Text className="text-[12.5px] font-medium text-[#787a83]">All projects</Text>
-                </View>
-                <Text className="mt-2 text-[16px] font-semibold text-[#edeef0]">
-                  Remote unavailable
-                </Text>
-                <Text
-                  className="mt-0.5 font-mono text-[12px] text-[#787a83]"
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {routeProjectPath}
-                </Text>
-              </View>
-              <SidebarStateCard
-                title={relayUnavailableProjectCopy(relayStatus).title}
-                detail={relayUnavailableProjectCopy(relayStatus).detail}
-                tone="warning"
-              />
-            </>
-          ) : pickerMode ? (
+      <Animated.View
+        className="h-full flex-row"
+        style={[{ width: SIDEBAR_WIDTH * 2 }, menuAnimationStyle]}
+      >
+        <View pointerEvents={pickerMode ? "auto" : "none"} style={{ width: SIDEBAR_WIDTH }}>
+          <ScrollView className="flex-1">
             <ProjectPicker
               projects={projects}
               selectedPath={effectiveProjectPath}
               onSelect={handlePickProject}
             />
-          ) : (
-            <>
-              <ProjectHeader
-                project={effectiveProject!}
-                onSwitchProject={() => setShowPicker(true)}
-              />
-              {showPrimaryNav ? (
-                <>
-                  <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
-                  {sidebarMode === "views" ? (
-                    <SidebarPrimaryNav
-                      projectPath={routeProjectPath}
-                      onNavigate={() => setSidebarOpen(false)}
-                    />
-                  ) : (
-                    <WorktreeTree
-                      projectPath={effectiveProject!.path}
-                      endpoint={endpoint}
-                      token={token}
-                      desktopState={desktopState}
-                      desktopStateError={desktopStateError}
-                      selectedSessionId={selectedSessionId}
-                      onPickSession={handlePickSession}
-                      onPickService={handlePickService}
-                      onKillSession={handleKillSession}
-                    />
-                  )}
-                </>
-              ) : (
-                <WorktreeTree
-                  projectPath={effectiveProject!.path}
-                  endpoint={endpoint}
-                  token={token}
-                  desktopState={desktopState}
-                  desktopStateError={desktopStateError}
-                  selectedSessionId={selectedSessionId}
-                  onPickSession={handlePickSession}
-                  onPickService={handlePickService}
-                  onKillSession={handleKillSession}
+          </ScrollView>
+        </View>
+        <View pointerEvents={pickerMode ? "none" : "auto"} style={{ width: SIDEBAR_WIDTH }}>
+          <ScrollView className="flex-1">
+            {routeRelayUnavailable && !showPicker ? (
+              <>
+                <View className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4">
+                  <View className="flex-row items-center gap-1.5">
+                    <ChevronLeft size={14} color="#787a83" />
+                    <Text className="text-[12.5px] font-medium text-[#787a83]">All projects</Text>
+                  </View>
+                  <Text className="mt-2 text-[16px] font-semibold text-[#edeef0]">
+                    Remote unavailable
+                  </Text>
+                  <Text
+                    className="mt-0.5 font-mono text-[12px] text-[#787a83]"
+                    numberOfLines={1}
+                    ellipsizeMode="middle"
+                  >
+                    {routeProjectPath}
+                  </Text>
+                </View>
+                <SidebarStateCard
+                  title={relayUnavailableProjectCopy(relayStatus).title}
+                  detail={relayUnavailableProjectCopy(relayStatus).detail}
+                  tone="warning"
                 />
-              )}
-            </>
-          )}
-        </Animated.View>
-      </ScrollView>
+              </>
+            ) : effectiveProject ? (
+              <>
+                <ProjectHeader
+                  project={effectiveProject}
+                  onSwitchProject={() => setShowPicker(true)}
+                />
+                {showPrimaryNav ? (
+                  <>
+                    <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
+                    {sidebarMode === "views" ? (
+                      <SidebarPrimaryNav
+                        projectPath={routeProjectPath}
+                        onNavigate={() => setSidebarOpen(false)}
+                      />
+                    ) : (
+                      <WorktreeTree
+                        projectPath={effectiveProject.path}
+                        endpoint={endpoint}
+                        token={token}
+                        desktopState={desktopState}
+                        desktopStateError={desktopStateError}
+                        selectedSessionId={selectedSessionId}
+                        onPickSession={handlePickSession}
+                        onPickService={handlePickService}
+                        onKillSession={handleKillSession}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <WorktreeTree
+                    projectPath={effectiveProject.path}
+                    endpoint={endpoint}
+                    token={token}
+                    desktopState={desktopState}
+                    desktopStateError={desktopStateError}
+                    selectedSessionId={selectedSessionId}
+                    onPickSession={handlePickSession}
+                    onPickService={handlePickService}
+                    onKillSession={handleKillSession}
+                  />
+                )}
+              </>
+            ) : null}
+          </ScrollView>
+        </View>
+      </Animated.View>
     </View>
   );
 }
