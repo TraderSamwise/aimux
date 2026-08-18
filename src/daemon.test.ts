@@ -4628,6 +4628,40 @@ describe("daemon routing (relay + proxy)", () => {
     expect((after.body as any).projects[0].service).toMatchObject({ pid: currentActorPid() });
   });
 
+  it("includes online agent counts in the project list", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const ensured = await daemon.routeRequest("POST", "/projects/ensure", { projectRoot });
+    expect(ensured.status).toBe(200);
+    vi.mocked(requestJson).mockImplementation(async (url: string) => {
+      if (url.includes(PROJECT_API_ROUTES.desktopState)) {
+        return {
+          status: 200,
+          json: {
+            ok: true,
+            worktreeGroups: [
+              {
+                sessions: [
+                  { id: "claude-1", status: "running" },
+                  { id: "codex-1", status: "offline" },
+                  { id: "overseer-1", status: "running", overseer: true },
+                  { id: "waiting-1", status: "offline", pendingAction: "NEEDS INPUT" },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      return { status: 200, json: projectServiceHealth(currentActorPid()) };
+    });
+
+    const res = await daemon.routeRequest("GET", "/projects");
+
+    expect(res.status).toBe(200);
+    expect((res.body as any).projects[0]).toMatchObject({ onlineAgentCount: 2 });
+  });
+
   it("allows browser preflight requests to daemon routes", async () => {
     const originalPort = process.env.AIMUX_DAEMON_PORT;
     const port = "49191";

@@ -126,6 +126,7 @@ export interface CoreStatusProject {
   service: unknown | null;
   serviceAlive: boolean;
   serviceEndpoint: unknown;
+  onlineAgentCount?: number;
 }
 
 export type CoreRelaySnapshot = RelayStatusSnapshot | { status: "off" };

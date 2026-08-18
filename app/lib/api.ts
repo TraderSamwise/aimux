@@ -321,6 +321,7 @@ export interface DaemonProject {
   service: unknown | null;
   serviceAlive: boolean;
   serviceEndpoint: ServiceEndpoint | null;
+  onlineAgentCount?: number;
 }
 
 export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {

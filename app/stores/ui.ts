@@ -11,3 +11,6 @@ export const sidebarModeAtom = atom<SidebarMode>("dashboard");
 // Reset to false by the picker click handler after the user picks a project, and by
 // the sidebar via useEffect when the selected project path changes externally.
 export const sidebarShowProjectPickerAtom = atom<boolean>(false);
+
+// Ephemeral — the project picker defaults to active projects on every app load.
+export const sidebarProjectPickerShowAllAtom = atom<boolean>(false);

@@ -19,6 +19,7 @@ import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopState } from "@/lib/desktop-state";
 import { MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
+import { filterProjectPickerProjects } from "@/lib/project-picker";
 import {
   buildViewHref,
   detailHrefForPath,
@@ -41,7 +42,12 @@ import {
   selectedSessionIdAtom,
   selectProjectAtom,
 } from "@/stores/projects";
-import { sidebarModeAtom, sidebarOpenAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
+import {
+  sidebarModeAtom,
+  sidebarOpenAtom,
+  sidebarProjectPickerShowAllAtom,
+  sidebarShowProjectPickerAtom,
+} from "@/stores/ui";
 import {
   getProjectServiceEndpoint,
   isRelayUnavailableForProjectDiscovery,
@@ -64,27 +70,74 @@ type SidebarMode = "dashboard" | "views";
 function ProjectPicker({
   projects,
   selectedPath,
+  showAllProjects,
+  onShowAllProjectsChange,
   onSelect,
 }: {
   projects: DaemonProject[];
   selectedPath: string | null;
+  showAllProjects: boolean;
+  onShowAllProjectsChange: (showAll: boolean) => void;
   onSelect: (path: string) => void;
 }) {
+  const visibleProjects = filterProjectPickerProjects(projects, { showAll: showAllProjects });
+  const hiddenCount = Math.max(0, projects.length - visibleProjects.length);
+
   return (
     <View className="pt-4 pb-2">
-      <View className="px-3.5 pb-2">
+      <View className="flex-row items-center justify-between px-3.5 pb-2">
         <Text className="text-[10px] font-bold uppercase tracking-widest text-[#787a83]">
           Projects
         </Text>
+        {projects.length > 0 ? (
+          <View className="flex-row overflow-hidden rounded-md border border-[#30313a]">
+            {[
+              { label: "Active", value: false },
+              { label: "All", value: true },
+            ].map((option) => {
+              const active = showAllProjects === option.value;
+              return (
+                <Pressable
+                  key={option.label}
+                  onPress={() => onShowAllProjectsChange(option.value)}
+                  className={cn(
+                    "px-2.5 py-1",
+                    active ? "bg-[#edeef0]" : "bg-transparent hover:bg-[#232429]",
+                  )}
+                >
+                  <Text
+                    className={cn(
+                      "text-[11px] font-semibold",
+                      active ? "text-[#111216]" : "text-[#edeef0]",
+                    )}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
       </View>
       {projects.length === 0 ? (
         <View className="px-3.5 py-3">
           <Text className="text-[13px] text-[#787a83]">No projects detected</Text>
         </View>
+      ) : visibleProjects.length === 0 ? (
+        <View className="px-3.5 py-3">
+          <Text className="text-[13px] text-[#787a83]">No active projects</Text>
+          {hiddenCount > 0 ? (
+            <Text className="mt-1 text-[12px] text-[#5b5d66]">
+              Switch to All to show {hiddenCount} hidden.
+            </Text>
+          ) : null}
+        </View>
       ) : (
-        projects.map((project) => {
+        visibleProjects.map((project) => {
           const isSelected = project.path === selectedPath;
-          const isOnline = project.serviceAlive;
+          const onlineAgentCount = project.onlineAgentCount;
+          const isOnline =
+            onlineAgentCount === undefined ? project.serviceAlive : onlineAgentCount > 0;
           return (
             <Pressable
               key={project.path}
@@ -114,7 +167,11 @@ function ProjectPicker({
                     isOnline ? "text-[#4ade80]" : "text-[#787a83]",
                   )}
                 >
-                  {isOnline ? "online" : "offline"}
+                  {onlineAgentCount === undefined
+                    ? isOnline
+                      ? "online"
+                      : "offline"
+                    : `${onlineAgentCount} online`}
                 </Text>
               </View>
               <Text
@@ -384,6 +441,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const showPicker = useAtomValue(sidebarShowProjectPickerAtom);
   const setShowPicker = useSetAtom(sidebarShowProjectPickerAtom);
+  const [showAllPickerProjects, setShowAllPickerProjects] = useAtom(
+    sidebarProjectPickerShowAllAtom,
+  );
   const setSidebarOpen = useSetAtom(sidebarOpenAtom);
   const router = useRouter();
   const pathname = usePathname();
@@ -511,6 +571,8 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
             <ProjectPicker
               projects={projects}
               selectedPath={effectiveProjectPath}
+              showAllProjects={showAllPickerProjects}
+              onShowAllProjectsChange={setShowAllPickerProjects}
               onSelect={handlePickProject}
             />
           </ScrollView>

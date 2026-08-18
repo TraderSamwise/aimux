@@ -338,6 +338,8 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const PROJECT_SERVICE_ENDPOINT_READY_TIMEOUT_MS = 2_000;
 const PROJECT_SERVICE_ENDPOINT_READY_INTERVAL_MS = 50;
+const PROJECT_ONLINE_AGENT_COUNT_CACHE_TTL_MS = 2_000;
+const PROJECT_ONLINE_AGENT_COUNT_TIMEOUT_MS = 500;
 const CORS_ALLOWED_ORIGINS = new Set([
   "http://localhost:8081",
   "http://127.0.0.1:8081",
@@ -351,7 +353,55 @@ type ProjectsRouteProject = ReturnType<typeof listRegisteredDesktopProjects>[num
   service: ProjectServiceState | null;
   serviceAlive: boolean;
   serviceEndpoint: ReturnType<typeof loadMetadataEndpointByProjectId>;
+  onlineAgentCount?: number;
 };
+
+type ProjectRouteServiceEndpoint = ReturnType<typeof loadMetadataEndpointByProjectId>;
+type ProjectOnlineAgentCountCacheEntry = { count: number | undefined; ts: number };
+type ProjectDesktopStateSession = {
+  status?: unknown;
+  pendingAction?: unknown;
+  overseer?: unknown;
+  team?: { role?: unknown } | null;
+};
+type ProjectDesktopStateGroup = { sessions?: unknown };
+type ProjectDesktopStatePayload = {
+  sessions?: unknown;
+  teammates?: unknown;
+  worktreeGroups?: unknown;
+};
+
+function isProjectDesktopStateSession(value: unknown): value is ProjectDesktopStateSession {
+  return Boolean(value && typeof value === "object");
+}
+
+function isDashboardHiddenProjectSession(session: ProjectDesktopStateSession): boolean {
+  return session.overseer === true || session.team?.role === "overseer";
+}
+
+function isOnlineProjectSession(session: ProjectDesktopStateSession): boolean {
+  if (isDashboardHiddenProjectSession(session)) return false;
+  if (session.pendingAction) return true;
+  return session.status !== "offline" && session.status !== "exited";
+}
+
+function countSessionsFromUnknown(value: unknown): number {
+  if (!Array.isArray(value)) return 0;
+  return value.filter(isProjectDesktopStateSession).filter(isOnlineProjectSession).length;
+}
+
+function countOnlineDesktopAgents(state: ProjectDesktopStatePayload): number | undefined {
+  if (Array.isArray(state.worktreeGroups)) {
+    return state.worktreeGroups.reduce((total, group) => {
+      const sessions = group && typeof group === "object" ? (group as ProjectDesktopStateGroup).sessions : undefined;
+      return total + countSessionsFromUnknown(sessions);
+    }, 0);
+  }
+  if (Array.isArray(state.sessions) || Array.isArray(state.teammates)) {
+    return countSessionsFromUnknown(state.sessions) + countSessionsFromUnknown(state.teammates);
+  }
+  return undefined;
+}
 
 interface DaemonRouteResponse {
   status: number;
@@ -442,6 +492,7 @@ export class AimuxDaemon {
   private readonly pushThrottle = new MobilePushThrottle();
   private readonly projectActors = new Map<string, CoreProjectActor>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
+  private readonly projectOnlineAgentCountCache = new Map<string, ProjectOnlineAgentCountCacheEntry>();
   private readonly authFlows = new Map<string, DaemonAuthFlow>();
   private state: DaemonState = loadDaemonState();
   private stopping = false;
@@ -708,6 +759,53 @@ export class AimuxDaemon {
         serviceEndpoint: loadMetadataEndpointByProjectId(project.id),
       };
     });
+  }
+
+  private async listProjectsWithOnlineAgentCountsForRoute(): Promise<ProjectsRouteProject[]> {
+    const projects = this.listProjectsForRoute();
+    return Promise.all(
+      projects.map(async (project) => ({
+        ...project,
+        onlineAgentCount: await this.readProjectOnlineAgentCount(
+          project.id,
+          project.serviceAlive,
+          project.serviceEndpoint,
+        ),
+      })),
+    );
+  }
+
+  private async readProjectOnlineAgentCount(
+    projectId: string,
+    serviceAlive: boolean,
+    endpoint: ProjectRouteServiceEndpoint,
+  ): Promise<number | undefined> {
+    if (!serviceAlive) {
+      this.projectOnlineAgentCountCache.delete(projectId);
+      return 0;
+    }
+    if (!endpoint) return undefined;
+
+    const now = Date.now();
+    const cached = this.projectOnlineAgentCountCache.get(projectId);
+    if (cached && now - cached.ts < PROJECT_ONLINE_AGENT_COUNT_CACHE_TTL_MS) return cached.count;
+
+    try {
+      const { status, json } = await requestJson<ProjectDesktopStatePayload>(
+        `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.desktopState}`,
+        { method: "GET", timeoutMs: PROJECT_ONLINE_AGENT_COUNT_TIMEOUT_MS },
+      );
+      const count = status >= 200 && status < 300 ? countOnlineDesktopAgents(json) : undefined;
+      this.projectOnlineAgentCountCache.set(projectId, { count, ts: now });
+      return count;
+    } catch (error) {
+      log.warn("project online agent count fetch failed", "daemon", {
+        projectId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.projectOnlineAgentCountCache.set(projectId, { count: undefined, ts: now });
+      return undefined;
+    }
   }
 
   private daemonStatusTextPayload(
@@ -3845,7 +3943,7 @@ export class AimuxDaemon {
     }
 
     if (method === "GET" && pathname === "/projects") {
-      return { status: 200, body: { ok: true, projects: this.listProjectsForRoute() } };
+      return { status: 200, body: { ok: true, projects: await this.listProjectsWithOnlineAgentCountsForRoute() } };
     }
 
     if (method === "GET" && pathname.startsWith("/projects/")) {
