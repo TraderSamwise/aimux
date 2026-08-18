@@ -31,3 +31,10 @@ export function agentActivityLabel(
       return null;
   }
 }
+
+export function shouldShimmerAgentActivityLabel(
+  activity: AgentActivityState | undefined,
+  label: string | null,
+): boolean {
+  return activity === "running" && Boolean(label);
+}

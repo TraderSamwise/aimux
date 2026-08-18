@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
+  Easing,
   FlatList,
   Image,
   Platform,
@@ -50,7 +51,7 @@ import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import { useAuth, useUser } from "@/lib/auth";
-import { agentActivityLabel } from "@/lib/activity-label";
+import { agentActivityLabel, shouldShimmerAgentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   createShareInvite,
@@ -146,6 +147,7 @@ const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 132;
 const COMPOSER_SCROLL_SAFETY_PADDING = 44;
 const COMPOSER_HIDE_ANIMATION_MS = 160;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
+const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
@@ -650,6 +652,7 @@ export default function ChatScreen() {
     () => agentActivityLabel(activity, activityText),
     [activity, activityText],
   );
+  const activityLabelShimmer = shouldShimmerAgentActivityLabel(activity, activityLabel);
 
   const wideControls = composerWidth >= COMPOSER_CONTROL_LABEL_WIDTH;
   const compactHeaderActions = width < 430;
@@ -1731,9 +1734,7 @@ export default function ChatScreen() {
                         </Text>
                       </View>
                     ) : activityLabel ? (
-                      <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                        {activityLabel}
-                      </Text>
+                      <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
                     ) : null}
                   </View>
                   {/*
@@ -2342,6 +2343,71 @@ function ComposerFocusShell({
         />
       ) : null}
       {children({ onBlur, onFocus })}
+    </View>
+  );
+}
+
+function ActivityFooterLabel({ label, shimmer }: { label: string; shimmer: boolean }) {
+  const [shimmerProgress] = useState(() => new Animated.Value(0));
+
+  useEffect(() => {
+    if (!shimmer) {
+      shimmerProgress.stopAnimation();
+      shimmerProgress.setValue(0);
+      return;
+    }
+    const animation = Animated.loop(
+      Animated.timing(shimmerProgress, {
+        duration: FOOTER_LABEL_SHIMMER_DURATION_MS,
+        easing: Easing.inOut(Easing.quad),
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+    );
+    animation.start();
+    return () => {
+      animation.stop();
+      shimmerProgress.setValue(0);
+    };
+  }, [shimmer, shimmerProgress]);
+
+  const highlightOpacity = shimmerProgress.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0, 0.36, 0],
+  });
+  const highlightTranslateX = shimmerProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-42, 76],
+  });
+
+  return (
+    <View className="min-w-0 overflow-hidden" style={{ position: "relative" }}>
+      <Text
+        className="text-xs text-muted-foreground"
+        numberOfLines={1}
+        style={shimmer ? { opacity: 0.78 } : undefined}
+      >
+        {label}
+      </Text>
+      {shimmer ? (
+        <Animated.Text
+          pointerEvents="none"
+          numberOfLines={1}
+          style={{
+            color: "#edeef0",
+            fontSize: 12,
+            lineHeight: 16,
+            opacity: highlightOpacity,
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: 0,
+            transform: [{ translateX: highlightTranslateX }],
+          }}
+        >
+          {label}
+        </Animated.Text>
+      ) : null}
     </View>
   );
 }

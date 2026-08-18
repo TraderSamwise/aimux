@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { agentActivityLabel } from "./activity-label";
+import { agentActivityLabel, shouldShimmerAgentActivityLabel } from "./activity-label";
 
 describe("agentActivityLabel", () => {
   it("prefers the tool's own words while a turn is running", () => {
@@ -26,5 +26,13 @@ describe("agentActivityLabel", () => {
     expect(agentActivityLabel(undefined, "Brewing…")).toBeNull();
     expect(agentActivityLabel("idle", "Brewing…")).toBeNull();
     expect(agentActivityLabel("done", "Brewing…")).toBeNull();
+  });
+
+  it("shimmers only while the runtime reports active work", () => {
+    expect(shouldShimmerAgentActivityLabel("running", "Hashing…")).toBe(true);
+    expect(shouldShimmerAgentActivityLabel("waiting", "Waiting for input")).toBe(false);
+    expect(shouldShimmerAgentActivityLabel("error", "Stopped on an error")).toBe(false);
+    expect(shouldShimmerAgentActivityLabel("interrupted", "Interrupted")).toBe(false);
+    expect(shouldShimmerAgentActivityLabel(undefined, null)).toBe(false);
   });
 });
