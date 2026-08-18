@@ -1,4 +1,5 @@
 import type { DaemonProject } from "@/lib/api";
+import { agentCompactIdentity } from "@/lib/agent-display";
 import type { DesktopSession, DesktopState } from "@/lib/desktop-state";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
@@ -46,7 +47,7 @@ export function monitorSessionTargetsForProject(
       projectPath: project.path,
       projectName: project.name,
       sessionId: session.id,
-      sessionLabel: session.label || session.id,
+      sessionLabel: agentCompactIdentity(session),
       status: session.status,
       endpoint,
     }));

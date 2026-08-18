@@ -1,4 +1,5 @@
 import type { NotificationRecord } from "@/lib/api";
+import { agentCompactIdentity } from "@/lib/agent-display";
 import type { DesktopService, DesktopSession, DesktopState } from "@/lib/desktop-state";
 import type { SecurityInboxEvent } from "@/stores/security";
 
@@ -106,7 +107,7 @@ function pendingAgentCard(session: DesktopSession): ForYouCard | null {
     id: `agent:${session.id}:attention`,
     kind: "action-required",
     source: "agent",
-    title: session.label || session.id,
+    title: agentCompactIdentity(session),
     body: session.pendingAction || session.previewLine || session.headline || "Agent is waiting",
     subtitle: [session.worktreeName, session.status].filter(Boolean).join(" · "),
     createdAt: new Date(0).toISOString(),

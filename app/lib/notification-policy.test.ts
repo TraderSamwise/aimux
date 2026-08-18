@@ -46,6 +46,23 @@ describe("notification policy", () => {
     ).toBeNull();
   });
 
+  it("uses compact generated labels in notification fallback bodies", () => {
+    expect(
+      snapshotSessionForNotifications(
+        session({
+          id: "codex-o6o4kf",
+          label: "codex-o6o4kf",
+          command: "codex --model gpt-5.5",
+          role: "coder",
+          headline: "",
+        }),
+      ),
+    ).toMatchObject({
+      id: "codex-o6o4kf",
+      label: "codex (coder)",
+    });
+  });
+
   it("emits when an agent starts needing input", () => {
     const previous = snapshotSessionForNotifications(session({ attention: "none" }));
     const event = evaluateAgentNotification(

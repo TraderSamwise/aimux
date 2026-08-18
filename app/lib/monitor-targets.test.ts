@@ -45,6 +45,26 @@ describe("monitor targets", () => {
     ]);
   });
 
+  it("collapses generated agent labels in monitor presentation labels", () => {
+    const generatedState: DesktopState = {
+      ...state,
+      sessions: [
+        {
+          id: "codex-o6o4kf",
+          status: "running",
+          label: "codex-o6o4kf",
+          command: "codex --model gpt-5.5",
+          role: "coder",
+        },
+      ],
+    };
+
+    expect(monitorSessionTargetsForProject(project, generatedState)[0]).toMatchObject({
+      sessionId: "codex-o6o4kf",
+      sessionLabel: "codex (coder)",
+    });
+  });
+
   it("does not expose project sessions while the host service is unavailable", () => {
     expect(monitorSessionTargetsForProject({ ...project, serviceAlive: false }, state)).toEqual([]);
   });

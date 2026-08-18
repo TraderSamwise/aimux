@@ -249,7 +249,7 @@ function ExposeTileCard({
                   )}
                   numberOfLines={1}
                 >
-                  {tile.label}
+                  {tile.displayLabel}
                 </Text>
               </View>
               {compactTileHeader ? null : (

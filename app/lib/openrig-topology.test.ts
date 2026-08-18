@@ -59,6 +59,12 @@ describe("openrig-inspired topology model", () => {
       offline: 1,
     });
     expect(topology.project.health).toBe("attention");
+    expect(topology.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "agent:agent-1", label: "Codex" }),
+        expect.objectContaining({ id: "agent:agent-2", label: "claude" }),
+      ]),
+    );
     expect(topology.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ from: "project:/repo/aimux", to: "worktree:__main_checkout__" }),

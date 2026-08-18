@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { forkAgent, killAgent, resumeAgent, stopAgent } from "@/lib/api";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
+import { agentCompactIdentity } from "@/lib/agent-display";
 import { canResumeSession } from "@/lib/agent-lifecycle";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
@@ -62,6 +63,7 @@ export function AgentActions({
     (session.status === "offline" || session.status === "exited") &&
     session.restoreState === "blocked";
   const resumeBlockedReason = session.restoreBlockedReason ?? "resume is unavailable";
+  const displayName = agentCompactIdentity(session);
   const forkTool = agentToolForFork(session);
   const forkWorktreePath =
     session.worktreePath && session.worktreePath !== mainCheckoutPath
@@ -144,7 +146,7 @@ export function AgentActions({
                 }),
             })}
             disabled={!canAct}
-            label={`Stop ${session.label || session.id}`}
+            label={`Stop ${displayName}`}
           />
         ) : canResume ? (
           <ActionButton
@@ -160,7 +162,7 @@ export function AgentActions({
                 }),
             })}
             disabled={!canAct}
-            label={`Resume ${session.label || session.id}`}
+            label={`Resume ${displayName}`}
           />
         ) : resumeBlocked ? (
           <ActionButton
@@ -169,7 +171,7 @@ export function AgentActions({
             sizeClass={sizeClass}
             onPress={() => undefined}
             disabled
-            label={`Resume unavailable for ${session.label || session.id}: ${resumeBlockedReason}`}
+            label={`Resume unavailable for ${displayName}: ${resumeBlockedReason}`}
           />
         ) : null}
         {forkTool ? (
@@ -190,7 +192,7 @@ export function AgentActions({
               ),
             )}
             disabled={!canAct}
-            label={`Fork ${session.label || session.id}`}
+            label={`Fork ${displayName}`}
           />
         ) : null}
         <ActionButton
@@ -207,7 +209,7 @@ export function AgentActions({
               }),
           })}
           disabled={!canAct}
-          label={`Kill ${session.label || session.id}`}
+          label={`Kill ${displayName}`}
         />
       </View>
       {visibleError ? (

@@ -5,7 +5,7 @@ import type {
   DesktopState,
   WorktreeBucket,
 } from "@/lib/desktop-state";
-import { firstTokenOf } from "@/lib/status-tone";
+import { agentCompactIdentity, agentToolName } from "@/lib/agent-display";
 
 export type TopologyNodeKind = "project" | "worktree" | "agent" | "service";
 export type TopologyHealth = "active" | "attention" | "idle" | "offline";
@@ -91,11 +91,11 @@ function rollupHealth(nodes: TopologyNode[]): TopologyHealth {
 }
 
 function agentNode(session: DesktopSession, worktreeKey: string): TopologyNode {
-  const tool = firstTokenOf(session.command);
+  const tool = agentToolName(session);
   return {
     id: `agent:${session.id}`,
     kind: "agent",
-    label: session.label || session.id,
+    label: agentCompactIdentity(session),
     subtitle: [tool, session.headline || session.previewLine].filter(Boolean).join(" · "),
     status: session.status,
     command: session.command,

@@ -9,6 +9,7 @@ import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { WorktreeManagementPanel } from "@/components/worktree-management-panel";
 import { StatusDotMini } from "@/components/status-dot";
+import { agentRoleLabel, agentShortName } from "@/lib/agent-display";
 import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -17,7 +18,6 @@ import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
 import {
   agentStatusKind,
   appStatusClasses,
-  firstTokenOf,
   serviceStatusKind,
   type AppStatusKind,
 } from "@/lib/status-tone";
@@ -153,7 +153,8 @@ function AgentRow({
   onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
-  const tool = firstTokenOf(session.command);
+  const shortName = agentShortName(session);
+  const role = agentRoleLabel(session);
   const state = deriveAgentState(session);
   const identity = (
     <>
@@ -173,14 +174,14 @@ function AgentRow({
           numberOfLines={1}
           ellipsizeMode="tail"
         >
-          {session.label || session.id}
+          {shortName}
         </Text>
-        {session.role || tool ? (
+        {role ? (
           <Text
             className={cn("shrink-0 font-mono text-[12px] text-[#7c7e88]", compact && "ml-auto")}
             numberOfLines={1}
           >
-            {session.role ?? tool}
+            {role}
           </Text>
         ) : null}
       </View>

@@ -1,8 +1,8 @@
 import type { DaemonProject } from "@/lib/api";
+import { agentCompactIdentity, agentToolName } from "@/lib/agent-display";
 import type { AnsiSpan } from "@/lib/ansi";
 import type { AgentTranscriptMessage, ChatMessage } from "@/lib/events";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import { firstTokenOf } from "@/lib/status-tone";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { toChatMessages } from "@/lib/transcript-view";
 import { worktreeTone } from "@/lib/worktree-tone";
@@ -72,6 +72,7 @@ export interface ExposeTile {
   windowId?: string;
   windowIndex?: number;
   label: string;
+  displayLabel: string;
   tool: string;
   role?: string;
   kind: "agent" | "service";
@@ -206,11 +207,14 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       const statusKind = normalizeStatusKind(item.exposeStatus?.kind);
       const label = item.label || metadata.label || item.id || "agent";
       const sessionId = metadata.sessionId || item.id || label;
-      const tool =
-        metadata.toolConfigKey ||
-        firstTokenOf(metadata.command) ||
-        label.split(/[(-]/)[0] ||
-        "agent";
+      const agentDisplay = {
+        id: sessionId,
+        label,
+        command: metadata.command,
+        toolConfigKey: metadata.toolConfigKey,
+        role: metadata.role,
+      };
+      const tool = agentToolName(agentDisplay);
       tiles.push({
         id: `${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
         projectId: item.projectId || source.project.id,
@@ -221,6 +225,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         windowId: item.target?.windowId,
         windowIndex: item.target?.windowIndex,
         label,
+        displayLabel: metadata.kind === "service" ? label : agentCompactIdentity(agentDisplay),
         tool,
         role: metadata.role,
         kind: metadata.kind === "service" ? "service" : "agent",

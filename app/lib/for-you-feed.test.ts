@@ -164,5 +164,36 @@ describe("For You feed classifier", () => {
         "notification:n1",
       ]),
     );
+    expect(feed.cards.find((card) => card.id === "agent:agent-1:attention")).toMatchObject({
+      title: "agent",
+    });
+  });
+
+  it("uses compact labels for pending generated agents", () => {
+    const feed = buildForYouFeed({
+      securityEvents: [],
+      notifications: [],
+      desktopState: {
+        ok: true,
+        sessions: [
+          {
+            id: "codex-o6o4kf",
+            label: "codex-o6o4kf",
+            command: "codex --model gpt-5.5",
+            role: "coder",
+            status: "waiting",
+            pendingAction: "Needs input",
+          },
+        ],
+        services: [],
+        worktrees: [],
+      },
+    });
+
+    expect(feed.cards[0]).toMatchObject({
+      id: "agent:codex-o6o4kf:attention",
+      title: "codex (coder)",
+      sessionId: "codex-o6o4kf",
+    });
   });
 });

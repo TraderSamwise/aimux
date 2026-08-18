@@ -81,6 +81,47 @@ describe("expose model", () => {
     ]);
   });
 
+  it("shows compact agent identity in tile headers while preserving session ids", () => {
+    const [generated, custom] = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("1", "main", 0),
+            label: "codex-o6o4kf",
+            metadata: {
+              ...item("1", "main", 0).metadata,
+              sessionId: "codex-o6o4kf",
+              role: "coder",
+            },
+          },
+          {
+            ...item("2", "main", 0),
+            label: "overseer",
+            metadata: {
+              ...item("2", "main", 0).metadata,
+              sessionId: "claude-k9czzb",
+              command: "claude",
+              toolConfigKey: "claude",
+              role: "reviewer",
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(generated).toMatchObject({
+      label: "codex-o6o4kf",
+      displayLabel: "codex (coder)",
+      sessionId: "codex-o6o4kf",
+    });
+    expect(custom).toMatchObject({
+      label: "overseer",
+      displayLabel: "overseer (reviewer)",
+      sessionId: "claude-k9czzb",
+    });
+  });
+
   it("keeps Expose tones stable when the API order or server tone changes", () => {
     const first = buildExposeTiles([
       {

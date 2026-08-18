@@ -1,6 +1,7 @@
 import type { DesktopSession } from "@/lib/desktop-state";
 import type { NotificationRecord } from "@/lib/api";
 import type { AlertEvent } from "@/lib/events";
+import { agentCompactIdentity } from "@/lib/agent-display";
 import {
   isAgentNotificationEnabled,
   type AgentNotificationKind,
@@ -65,7 +66,7 @@ export function snapshotSessionForNotifications(
     status: session.status,
     attention: normalizeState(session.attention),
     activity: normalizeState(session.activity),
-    label: session.label?.trim() || session.command?.trim() || session.id,
+    label: agentCompactIdentity(session),
     headline: session.headline?.trim() || session.previewLine?.trim() || "",
     unseenCount: session.unseenCount ?? 0,
   };
