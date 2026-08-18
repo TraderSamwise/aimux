@@ -1,5 +1,13 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Animated, Easing, Platform, Pressable, ScrollView, View } from "react-native";
+import {
+  Animated,
+  Easing,
+  Platform,
+  Pressable,
+  ScrollView,
+  View,
+  type GestureResponderEvent,
+} from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -61,6 +69,9 @@ import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 //   text fg #edeef0 · muted #a6a8b0 / #787a83 · faint #5b5d66
 
 const SIDEBAR_WIDTH = 320;
+const PROJECT_PICKER_EDGE_SWIPE_WIDTH = 28;
+const PROJECT_PICKER_EDGE_SWIPE_DISTANCE = 56;
+const PROJECT_PICKER_EDGE_SWIPE_MAX_VERTICAL_DRIFT = 36;
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 type SidebarMode = "dashboard" | "views";
@@ -507,6 +518,11 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     isRelayUnavailableForProjectDiscovery(relayStatus);
   const pickerMode = !effectiveProject || showPicker;
   const [menuProgress] = useState(() => new Animated.Value(pickerMode ? 0 : 1));
+  const projectPickerSwipeRef = useRef<{
+    startX: number;
+    startY: number;
+    triggered: boolean;
+  } | null>(null);
 
   useEffect(() => {
     Animated.timing(menuProgress, {
@@ -557,6 +573,42 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     }
   }
 
+  function canSwipeBackToProjectPicker() {
+    return Boolean(effectiveProject && !pickerMode);
+  }
+
+  function handleProjectPickerSwipeStart(event: GestureResponderEvent) {
+    if (!canSwipeBackToProjectPicker()) {
+      projectPickerSwipeRef.current = null;
+      return;
+    }
+    const { locationX, locationY } = event.nativeEvent;
+    projectPickerSwipeRef.current =
+      locationX <= PROJECT_PICKER_EDGE_SWIPE_WIDTH
+        ? { startX: locationX, startY: locationY, triggered: false }
+        : null;
+  }
+
+  function handleProjectPickerSwipeMove(event: GestureResponderEvent) {
+    const gesture = projectPickerSwipeRef.current;
+    if (!gesture || gesture.triggered || !canSwipeBackToProjectPicker()) return;
+    const { locationX, locationY } = event.nativeEvent;
+    const deltaX = locationX - gesture.startX;
+    const deltaY = Math.abs(locationY - gesture.startY);
+    if (
+      deltaX >= PROJECT_PICKER_EDGE_SWIPE_DISTANCE &&
+      deltaY <= PROJECT_PICKER_EDGE_SWIPE_MAX_VERTICAL_DRIFT
+    ) {
+      gesture.triggered = true;
+      blurWebActiveElement();
+      setShowPicker(true);
+    }
+  }
+
+  function handleProjectPickerSwipeEnd() {
+    projectPickerSwipeRef.current = null;
+  }
+
   return (
     <View
       className="overflow-hidden border-r border-[#2a2b31] bg-[#161719]"
@@ -577,7 +629,14 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
             />
           </ScrollView>
         </View>
-        <View pointerEvents={pickerMode ? "none" : "auto"} style={{ width: SIDEBAR_WIDTH }}>
+        <View
+          pointerEvents={pickerMode ? "none" : "auto"}
+          style={{ width: SIDEBAR_WIDTH }}
+          onTouchStart={handleProjectPickerSwipeStart}
+          onTouchMove={handleProjectPickerSwipeMove}
+          onTouchEnd={handleProjectPickerSwipeEnd}
+          onTouchCancel={handleProjectPickerSwipeEnd}
+        >
           <ScrollView className="flex-1">
             {routeRelayUnavailable && !showPicker ? (
               <>
