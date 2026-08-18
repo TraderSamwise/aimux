@@ -15,6 +15,9 @@ import {
   writePlanContent,
 } from "./runtime-core/plan-authority.js";
 
+/** A carried-over activity blurb rides in the launch argv, so it stays small. */
+const ACTIVITY_SUMMARY_MAX_CHARS = 500;
+
 export interface ForkSourceSnapshot {
   historyText?: string;
   liveText?: string;
@@ -302,7 +305,7 @@ export class SessionBootstrapService {
 
   summarizeForkSourceActivity(snapshot: ForkSourceSnapshot): string | undefined {
     if (snapshot.statusText?.trim()) {
-      return snapshot.statusText.trim();
+      return snapshot.statusText.trim().slice(0, ACTIVITY_SUMMARY_MAX_CHARS);
     }
 
     const source = snapshot.historyText || snapshot.liveText;
@@ -327,15 +330,25 @@ export class SessionBootstrapService {
 
     const tail = lines.slice(-8);
     if (tail.length === 0) return undefined;
-    return tail.join(" ").slice(0, 500);
+    return tail.join(" ").slice(0, ACTIVITY_SUMMARY_MAX_CHARS);
   }
 
-  buildForkPreamble(sourceSessionId: string, targetSessionId: string): string {
+  /**
+   * The carried-over context is written to disk by seedForkArtifacts, so this
+   * names those files instead of inlining them. Inlining a 160-line terminal
+   * capture plus the source plan and history pushed the launch argv past the
+   * ~16KB tmux packs into one command, and the window never opened.
+   */
+  buildForkPreamble(
+    sourceSessionId: string,
+    targetSessionId: string,
+    snapshot: ForkSourceSnapshot = this.readForkSourceSnapshot(sourceSessionId),
+  ): string {
     const sourceLabel = this.deps.getSessionLabel(sourceSessionId) ?? sourceSessionId;
     const sourceRole = this.deps.getSessionRole(sourceSessionId);
     const sourceWorktree = this.deps.getSessionWorktreePath(sourceSessionId);
-    const snapshot = this.readForkSourceSnapshot(sourceSessionId);
     const activitySummary = this.summarizeForkSourceActivity(snapshot);
+    const targetContextDir = join(getContextDir(), targetSessionId);
 
     return [
       "## Aimux Handoff",
@@ -343,41 +356,21 @@ export class SessionBootstrapService {
       `Your new session ID is ${targetSessionId}.`,
       sourceWorktree ? `Source worktree: ${sourceWorktree}` : undefined,
       "",
-      "Continue the same line of work using the source agent's carried-over context below.",
+      "Continue the same line of work using the source agent's carried-over context.",
       "You are independent now, but should preserve continuity and build on the source agent's progress.",
-      "Treat the provided summary, history, and live snapshot as prior context you already know.",
+      "Read these carried-over context files before you start:",
+      `- ${join(targetContextDir, "summary.md")}`,
+      snapshot.liveText ? `- ${join(targetContextDir, "live.md")}` : undefined,
+      `- ${getPlanAuthorityPath(targetSessionId)}`,
+      "Treat them as prior context you already know, not fresh-session scaffolding.",
       "Do not describe yourself as a fresh session if any carried-over context is present.",
       "A blank source plan does not mean there was no prior work or interaction.",
+      "Do not start with git archaeology.",
+      "After reading them, briefly summarize what we were doing and continue from that context.",
       activitySummary ? `\n### Recent Activity Summary\n${activitySummary}` : undefined,
-      snapshot.planText ? `\n### Source Plan\n${snapshot.planText}` : undefined,
-      snapshot.historyText ? `\n### Recent History\n${snapshot.historyText}` : undefined,
-      snapshot.liveText ? `\n### Live Terminal Snapshot\n${snapshot.liveText}` : undefined,
     ]
       .filter(Boolean)
       .join("\n");
-  }
-
-  buildCodexForkContinuityPreamble(
-    sourceSessionId: string,
-    targetSessionId: string,
-    snapshot: ForkSourceSnapshot,
-    instruction?: string,
-  ): string {
-    const activitySummary = this.summarizeForkSourceActivity(snapshot);
-    const summaryPath = join(getContextDir(), targetSessionId, "summary.md");
-    const livePath = join(getContextDir(), targetSessionId, "live.md");
-    const planPath = getPlanAuthorityPath(targetSessionId);
-    return [
-      `This session is a fork of ${sourceSessionId}.`,
-      `Read ${summaryPath}, ${livePath}, and ${planPath} first.`,
-      "Treat them as real carried-over memory, not fresh-session scaffolding.",
-      "Do not start with git archaeology.",
-      activitySummary ? `Recent source activity: ${activitySummary}` : undefined,
-      instruction?.trim() ? `Instruction: ${instruction.trim()}` : undefined,
-      "After reading them, briefly summarize what we were doing and continue from that context.",
-    ]
-      .filter(Boolean)
-      .join(" ");
   }
 
   buildCodexMigrationContinuityPreamble(
@@ -478,6 +471,47 @@ export class SessionBootstrapService {
   finalizePreamble(command: string, preamble: string): void {
     debugPreamble(command, Buffer.byteLength(preamble));
   }
+}
+
+/**
+ * tmux packs a whole new-window command into a single ~16KB message and refuses
+ * anything larger ("command too long"), so a launch preamble that rides in argv
+ * has to stay well under that. The rest of the command — the `env -i` list, tool
+ * args, hook and session-id flags — measures ~3KB, leaving ~5KB of headroom.
+ */
+export const LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES = 8000;
+
+function truncateToBytesOnLineBoundary(text: string, maxBytes: number): string {
+  const buffer = Buffer.from(text, "utf-8");
+  if (buffer.length <= maxBytes) return text;
+  // Walk back off any continuation byte so the cut lands between characters.
+  let end = maxBytes;
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end -= 1;
+  const truncated = buffer.subarray(0, end).toString("utf-8");
+  const lastNewline = truncated.lastIndexOf("\n");
+  return lastNewline > truncated.length / 2 ? truncated.slice(0, lastNewline) : truncated;
+}
+
+/**
+ * Keep a launch preamble inside the tmux command budget, spilling the full text
+ * to a file the agent is told to read when it does not fit.
+ */
+export function capLaunchPreambleForArgv(sessionId: string, preamble: string): string {
+  if (Buffer.byteLength(preamble, "utf-8") <= LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES) return preamble;
+
+  let pointer = "\n\n[Preamble truncated to fit the terminal launch limit.]";
+  try {
+    const overflowDir = join(getContextDir(), sessionId);
+    const overflowPath = join(overflowDir, "launch-preamble.md");
+    mkdirSync(overflowDir, { recursive: true });
+    writeFileSync(overflowPath, preamble.endsWith("\n") ? preamble : `${preamble}\n`);
+    pointer = `\n\n[Preamble truncated to fit the terminal launch limit. Read ${overflowPath} for the full text before you start.]`;
+  } catch (error) {
+    debug(`launch preamble overflow not written for ${sessionId}: ${String(error)}`, "preamble");
+  }
+
+  const budget = LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES - Buffer.byteLength(pointer, "utf-8");
+  return truncateToBytesOnLineBoundary(preamble, budget) + pointer;
 }
 
 export function getToolResumeArgs(

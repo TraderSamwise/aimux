@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildClaudeHookSettings,
   extractClaudeBackendSessionIdFromArgs,
@@ -72,14 +75,31 @@ describe("claude-hooks", () => {
   });
 
   it("injects settings and backend session id when allowed", () => {
-    const args = injectClaudeHookArgs(["hello"], {
-      sessionId: "claude-abc123",
-      projectRoot: "/tmp/project",
-      backendSessionId: "backend-123",
-    });
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-claude-hooks-"));
+    const previousHome = process.env.AIMUX_HOME;
+    process.env.AIMUX_HOME = join(projectRoot, "aimux-home");
+    let args: string[];
+    try {
+      args = injectClaudeHookArgs(["hello"], {
+        sessionId: "claude-abc123",
+        projectRoot,
+        backendSessionId: "backend-123",
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = previousHome;
+    }
     expect(args[0]).toBe("--session-id");
     expect(args[1]).toBe("backend-123");
-    expect(args).toContain("--settings");
+    expect(args[2]).toBe("--settings");
+
+    // The settings ride as a path, not inline JSON: tmux refuses an oversized
+    // new-window command, and the hook set alone is ~8KB.
+    const settingsPath = args[3];
+    expect(settingsPath.startsWith("{")).toBe(false);
+    expect(JSON.parse(readFileSync(settingsPath, "utf-8")).hooks.Stop).toBeDefined();
+    expect(Buffer.byteLength(args.join(" "), "utf-8")).toBeLessThan(1000);
+    rmSync(projectRoot, { recursive: true, force: true });
   });
 
   it("skips backend session id injection for resume-style args", () => {

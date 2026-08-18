@@ -237,6 +237,11 @@ export function buildDefaultRootMouseBindingsConfig(input: {
   ].join("\n");
 }
 
+/** What tmux has to pack into its one command message, NUL separators included. */
+function packedArgvBytes(argv: string[]): number {
+  return argv.reduce((total, arg) => total + Buffer.byteLength(arg, "utf-8") + 1, 0);
+}
+
 export class TmuxRuntimeManager {
   private sessionPrefixCache: string | null = null;
 
@@ -828,7 +833,10 @@ export class TmuxRuntimeManager {
         cwd,
         error,
       });
-      throw new Error(`tmux failed to create window "${name}" in session ${sessionName}`, { cause: error });
+      throw new Error(
+        `tmux failed to create window "${name}" in session ${sessionName} (${packedArgvBytes(argv)}-byte command)`,
+        { cause: error },
+      );
     }
     const [windowId, index, windowName] = raw.split("\t");
     return {
@@ -872,7 +880,10 @@ export class TmuxRuntimeManager {
         cwd,
         error,
       });
-      throw new Error(`tmux failed to create window "${name}" in session ${sessionName}`, { cause: error });
+      throw new Error(
+        `tmux failed to create window "${name}" in session ${sessionName} (${packedArgvBytes(argv)}-byte command)`,
+        { cause: error },
+      );
     }
     const [windowId, index, windowName] = raw.split("\t");
     return {

@@ -650,18 +650,9 @@ export class Multiplexer {
     if (!nativeFork) {
       const sourceSnapshot = this.sessionBootstrap.readForkSourceSnapshot(sourceSessionId);
       this.sessionBootstrap.seedForkArtifacts(sourceSessionId, targetSessionId, targetToolConfigKey);
-      const codexContinuityPreamble = !toolCfg.preambleFlag
-        ? this.sessionBootstrap.buildCodexForkContinuityPreamble(
-            sourceSessionId,
-            targetSessionId,
-            sourceSnapshot,
-            instruction,
-          )
-        : undefined;
       extraPreamble = [
-        this.sessionBootstrap.buildForkPreamble(sourceSessionId, targetSessionId),
-        codexContinuityPreamble ? undefined : instruction?.trim(),
-        codexContinuityPreamble,
+        this.sessionBootstrap.buildForkPreamble(sourceSessionId, targetSessionId, sourceSnapshot),
+        instruction?.trim(),
       ]
         .filter(Boolean)
         .join("\n\n");

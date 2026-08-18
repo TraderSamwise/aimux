@@ -14,6 +14,7 @@ import {
 } from "../claude-hooks.js";
 import { codexLaunchHookArgs, installCodexHooks } from "../codex-hooks.js";
 import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
+import { capLaunchPreambleForArgv } from "../session-bootstrap.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
 import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
@@ -678,14 +679,17 @@ export function createSession(
 
   const preamble = effectiveSuppressStartupPreamble
     ? ""
-    : host.sessionBootstrap.buildSessionPreamble({
+    : capLaunchPreambleForArgv(
         sessionId,
-        command,
-        worktreePath,
-        extraPreamble,
-        includeAimuxPreamble: automaticPreambleEnabled,
-        team,
-      });
+        host.sessionBootstrap.buildSessionPreamble({
+          sessionId,
+          command,
+          worktreePath,
+          extraPreamble,
+          includeAimuxPreamble: automaticPreambleEnabled,
+          team,
+        }),
+      );
   const shouldInjectLaunchPreamble = Boolean(
     isConfiguredToolCommand && !effectiveSuppressStartupPreamble && preambleFlag && preamble.trim(),
   );
@@ -891,14 +895,17 @@ export async function createSessionAsync(
 
   const preamble = effectiveSuppressStartupPreamble
     ? ""
-    : host.sessionBootstrap.buildSessionPreamble({
+    : capLaunchPreambleForArgv(
         sessionId,
-        command,
-        worktreePath,
-        extraPreamble,
-        includeAimuxPreamble: automaticPreambleEnabled,
-        team,
-      });
+        host.sessionBootstrap.buildSessionPreamble({
+          sessionId,
+          command,
+          worktreePath,
+          extraPreamble,
+          includeAimuxPreamble: automaticPreambleEnabled,
+          team,
+        }),
+      );
   const shouldInjectLaunchPreamble = Boolean(
     isConfiguredToolCommand && !effectiveSuppressStartupPreamble && preambleFlag && preamble.trim(),
   );

@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getProjectStateDirFor } from "./paths.js";
 import { buildProjectHookCommand } from "./project-hook-command.js";
@@ -122,6 +123,23 @@ export function buildClaudeHookSettings(opts: { sessionId: string; projectRoot: 
   });
 }
 
+/**
+ * The hook set is ~8KB of JSON. Inline in argv it ate half of the ~16KB tmux
+ * packs into one new-window command, so it goes to a file and claude reads the
+ * path (`--settings <file-or-json>`).
+ */
+export function writeClaudeHookSettingsFile(opts: {
+  sessionId: string;
+  projectRoot: string;
+  backendSessionId?: string;
+}): string {
+  const settingsDir = join(getProjectStateDirFor(opts.projectRoot), "claude-settings");
+  mkdirSync(settingsDir, { recursive: true });
+  const settingsPath = join(settingsDir, `${opts.sessionId}.json`);
+  writeFileSync(settingsPath, `${buildClaudeHookSettings(opts)}\n`);
+  return settingsPath;
+}
+
 export function injectClaudeHookArgs(
   args: string[],
   opts: {
@@ -130,7 +148,7 @@ export function injectClaudeHookArgs(
     backendSessionId?: string;
   },
 ): string[] {
-  const injected: string[] = ["--settings", buildClaudeHookSettings(opts), ...args];
+  const injected: string[] = ["--settings", writeClaudeHookSettingsFile(opts), ...args];
   if (!opts.backendSessionId || shouldSkipClaudeSessionIdInjection(args)) {
     return injected;
   }

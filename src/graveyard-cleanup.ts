@@ -4,7 +4,14 @@ import type { GraveyardConfig } from "./config.js";
 import { loadConfig } from "./config.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { loadMetadataState, saveMetadataState } from "./metadata-store.js";
-import { getContextDir, getHistoryDir, getPlansDir, getRecordingsDir, getStatusDir } from "./paths.js";
+import {
+  getContextDir,
+  getHistoryDir,
+  getPlansDir,
+  getProjectStateDir,
+  getRecordingsDir,
+  getStatusDir,
+} from "./paths.js";
 import {
   listTopologySessionStates,
   removeTopologySession,
@@ -182,6 +189,7 @@ export function deleteAgentAssets(sessionId: string): GraveyardCleanupDeletedAge
   removeIfExists(join(getContextDir(), sessionId), removedAssets, { recursive: true });
   removeIfExists(join(getPlansDir(), `${sessionId}.md`), removedAssets);
   removeIfExists(join(getStatusDir(), `${sessionId}.md`), removedAssets);
+  removeIfExists(join(getProjectStateDir(), "claude-settings", `${sessionId}.json`), removedAssets);
   removeAgentMetadata(sessionId);
   return { sessionId, removedAssets };
 }

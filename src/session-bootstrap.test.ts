@@ -1,5 +1,29 @@
-import { describe, expect, it } from "vitest";
-import { buildAimuxAgentInstructions, getToolResumeArgs, SessionBootstrapService } from "./session-bootstrap.js";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  buildAimuxAgentInstructions,
+  capLaunchPreambleForArgv,
+  getToolResumeArgs,
+  LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES,
+  SessionBootstrapService,
+} from "./session-bootstrap.js";
+import { withProjectPaths } from "./paths.js";
+
+const tempRoots: string[] = [];
+
+function tempProjectRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "aimux-preamble-"));
+  tempRoots.push(root);
+  return root;
+}
+
+afterEach(() => {
+  while (tempRoots.length > 0) {
+    rmSync(tempRoots.pop()!, { recursive: true, force: true });
+  }
+});
 
 const deps: ConstructorParameters<typeof SessionBootstrapService>[0] = {
   tmuxRuntimeManager: {} as any,
@@ -110,5 +134,72 @@ describe("getToolResumeArgs", () => {
       "backend-1",
     ]);
     expect(getToolResumeArgs({ resumeArgs: ["--continue"] } as any, "backend-1")).toBeUndefined();
+  });
+});
+
+describe("capLaunchPreambleForArgv", () => {
+  it("leaves a preamble that already fits the tmux command budget alone", () => {
+    const preamble = "## Aimux Handoff\nContinue the forked work.";
+
+    expect(capLaunchPreambleForArgv("claude-fits", preamble)).toBe(preamble);
+  });
+
+  it("spills an oversized preamble to a file the agent is told to read", () => {
+    const root = tempProjectRoot();
+    const preamble = Array.from({ length: 2000 }, (_, index) => `line ${index} of carried-over context`).join("\n");
+
+    const capped = withProjectPaths(root, () => capLaunchPreambleForArgv("claude-fork", preamble));
+
+    const overflowPath = join(root, ".aimux", "context", "claude-fork", "launch-preamble.md");
+    expect(Buffer.byteLength(capped, "utf-8")).toBeLessThanOrEqual(LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES);
+    expect(capped).toContain(overflowPath);
+    expect(capped.startsWith("line 0 of carried-over context")).toBe(true);
+    expect(readFileSync(overflowPath, "utf-8")).toContain("line 1999 of carried-over context");
+  });
+
+  it("truncates even when the overflow file cannot be written", () => {
+    const root = tempProjectRoot();
+    const notADirectory = join(root, "file-where-a-repo-should-be");
+    writeFileSync(notADirectory, "");
+
+    const capped = withProjectPaths(notADirectory, () => capLaunchPreambleForArgv("claude-fork", "x".repeat(40000)));
+
+    expect(Buffer.byteLength(capped, "utf-8")).toBeLessThanOrEqual(LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES);
+    expect(capped).toContain("[Preamble truncated to fit the terminal launch limit.]");
+  });
+});
+
+describe("buildForkPreamble", () => {
+  it("names the seeded context files instead of inlining them", () => {
+    const root = tempProjectRoot();
+    const service = new SessionBootstrapService(deps);
+    const snapshot = {
+      planText: "PLAN ".repeat(4000),
+      historyText: "HISTORY ".repeat(4000),
+      liveText: "LIVE ".repeat(4000),
+      statusText: "Carried status: mid-refactor of the fills read path.",
+    };
+
+    const preamble = withProjectPaths(root, () => service.buildForkPreamble("codex-source", "claude-fork", snapshot));
+
+    expect(Buffer.byteLength(preamble, "utf-8")).toBeLessThan(LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES);
+    expect(preamble).not.toContain("PLAN PLAN");
+    expect(preamble).not.toContain("HISTORY HISTORY");
+    expect(preamble).not.toContain("LIVE LIVE");
+    expect(preamble).toContain(join(root, ".aimux", "context", "claude-fork", "summary.md"));
+    expect(preamble).toContain(join(root, ".aimux", "context", "claude-fork", "live.md"));
+    expect(preamble).toContain("Carried status: mid-refactor of the fills read path.");
+  });
+
+  it("omits the live snapshot file when the source had no live text", () => {
+    const root = tempProjectRoot();
+    const service = new SessionBootstrapService(deps);
+
+    const preamble = withProjectPaths(root, () =>
+      service.buildForkPreamble("codex-source", "claude-fork", { planText: "small plan" }),
+    );
+
+    expect(preamble).toContain(join(root, ".aimux", "context", "claude-fork", "summary.md"));
+    expect(preamble).not.toContain(join(root, ".aimux", "context", "claude-fork", "live.md"));
   });
 });
