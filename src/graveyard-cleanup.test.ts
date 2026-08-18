@@ -4,7 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildGraveyardCleanupPlan, deleteGraveyardAgent, runGraveyardCleanup } from "./graveyard-cleanup.js";
-import { getContextDir, getHistoryDir, getPlansDir, getRecordingsDir, getStatusDir, initPaths } from "./paths.js";
+import {
+  getContextDir,
+  getHistoryDir,
+  getPlansDir,
+  getProjectStateDir,
+  getRecordingsDir,
+  getStatusDir,
+  initPaths,
+} from "./paths.js";
 import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
 import {
   listTopologySessionStates,
@@ -310,6 +318,9 @@ describe("graveyard cleanup", () => {
     writeFileSync(join(getHistoryDir(), "codex-old.jsonl"), "{}\n");
     writeFileSync(join(getPlansDir(), "codex-old.md"), "# plan\n");
     writeFileSync(join(getStatusDir(), "codex-old.md"), "status\n");
+    const settingsPath = join(getProjectStateDir(), "claude-settings", "codex-old.json");
+    mkdirSync(join(getProjectStateDir(), "claude-settings"), { recursive: true });
+    writeFileSync(settingsPath, "{}\n");
 
     const deleted = deleteGraveyardAgent("codex-old");
 
@@ -322,8 +333,10 @@ describe("graveyard cleanup", () => {
         contextDir,
         join(getPlansDir(), "codex-old.md"),
         join(getStatusDir(), "codex-old.md"),
+        settingsPath,
       ]),
     );
+    expect(existsSync(settingsPath)).toBe(false);
     expect(existsSync(contextDir)).toBe(false);
     expect(existsSync(join(getRecordingsDir(), "codex-old.log"))).toBe(false);
     expect(loadMetadataState().sessions["codex-old"]).toBeUndefined();

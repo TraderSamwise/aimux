@@ -203,3 +203,13 @@ describe("buildForkPreamble", () => {
     expect(preamble).not.toContain(join(root, ".aimux", "context", "claude-fork", "live.md"));
   });
 });
+
+describe("summarizeForkSourceActivity", () => {
+  it("keeps a carried-over status blurb small enough to ride in the launch argv", () => {
+    const service = new SessionBootstrapService(deps);
+
+    const summary = service.summarizeForkSourceActivity({ statusText: "S".repeat(20000) });
+
+    expect(summary).toHaveLength(500);
+  });
+});
