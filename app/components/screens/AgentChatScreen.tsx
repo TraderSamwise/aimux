@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
-  Easing,
   FlatList,
   Image,
   Platform,
@@ -24,8 +23,17 @@ import {
   KeyboardGestureArea,
   KeyboardStickyView,
 } from "react-native-keyboard-controller";
-import { useSharedValue, withTiming, type SharedValue } from "react-native-reanimated";
+import Reanimated, {
+  Easing as ReanimatedEasing,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useColorScheme } from "nativewind";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -148,6 +156,13 @@ const COMPOSER_SCROLL_SAFETY_PADDING = 44;
 const COMPOSER_HIDE_ANIMATION_MS = 160;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
 const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
+/** How much of the label the travelling highlight covers, as a fraction of its width. */
+const FOOTER_LABEL_SHIMMER_BAND = 0.3;
+/** muted-foreground → foreground, per theme (see app/global.css). */
+const FOOTER_LABEL_SHIMMER_COLORS = {
+  dark: { base: "#a1a1aa", highlight: "#fafafa" },
+  light: { base: "#71717a", highlight: "#09090b" },
+} as const;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
@@ -2348,67 +2363,82 @@ function ComposerFocusShell({
 }
 
 function ActivityFooterLabel({ label, shimmer }: { label: string; shimmer: boolean }) {
-  const [shimmerProgress] = useState(() => new Animated.Value(0));
+  const { colorScheme } = useColorScheme();
+  const palette = FOOTER_LABEL_SHIMMER_COLORS[colorScheme === "light" ? "light" : "dark"];
+  const sweep = useSharedValue(0);
 
   useEffect(() => {
     if (!shimmer) {
-      shimmerProgress.stopAnimation();
-      shimmerProgress.setValue(0);
+      sweep.value = 0;
       return;
     }
-    const animation = Animated.loop(
-      Animated.timing(shimmerProgress, {
+    sweep.value = 0;
+    sweep.value = withRepeat(
+      withTiming(1, {
         duration: FOOTER_LABEL_SHIMMER_DURATION_MS,
-        easing: Easing.inOut(Easing.quad),
-        toValue: 1,
-        useNativeDriver: true,
+        easing: ReanimatedEasing.linear,
       }),
+      -1,
+      false,
     );
-    animation.start();
     return () => {
-      animation.stop();
-      shimmerProgress.setValue(0);
+      sweep.value = 0;
     };
-  }, [shimmer, shimmerProgress]);
+  }, [shimmer, sweep]);
 
-  const highlightOpacity = shimmerProgress.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, 0.36, 0],
-  });
-  const highlightTranslateX = shimmerProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-42, 76],
-  });
-
-  return (
-    <View className="min-w-0 overflow-hidden" style={{ position: "relative" }}>
-      <Text
-        className="text-xs text-muted-foreground"
-        numberOfLines={1}
-        style={shimmer ? { opacity: 0.78 } : undefined}
-      >
+  if (!shimmer) {
+    return (
+      <Text className="text-xs text-muted-foreground" numberOfLines={1}>
         {label}
       </Text>
-      {shimmer ? (
-        <Animated.Text
-          pointerEvents="none"
-          numberOfLines={1}
-          style={{
-            color: "#edeef0",
-            fontSize: 12,
-            lineHeight: 16,
-            opacity: highlightOpacity,
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: 0,
-            transform: [{ translateX: highlightTranslateX }],
-          }}
-        >
-          {label}
-        </Animated.Text>
-      ) : null}
-    </View>
+    );
+  }
+
+  // Per-character colour is what makes this a highlight travelling through the
+  // text rather than a second copy of it sliding across.
+  const characters = Array.from(label);
+  return (
+    <Text
+      className="text-xs"
+      numberOfLines={1}
+      accessibilityLabel={label}
+      style={{ color: palette.base }}
+    >
+      {characters.map((character, index) => (
+        <ActivityFooterLabelCharacter
+          key={`${index}-${character}`}
+          character={character}
+          palette={palette}
+          phase={characters.length > 1 ? index / (characters.length - 1) : 0}
+          sweep={sweep}
+        />
+      ))}
+    </Text>
+  );
+}
+
+function ActivityFooterLabelCharacter({
+  character,
+  palette,
+  phase,
+  sweep,
+}: {
+  character: string;
+  palette: { base: string; highlight: string };
+  phase: number;
+  sweep: SharedValue<number>;
+}) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const center = sweep.value * (1 + 2 * FOOTER_LABEL_SHIMMER_BAND) - FOOTER_LABEL_SHIMMER_BAND;
+    const distance = Math.abs(phase - center);
+    const intensity = Math.max(0, 1 - distance / FOOTER_LABEL_SHIMMER_BAND);
+    return { color: interpolateColor(intensity, [0, 1], [palette.base, palette.highlight]) };
+  }, [palette.base, palette.highlight, phase]);
+
+  return (
+    <Reanimated.Text style={[{ fontSize: 12, lineHeight: 16 }, animatedStyle]}>
+      {character}
+    </Reanimated.Text>
   );
 }
 
