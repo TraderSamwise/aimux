@@ -139,7 +139,8 @@ installed build coherence.
 ## Releases
 
 Local CLI releases publish from git tags to GitHub Releases, npm, and the
-Homebrew tap.
+Homebrew tap. Cut one with `yarn release:readiness && yarn release:patch`;
+`docs/deployment.md` documents the chain the tag triggers.
 
 The web app deploys from pushed commits through the configured Vercel project.
 Do not deploy the web app manually from a local working tree.

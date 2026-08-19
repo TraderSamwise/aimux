@@ -6,7 +6,8 @@ These docs are the maintained product and operations references.
 - [Architecture](architecture.md) - runtime layers, ownership boundaries, and
   client responsibilities.
 - [Development](development.md) - local backend and app development workflows.
-- [Deployment](deployment.md) - relay, web, and native release operations.
+- [Deployment](deployment.md) - relay, web, CLI, and native release
+  operations.
 - [Sharing](sharing.md) - invite flow, shared chat routing, and receiver
   experience.
 - [Security](security.md) - remote access, notifications, hosted mode, and

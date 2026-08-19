@@ -166,6 +166,56 @@ changed since the last native build, because an OTA can only target the runtime
 already installed on the device. Environment variables are baked into the native
 bundle at build time via `app.config.js`.
 
+## 6. CLI Releases
+
+The CLI publishes from a git tag. `.github/workflows/release.yml` runs on any
+`v*` tag and does the whole chain: platform assets, the GitHub Release, npm, and
+the Homebrew tap. Nothing is published by hand.
+
+### Cut a release
+
+```bash
+yarn release:readiness   # yarn verify — typecheck, lint, root tests, app tests
+yarn release:patch       # or release:minor / release:major
+```
+
+`release:patch` runs `yarn version --patch`, which bumps `package.json`, commits
+it, and tags `v<version>`, then pushes the branch and the tag together. The
+working tree must be clean and the branch must already be pushable — the tag is
+what triggers everything downstream, so a tag pushed from a red branch publishes
+a broken release.
+
+### What the tag triggers
+
+1. **Release assets** — builds `aimux-{darwin,linux}-{arm64,x64}.tar.gz` plus
+   `.sha256` on matching runners, after re-running `yarn release:readiness`.
+   Each asset is checked for stripped source maps, and the Darwin assets are
+   checked for a notifier helper of the right architecture. Assets are uploaded
+   to the GitHub Release, which is created with generated notes.
+2. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
+   publishing (OIDC, no stored token). It fails fast if `package.json`'s version
+   does not match the tag, and stages the macOS notifier helpers from the
+   release assets so the npm package carries them.
+3. **Homebrew tap** — rewrites `Formula/aimux.rb` in
+   `TraderSamwise/homebrew-aimux` with the new version, URLs, and SHA256 values,
+   using the `HOMEBREW_TAP_TOKEN` secret.
+
+The npm and tap jobs both depend on the asset job, so a failed build publishes
+nothing.
+
+### Verify a release
+
+```bash
+gh run watch                            # or: gh run list --workflow=release.yml
+gh release view v<version>              # four assets + four .sha256 files
+npm view aimux-cli version
+brew update && brew info aimux
+```
+
+The three surfaces should agree on the version. `scripts/install.sh` pulls the
+same GitHub Release asset, so a standalone install of `AIMUX_VERSION=v<version>`
+is the fourth check.
+
 ## Architecture
 
 ```text
