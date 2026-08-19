@@ -213,3 +213,57 @@ describe("summarizeForkSourceActivity", () => {
     expect(summary).toHaveLength(500);
   });
 });
+
+describe("summarizeForkSourceActivity chrome filtering", () => {
+  const codexPane = [
+    "› commit and push and yolo into master and then master into preview",
+    "",
+    "• Ran git push origin master",
+    "  Pushed:",
+    "  - master -> origin/master at bb56e53a83",
+    "  Flow was full branch -> master -> preview, no cherry-picks. Both worktrees are clean.",
+    "─ Worked for 1m 33s ──────────────────────────────────────────────",
+    "",
+    "› Summarize recent commits",
+    "",
+    "  gpt-5.5 high · ~/cs/tealstreet-next/.aimux/worktrees/context-mcp · Main [default]",
+  ].join("\n");
+
+  it("drops the composer placeholder and status line below the last rule", () => {
+    const service = new SessionBootstrapService(deps);
+
+    const summary = service.summarizeForkSourceActivity({ liveText: codexPane });
+
+    expect(summary).toContain("no cherry-picks");
+    expect(summary).not.toContain("Summarize recent commits");
+    expect(summary).not.toContain("gpt-5.5 high");
+    expect(summary).not.toContain("Worked for 1m 33s");
+  });
+
+  it("keeps prompts that sit above the footer", () => {
+    const service = new SessionBootstrapService(deps);
+
+    const summary = service.summarizeForkSourceActivity({ liveText: codexPane });
+
+    expect(summary).toContain("commit and push and yolo into master");
+  });
+
+  it("drops claude's banner, hint and status chrome without matching on model names", () => {
+    const service = new SessionBootstrapService(deps);
+    const claudePane = [
+      "╭─── Claude Code v2.1.232 ───────────────────────────────╮",
+      "│                  Welcome back Sam!                     │",
+      "╰────────────────────────────────────────────────────────╯",
+      "⏺ Bumped the constant in src/index.ts from 41 to 42.",
+      "✻ Brewed for 13s",
+      "──────────────────────────────────────────────────────────",
+      "❯ ",
+      "  sam@MacBook-Pro-4 /Users/sam/cs/aimux master Opus 5 (1M context)",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+    ].join("\n");
+
+    const summary = service.summarizeForkSourceActivity({ liveText: claudePane });
+
+    expect(summary).toBe("⏺ Bumped the constant in src/index.ts from 41 to 42.");
+  });
+});

@@ -18,6 +18,43 @@ import {
 /** A carried-over activity blurb rides in the launch argv, so it stays small. */
 const ACTIVITY_SUMMARY_MAX_CHARS = 500;
 
+/** A run of box-drawing or block characters — a rule, a banner, or a logo row. */
+const DECORATION_CHARACTER = /[\u2500-\u257f\u2580-\u259f]/gu;
+const RULE_LINE = /[\u2500-\u257f\u2580-\u259f]{12,}/u;
+
+const CHROME_LINE_PATTERNS = [
+  /^#\s/,
+  /^Updated:/,
+  /^Recent terminal output:/,
+  // Shell prompt line: "sam@host ~/path …".
+  /^[\w.-]+@[\w.-]+\s+[~/]/,
+  // Agent status line: "gpt-5.5 high · ~/cs/project …".
+  /^[^\s·]+(\s+[^\s·]+)?\s+·\s+[~/]/,
+  /^[⏵▶]{2}/,
+  /^(Tip|⚠|✻|✳|✽)\s/,
+  /(shift\+tab|ctrl\+[a-z]\b|\? for shortcuts)/i,
+];
+
+/**
+ * Both agent TUIs draw a rule, then the composer and status line, at the bottom
+ * of every frame. Cutting from that last rule drops the placeholder prompt and
+ * the model/cwd banner while keeping the real prompts further up the scrollback.
+ */
+function stripTerminalFooter(lines: string[]): string[] {
+  const searchFrom = Math.max(0, lines.length - 15);
+  for (let index = lines.length - 1; index >= searchFrom; index -= 1) {
+    if (RULE_LINE.test(lines[index])) return lines.slice(0, index);
+  }
+  return lines;
+}
+
+function isTerminalChromeLine(line: string): boolean {
+  if (CHROME_LINE_PATTERNS.some((pattern) => pattern.test(line))) return true;
+  if (/^[│┃].*[│┃]$/u.test(line)) return true;
+  const decoration = line.match(DECORATION_CHARACTER)?.length ?? 0;
+  return decoration > 0 && decoration * 2 >= line.length;
+}
+
 export interface ForkSourceSnapshot {
   historyText?: string;
   liveText?: string;
@@ -311,22 +348,10 @@ export class SessionBootstrapService {
     const source = snapshot.historyText || snapshot.liveText;
     if (!source) return undefined;
 
-    const lines = source
-      .split("\n")
+    const lines = stripTerminalFooter(source.split("\n"))
       .map((line) => line.replace(/\s+/g, " ").trim())
       .filter(Boolean)
-      .filter(
-        (line) =>
-          !line.startsWith("# ") &&
-          !line.startsWith("Updated:") &&
-          !line.startsWith("Recent terminal output:") &&
-          !line.includes("gpt-5.4 medium") &&
-          !line.includes("Opus 4.6") &&
-          !line.startsWith("sam@") &&
-          !line.startsWith("▐") &&
-          !line.startsWith("▝") &&
-          !line.startsWith("⏵⏵"),
-      );
+      .filter((line) => !isTerminalChromeLine(line));
 
     const tail = lines.slice(-8);
     if (tail.length === 0) return undefined;
