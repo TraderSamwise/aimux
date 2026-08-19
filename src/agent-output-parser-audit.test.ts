@@ -156,7 +156,7 @@ describe("auditAgentOutputParserCorpus", () => {
     writeFileSync(
       join(dir, "codex-test.jsonl"),
       [
-        JSON.stringify({ type: "response", content: "Worked for 20m 16s - leaked assistant prose" }),
+        JSON.stringify({ type: "response", content: "Simmered for 12s - leaked assistant prose" }),
         JSON.stringify({ type: "response", content: "Baked for 3s - leaked assistant prose" }),
         "",
       ].join("\n"),

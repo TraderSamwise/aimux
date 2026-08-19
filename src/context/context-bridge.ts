@@ -6,7 +6,7 @@ import { loadConfig } from "../config.js";
 import { getRecordingsDir, getContextDir } from "../paths.js";
 import { appendTurn, readHistory, type HistoryTurn } from "./history.js";
 import { algorithmicCompact } from "./compactor.js";
-import { debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
+import { debug, debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "../tmux/runtime-manager.js";
 import { classifyToolPane } from "../tool-output-watchers.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
@@ -107,11 +107,7 @@ export function writeLivePaneSnapshot(session: { id: string; command: string }, 
 
   const hash = simpleHash(normalized);
   if (livePaneSnapshotHashes.get(session.id) === hash) return false;
-  livePaneSnapshotHashes.set(session.id, hash);
 
-  const sessionDir = join(getContextDir(), session.id);
-  if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
-  const snapshotBody = boundLiveSnapshot(normalized);
   const snapshot = [
     `# ${session.id} (${session.command}) — Live Snapshot`,
     "",
@@ -119,10 +115,22 @@ export function writeLivePaneSnapshot(session: { id: string; command: string }, 
     "",
     "Recent terminal output:",
     "",
-    snapshotBody,
+    boundLiveSnapshot(normalized),
     "",
   ].join("\n");
-  writeFileSync(join(sessionDir, "live.md"), snapshot);
+
+  // A snapshot is continuity bookkeeping on the side of a read. Callers that
+  // only want the pane back — the transcript API, the parser harness — must not
+  // fail because there is nowhere to write it.
+  try {
+    const sessionDir = join(getContextDir(), session.id);
+    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "live.md"), snapshot);
+  } catch (error) {
+    debug(`live snapshot skipped for ${session.id}: ${String(error)}`, "context");
+    return false;
+  }
+  livePaneSnapshotHashes.set(session.id, hash);
   debugContext("wrote", `${session.id}/live.md`, snapshot.length);
   return true;
 }

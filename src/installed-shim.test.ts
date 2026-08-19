@@ -145,6 +145,11 @@ exit "\${TMUX_EXIT:-0}"
 
   const env = {
     ...process.env,
+    // Running the suite inside an aimux-managed session would otherwise leak
+    // that session's identity into the shim and make it report source=agent.
+    AIMUX_SESSION_ID: undefined,
+    AIMUX_TOOL: undefined,
+    AIMUX_OVERSEER: undefined,
     AIMUX_ROOT: aimuxRoot,
     AIMUX_NODE_BIN: nodePath,
     AIMUX_HOME: home,

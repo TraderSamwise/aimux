@@ -317,6 +317,11 @@ export function parseAgentOutput(
     return /^›\s?/.test(line) || /^>\s?/.test(line) || /^❯\s?/.test(line);
   };
   /**
+   * The composer sits at column zero. An indented marker is something else —
+   * tool output quoting a shell prompt, or a row inside a codex chooser.
+   */
+  const isIndentedMarkerLine = (line: string) => /^\s+(?:›|>|❯)\s?/.test(line);
+  /**
    * A tool result hanging off the line above it — the agent's own output, never
    * the operator's typing. `⎿` (U+23BF) is what Claude Code actually prints;
    * `└` (U+2514) shows up in box drawing and is accepted for older transcripts.
@@ -392,6 +397,18 @@ export function parseAgentOutput(
     if (isTitledDivider(trimmed)) {
       lastLineWasDivider = false;
       continue;
+    }
+    // A chooser row is indented under its header. It is not the operator typing,
+    // but it is what they are choosing between, so it reads as status rather
+    // than being dropped with the rest of the indented tool output.
+    if (isIndentedMarkerLine(trimmed)) {
+      const rowText = stripPromptMarker(trimmed);
+      if (isCodexPickerSelectionPrompt(rowText)) {
+        lastLineWasDivider = false;
+        expectingResponse = false;
+        if (rowText.trim()) pushLine("status", rowText, index);
+        continue;
+      }
     }
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);

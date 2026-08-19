@@ -616,6 +616,7 @@ export default function ChatScreen() {
 
     activeComposerDraftKeyRef.current = composerDraftKey;
     const saved = composerDraftKey ? composerDraftsByKey.get(composerDraftKey) : undefined;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer is re-seeded from the draft store when the conversation changes
     setDraft(saved?.draft ?? "");
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
     setComposerInputContentHeight(saved?.inputContentHeight ?? COMPOSER_INPUT_MIN_HEIGHT);
@@ -654,6 +655,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!isSharedSessionView) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a shared view opens straight into the share panel
     setManagePanelOpen(false);
     setSharePanelOpen(true);
   }, [isSharedSessionView]);
@@ -815,6 +817,7 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!pendingComposerAck) return;
     if (userMessageCount <= pendingComposerAck.baselineUserMessageCount) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer clears once the server acknowledges the send
     setDraft("");
     setPendingAttachments([]);
     setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
@@ -1458,6 +1461,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!shouldLoadShareSummary) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing a stale summary is the effect's whole job
       if (!activeShareForRoute && !sharePanelOpen) setShareSummary(null);
       return;
     }

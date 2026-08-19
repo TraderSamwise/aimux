@@ -68,11 +68,12 @@ describe("projectStateErrorCopy", () => {
   });
 
   it("surfaces pending security approval codes when the relay provides one", () => {
-    expect(projectStateErrorCopy("Remote client pending security approval. Code ABC-123.")).toEqual(
+    // The relay mints codes from 23456789ABCDEFGHJKLMNPQRSTUVWXYZ — no 0/1/I/O.
+    expect(projectStateErrorCopy("Remote client pending security approval. Code ABC-234.")).toEqual(
       {
         title: "Remote client pending approval.",
         detail:
-          "Run `aimux security device approve`, match code ABC-123, then refresh project state.",
+          "Run `aimux security device approve`, match code ABC-234, then refresh project state.",
       },
     );
   });

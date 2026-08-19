@@ -100,6 +100,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/reviews/request-changes": "client-api",
   "/orchestration/routes": "client-api",
   "/attachments": "client-api",
+  "/attachments/publish": "client-api",
   "/control/switchable-agents": "client-api",
   "/control/open-dashboard": "local-control",
   "/control/open-notification-target": "local-control",

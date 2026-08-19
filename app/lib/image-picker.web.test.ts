@@ -13,6 +13,7 @@ describe("isAcceptedImageFile", () => {
   it("rejects non-image and unsupported image formats", () => {
     expect(isAcceptedImageFile({ type: "text/plain" })).toBe(false);
     expect(isAcceptedImageFile({ type: "application/pdf" })).toBe(false);
-    expect(isAcceptedImageFile({ type: "image/heic" })).toBe(false);
+    // iOS shares photos as HEIC, so every image/* type is accepted.
+    expect(isAcceptedImageFile({ type: "image/heic" })).toBe(true);
   });
 });

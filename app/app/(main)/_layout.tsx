@@ -306,6 +306,7 @@ export default function MainLayout() {
     reconcileProjects,
     relayReadyForRequests,
     relayStatus,
+    relayUrl,
     store,
   ]);
 
