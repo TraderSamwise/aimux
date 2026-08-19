@@ -8,6 +8,7 @@ import type {
   AgentTranscriptPart,
   RichTextSpan,
 } from "./agent-transcript-contract.js";
+import { ATTACHMENT_MIME_PATTERN, recoverWrappedAttachments } from "./attachment-text.js";
 import { parseSgrRichTextLines, richTextLineText, sliceRichTextSpans } from "./rich-text.js";
 export type {
   AgentTranscriptAttachmentPart,
@@ -51,16 +52,17 @@ export interface ParsedAgentOutputLike {
   blocks?: readonly TranscriptBlock[];
 }
 
-const MIME_PATTERN = "[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+";
 const ATTACHED_FILE_LINE = new RegExp(
-  `^\\s*-\\s+(.+?)\\s+\\((${MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(.+?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)\\s*$`,
+  `^\\s*-\\s+(.+?)\\s+\\((${ATTACHMENT_MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(.+?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)\\s*$`,
 );
 const INLINE_ATTACHED_FILE = new RegExp(
-  `^(.*?)\\s*Attached (?:image )?files:\\s*-\\s+(.+?)\\s+\\((${MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(.+?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)\\s*$`,
+  `^(.*?)\\s*Attached (?:image )?files:\\s*-\\s+(.+?)\\s+\\((${ATTACHMENT_MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(.+?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)\\s*$`,
 );
 const FLATTENED_ATTACHMENTS_HEADER = /\bAttached (?:image )?files:\s*/;
-const FLATTENED_ATTACHMENT_ITEM =
-  /-\s+(.+?)\s+\(([A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+),\s+\d+\s+bytes\):\s+(\S*?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)/g;
+const FLATTENED_ATTACHMENT_ITEM = new RegExp(
+  `-\\s+(.+?)\\s+\\((${ATTACHMENT_MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(\\S*?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)`,
+  "g",
+);
 const VIEWED_ATTACHMENT_PATH =
   /^\s*(?:[└⎿L]\s*)?(?:\.aimux\/attachments\/|.+?\.aimux\/attachments\/)(att_[A-Za-z0-9_-]+)\.[^\s/]+\s*$/;
 
@@ -242,48 +244,21 @@ function partsFromFlattened(text: string, labels: AttachmentLabels): AgentTransc
 
   // Collapsing to a space is not enough when the wrap fell inside the path
   // itself — `.aimux/attach ments/att_…` matches nothing. Observed on a live
-  // box. The id survives with the spaces removed entirely; the filename and
-  // type do not, and are better dropped than guessed at.
+  // box. `recoverWrappedAttachments` takes the spaces out entirely, which puts
+  // the id back together and the item's metadata with it; the header is only
+  // consulted for what that metadata does not say.
   if (!matched) {
-    // Squash to find the ids, but keep a map back to the original so the path
-    // can be *removed* exactly rather than guessed at. Leaving it in would put
-    // `/srv/…/.aimux/attachments/att_….png` in somebody's chat; dropping the
-    // whole tail would eat any words that came after it.
-    let squashed = "";
-    const sourceIndex: number[] = [];
-    for (let i = 0; i < tail.length; i += 1) {
-      if (/\s/.test(tail[i]!)) continue;
-      squashed += tail[i];
-      sourceIndex.push(i);
+    const recovered = recoverWrappedAttachments(tail);
+    if (!recovered) return null;
+    if (recovered.prose) parts.push({ type: "text", text: recovered.prose });
+    for (const attachment of recovered.attachments) {
+      parts.push(
+        attachmentPart(labels, attachment.attachmentId, {
+          filename: attachment.filename,
+          mimeType: attachment.mimeType ?? (imageHeader ? "image/unknown" : undefined),
+        }),
+      );
     }
-
-    const recovered: AgentTranscriptPart[] = [];
-    const drop = new Set<number>();
-    const PATH_CHAR = /[A-Za-z0-9_\-./~]/;
-
-    for (const match of squashed.matchAll(/\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)(?:\.[A-Za-z0-9]{1,8})?/g)) {
-      if (!match[1] || match.index === undefined) continue;
-      recovered.push(attachmentPart(labels, match[1], imageHeader ? { mimeType: "image/unknown" } : {}));
-      // Walk back over the directories that led here, so the whole path goes.
-      let from = match.index;
-      while (from > 0 && PATH_CHAR.test(squashed[from - 1]!)) from -= 1;
-      for (let i = from; i < match.index + match[0].length; i += 1) {
-        drop.add(sourceIndex[i]!);
-      }
-    }
-
-    if (recovered.length === 0) return null;
-
-    const prose = tail
-      .split("")
-      .filter((_, index) => !drop.has(index))
-      .join("")
-      // What is left of a list item once its path is gone.
-      .replace(/[-•]\s*(?=\s|$)/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (prose) parts.push({ type: "text", text: prose });
-    parts.push(...recovered);
     return parts;
   }
   const suffix = tail.slice(cursor).trim();

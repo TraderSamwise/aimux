@@ -405,6 +405,53 @@ describe("a block mangled by a wrap", () => {
     expect(message!.parts.filter((p) => p.type === "image_reference")).toHaveLength(1);
   });
 
+  it("keeps a wrapped image an image, under the header the server actually writes", () => {
+    // `Attached files:` — never `Attached image files:`, which is what every
+    // fixture here used to say. The bug that shipped lived in exactly that gap:
+    // with no header to lean on, the mime came back undefined and a screenshot
+    // arrived in the console as `[file #1]`.
+    const [message] = messagesFromParsedAgentOutput(
+      parsed([
+        {
+          type: "prompt",
+          text:
+            "Please review the attached file(s). Attached files: - image.png (image/png, 46624 bytes): " +
+            "/srv/grand-console/.aimux/attach\nments/att_wrapped.png",
+        },
+      ]),
+    );
+
+    expect(message!.parts).toEqual([
+      { type: "text", text: "Please review the attached file(s)." },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_wrapped",
+        filename: "image.png",
+        mimeType: "image/png",
+      },
+    ]);
+  });
+
+  it("keeps a wrapped document a document", () => {
+    const [message] = messagesFromParsedAgentOutput(
+      parsed([
+        {
+          type: "prompt",
+          text:
+            "read this Attached files: - notes.pdf (application/pdf, 12 bytes): " +
+            "/srv/grand-console/.aimux/attach\nments/att_doc.pdf",
+        },
+      ]),
+    );
+
+    expect(message!.parts.at(-1)).toMatchObject({
+      type: "attachment_reference",
+      attachmentId: "att_doc",
+      kind: "pdf",
+    });
+  });
+
   it("does not invent an image for a block that only mentions the header", () => {
     const [message] = messagesFromParsedAgentOutput(
       parsed([{ type: "response", text: "I looked for Attached image files: and found none." }]),

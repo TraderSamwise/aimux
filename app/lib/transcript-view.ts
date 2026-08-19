@@ -4,6 +4,7 @@ import type {
   HistoryAttachmentReferencePart,
   HistoryPart,
 } from "@/lib/events";
+import { ATTACHMENT_MIME_PATTERN, recoverWrappedAttachments } from "../../src/attachment-text";
 
 interface ChatMessageOptions {
   shared?: boolean;
@@ -11,7 +12,6 @@ interface ChatMessageOptions {
 
 const LEGACY_SHARED_MESSAGE_RE = /^Message from ([^\n]+?) via Aimux shared chat:\s*([\s\S]*)$/;
 const BRACKETED_SHARED_MESSAGE_RE = /^\[[^\]\n]{1,120}\]\s+[\s\S]+$/;
-const ATTACHMENT_MIME_PATTERN = "[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+";
 const LEGACY_ATTACHMENTS_HEADER = /\bAttached (?:image )?files:\s*/i;
 const LEGACY_ATTACHMENT_ITEM = new RegExp(
   `-\\s+(.+?)\\s+\\((${ATTACHMENT_MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(\\S*?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)`,
@@ -117,72 +117,27 @@ function partsFromLegacyAttachmentText(
   }
 
   if (!matched) {
-    const recovered = recoverWrappedLegacyAttachments(tail, labels, imageHeader);
+    const recovered = recoverWrappedAttachments(tail);
     if (!recovered) return null;
-    const { parts: recoveredParts, prose } = recovered;
-    if (prose) parts.push({ type: "text", text: prose });
-    parts.push(...recoveredParts);
+    if (recovered.prose) parts.push({ type: "text", text: recovered.prose });
+    for (const attachment of recovered.attachments) {
+      parts.push(
+        legacyAttachmentPart(
+          attachment.attachmentId,
+          {
+            filename: attachment.filename,
+            mimeType: attachment.mimeType ?? (imageHeader ? "image/unknown" : undefined),
+          },
+          labels,
+        ),
+      );
+    }
     return parts;
   }
 
   const suffix = tail.slice(cursor).trim();
   if (suffix) parts.push({ type: "text", text: suffix });
   return parts;
-}
-
-function recoverWrappedLegacyAttachments(
-  tail: string,
-  labels: { image: number; file: number },
-  imageHeader: boolean,
-): { parts: HistoryPart[]; prose: string } | null {
-  let squashed = "";
-  const sourceIndex: number[] = [];
-  for (let index = 0; index < tail.length; index += 1) {
-    if (/\s/.test(tail[index]!)) continue;
-    squashed += tail[index];
-    sourceIndex.push(index);
-  }
-
-  const parts: HistoryPart[] = [];
-  const drop = new Set<number>();
-
-  for (const match of squashed.matchAll(
-    /\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)(?:\.([A-Za-z0-9]{1,8}))?/g,
-  )) {
-    if (!match[1] || match.index === undefined) continue;
-    let from = match.index;
-    while (from > 0 && !/[-•]/.test(squashed[from - 1]!)) from -= 1;
-    if (from > 0) from -= 1;
-    const item = squashed.slice(from, match.index + match[0].length);
-    const itemMatch = item.match(
-      /^[-•]?(.+?)\(([A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+),\d+bytes\):/,
-    );
-    const mimeType = itemMatch?.[2] ?? (imageHeader ? "image/unknown" : undefined);
-    parts.push(
-      legacyAttachmentPart(
-        match[1],
-        {
-          filename: itemMatch?.[1],
-          mimeType,
-        },
-        labels,
-      ),
-    );
-    for (let index = from; index < match.index + match[0].length; index += 1) {
-      drop.add(sourceIndex[index]!);
-    }
-  }
-
-  if (parts.length === 0) return null;
-
-  const prose = tail
-    .split("")
-    .filter((_, index) => !drop.has(index))
-    .join("")
-    .replace(/[-•]\s*(?=\s|$)/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return { parts, prose };
 }
 
 function normalizeLegacyAttachmentParts(
