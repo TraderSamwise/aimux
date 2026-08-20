@@ -22,7 +22,10 @@ export async function deliverShareInvite(input: ShareInviteDeliveryInput): Promi
     body: JSON.stringify({
       from,
       to: [input.inviteEmail],
-      subject: `${input.owner.displayName} invited you to aimux`,
+      // A real person to answer keeps this out of the bulk-mail bucket, and the
+      // invitee usually wants to ask the owner something anyway.
+      ...(input.owner.email ? { reply_to: input.owner.email } : {}),
+      subject: `${input.owner.displayName} invited you to an aimux chat`,
       html: renderShareInviteEmail(input),
       text: shareInviteEmailText(input),
     }),
@@ -35,24 +38,50 @@ export async function deliverShareInvite(input: ShareInviteDeliveryInput): Promi
 }
 
 function renderShareInviteEmail(input: ShareInviteDeliveryInput): string {
+  const inviter = escapeHtml(input.owner.email ?? input.owner.displayName);
+  const project = projectName(input.share.projectRoot);
   return `
     <div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.5">
-      <h2>${escapeHtml(input.owner.displayName)} invited you to aimux</h2>
-      <p>You were invited to join an aimux chat for session <strong>${escapeHtml(input.share.sessionId)}</strong>.</p>
-      <p><a href="${escapeHtml(input.acceptUrl)}" style="color:#2563eb;font-weight:700">Accept invite</a></p>
-      <p style="color:#666;font-size:13px">This invite is scoped to one agent chat. If you did not expect it, ignore this email.</p>
+      <p>Hi,</p>
+      <p>
+        ${inviter} invited you to join an aimux chat with the agent
+        <strong>${escapeHtml(input.share.sessionId)}</strong>${project ? ` on <strong>${escapeHtml(project)}</strong>` : ""}.
+        You can read the conversation and reply to the agent from your browser.
+      </p>
+      <p><a href="${escapeHtml(input.acceptUrl)}" style="color:#2563eb;font-weight:700">Accept the invite</a></p>
+      <p style="color:#666;font-size:13px">
+        Or paste this link into your browser:<br />
+        ${escapeHtml(input.acceptUrl)}
+      </p>
+      <p style="color:#666;font-size:13px">
+        This invite is scoped to that one chat and nothing else in ${inviter}'s account.
+        If you were not expecting it, you can ignore this email.
+      </p>
     </div>
   `;
 }
 
+/** The repository name an invitee would recognise, not the owner's full path. */
+function projectName(projectRoot: string): string {
+  const trimmed = projectRoot.replace(/\/+$/, "");
+  if (!trimmed) return "";
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1);
+}
+
 function shareInviteEmailText(input: ShareInviteDeliveryInput): string {
+  const inviter = input.owner.email ?? input.owner.displayName;
+  const project = projectName(input.share.projectRoot);
   return [
-    `${input.owner.displayName} invited you to aimux`,
+    "Hi,",
     "",
-    `Session: ${input.share.sessionId}`,
-    `Accept invite: ${input.acceptUrl}`,
+    `${inviter} invited you to join an aimux chat with the agent ${input.share.sessionId}` +
+      `${project ? ` on ${project}` : ""}.`,
+    "You can read the conversation and reply to the agent from your browser.",
     "",
-    "This invite is scoped to one agent chat. If you did not expect it, ignore this email.",
+    `Accept the invite: ${input.acceptUrl}`,
+    "",
+    `This invite is scoped to that one chat and nothing else in ${inviter}'s account.`,
+    "If you were not expecting it, you can ignore this email.",
   ].join("\n");
 }
 
