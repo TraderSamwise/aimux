@@ -614,11 +614,22 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
       className="overflow-hidden border-r border-[#2a2b31] bg-[#161719]"
       style={{ width: SIDEBAR_WIDTH, height: "100%" }}
     >
+      {/*
+        Laid out through `style`, not className: this is the one Animated view in
+        the app styled by class, and the row never took effect — the two panes
+        stacked, so sliding to the project pane pushed both off-screen and left
+        the sidebar blank.
+      */}
       <Animated.View
-        className="h-full flex-row"
-        style={[{ width: SIDEBAR_WIDTH * 2 }, menuAnimationStyle]}
+        style={[
+          { flexDirection: "row", height: "100%", width: SIDEBAR_WIDTH * 2 },
+          menuAnimationStyle,
+        ]}
       >
-        <View pointerEvents={pickerMode ? "auto" : "none"} style={{ width: SIDEBAR_WIDTH }}>
+        <View
+          pointerEvents={pickerMode ? "auto" : "none"}
+          style={{ width: SIDEBAR_WIDTH, height: "100%" }}
+        >
           <ScrollView className="flex-1">
             <ProjectPicker
               projects={projects}
@@ -631,7 +642,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
         </View>
         <View
           pointerEvents={pickerMode ? "none" : "auto"}
-          style={{ width: SIDEBAR_WIDTH }}
+          style={{ width: SIDEBAR_WIDTH, height: "100%" }}
           onTouchStart={handleProjectPickerSwipeStart}
           onTouchMove={handleProjectPickerSwipeMove}
           onTouchEnd={handleProjectPickerSwipeEnd}
