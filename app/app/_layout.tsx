@@ -1,4 +1,4 @@
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useGlobalSearchParams, useRouter, useSegments } from "expo-router";
 import React, { useEffect } from "react";
 import { Platform } from "react-native";
 import { useColorScheme } from "nativewind";
@@ -7,6 +7,8 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AuthProvider, LOCAL_MODE, useAuth } from "@/lib/auth";
+import { sanitizeRedirect } from "@/lib/clerk-errors";
+import { singleRouteParam } from "@/lib/route-params";
 import { useAppStackScreenOptions } from "@/lib/navigation";
 import { useThemeEffect } from "@/lib/theme-effect";
 
@@ -20,15 +22,20 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const onPublicScreen = onAuthScreen || segments[0] === "shares";
   // cli-auth manages its own signed-in/out states — never auto-redirect it.
   const onCliAuth = segments[0] === "cli-auth";
+  // Where sign-in was headed before it was interrupted — an invite link, say.
+  // Clerk flipping isSignedIn used to race the auth screen's own navigation and
+  // land everyone on "/", which silently dropped the invite they clicked.
+  const params = useGlobalSearchParams<{ redirect?: string | string[] }>();
+  const pendingRedirect = sanitizeRedirect(singleRouteParam(params.redirect));
 
   useEffect(() => {
     if (!isLoaded || onCliAuth) return;
     if (isSignedIn && onAuthScreen) {
-      router.replace("/");
+      router.replace(pendingRedirect ?? "/");
     } else if (!isSignedIn && !LOCAL_MODE && !onPublicScreen) {
       router.replace("/auth");
     }
-  }, [isSignedIn, isLoaded, onAuthScreen, onPublicScreen, onCliAuth, router]);
+  }, [isSignedIn, isLoaded, onAuthScreen, onPublicScreen, onCliAuth, pendingRedirect, router]);
 
   if (!isLoaded) return null;
   return <>{children}</>;

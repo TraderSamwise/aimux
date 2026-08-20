@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSetAtom } from "jotai";
@@ -37,7 +37,7 @@ export default function AcceptShareInviteScreen() {
     [isLoaded, isSignedIn, ownerUserId, inviteToken, status],
   );
 
-  async function acceptInvite() {
+  const acceptInvite = useCallback(async () => {
     if (!ownerUserId || !inviteToken || status === "accepting") return;
     setStatus("accepting");
     setMessage(null);
@@ -71,7 +71,26 @@ export default function AcceptShareInviteScreen() {
       setStatus("error");
       setMessage(err instanceof Error ? err.message : String(err));
     }
-  }
+  }, [
+    getToken,
+    inviteToken,
+    ownerUserId,
+    router,
+    setAcceptedShares,
+    setActiveShare,
+    setAgentOutputViewMode,
+    status,
+  ]);
+
+  // Arriving here already signed in — straight from the emailed link, or back
+  // from sign-in — means the invite was the intent. Asking for one more click
+  // was how people lost the invite on the way through auth.
+  const autoAcceptedRef = useRef(false);
+  useEffect(() => {
+    if (!canAccept || status !== "idle" || autoAcceptedRef.current) return;
+    autoAcceptedRef.current = true;
+    void acceptInvite();
+  }, [acceptInvite, canAccept, status]);
 
   return (
     <View className="flex-1 bg-background p-6 justify-center">
