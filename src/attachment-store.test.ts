@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import {
   assertPublishableSource,
   createPathAttachment,
+  forgetSessionAttachments,
+  listSessionAttachments,
   isSensitiveAttachmentSource,
   createUploadedAttachment,
   getAttachmentContent,
@@ -240,5 +242,79 @@ describe("isSensitiveAttachmentSource", () => {
   it("still allows committed env templates", () => {
     expect(isSensitiveAttachmentSource("/repo/.env.example")).toBe(false);
     expect(isSensitiveAttachmentSource("/repo/app/.env.sample")).toBe(false);
+  });
+});
+
+describe("listSessionAttachments", () => {
+  let repoRoot = "";
+
+  beforeEach(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "aimux-recent-attachments-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    forgetSessionAttachments();
+  });
+
+  afterEach(() => {
+    forgetSessionAttachments();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("remembers what a session published, newest first", () => {
+    for (const name of ["one.txt", "two.txt"]) {
+      const sourcePath = join(repoRoot, name);
+      writeFileSync(sourcePath, name);
+      createPathAttachment({ projectRoot: repoRoot, sourcePath, sessionId: "codex-1" });
+    }
+
+    const recent = listSessionAttachments("codex-1");
+
+    expect(recent.map((entry) => entry.record.filename)).toEqual(["two.txt", "one.txt"]);
+  });
+
+  it("keeps one session's publishes out of another's", () => {
+    const sourcePath = join(repoRoot, "mine.txt");
+    writeFileSync(sourcePath, "mine");
+    createPathAttachment({ projectRoot: repoRoot, sourcePath, sessionId: "codex-1" });
+
+    expect(listSessionAttachments("claude-2")).toEqual([]);
+  });
+
+  it("ignores what the operator uploaded from the composer", () => {
+    createUploadedAttachment({
+      filename: "screenshot.png",
+      mimeType: "image/png",
+      dataBase64: Buffer.from("png-bytes").toString("base64"),
+      sessionId: "codex-1",
+    });
+
+    expect(listSessionAttachments("codex-1")).toEqual([]);
+  });
+});
+
+describe("session attachment hydration", () => {
+  let repoRoot = "";
+
+  beforeEach(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "aimux-hydrate-attachments-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    forgetSessionAttachments();
+  });
+
+  afterEach(() => {
+    forgetSessionAttachments();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("finds publishes written before this process started", () => {
+    const sourcePath = join(repoRoot, "earlier.txt");
+    writeFileSync(sourcePath, "earlier");
+    createPathAttachment({ projectRoot: repoRoot, sourcePath, sessionId: "codex-1" });
+
+    // As if the service had restarted: the records are on disk, the map is not.
+    forgetSessionAttachments();
+
+    expect(listSessionAttachments("codex-1").map((entry) => entry.record.filename)).toEqual(["earlier.txt"]);
   });
 });

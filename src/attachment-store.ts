@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAttachmentsDir } from "./paths.js";
@@ -259,6 +259,7 @@ export function createPathAttachment(input: CreatePathAttachmentInput): PublicAt
 
   atomicWrite(contentPath, buffer);
   writeJsonAtomic(join(attachmentsDir, `${id}.json`), record);
+  rememberPublishedAttachment(record);
 
   return toPublicAttachment(record);
 }
@@ -285,6 +286,103 @@ function getAttachmentForDisplay(id: string, sessionId?: string): AttachmentReco
   if (!record) return null;
   if (sessionId !== undefined && record.sessionId && record.sessionId !== sessionId) return null;
   return record;
+}
+
+/**
+ * The last few files this session published, newest first.
+ *
+ * Kept in memory because the chat polls the pane twice a second and every read
+ * asks this question; hydrated from the records on disk the first time a
+ * session asks, so a restarted service does not lose an image that is still on
+ * screen.
+ *
+ * Only agent publishes are tracked. An upload from the chat composer belongs to
+ * the operator who sent it and already appears as their message — carrying it
+ * here would re-attribute it to the agent.
+ */
+export interface PublishedAttachmentEntry {
+  record: PublicAttachmentRecord;
+  /** The transcript message this was merged into, once it has been merged. */
+  anchorMessageId?: string;
+}
+
+const recentPublishedBySession = new Map<string, PublishedAttachmentEntry[]>();
+const hydratedSessions = new Set<string>();
+const RECENT_PUBLISHED_PER_SESSION = 5;
+
+function rememberPublishedAttachment(record: AttachmentRecord): void {
+  if (record.source !== "path" || !record.sessionId) return;
+  const recent = recentPublishedBySession.get(record.sessionId) ?? [];
+  recentPublishedBySession.set(
+    record.sessionId,
+    [{ record: toPublicAttachment(record) }, ...recent.filter((entry) => entry.record.id !== record.id)].slice(
+      0,
+      RECENT_PUBLISHED_PER_SESSION,
+    ),
+  );
+}
+
+function hydrateSessionAttachments(sessionId: string): void {
+  if (hydratedSessions.has(sessionId)) return;
+  hydratedSessions.add(sessionId);
+  let attachmentsDir: string;
+  try {
+    attachmentsDir = getAttachmentsDir();
+  } catch {
+    return;
+  }
+  if (!existsSync(attachmentsDir)) return;
+  const records: AttachmentRecord[] = [];
+  for (const entry of readdirSync(attachmentsDir)) {
+    if (!entry.endsWith(".json")) continue;
+    try {
+      const record = JSON.parse(readFileSync(join(attachmentsDir, entry), "utf-8")) as AttachmentRecord;
+      if (record.source === "path" && attachmentBelongsToSession(record, sessionId)) records.push(record);
+    } catch {
+      continue;
+    }
+  }
+  records.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  const known = recentPublishedBySession.get(sessionId) ?? [];
+  const knownIds = new Set(known.map((entry) => entry.record.id));
+  const hydrated = records
+    .filter((record) => !knownIds.has(record.id))
+    .slice(0, RECENT_PUBLISHED_PER_SESSION)
+    .map((record) => ({ record: toPublicAttachment(record) }));
+  recentPublishedBySession.set(sessionId, [...known, ...hydrated].slice(0, RECENT_PUBLISHED_PER_SESSION));
+}
+
+export function listSessionAttachments(sessionId: string, opts: { limit?: number } = {}): PublishedAttachmentEntry[] {
+  const trimmedSessionId = sessionId.trim();
+  if (!trimmedSessionId) return [];
+  hydrateSessionAttachments(trimmedSessionId);
+  return (recentPublishedBySession.get(trimmedSessionId) ?? []).slice(0, opts.limit ?? RECENT_PUBLISHED_PER_SESSION);
+}
+
+/**
+ * Pin an attachment to the turn it was shown in.
+ *
+ * Without this the merge re-attaches to whatever reply is newest, so an image
+ * published ten turns ago walks down the transcript and shows up again under
+ * every later answer.
+ */
+export function anchorSessionAttachment(sessionId: string, attachmentId: string, messageId: string): void {
+  const recent = recentPublishedBySession.get(sessionId.trim());
+  if (!recent) return;
+  const entry = recent.find((candidate) => candidate.record.id === attachmentId);
+  if (!entry) return;
+  entry.anchorMessageId = messageId;
+}
+
+/** Test seam. Publishing and reading share a process, so they share this map. */
+export function forgetSessionAttachments(sessionId?: string): void {
+  if (sessionId) {
+    recentPublishedBySession.delete(sessionId.trim());
+    hydratedSessions.delete(sessionId.trim());
+  } else {
+    recentPublishedBySession.clear();
+    hydratedSessions.clear();
+  }
 }
 
 export function getAttachment(id: string, sessionId?: string): PublicAttachmentRecord | null {

@@ -15,8 +15,17 @@ import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { activityTextFromParsedAgentOutput, parseAgentOutput } from "../agent-output-parser.js";
-import { messagesFromParsedAgentOutput, type AgentTranscriptMessage } from "../agent-transcript.js";
-import { getAttachment } from "../attachment-store.js";
+import {
+  mergePublishedAttachments,
+  messagesFromParsedAgentOutput,
+  type AgentTranscriptMessage,
+} from "../agent-transcript.js";
+import {
+  anchorSessionAttachment,
+  forgetSessionAttachments,
+  getAttachment,
+  listSessionAttachments,
+} from "../attachment-store.js";
 import { parseSgrRichTextLines } from "../rich-text.js";
 import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
@@ -307,8 +316,25 @@ export async function sendAgentInput(
  */
 const transcriptCache = new Map<
   string,
-  { output: string; outputAnsi: string; parsed: any; messages: AgentTranscriptMessage[]; activityText: string }
+  {
+    output: string;
+    outputAnsi: string;
+    parsed: any;
+    messages: AgentTranscriptMessage[];
+    activityText: string;
+    publishedKey: string;
+  }
 >();
+
+/** How many recent publishes may be carried into a transcript on their own. */
+const PUBLISHED_ATTACHMENT_LIMIT = 5;
+/**
+ * How long after publishing an attachment may re-attach to a different turn.
+ * Long enough to survive a reply still being written — the message id hashes
+ * its text, so it moves while the agent streams — and short enough that an
+ * older image stays where it was shown.
+ */
+const PUBLISHED_ATTACHMENT_REANCHOR_MS = 2 * 60 * 1000;
 
 /**
  * SGR only — the colours tmux tracked, none of the cursor motion around them.
@@ -446,9 +472,13 @@ export async function readAgentOutput(
     attention: derived?.attention,
   });
 
+  // Published attachments are part of the transcript but not part of the pane
+  // text the cache is keyed on, so a fresh publish has to invalidate it too.
+  const published = listSessionAttachments(sessionId, { limit: PUBLISHED_ATTACHMENT_LIMIT });
+  const publishedKey = published.map((entry) => `${entry.record.id}@${entry.anchorMessageId ?? ""}`).join(",");
   const cacheKey = `${sessionId}:${startLine ?? -120}`;
   const cached = transcriptCache.get(cacheKey);
-  if (cached && cached.output === output && cached.outputAnsi === outputAnsi) {
+  if (cached && cached.output === output && cached.outputAnsi === outputAnsi && cached.publishedKey === publishedKey) {
     return {
       sessionId,
       output,
@@ -469,7 +499,7 @@ export async function readAgentOutput(
   const parsed = stripParsedSourceLines(parsedForMessages);
   // Projected here rather than in each client. Two of them had grown their own
   // copy of this mapping and the copies had already drifted.
-  const messages = messagesFromParsedAgentOutput(parsedForMessages, {
+  const parsedMessages = messagesFromParsedAgentOutput(parsedForMessages, {
     richLines,
     attachmentContentForId: (attachmentId) => {
       const attachment = getAttachment(attachmentId, sessionId);
@@ -484,8 +514,27 @@ export async function readAgentOutput(
   // in the pane text this cache is keyed on, so identical output means an
   // identical verb — and recomputing only on a miss would blank it on every
   // unchanged poll.
+  const merged = mergePublishedAttachments(
+    parsedMessages,
+    published.map((entry) => ({
+      attachmentId: entry.record.id,
+      anchorMessageId: entry.anchorMessageId,
+      canReanchor: Date.now() - Date.parse(entry.record.createdAt) < PUBLISHED_ATTACHMENT_REANCHOR_MS,
+      filename: entry.record.filename,
+      mimeType: entry.record.mimeType,
+      contentUrl: entry.record.contentUrl,
+      hostedContentUrl: entry.record.hostedContentUrl,
+      hostedExpiresAt: entry.record.hostedExpiresAt,
+    })),
+  );
+  const messages = merged.messages;
+  // Written back so the next read puts it in the same place rather than under
+  // whatever the newest reply happens to be by then.
+  for (const anchor of merged.anchors) {
+    anchorSessionAttachment(sessionId, anchor.attachmentId, anchor.messageId);
+  }
   const activityText = activityTextFromParsedAgentOutput(parsed);
-  transcriptCache.set(cacheKey, { output, outputAnsi, parsed, messages, activityText });
+  transcriptCache.set(cacheKey, { output, outputAnsi, parsed, messages, activityText, publishedKey });
 
   return {
     sessionId,
@@ -504,6 +553,9 @@ export function forgetAgentTranscript(sessionId: string): void {
   for (const key of transcriptCache.keys()) {
     if (key === sessionId || key.startsWith(`${sessionId}:`)) transcriptCache.delete(key);
   }
+  // The publish index is transcript state too — a session that is gone has no
+  // transcript left for its attachments to belong to.
+  forgetSessionAttachments(sessionId);
 }
 
 export function registerManagedSession(

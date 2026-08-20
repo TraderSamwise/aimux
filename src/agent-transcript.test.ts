@@ -5,6 +5,7 @@ import {
   messagesFromParsedAgentOutput,
   transcriptMessageText,
   type ParsedAgentOutputLike,
+  mergePublishedAttachments,
 } from "./agent-transcript.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
 import { parseSgrRichTextLines } from "./rich-text.js";
@@ -567,5 +568,186 @@ describe("a mangled attachment path", () => {
     expect(text).not.toContain(".aimux");
     expect(text).not.toContain("/srv/grand-console");
     expect(messages[0]!.parts.filter((p) => p.type === "image_reference")).toHaveLength(1);
+  });
+});
+
+describe("mergePublishedAttachments", () => {
+  const image = {
+    attachmentId: "att_published_image",
+    filename: "chart.png",
+    mimeType: "image/png",
+    contentUrl: "/attachments/att_published_image/content",
+  };
+
+  it("carries an attachment the pane never showed", () => {
+    const { messages, anchors } = mergePublishedAttachments(
+      [
+        {
+          id: "assistant:1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Generated Image:" }],
+          text: "Generated Image:",
+          latest: true,
+        },
+      ],
+      [image],
+    );
+
+    expect(anchors).toEqual([{ attachmentId: "att_published_image", messageId: "assistant:1" }]);
+    const parts = messages.flatMap((message) => message.parts);
+    expect(parts).toContainEqual(
+      expect.objectContaining({
+        type: "image_reference",
+        attachmentId: "att_published_image",
+        filename: "chart.png",
+        contentUrl: "/attachments/att_published_image/content",
+      }),
+    );
+  });
+
+  it("leaves an attachment the pane already showed alone", () => {
+    const { messages } = mergePublishedAttachments(
+      [
+        {
+          id: "assistant:1",
+          role: "assistant",
+          parts: [{ type: "image_reference", label: "[image #1]", attachmentId: "att_published_image" }],
+          text: "[image #1]",
+          latest: true,
+        },
+      ],
+      [image],
+    );
+
+    const imageParts = messages.flatMap((message) => message.parts).filter((part) => part.type === "image_reference");
+    expect(imageParts).toHaveLength(1);
+  });
+
+  it("starts an assistant message when the transcript ends on the operator", () => {
+    const { messages } = mergePublishedAttachments(
+      [{ id: "user:1", role: "user", parts: [{ type: "text", text: "show me" }], text: "show me", latest: true }],
+      [image],
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1].role).toBe("assistant");
+    expect(messages[1].latest).toBe(true);
+    expect(messages[0].latest).toBeUndefined();
+  });
+
+  it("does nothing when there is nothing published", () => {
+    const original = [{ id: "assistant:1", role: "assistant" as const, parts: [], text: "" }];
+
+    expect(mergePublishedAttachments(original, []).messages).toBe(original);
+  });
+});
+
+describe("mergePublishedAttachments anchoring", () => {
+  const anchored = {
+    attachmentId: "att_anchored",
+    filename: "chart.png",
+    mimeType: "image/png",
+    anchorMessageId: "assistant:published-turn",
+  };
+
+  it("keeps an attachment with the turn it was shown in", () => {
+    const { messages } = mergePublishedAttachments(
+      [
+        { id: "assistant:published-turn", role: "assistant", parts: [{ type: "text", text: "here" }], text: "here" },
+        {
+          id: "assistant:later",
+          role: "assistant",
+          parts: [{ type: "text", text: "later" }],
+          text: "later",
+          latest: true,
+        },
+      ],
+      [anchored],
+    );
+
+    const withImage = messages.find((message) =>
+      message.parts.some((part) => part.type === "image_reference" && part.attachmentId === "att_anchored"),
+    );
+    expect(withImage?.id).toBe("assistant:published-turn");
+  });
+
+  it("drops it once that turn has scrolled out of the window", () => {
+    const { messages, anchors } = mergePublishedAttachments(
+      [
+        {
+          id: "assistant:later",
+          role: "assistant",
+          parts: [{ type: "text", text: "later" }],
+          text: "later",
+          latest: true,
+        },
+      ],
+      [anchored],
+    );
+
+    expect(anchors).toEqual([]);
+    expect(messages.flatMap((message) => message.parts).some((part) => part.type === "image_reference")).toBe(false);
+  });
+});
+
+describe("mergePublishedAttachments re-anchoring", () => {
+  const streaming = {
+    attachmentId: "att_streaming",
+    filename: "chart.png",
+    mimeType: "image/png",
+    anchorMessageId: "assistant:before-more-text",
+    canReanchor: true,
+  };
+
+  it("follows a reply whose id moved while it was still being written", () => {
+    const { messages, anchors } = mergePublishedAttachments(
+      [{ id: "assistant:after-more-text", role: "assistant", parts: [], text: "", latest: true }],
+      [streaming],
+    );
+
+    expect(anchors).toEqual([{ attachmentId: "att_streaming", messageId: "assistant:after-more-text" }]);
+    expect(messages[0].parts.some((part) => part.type === "image_reference")).toBe(true);
+  });
+
+  it("stops following once the grace has passed", () => {
+    const { messages } = mergePublishedAttachments(
+      [{ id: "assistant:after-more-text", role: "assistant", parts: [], text: "", latest: true }],
+      [{ ...streaming, canReanchor: false }],
+    );
+
+    expect(messages[0].parts.some((part) => part.type === "image_reference")).toBe(false);
+  });
+});
+
+describe("mergePublishedAttachments without a reply to sit under", () => {
+  const published = {
+    attachmentId: "att_no_reply",
+    filename: "chart.png",
+    mimeType: "image/png",
+  };
+
+  it("keeps showing it across polls once it has its own message", () => {
+    const transcript = [
+      {
+        id: "user:1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "show me" }],
+        text: "show me",
+        latest: true as const,
+      },
+    ];
+
+    const first = mergePublishedAttachments(transcript, [published]);
+    const anchorId = first.anchors[0]?.messageId;
+    expect(anchorId).toBe("assistant:published:att_no_reply");
+
+    // Second poll: the anchor names a message the parser never emits.
+    const second = mergePublishedAttachments(transcript, [
+      { ...published, anchorMessageId: anchorId, canReanchor: false },
+    ]);
+
+    expect(second.messages.flatMap((message) => message.parts).some((part) => part.type === "image_reference")).toBe(
+      true,
+    );
   });
 });

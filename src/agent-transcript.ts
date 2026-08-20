@@ -392,6 +392,129 @@ export function messagesFromParsedAgentOutput(
   return messages;
 }
 
+/** An attachment the session published, as the store recorded it. */
+export interface PublishedAttachmentForTranscript {
+  attachmentId: string;
+  /** Where it was already merged, so it stays with that turn. */
+  anchorMessageId?: string;
+  /**
+   * May it re-attach if that turn's id moved? Message ids hash the reply text,
+   * so a streaming answer changes id under the anchor — briefly re-anchorable
+   * covers that without letting an old image walk down the page forever.
+   */
+  canReanchor?: boolean;
+  filename?: string;
+  mimeType?: string;
+  contentUrl?: string;
+  hostedContentUrl?: string;
+  hostedExpiresAt?: string;
+}
+
+/**
+ * Put published attachments into the transcript when the pane never showed
+ * them.
+ *
+ * Reading them out of the terminal is best-effort by nature: an agent's UI
+ * collapses long tool output, and codex prints its result under a `└` gutter
+ * that the parser reads as status. Either way the line naming the attachment is
+ * gone, and an image the agent deliberately published shows up as prose about
+ * an image. What the store recorded does not depend on any of that.
+ */
+/**
+ * The message the merge invents when a publish has no reply to sit under. It is
+ * rebuilt from the same attachment id on every read, so an anchor pointing at
+ * it stays valid even though the parser never produces it.
+ */
+const PUBLISHED_MESSAGE_ID_PREFIX = "assistant:published:";
+
+export function mergePublishedAttachments(
+  messages: AgentTranscriptMessage[],
+  published: readonly PublishedAttachmentForTranscript[],
+): { messages: AgentTranscriptMessage[]; anchors: Array<{ attachmentId: string; messageId: string }> } {
+  if (published.length === 0) return { messages, anchors: [] };
+  const alreadyShown = new Set<string>();
+  const messageIds = new Set<string>();
+  for (const message of messages) {
+    messageIds.add(message.id);
+    for (const part of message.parts) {
+      if (part.type === "image_reference" || part.type === "attachment_reference") {
+        alreadyShown.add(part.attachmentId);
+      }
+    }
+  }
+  const missing = published.filter((entry) => {
+    if (alreadyShown.has(entry.attachmentId)) return false;
+    // Anchored to a turn that has scrolled out of the window: the reply it
+    // belonged to is gone, and showing it under a later one is how an image
+    // ends up following the conversation down the page.
+    if (entry.anchorMessageId?.startsWith(PUBLISHED_MESSAGE_ID_PREFIX)) return true;
+    if (entry.anchorMessageId && !messageIds.has(entry.anchorMessageId)) return entry.canReanchor === true;
+    return true;
+  });
+  if (missing.length === 0) return { messages, anchors: [] };
+
+  const labels: AttachmentLabels = { byId: new Map(), nextImage: 1, nextFile: 1 };
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === "image_reference") labels.nextImage += 1;
+      else if (part.type === "attachment_reference") labels.nextFile += 1;
+    }
+  }
+
+  const partFor = (entry: PublishedAttachmentForTranscript) => {
+    const part = attachmentPart(labels, entry.attachmentId, {
+      filename: entry.filename,
+      mimeType: entry.mimeType,
+    });
+    if (entry.contentUrl) part.contentUrl = entry.contentUrl;
+    if (entry.hostedContentUrl) part.hostedContentUrl = entry.hostedContentUrl;
+    if (entry.hostedExpiresAt) part.hostedExpiresAt = entry.hostedExpiresAt;
+    return part;
+  };
+
+  // Oldest first, so they read in the order they were published.
+  const ordered = [...missing].reverse();
+  const merged = messages.map((message) => ({ ...message, parts: [...message.parts] }));
+  const byId = new Map(merged.map((message) => [message.id, message]));
+  const anchors: Array<{ attachmentId: string; messageId: string }> = [];
+  const unanchored: PublishedAttachmentForTranscript[] = [];
+
+  for (const entry of ordered) {
+    const anchored = entry.anchorMessageId ? byId.get(entry.anchorMessageId) : undefined;
+    if (!anchored) {
+      unanchored.push(entry);
+      continue;
+    }
+    anchored.parts.push(partFor(entry));
+    anchored.text = transcriptMessageText(anchored.parts);
+  }
+
+  if (unanchored.length > 0) {
+    const parts = unanchored.map(partFor);
+    const tail = merged[merged.length - 1];
+    if (tail && tail.role === "assistant") {
+      tail.parts.push(...parts);
+      tail.text = transcriptMessageText(tail.parts);
+      for (const entry of unanchored) anchors.push({ attachmentId: entry.attachmentId, messageId: tail.id });
+    } else {
+      for (const message of merged) delete message.latest;
+      const publishedMessageId = `${PUBLISHED_MESSAGE_ID_PREFIX}${unanchored[0].attachmentId}`;
+      merged.push({
+        id: publishedMessageId,
+        role: "assistant",
+        parts,
+        text: transcriptMessageText(parts),
+        latest: true,
+      });
+      for (const entry of unanchored) {
+        anchors.push({ attachmentId: entry.attachmentId, messageId: publishedMessageId });
+      }
+    }
+  }
+
+  return { messages: merged, anchors };
+}
+
 function applyAttachmentContent(parts: AgentTranscriptPart[], resolver: AttachmentContentResolver | undefined): void {
   if (!resolver) return;
   for (const part of parts) {
