@@ -1,6 +1,6 @@
 {
   "name": "aimux-cli",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "description": "Local agent multiplexer for AI coding tools with native TUIs",
   "main": "bin/aimux",
   "bin": {
