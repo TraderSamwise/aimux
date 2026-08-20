@@ -180,7 +180,9 @@ yarn release:patch       # or release:minor / release:major
 ```
 
 `release:patch` runs `yarn version --patch`, which bumps `package.json`, commits
-it, and tags `v<version>`, then pushes the branch and the tag together. The
+it, and tags `v<version>`, then pushes the branch and the tag together — as one
+atomic push, so a branch rejected for being behind cannot leave a tag behind
+that ships a release with no history on `master`. The
 working tree must be clean and the branch must already be pushable — the tag is
 what triggers everything downstream, so a tag pushed from a red branch publishes
 a broken release.
