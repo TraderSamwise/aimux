@@ -31,7 +31,11 @@ import {
   worktreeGroupsFamily,
 } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
-import { projectStateErrorCopy } from "@/lib/project-connection-display";
+import { PairDeviceDialog } from "@/components/PairDeviceDialog";
+import {
+  isDevicePendingApprovalError,
+  projectStateErrorCopy,
+} from "@/lib/project-connection-display";
 
 // TUI-styled worktree dashboard: each worktree is a contained, tinted card
 // (left accent bar = aggregate state) with a header row (square glyph · name ·
@@ -652,6 +656,16 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
     );
   }
   if (endpoint && desktopState === null && desktopStateError) {
+    // Pairing is the operator's next move, not an error to read: the dialog
+    // carries the code and clears itself, so no wall goes up behind it.
+    if (isDevicePendingApprovalError(desktopStateError)) {
+      return (
+        <View className={statePad}>
+          <PageStateCard title="Waiting for this device to be approved…" />
+          <PairDeviceDialog />
+        </View>
+      );
+    }
     const copy = projectStateErrorCopy(desktopStateError);
     return (
       <View className={statePad}>

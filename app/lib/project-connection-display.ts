@@ -50,6 +50,10 @@ export function projectStateErrorCopy(error: string): {
   };
 }
 
+export function isDevicePendingApprovalError(error: string): boolean {
+  return /pending security approval/i.test(error);
+}
+
 export function isProjectHostOfflineError(error: string) {
   return /ECONNREFUSED|Failed to fetch|Network request failed|Load failed/i.test(error);
 }

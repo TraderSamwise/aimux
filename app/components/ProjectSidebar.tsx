@@ -515,6 +515,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     Boolean(routeProjectPath) &&
     !effectiveProject &&
     relayConfigured &&
+    // An unapproved device is not a broken remote: pairing is handled by the
+    // dialog on the surface that needed the host, so the sidebar stays usable.
+    relayStatus !== "device_pending" &&
     isRelayUnavailableForProjectDiscovery(relayStatus);
   const pickerMode = !effectiveProject || showPicker;
   const [menuProgress] = useState(() => new Animated.Value(pickerMode ? 0 : 1));
