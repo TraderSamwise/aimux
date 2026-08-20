@@ -18,6 +18,7 @@ import {
 } from "./paths.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { PROJECT_API_ROUTES, type AgentLoopInput, type TeamConfig } from "./project-api-contract.js";
+import { assertPublishableSource } from "./attachment-store.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
@@ -2363,8 +2364,22 @@ attachmentCmd
     ) => {
       const sourcePath = pathResolve(filePath);
       const projectRoot = opts.project ? await prepareProjectContext(opts.project) : await prepareProjectContext();
+      // Validated before the bytes go anywhere. Hosting uploads a copy to the
+      // relay, so leaving this to the project service would exfiltrate first
+      // and refuse afterwards.
+      let sourceRealPath: string;
+      try {
+        sourceRealPath = assertPublishableSource({
+          sourcePath,
+          projectRoot,
+          allowedRoots: listWorktrees(projectRoot).map((worktree) => worktree.path),
+        });
+      } catch (error) {
+        console.error(`aimux: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
       const hostedAttachment = await maybeHostPublishedAttachment({
-        sourcePath,
+        sourcePath: sourceRealPath,
         filename: opts.name || basename(sourcePath),
         mimeType: opts.mime || mimeTypeForPublishedAttachment(sourcePath),
         sessionId: opts.session,
@@ -2372,7 +2387,9 @@ attachmentCmd
       const result = await postProjectServiceJson(
         PROJECT_API_ROUTES.attachmentsPublish,
         {
-          path: sourcePath,
+          // The resolved path, so the service copies the same bytes the relay
+          // was handed rather than re-resolving the argument on its own.
+          path: sourceRealPath,
           sessionId: opts.session,
           filename: opts.name,
           mimeType: opts.mime,

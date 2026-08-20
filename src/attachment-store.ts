@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAttachmentsDir } from "./paths.js";
 import { atomicWrite, writeJsonAtomic } from "./atomic-write.js";
 
@@ -168,21 +169,55 @@ export function createUploadedAttachment(input: CreateUploadedAttachmentInput): 
   return toPublicAttachment(record);
 }
 
+/**
+ * The one gate every publish goes through, wherever it starts.
+ *
+ * The CLI hosts a copy to the relay before the project service ever sees the
+ * request, so a check that lived only in the service would upload the bytes
+ * first and refuse afterwards. Returns the resolved real path — checking one
+ * path and reading another is the same hole wearing a different hat.
+ */
+export function assertPublishableSource(input: {
+  sourcePath: string;
+  projectRoot: string;
+  allowedRoots?: string[];
+}): string {
+  const requestedPath = resolve(input.sourcePath);
+  let sourceRealPath: string;
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(requestedPath);
+    sourceRealPath = realpathSync(requestedPath);
+  } catch {
+    throw new Error(`attachment source does not exist: ${requestedPath}`);
+  }
+  // A symlink is refused rather than followed: the CLI hosts the bytes before
+  // the project service sees them, so both callers must reject the same shapes.
+  if (!stat.isFile()) {
+    throw new Error("attachment source must be a regular file");
+  }
+  if (isSensitiveAttachmentSource(sourceRealPath)) {
+    throw new Error(sensitiveAttachmentSourceError(sourceRealPath));
+  }
+  if (!isPathUnderAnyRoot(sourceRealPath, publishableRoots(input.projectRoot, input.allowedRoots))) {
+    throw new Error(
+      `attachment source must be inside the project, one of its worktrees, or a temporary directory: ${sourceRealPath}`,
+    );
+  }
+  return sourceRealPath;
+}
+
 export function createPathAttachment(input: CreatePathAttachmentInput): PublicAttachmentRecord {
   const sessionId = input.sessionId?.trim();
   if (!sessionId) {
     throw new Error("attachment sessionId is required");
   }
   const sourcePath = resolve(input.sourcePath);
-  const stat = lstatSync(sourcePath);
-  if (!stat.isFile()) {
-    throw new Error("attachment source must be a regular file");
-  }
-  const sourceRealPath = realpathSync(sourcePath);
-  const allowedRoots = [input.projectRoot, ...(input.allowedRoots ?? [])].filter(Boolean);
-  if (!isPathUnderAnyRoot(sourceRealPath, allowedRoots)) {
-    throw new Error("attachment source must be inside the project");
-  }
+  const sourceRealPath = assertPublishableSource({
+    sourcePath,
+    projectRoot: input.projectRoot,
+    allowedRoots: input.allowedRoots,
+  });
 
   const buffer = readFileSync(sourceRealPath);
   if (buffer.length === 0) {
@@ -340,6 +375,59 @@ function mimeTypeFromFilename(filename: string): string {
   if (extension === ".html" || extension === ".htm") return "text/html";
   if (extension === ".svg") return "image/svg+xml";
   return "application/octet-stream";
+}
+
+/**
+ * Where a publish may read from. Agents write their working files to a scratch
+ * directory under the system temp root, so refusing everything outside the
+ * checkout meant an agent could never show what it had just produced.
+ */
+function publishableRoots(projectRoot: string, extraRoots: string[] | undefined): string[] {
+  return [projectRoot, ...(extraRoots ?? []), ...temporaryRoots()].filter(Boolean);
+}
+
+/** Both temp roots: macOS gives per-user `/var/folders/...` and plain `/tmp`. */
+function temporaryRoots(): string[] {
+  return [tmpdir(), "/tmp"];
+}
+
+const SENSITIVE_SOURCE_DIRECTORIES = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".gcloud"];
+const SENSITIVE_SOURCE_FILENAMES = new Set([
+  ".envrc",
+  ".git-credentials",
+  ".netrc",
+  ".npmrc",
+  ".pgpass",
+  ".pypirc",
+  "auth.json",
+  "credentials",
+  "credentials.json",
+  "id_dsa",
+  "id_ecdsa",
+  "id_ed25519",
+  "id_rsa",
+]);
+const SENSITIVE_SOURCE_EXTENSIONS = new Set([".jks", ".key", ".keystore", ".p12", ".pem", ".pfx"]);
+/** Committed templates carry no secrets and are the one `.env*` worth showing. */
+const PUBLISHABLE_ENV_FILENAMES = new Set([".env.dist", ".env.example", ".env.sample", ".env.template"]);
+
+/**
+ * Is this the kind of file nobody means to paste into a chat? Matched on path
+ * segments rather than substrings, so `.envoy.ts` and `notes.sshx` stay
+ * publishable, and case-insensitively for case-folding filesystems.
+ */
+export function isSensitiveAttachmentSource(path: string): boolean {
+  const segments = path.split(sep).map((segment) => segment.toLowerCase());
+  if (segments.some((segment) => SENSITIVE_SOURCE_DIRECTORIES.includes(segment))) return true;
+  const name = basename(path).toLowerCase();
+  if (PUBLISHABLE_ENV_FILENAMES.has(name)) return false;
+  if (SENSITIVE_SOURCE_FILENAMES.has(name)) return true;
+  if (name === ".env" || name.startsWith(".env.")) return true;
+  return SENSITIVE_SOURCE_EXTENSIONS.has(extname(name).toLowerCase());
+}
+
+export function sensitiveAttachmentSourceError(path: string): string {
+  return `attachment source looks like a credential or secret file and cannot be published: ${basename(path)}`;
 }
 
 function isPathUnderAnyRoot(path: string, roots: string[]): boolean {
