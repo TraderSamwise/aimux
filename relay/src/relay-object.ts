@@ -685,6 +685,10 @@ export class RelayObject extends DurableObject<Env> {
     }
     await saveSecurityState(this.ctx.storage, result.state);
     for (const event of result.events) {
+      // A suppressed reconnect goes no further than the log. The daemon turns
+      // any event it receives into a desktop notification, so skipping only the
+      // push path below would have left the toast firing all night.
+      if (event.alert === false) continue;
       if (this.daemonWs) {
         try {
           this.send(this.daemonWs, { type: "security_event", event });

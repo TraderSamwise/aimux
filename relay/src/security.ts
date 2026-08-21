@@ -35,6 +35,8 @@ export interface SecurityDeviceRecord extends SecurityDeviceInfo {
   id: string;
   firstSeenAt: string;
   lastSeenAt: string;
+  /** When this device last produced an owner-facing connection alert. */
+  lastAlertedAt?: string;
   approvedAt?: string;
   blockedAt?: string;
   publicKeyAlg?: "ES256";
@@ -79,6 +81,17 @@ export type SecurityEventKind =
   | "emergency_lockdown"
   | "security_unlocked";
 
+/**
+ * How often a shared participant's presence may interrupt the owner.
+ *
+ * Measured from the last notification, not the last connection: a browser tab
+ * left open reconnects whenever the machine wakes or the network moves, and a
+ * laptop that sleeps for hours produces a "new" arrival every time it comes
+ * back. Neither is the participant doing anything. Once a day is a heartbeat;
+ * anything more is the storm this exists to stop.
+ */
+const SHARED_CONNECT_ALERT_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 export interface SecurityEventRecord {
   id: string;
   kind: SecurityEventKind;
@@ -94,6 +107,14 @@ export interface SecurityEventRecord {
   title: string;
   body: string;
   createdAt: string;
+  /**
+   * Whether this event is worth interrupting the owner for. Absent means yes —
+   * only a reconnect that is plainly the same visit sets it false.
+   */
+  alert?: boolean;
+  /** When this visit was last seen reconnecting, and how many times. */
+  lastConnectedAt?: string;
+  repeatCount?: number;
   approvalCode?: string;
   country?: string;
   userAgent?: string;
@@ -266,6 +287,10 @@ export function recordClientConnection(
     throw new Error("Device proof key mismatch");
   }
   const firstSeen = !previous;
+  const sinceLastAlertMs = previous?.lastAlertedAt ? Date.parse(now) - Date.parse(previous.lastAlertedAt) : undefined;
+  // Fails open: an unparseable or skewed timestamp notifies rather than
+  // silently swallowing a participant's arrival.
+  const shouldAlertShared = sinceLastAlertMs === undefined || !(sinceLastAlertMs < SHARED_CONNECT_ALERT_INTERVAL_MS);
   const firstProofRegistration = Boolean(context.deviceProof && !previous?.publicKeyJwk);
   const device: SecurityDeviceRecord = {
     ...previous,
@@ -273,6 +298,7 @@ export function recordClientConnection(
     id: normalizedDeviceInfo.deviceId,
     firstSeenAt: previous?.firstSeenAt ?? now,
     lastSeenAt: now,
+    lastAlertedAt: context.shared && shouldAlertShared ? now : previous?.lastAlertedAt,
     approvedAt: firstProofRegistration ? undefined : previous?.approvedAt,
     blockedAt: previous?.blockedAt,
     publicKeyAlg: context.deviceProof?.alg ?? previous?.publicKeyAlg,
@@ -287,10 +313,21 @@ export function recordClientConnection(
   next.devices[device.id] = device;
 
   const events: SecurityEventRecord[] = context.shared
-    ? [buildSecurityEvent("shared_client_connected", device, context, now)]
+    ? [
+        {
+          ...buildSecurityEvent("shared_client_connected", device, context, now),
+          alert: shouldAlertShared,
+        },
+      ]
     : [buildSecurityEvent("client_connected", device, context, now)];
   if (!context.shared && firstSeen) events.push(buildSecurityEvent("new_client_detected", device, context, now));
-  for (const event of events) appendSecurityEvent(next, event);
+  for (const event of events) {
+    // The log holds a hundred events. A tab reconnecting every few minutes
+    // would evict every real one before morning, so a repeat is folded into the
+    // visit it belongs to rather than written as another arrival.
+    if (event.alert === false && collapseRepeatConnection(next, event, now)) continue;
+    appendSecurityEvent(next, event);
+  }
   return { state: next, device, firstSeen, events };
 }
 
@@ -538,6 +575,28 @@ export function markSecurityActionUsed(
     next.actions[actionId] = { ...action, usedAt: now };
   }
   return next;
+}
+
+/**
+ * Fold a reconnect into the arrival it repeats, if that arrival is still in the
+ * log. Returns false when there is nothing to fold into and the event should be
+ * written normally.
+ */
+function collapseRepeatConnection(state: SecurityState, event: SecurityEventRecord, now: string): boolean {
+  const events = state.events ?? [];
+  const index = events.findIndex(
+    (candidate) => candidate.kind === event.kind && candidate.deviceId === event.deviceId,
+  );
+  if (index < 0) return false;
+  // Replaced rather than mutated: normalizeSecurityState copies the array but
+  // not the records in it, so editing one in place would reach back into the
+  // caller's state.
+  state.events = events.map((candidate, position) =>
+    position === index
+      ? { ...candidate, lastConnectedAt: now, repeatCount: (candidate.repeatCount ?? 1) + 1 }
+      : candidate,
+  );
+  return true;
 }
 
 export function appendSecurityEvent(state: SecurityState, event: SecurityEventRecord): SecurityState {

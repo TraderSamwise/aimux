@@ -125,10 +125,57 @@ describe("relay security events", () => {
 
     expect(second.firstSeen).toBe(false);
     expect(second.events.map((event) => event.kind)).toEqual(["shared_client_connected"]);
+    // Folded into the arrival it repeats rather than logged as a new one.
+    expect(second.state.events).toHaveLength(1);
     expect(second.state.events[0]).toMatchObject({
       kind: "shared_client_connected",
-      createdAt: "2026-05-24T00:05:00.000Z",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      lastConnectedAt: "2026-05-24T00:05:00.000Z",
+      repeatCount: 2,
     });
+    // Recorded, but not worth waking the owner: five minutes later is the same
+    // visit, and a tab left open reconnects on its own all night.
+    expect(first.events[0]?.alert).toBe(true);
+    expect(second.events[0]?.alert).toBe(false);
+  });
+
+  it("notifies at most once a day however often the tab reconnects", () => {
+    const sharedContext = {
+      shared: {
+        shareId: "share_123",
+        sessionId: "claude-abc",
+        actorUserId: "user_guest",
+        actorName: "Alex",
+      },
+    };
+    const device = { deviceId: "guest-browser", kind: "web" as const, name: "Web browser" };
+
+    const first = recordClientConnection(emptySecurityState(), device, sharedContext, "2026-05-24T00:00:00.000Z");
+    const soon = recordClientConnection(first.state, device, sharedContext, "2026-05-24T00:29:00.000Z");
+    // A laptop waking after hours asleep is still the same open tab, not an
+    // arrival — this is the notification that was firing all night.
+    const afterSleep = recordClientConnection(soon.state, device, sharedContext, "2026-05-24T04:15:00.000Z");
+    const nextDay = recordClientConnection(afterSleep.state, device, sharedContext, "2026-05-25T09:00:00.000Z");
+
+    expect(first.events[0]?.alert).toBe(true);
+    expect(soon.events[0]?.alert).toBe(false);
+    expect(afterSleep.events[0]?.alert).toBe(false);
+    expect(nextDay.events[0]?.alert).toBe(true);
+
+    // The log holds a hundred events; a reconnecting tab must not evict them.
+    const connectEvents = nextDay.state.events.filter((event) => event.kind === "shared_client_connected");
+    expect(connectEvents).toHaveLength(2);
+    expect(connectEvents.some((event) => (event.repeatCount ?? 1) > 1)).toBe(true);
+  });
+
+  it("leaves the owner's own device alerts alone", () => {
+    const device = { deviceId: "sam-laptop", kind: "web" as const, name: "MacBook" };
+    const first = recordClientConnection(emptySecurityState(), device, {}, "2026-05-24T00:00:00.000Z");
+    const second = recordClientConnection(first.state, device, {}, "2026-05-24T00:05:00.000Z");
+
+    expect(first.events.map((event) => event.kind)).toEqual(["client_connected", "new_client_detected"]);
+    expect(first.events.every((event) => event.alert === undefined)).toBe(true);
+    expect(second.events.map((event) => event.kind)).toEqual(["client_connected"]);
   });
 
   it("approves and blocks owner remote devices", () => {
