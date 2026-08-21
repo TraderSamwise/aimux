@@ -471,7 +471,13 @@ function markTopologySessionOffline(host: Multiplexer, existing: RuntimeTopology
 }
 
 function recordStartingSession(host: Multiplexer, input: ScheduledSessionCreate): void {
-  clearDashboardOperationFailures({ targetKind: "agent", operation: "create", targetId: input.sessionId });
+  // Same reasoning as the success path: a retry carries a new session id, so
+  // the failure it supersedes is found by where it was created.
+  clearDashboardOperationFailures({
+    targetKind: "agent",
+    operation: "create",
+    worktreePath: input.targetWorktreePath?.trim() || null,
+  });
   upsertTopologySession(
     {
       id: input.sessionId,
@@ -587,7 +593,15 @@ async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSess
     if (input.open) {
       host.openLiveTmuxWindowForEntry({ id: transport.id });
     }
-    clearDashboardOperationFailures({ targetKind: "agent", operation: "create", targetId: input.sessionId });
+    // Cleared by where it was created, not by which session id it got: the
+    // failure names the session that never came up, and the retry that proves
+    // creation works again is a different one. Matching on the id meant the
+    // banner outlived every successful create and sat there for a day.
+    clearDashboardOperationFailures({
+      targetKind: "agent",
+      operation: "create",
+      worktreePath: input.targetWorktreePath?.trim() || null,
+    });
     notifyLifecycleChange(host);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

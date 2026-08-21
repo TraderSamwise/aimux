@@ -1115,6 +1115,9 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
   if (!options.managedWindows && options.hydrateLiveAgentWindows !== false) {
     managedWindows = hydrateLiveAgentWindowsForSnapshot(host, managedWindows);
   }
+  // A worktree that exists cannot still be failing to be created. The record is
+  // written by paths that throw before they can retire it — "already exists"
+  // being the obvious one — so the projection is where that gets settled.
   const realizedWorktreePaths = new Set(
     worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),
   );

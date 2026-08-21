@@ -397,7 +397,12 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     ["?", "help"],
     ["q", "quit"],
   ];
-  const visibility: FooterHint[] = [["a", state.hideOfflineAgents ? "show offline" : "hide offline"]];
+  const visibility: FooterHint[] = [
+    ["a", state.hideOfflineAgents ? "show offline" : "hide offline"],
+    // Offered only while there is a banner to dismiss — the card has no row to
+    // focus, so this is the only way to clear it by hand.
+    ...((state.operationFailures?.length ?? 0) > 0 ? ([["X", "clear failures"]] as FooterHint[]) : []),
+  ];
 
   // Worktrees present, focused at session level: the full set.
   if (state.hasWorktrees && state.navLevel === "sessions") {

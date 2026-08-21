@@ -24,7 +24,15 @@ interface DashboardOperationFailureState {
 }
 
 const MAX_FAILURES = 100;
-const ACTIVE_FAILURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long a failure keeps the banner up on its own.
+ *
+ * A day was long enough that a transient failure became furniture: the retry
+ * succeeds, the operator carries on, and the warning is still there tomorrow.
+ * A successful operation retires it immediately; this is only the backstop for
+ * one that is never retried.
+ */
+const ACTIVE_FAILURE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 function loadState(): DashboardOperationFailureState {
   const path = getDashboardOperationFailuresPath();
@@ -103,7 +111,12 @@ export function clearDashboardOperationFailures(match: {
   targetKind?: DashboardOperationTargetKind;
   operation?: string;
   targetId?: string;
-  worktreePath?: string;
+  /**
+   * A path matches that worktree; `null` matches only failures recorded
+   * without one, which is how the main checkout is written. Omitting the field
+   * still matches any worktree.
+   */
+  worktreePath?: string | null;
 }): number {
   const state = loadState();
   let changed = 0;
@@ -112,6 +125,7 @@ export function clearDashboardOperationFailures(match: {
     if (match.targetKind && failure.targetKind !== match.targetKind) return failure;
     if (match.operation && failure.operation !== match.operation) return failure;
     if (match.targetId && failure.targetId !== match.targetId) return failure;
+    if (match.worktreePath === null && failure.worktreePath) return failure;
     if (match.worktreePath && failure.worktreePath !== match.worktreePath) return failure;
     changed += 1;
     return { ...failure, cleared: true };

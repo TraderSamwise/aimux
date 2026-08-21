@@ -698,6 +698,29 @@ export const dashboardInteractionMethods = {
       this.showOverseerOverlay();
       return;
     }
+    // The failure banner is a card, not a row, so there is nothing to focus and
+    // press x on. Without this the only way past a failure nobody intends to
+    // retry was to wait it out.
+    if (isShiftedCommand(event, key, "x")) {
+      if ((this.dashboardOperationFailuresCache?.length ?? 0) === 0) return;
+      const modelLifecycle = captureDashboardLifecycle(this);
+      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+      this.footerFlash = "Dismissed failures";
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+      void mutateDashboardApi(this, PROJECT_API_ROUTES.operationFailuresClear, {})
+        .then(async () => {
+          await refreshDashboardModelThroughApi(this, { force: true, lifecycle: modelLifecycle });
+          renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
+        })
+        .catch((error: unknown) => {
+          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+          this.showDashboardError("Failed to dismiss failures", [
+            error instanceof Error ? error.message : String(error),
+          ]);
+        });
+      return;
+    }
     if (isShiftedCommand(event, key, "r")) {
       const selected = this.getSelectedDashboardSessionForActions();
       if (selected) {
