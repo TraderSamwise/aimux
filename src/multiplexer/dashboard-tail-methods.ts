@@ -62,7 +62,7 @@ import type { SessionRuntime } from "../session-runtime.js";
 import { loadConfig } from "../config.js";
 import { getRepoRoot } from "../paths.js";
 import type { LaunchOverride } from "../shell-args.js";
-import type { SessionTeamMetadata } from "../team.js";
+import { OVERSEER_SESSION_TEAM, type SessionTeamMetadata } from "../team.js";
 import { setSessionOverseer } from "../metadata-store.js";
 import { createSessionAsync } from "./session-launch.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -793,9 +793,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       throw new Error(`Unknown tool config: ${opts.toolConfigKey}`);
     }
     const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
-    const team: SessionTeamMetadata | undefined = opts.overseer
-      ? { teamId: "overseer", parentSessionId: "", role: "overseer" }
-      : undefined;
+    const team: SessionTeamMetadata | undefined = opts.overseer ? OVERSEER_SESSION_TEAM : undefined;
     const createInput: ScheduledSessionCreate = {
       command: opts.launchOverride?.command ?? tool.command,
       args: opts.launchOverride?.args ?? tool.args,

@@ -23,6 +23,13 @@ export interface SessionTeamMetadata {
   order?: number;
 }
 
+/** Team metadata that marks a session as the project overseer. */
+export const OVERSEER_SESSION_TEAM: SessionTeamMetadata = {
+  teamId: "overseer",
+  parentSessionId: "",
+  role: "overseer",
+};
+
 export function isTeammateSession(session: { team?: SessionTeamMetadata } | undefined): boolean {
   return Boolean(session?.team?.parentSessionId);
 }

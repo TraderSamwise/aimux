@@ -9,6 +9,7 @@ import { style } from "../tui/render/theme.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
 import { findMainRepo } from "../worktree.js";
 import { setSessionOverseer } from "../metadata-store.js";
+import { OVERSEER_SESSION_TEAM } from "../team.js";
 
 type ToolPickerHost = any;
 type ToolEntry = [string, ToolConfig];
@@ -286,7 +287,7 @@ export function runSelectedTool(
     sessionId,
     false,
     false,
-    overseer ? { teamId: "overseer", parentSessionId: "", role: "overseer" } : undefined,
+    overseer ? OVERSEER_SESSION_TEAM : undefined,
     override?.env,
   );
   if (overseer && transport?.id) {

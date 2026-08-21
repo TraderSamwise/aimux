@@ -24,6 +24,7 @@ import {
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { userFacingErrorLines } from "../error-display.js";
 import { isHttpTimeoutError } from "../http-client.js";
+import { OVERSEER_SESSION_TEAM } from "../team.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -73,6 +74,7 @@ function buildPendingSessionSeed(input: {
   tool: string;
   worktreePath?: string;
   pendingAction: PendingSessionCreateAction;
+  overseer?: boolean;
 }): DashboardSession {
   return {
     index: -1,
@@ -83,6 +85,11 @@ function buildPendingSessionSeed(input: {
     status: "waiting",
     active: false,
     worktreePath: input.worktreePath,
+    // An overseer roots at the main repo but is never listed under a worktree.
+    // Classifying the seed the way the settled session is classified keeps it
+    // out of the groups instead of inventing one for its path.
+    team: input.overseer ? OVERSEER_SESSION_TEAM : undefined,
+    overseer: input.overseer,
     pendingAction: input.pendingAction,
     optimistic: true,
   };
@@ -887,12 +894,16 @@ export async function spawnDashboardAgentWithFeedback(
     tool: input.tool,
     worktreePath: input.worktreePath,
     pendingAction: "creating",
+    overseer: input.overseer,
   });
   await runDashboardSessionMutation(host, {
     sessionId: input.sessionId,
     pendingAction: "creating",
     sessionSeed,
     onBeforeRequest: () => {
+      // Nothing to select for an overseer, and its main-repo path would focus a
+      // worktree group that does not exist.
+      if (input.overseer) return;
       host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath);
     },
     request: async () => {

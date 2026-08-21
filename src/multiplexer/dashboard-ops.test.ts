@@ -11,6 +11,9 @@ import {
   stopDashboardServiceWithFeedback,
   stopSessionToOfflineWithFeedback,
 } from "./dashboard-ops.js";
+import { buildDashboardWorktreeGroups } from "./dashboard-model.js";
+import { buildDashboardQuickJumpWorktrees } from "../dashboard/quick-jump.js";
+import { isOverseerSession } from "../team.js";
 
 function makePendingActionsFake() {
   const actions = new Map<string, { kind: string; token: number } | null>();
@@ -2345,6 +2348,58 @@ describe("dashboard-ops", () => {
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "claude-abcd12", "/repo");
     expect(host.dashboardPendingActions.getSessionAction("claude-abcd12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("keeps a spawning overseer out of the worktree groups instead of inventing one for the main repo", async () => {
+    const seeds: any[] = [];
+    const sessions = [[], [{ id: "claude-oversee", status: "running", tmuxWindowId: "@51" }]];
+    let sessionIndex = 0;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null, opts?: { sessionSeed?: any }) {
+        if (opts?.sessionSeed) seeds.push(opts.sessionSeed);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await spawnDashboardAgentWithFeedback(host, {
+      sessionId: "claude-oversee",
+      tool: "claude",
+      worktreePath: "/repo",
+      overseer: true,
+    });
+
+    const seed = seeds[0];
+    expect(seed).toBeDefined();
+
+    // Mirrors the dashboard render path: overseers are dropped, then whatever is
+    // left is grouped and drawn.
+    const listed = [seed].filter((session: any) => !isOverseerSession(session));
+    const groups = buildDashboardWorktreeGroups({} as any, listed, [], [], "/repo");
+    const rendered = buildDashboardQuickJumpWorktrees({
+      sessions: listed,
+      services: [],
+      worktreeGroups: groups,
+      mainCheckout: { name: "repo", branch: "master" },
+    });
+    expect(rendered.map((worktree) => worktree.name)).not.toContain("unknown");
+    expect(rendered.flatMap((worktree) => worktree.sessions.map((session) => session.id))).not.toContain(
+      "claude-oversee",
+    );
+    expect(isOverseerSession(seed)).toBe(true);
+    // Its main-repo path names no worktree group, so steering at it would focus nothing.
+    expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
   });
 
   it("selects the optimistic spawned agent before pending state can render", async () => {
