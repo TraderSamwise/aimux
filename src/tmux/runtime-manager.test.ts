@@ -352,7 +352,11 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "extended-keys-format")).toBe(
       true,
     );
-    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "focus-events")).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) => call.args[0] === "set-option" && call.args[3] === "focus-events" && call.args[4] === "off",
+      ),
+    ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "bell-action")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-window-option" && call.args[3] === "monitor-bell")).toBe(
       true,
@@ -2041,7 +2045,7 @@ describe("older tmux releases", () => {
 
     expect(() => manager.ensureProjectSession("/repo/mobile")).not.toThrow();
     // It kept going: options set after the unsupported one still ran.
-    expect(exec.calls.some((call) => call.args.includes("focus-events"))).toBe(true);
+    expect(exec.calls.some((call) => call.args.includes("focus-events") && call.args.includes("off"))).toBe(true);
   });
 
   it("still throws when tmux refuses a command for any other reason", () => {

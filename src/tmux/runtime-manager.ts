@@ -147,6 +147,7 @@ export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
   windowSize: "latest",
   extendedKeys: "always",
   extendedKeysFormat: "csi-u",
+  focusEvents: "off",
 });
 
 export const MANAGED_TMUX_TERMINAL_FEATURES = Object.freeze(["xterm*:extkeys", "xterm*:hyperlinks"] as const);
@@ -1496,7 +1497,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "set-clipboard", "external"]);
     this.exec(["set-option", "-t", sessionName, "copy-command", "pbcopy"]);
     this.exec(["set-option", "-t", sessionName, "repeat-time", "300"]);
-    this.exec(["set-option", "-t", sessionName, "focus-events", "on"]);
+    this.exec(["set-option", "-t", sessionName, "focus-events", MANAGED_TMUX_SESSION_OPTIONS.focusEvents]);
     this.exec(["set-hook", "-t", sessionName, "pane-focus-in", `run-shell -b ${shellQuote(controlCommand("active"))}`]);
     this.exec(["set-option", "-t", sessionName, "bell-action", "none"]);
     this.exec(["set-window-option", "-t", sessionName, "monitor-bell", "off"]);
