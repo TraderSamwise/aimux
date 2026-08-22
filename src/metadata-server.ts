@@ -2861,10 +2861,12 @@ export class MetadataServer {
     explicitRecipients?: string[];
     fallbackRecipients?: string[];
     from?: string;
+    alreadyDelivered?: string[];
   }): Promise<string[]> {
     const thread = input.thread as OrchestrationThread | undefined;
     const message = input.message as OrchestrationMessage | undefined;
     if (!thread?.id || !message?.id) return [];
+    const alreadyDelivered = new Set(input.alreadyDelivered ?? []);
     const recipients = resolveExchangeMessageAlertRecipients({
       explicitRecipients: input.explicitRecipients,
       message,
@@ -2874,6 +2876,7 @@ export class MetadataServer {
     });
     const deliveredTo: string[] = [];
     for (const recipient of recipients) {
+      if (alreadyDelivered.has(recipient)) continue;
       const delivered = await this.sendLiveExchangePrompt(
         recipient,
         this.threadMessagePrompt({ thread, message, recipient }),
@@ -2883,6 +2886,11 @@ export class MetadataServer {
       deliveredTo.push(recipient);
     }
     return deliveredTo;
+  }
+
+  private normalizeDeliveredTo(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
   }
 
   private async deliverAssignedTaskToLiveRecipient(input: AssignTaskResult): Promise<string[]> {
@@ -4843,15 +4851,17 @@ export class MetadataServer {
               });
         const messageKind = body.kind ?? "request";
         const preDeliveredTo = (result as { deliveredTo?: unknown }).deliveredTo;
-        const deliveredTo = Array.isArray(preDeliveredTo)
-          ? preDeliveredTo.filter((entry): entry is string => typeof entry === "string")
-          : await this.deliverThreadMessageToLiveRecipients({
-              thread: result.thread,
-              message: result.message,
-              explicitRecipients: explicitRecipients.length > 0 ? explicitRecipients : undefined,
-              fallbackRecipients: recipients,
-              from: body.from ?? "user",
-            });
+        const deliveredTo = this.normalizeDeliveredTo(preDeliveredTo);
+        deliveredTo.push(
+          ...(await this.deliverThreadMessageToLiveRecipients({
+            thread: result.thread,
+            message: result.message,
+            explicitRecipients: explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            fallbackRecipients: recipients,
+            from: body.from ?? "user",
+            alreadyDelivered: deliveredTo,
+          })),
+        );
         if (messageKind === "handoff") {
           const alertRecipients = resolveExchangeMessageAlertRecipients({
             explicitRecipients: explicitRecipients.length > 0 ? explicitRecipients : undefined,
@@ -4959,15 +4969,17 @@ export class MetadataServer {
           from: body.from?.trim() || "user",
         });
         const preDeliveredTo = (result as { deliveredTo?: unknown }).deliveredTo;
-        const deliveredTo = Array.isArray(preDeliveredTo)
-          ? preDeliveredTo.filter((entry): entry is string => typeof entry === "string")
-          : await this.deliverThreadMessageToLiveRecipients({
-              thread: result.thread,
-              message: result.message,
-              explicitRecipients,
-              fallbackRecipients: explicitRecipients,
-              from: body.from?.trim() || "user",
-            });
+        const deliveredTo = this.normalizeDeliveredTo(preDeliveredTo);
+        deliveredTo.push(
+          ...(await this.deliverThreadMessageToLiveRecipients({
+            thread: result.thread,
+            message: result.message,
+            explicitRecipients,
+            fallbackRecipients: explicitRecipients,
+            from: body.from?.trim() || "user",
+            alreadyDelivered: deliveredTo,
+          })),
+        );
         this.emitThreadWaitingAlert({
           kind: "handoff_waiting",
           threadId: (result.thread as { id: string }).id,

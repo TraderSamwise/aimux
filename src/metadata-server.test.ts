@@ -6225,6 +6225,71 @@ describe("MetadataServer threads API", () => {
     expect(sent.at(-1)?.text).toContain("Accept: aimux handoff accept");
   });
 
+  it("live-delivers thread messages when the host returns no delivered recipients", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      threads: {
+        sendMessage: (input) => ({
+          thread: {
+            id: input.threadId ?? "thread-live",
+            title: "Delegated task",
+            kind: "task",
+            status: "waiting",
+            createdAt: "2026-08-22T00:00:00.000Z",
+            updatedAt: "2026-08-22T00:00:00.000Z",
+            createdBy: input.from ?? "user",
+            participants: [input.from ?? "user", ...(input.to ?? [])],
+            owner: input.from ?? "user",
+            waitingOn: input.to,
+          },
+          message: {
+            id: "msg-live",
+            threadId: input.threadId ?? "thread-live",
+            ts: "2026-08-22T00:00:00.000Z",
+            from: input.from ?? "user",
+            to: input.to,
+            kind: input.kind ?? "request",
+            body: input.body,
+          },
+          deliveredTo: [],
+          threadCreated: false,
+        }),
+      },
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const sendRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        threadId: "thread-live",
+        from: "claude-lead",
+        to: ["codex-1"],
+        kind: "request",
+        body: "Please pick up the assigned task.",
+      }),
+    });
+
+    const message = (await sendRes.json()) as { deliveredTo: string[] };
+    expect(sendRes.ok).toBe(true);
+    expect(message.deliveredTo).toEqual(["codex-1"]);
+    expect(sent).toEqual([
+      expect.objectContaining({
+        sessionId: "codex-1",
+        text: expect.stringContaining("Please pick up the assigned task."),
+      }),
+    ]);
+  });
+
   it("does not emit generic message alerts for status messages", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
