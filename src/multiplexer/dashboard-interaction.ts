@@ -773,6 +773,12 @@ export const dashboardInteractionMethods = {
       case "f": {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected) {
+          if (selected.status === "offline" || selected.status === "exited") {
+            this.showDashboardError("Cannot fork offline agent", [
+              `${selected.label ?? selected.command ?? selected.id} is offline. Resume it first, then fork it.`,
+            ]);
+            return;
+          }
           this.showToolPicker(selected.id);
         } else if (hasWorktrees && this.dashboardState.level === "worktrees") {
           this.showDashboardError("Select an agent to fork", [

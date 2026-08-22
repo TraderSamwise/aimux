@@ -2257,6 +2257,28 @@ describe("dashboardInteractionMethods", () => {
     expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
   });
 
+  it("blocks dashboard forks from offline agent rows before opening the tool picker", () => {
+    const selected = { id: "codex-1", command: "codex", status: "offline" };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => false,
+        quickJumpDigits: "",
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardSessionForActions: vi.fn(() => selected),
+      showDashboardError: vi.fn(),
+      showToolPicker: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("f"));
+
+    expect(host.showDashboardError).toHaveBeenCalledWith("Cannot fork offline agent", [
+      "codex is offline. Resume it first, then fork it.",
+    ]);
+    expect(host.showToolPicker).not.toHaveBeenCalled();
+  });
+
   it("toggles the selected agent in the overseer loop through the overlay", async () => {
     const selected = { id: "codex-1", command: "codex", status: "working", headline: "keep going" };
     const host: any = {
