@@ -289,6 +289,7 @@ export class Multiplexer {
   private dashboardRawWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
+  private dashboardAgentRestoreOfferCache: unknown = null;
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;

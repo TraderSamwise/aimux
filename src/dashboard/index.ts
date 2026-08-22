@@ -133,6 +133,19 @@ export interface DashboardWorktreeRemovalInfo {
   stderr?: string;
 }
 
+export interface DashboardAgentRestoreOffer {
+  id: string;
+  updatedAt: string;
+  sessionIds: string[];
+  sessions: Array<{
+    id: string;
+    tool?: string;
+    command?: string;
+    label?: string;
+    worktreePath?: string;
+  }>;
+}
+
 export interface MainCheckoutInfo {
   name: string;
   branch: string;
@@ -156,6 +169,7 @@ export interface DashboardViewModel {
   mainCheckout: MainCheckoutInfo;
   worktreeRemoval?: DashboardWorktreeRemovalInfo;
   operationFailures: DashboardOperationFailure[];
+  agentRestoreOffer?: DashboardAgentRestoreOffer | null;
   hideOfflineAgents?: boolean;
   hiddenOfflineAgentCount?: number;
   detailsPaneVisible: boolean;
@@ -185,6 +199,7 @@ export class Dashboard {
     mainCheckout: { name: "Main Checkout", branch: "" },
     worktreeRemoval: undefined,
     operationFailures: [],
+    agentRestoreOffer: null,
     hideOfflineAgents: false,
     hiddenOfflineAgentCount: 0,
     detailsPaneVisible: true,

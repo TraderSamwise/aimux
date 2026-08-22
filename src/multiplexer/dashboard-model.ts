@@ -1,4 +1,9 @@
-import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard/index.js";
+import type {
+  DashboardAgentRestoreOffer,
+  DashboardService,
+  DashboardSession,
+  WorktreeGroup,
+} from "../dashboard/index.js";
 import { buildDashboardSessions, type DashboardLocalSession } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "../metadata-store.js";
@@ -19,6 +24,7 @@ import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { isDashboardWindowName, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
+import { isDashboardSessionOffline } from "../dashboard/visibility.js";
 import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import type {
   PendingServiceActionKind,
@@ -33,6 +39,12 @@ import { assertSessionRestorable } from "../session-restorability.js";
 import { shouldRelaunchFreshSession as shouldRelaunchFreshSessionState } from "../session-fresh-relaunch.js";
 import { log } from "../debug.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import {
+  agentRestoreSessionKey,
+  deriveAgentRestoreOffer,
+  recordLastOnlineAgents,
+  type AgentRestoreSession,
+} from "../runtime-core/agent-restore-state.js";
 import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
 import {
   captureDashboardLifecycle,
@@ -741,6 +753,7 @@ export function applyDashboardModel(
   worktreeGroups: WorktreeGroup[],
   mainCheckoutInfo: { name: string; branch: string },
   operationFailures: DashboardOperationFailure[] = [],
+  agentRestoreOffer: DashboardAgentRestoreOffer | null = null,
 ): boolean {
   reconcileDashboardPendingActionsFromRawModel(host, dashSessions, dashTeammates, dashServices);
   const snapshotKey = JSON.stringify({
@@ -750,6 +763,7 @@ export function applyDashboardModel(
     worktreeGroups,
     mainCheckoutInfo,
     operationFailures,
+    agentRestoreOffer,
     pendingActionsVersion: host.dashboardPendingActions.getVersion?.() ?? 0,
   });
   if (snapshotKey === host.dashboardModelSnapshotKey) {
@@ -774,6 +788,7 @@ export function applyDashboardModel(
     ),
   );
   host.dashboardOperationFailuresCache = operationFailures;
+  host.dashboardAgentRestoreOfferCache = agentRestoreOffer;
   host.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
   host.dashboardModelVersion = (host.dashboardModelVersion ?? 0) + 1;
   host.dashboardModelRefreshedAt = Date.now();
@@ -1116,10 +1131,10 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost, options: Das
 }
 
 function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
+  const projectRoot = projectRootFor(host);
   if (options.includeRuntimeInfo !== false) host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
-  let managedWindows =
-    options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host));
+  let managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
   if (!options.managedWindows && options.hydrateLiveAgentWindows !== false) {
     managedWindows = hydrateLiveAgentWindowsForSnapshot(host, managedWindows);
   }
@@ -1140,7 +1155,7 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
   let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
   let mainCheckoutPath: string | undefined;
   try {
-    mainCheckoutPath = findMainRepo(projectRootFor(host));
+    mainCheckoutPath = findMainRepo(projectRoot);
   } catch {}
   const mainWorktree =
     (mainCheckoutPath ? worktrees.find((wt: any) => wt.path === mainCheckoutPath) : worktrees[0]) ?? worktrees[0];
@@ -1154,6 +1169,31 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
   );
   const services = computeDashboardServices(host, worktrees, { ...options, managedWindows });
   const worktreeGroups = buildDashboardWorktreeGroups(host, sessions, services, worktrees, mainCheckoutPath);
+  const onlineRestoreSessions = [
+    ...new Map([...sessions, ...teammates].map((session) => [session.id, session])).values(),
+  ]
+    .filter((session) => !isDashboardSessionOffline(session))
+    .map((session): AgentRestoreSession => {
+      return {
+        id: session.id,
+        tool: session.toolConfigKey,
+        command: session.command,
+        label: session.label,
+        worktreePath: session.worktreePath,
+      };
+    });
+  const agentRestoreOffer = deriveAgentRestoreOffer(
+    onlineRestoreSessions.map((session) => session.id),
+    { projectRoot },
+  );
+  const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
+  const shouldRecordRestoreSnapshot =
+    onlineRestoreSessions.length > 0 ||
+    ((host as any).lastOnlineAgentRestoreSnapshotKey !== undefined && !agentRestoreOffer);
+  if (shouldRecordRestoreSnapshot && (host as any).lastOnlineAgentRestoreSnapshotKey !== restoreSnapshotKey) {
+    recordLastOnlineAgents(onlineRestoreSessions, { projectRoot });
+    (host as any).lastOnlineAgentRestoreSnapshotKey = restoreSnapshotKey;
+  }
   return {
     sessions,
     teammates,
@@ -1161,6 +1201,7 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
     worktrees,
     worktreeGroups,
     operationFailures,
+    agentRestoreOffer,
     mainCheckoutInfo,
     mainCheckoutPath,
   };
@@ -1190,6 +1231,7 @@ function isDesktopStateDashboardModel(value: any): value is {
   worktreeGroups: WorktreeGroup[];
   operationFailures?: DashboardOperationFailure[];
   mainCheckoutInfo: { name: string; branch: string };
+  agentRestoreOffer?: DashboardAgentRestoreOffer | null;
 } {
   return (
     Boolean(value) &&
@@ -1200,6 +1242,12 @@ function isDesktopStateDashboardModel(value: any): value is {
     Array.isArray(value.worktreeGroups) &&
     value.worktreeGroups.every(isDashboardWorktreeGroup) &&
     (value.operationFailures === undefined || Array.isArray(value.operationFailures)) &&
+    (value.agentRestoreOffer === undefined ||
+      value.agentRestoreOffer === null ||
+      (typeof value.agentRestoreOffer === "object" &&
+        typeof value.agentRestoreOffer.id === "string" &&
+        Array.isArray(value.agentRestoreOffer.sessionIds) &&
+        Array.isArray(value.agentRestoreOffer.sessions))) &&
     isMainCheckoutInfo(value.mainCheckoutInfo)
   );
 }
@@ -1310,6 +1358,7 @@ export async function refreshDashboardModelFromService(
       json.worktreeGroups,
       json.mainCheckoutInfo,
       json.operationFailures ?? [],
+      json.agentRestoreOffer ?? null,
     );
     if (applied && (host as any).runtimeGuardState?.kind && (host as any).runtimeGuardState.kind !== "ok") {
       scheduleTuiApiRecovery(host, { immediate: true });
@@ -1338,6 +1387,7 @@ export function refreshLocalDashboardModel(host: DashboardModelHost): void {
     worktreeGroups,
     snapshot.mainCheckoutInfo,
     snapshot.operationFailures,
+    snapshot.agentRestoreOffer ?? null,
   );
 }
 

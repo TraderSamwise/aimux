@@ -185,6 +185,7 @@ export const dashboardViewMethods = {
         version: AIMUX_VERSION,
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],
+        agentRestoreOffer: this.dashboardAgentRestoreOfferCache ?? null,
         hideOfflineAgents: this.dashboardState.hideOfflineAgents,
         hiddenOfflineAgentCount: this.dashboardState.hideOfflineAgents
           ? rawDashSessions.filter((session: any) => isDashboardSessionOffline(session)).length

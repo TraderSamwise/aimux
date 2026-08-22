@@ -1,5 +1,6 @@
 {
   "runtimeLight": {
+    "agentRestoreOffer": null,
     "sessions": [
       {
         "index": 0,
@@ -582,6 +583,7 @@
     "mainCheckoutPath": "<REPO>"
   },
   "runtimeFull": {
+    "agentRestoreOffer": null,
     "sessions": [
       {
         "index": 0,
@@ -1179,7 +1181,7 @@
     "mainCheckoutPath": "<REPO>"
   },
   "costModel": {
-    "exchangeReads": 136,
+    "exchangeReads": 138,
     "topologyReads": 7,
     "topologyParses": 1,
     "gitCalls": 2

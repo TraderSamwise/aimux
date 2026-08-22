@@ -46,6 +46,8 @@ export const PROJECT_API_ROUTES = {
     switchTool: "/agents/switch-tool",
     stop: "/agents/stop",
     resume: "/agents/resume",
+    restorePrevious: "/agents/restore-previous",
+    dismissRestorePrevious: "/agents/restore-previous/dismiss",
     kill: "/agents/kill",
     interrupt: "/agents/interrupt",
     rename: "/agents/rename",

@@ -526,6 +526,7 @@ export const persistenceMethods = {
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
     worktreeGroups: WorktreeGroup[];
     operationFailures: DashboardOperationFailure[];
+    agentRestoreOffer?: unknown;
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
@@ -557,6 +558,7 @@ export const persistenceMethods = {
       worktrees,
       worktreeGroups,
       operationFailures: desktopState.operationFailures,
+      agentRestoreOffer: desktopState.agentRestoreOffer,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
     };

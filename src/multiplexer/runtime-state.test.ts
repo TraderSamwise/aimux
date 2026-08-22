@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { initPaths, withProjectPaths } from "../paths.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { readLastOnlineAgentsSnapshot } from "../runtime-core/agent-restore-state.js";
 import {
   listTopologySessionStates,
   saveRuntimeTopologySessions,
@@ -229,6 +230,63 @@ describe("startStatusRefresh", () => {
 
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("records online agents from the refresh loop only when the online set changes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-22T02:00:00.000Z"));
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    const root = mkdtempSync(join(tmpdir(), "aimux-runtime-restore-"));
+    const repoRoot = join(root, "repo");
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    process.env.AIMUX_HOME = join(root, "home");
+    await initPaths(repoRoot);
+
+    const host: any = {
+      projectRoot: repoRoot,
+      statusInterval: null,
+      sessions: [{ id: "codex-1", status: "running", command: "codex" }],
+      prevStatuses: new Map([["codex-1", "running"]]),
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      sessionWorktreePaths: new Map([["codex-1", repoRoot]]),
+      getSessionLabel: vi.fn((sessionId: string) => (sessionId === "codex-1" ? "Main" : "Review")),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "agent",
+      publishAlert: vi.fn(),
+    };
+
+    try {
+      startStatusRefresh(host);
+      await vi.advanceTimersByTimeAsync(1000);
+      const first = readLastOnlineAgentsSnapshot(repoRoot);
+      expect(first?.sessionIds).toEqual(["codex-1"]);
+      expect(first?.sessions[0]).toMatchObject({
+        id: "codex-1",
+        tool: "codex",
+        command: "codex",
+        label: "Main",
+        worktreePath: repoRoot,
+      });
+
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(readLastOnlineAgentsSnapshot(repoRoot)?.updatedAt).toBe(first?.updatedAt);
+
+      host.sessions.push({ id: "claude-1", status: "idle", command: "claude" });
+      host.sessionToolKeys.set("claude-1", "claude");
+      host.sessionWorktreePaths.set("claude-1", repoRoot);
+      await vi.advanceTimersByTimeAsync(1000);
+      const second = readLastOnlineAgentsSnapshot(repoRoot);
+      expect(second?.sessionIds).toEqual(["codex-1", "claude-1"]);
+      expect(second?.updatedAt).not.toBe(first?.updatedAt);
+    } finally {
+      stopStatusRefresh(host);
+      if (previousAimuxHome === undefined) {
+        delete process.env.AIMUX_HOME;
+      } else {
+        process.env.AIMUX_HOME = previousAimuxHome;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

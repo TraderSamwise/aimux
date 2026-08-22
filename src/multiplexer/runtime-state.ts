@@ -20,6 +20,12 @@ import { listTopologyServiceStates, upsertTopologyService } from "../runtime-cor
 import { listTopologyWorktreeStates } from "../runtime-core/topology-worktrees.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
+import {
+  agentRestoreSessionKey,
+  recordLastOnlineAgents,
+  removeAgentRestoreOfferSessions,
+  type AgentRestoreSession,
+} from "../runtime-core/agent-restore-state.js";
 import { shouldMarkFreshRelaunchAllowed, shouldRelaunchFreshSession } from "../session-fresh-relaunch.js";
 import {
   captureDashboardLifecycle,
@@ -135,6 +141,36 @@ function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
   } catch {}
 }
 
+function onlineSessionsForRestore(host: RuntimeStateHost): AgentRestoreSession[] {
+  return (host.sessions ?? [])
+    .filter((session: any) => !session.exited && session.status !== "offline" && session.status !== "exited")
+    .map((session: any) => ({
+      id: session.id,
+      tool: host.sessionToolKeys?.get?.(session.id),
+      command: session.command,
+      label: host.getSessionLabel?.(session.id),
+      worktreePath: host.sessionWorktreePaths?.get?.(session.id),
+    }))
+    .filter((session: AgentRestoreSession) => Boolean(session.id));
+}
+
+function recordOnlineAgentsForRestore(host: RuntimeStateHost): void {
+  const sessions = onlineSessionsForRestore(host);
+  const key = agentRestoreSessionKey(sessions);
+  if ((host as any).lastOnlineAgentRestoreSnapshotKey === key) return;
+  if (sessions.length === 0 && (host as any).lastOnlineAgentRestoreSnapshotKey === undefined) {
+    return;
+  }
+  let projectRoot: string;
+  try {
+    projectRoot = projectRootFor(host);
+  } catch {
+    return;
+  }
+  recordLastOnlineAgents(sessions, { projectRoot });
+  (host as any).lastOnlineAgentRestoreSnapshotKey = key;
+}
+
 function isIntentionalOfflineSession(session: any): boolean {
   if (session.lifecycle === "offline") return true;
   if (session.lifecycle === "live")
@@ -206,6 +242,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
       }
       host.prevStatuses.set(session.id, curr);
     }
+    recordOnlineAgentsForRestore(host);
 
     if (host.mode === "dashboard") {
       const now = Date.now();
@@ -608,6 +645,7 @@ export function graveyardSession(host: RuntimeStateHost, sessionId: string, _ses
   markLifecycleUsed(host, sessionId);
 
   pruneOfflineSessionCache(host, sessionId);
+  removeAgentRestoreOfferSessions([sessionId], projectRoot);
 
   moveTopologySessionToGraveyard(sessionId, { projectRoot });
   host.invalidateDesktopStateSnapshot?.();
@@ -655,6 +693,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   if (existing) {
     if (isSessionRuntimeLive(host, existing)) {
       pruneOfflineSessionCache(host, sessionId);
+      removeAgentRestoreOfferSessions([sessionId], projectRootFor(host));
       host.invalidateDesktopStateSnapshot();
       host.writeStatuslineFile();
       return;
@@ -781,6 +820,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   if (restoredSession) {
     restoredSession.restoreStartedAt = Date.now();
   }
+  removeAgentRestoreOfferSessions([session.id], projectRoot);
 }
 
 export function recordSessionBackendSessionId(

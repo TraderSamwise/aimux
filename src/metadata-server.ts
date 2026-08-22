@@ -117,6 +117,7 @@ import { log } from "./debug.js";
 import { userFacingErrorMessage } from "./error-display.js";
 import { loadLibraryEntries } from "./library.js";
 import { getWorktreeCreatePath } from "./worktree.js";
+import { acknowledgeAgentRestoreOffer, readAgentRestoreOffer } from "./runtime-core/agent-restore-state.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
@@ -3183,6 +3184,7 @@ export class MetadataServer {
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
         ...(includePreview ? await this.attachDesktopStatePreviews(state, { includeChatPreview }) : state),
+        agentRestoreOffer: readAgentRestoreOffer(this.currentProjectRoot()),
       });
       return;
     }
@@ -5596,6 +5598,47 @@ export class MetadataServer {
             targetId: body.sessionId,
           }),
         );
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.restorePrevious) {
+        if (!this.options.desktop?.resumeAgent) {
+          send(res, 501, { ok: false, error: "agent resume not supported by this service" });
+          return;
+        }
+        const offer = readAgentRestoreOffer(this.currentProjectRoot());
+        if (!offer) {
+          send(res, 200, { ok: true, restored: [], failed: [], offer: null });
+          return;
+        }
+        const restored: Array<{ sessionId: string; status: string }> = [];
+        const failed: Array<{ sessionId: string; error: string }> = [];
+        for (const sessionId of offer.sessionIds) {
+          try {
+            const result = await runLifecycle(
+              { operation: "agent.resume", targetKind: "agent", targetId: sessionId },
+              () => this.options.desktop!.resumeAgent!({ sessionId }),
+            );
+            restored.push({ sessionId, status: result.status });
+          } catch (error) {
+            failed.push({ sessionId, error: userFacingErrorMessage(error) });
+          }
+        }
+        acknowledgeAgentRestoreOffer(this.currentProjectRoot());
+        notifyCurrentRouteChange();
+        send(res, 200, {
+          ok: failed.length === 0,
+          restored,
+          failed,
+          offer: readAgentRestoreOffer(this.currentProjectRoot()),
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.dismissRestorePrevious) {
+        acknowledgeAgentRestoreOffer(this.currentProjectRoot());
+        notifyCurrentRouteChange();
+        send(res, 200, { ok: true });
         return;
       }
 

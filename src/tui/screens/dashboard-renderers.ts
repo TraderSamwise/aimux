@@ -400,6 +400,12 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   ];
   const visibility: FooterHint[] = [
     ["a", state.hideOfflineAgents ? "show offline" : "hide offline"],
+    ...(state.agentRestoreOffer
+      ? ([
+          ["C", "restore agents"],
+          ["D", "dismiss restore"],
+        ] as FooterHint[])
+      : []),
     // Offered only while there is a banner to dismiss — the card has no row to
     // focus, so this is the only way to clear it by hand.
     ...((state.operationFailures?.length ?? 0) > 0 ? ([["X", "clear failures"]] as FooterHint[]) : []),
@@ -879,6 +885,28 @@ export function renderDashboardFrame(
     : "─".repeat(Math.max(0, cols));
   const header: string[] = ["", centerInBlock(title), divider, ""];
   const content: string[] = [];
+  if (state.agentRestoreOffer) {
+    const offer = state.agentRestoreOffer;
+    const labels = offer.sessions
+      .slice(0, 4)
+      .map((session) => session.label ?? session.command ?? session.tool ?? session.id)
+      .join(", ");
+    const extra = offer.sessions.length > 4 ? `, +${offer.sessions.length - 4} more` : "";
+    const rows = [
+      `${offer.sessionIds.length} previously running agent${offer.sessionIds.length === 1 ? "" : "s"} can be restored.`,
+      `${style("C", "strong")} restore all  ${style("D", "strong")} dismiss`,
+      style(`${labels}${extra}`, "muted"),
+    ];
+    for (const line of card({
+      tone: "work",
+      title: style("RESTORE AGENTS", "work"),
+      rows,
+      width: cardWidth,
+    })) {
+      content.push(line);
+    }
+    content.push("");
+  }
   const operationFailures = state.operationFailures ?? [];
   if (operationFailures.length > 0) {
     const failureRows = operationFailures.slice(0, 3).map((failure) => {
