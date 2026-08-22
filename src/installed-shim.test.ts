@@ -1918,6 +1918,67 @@ describe("installed aimux shim", () => {
     expectInvalidNoNode(fixture, ["review", "approve", "task-1", "--from", "--body=ok"]);
   });
 
+  it("falls through to Commander for workflow help and missing required positional arguments", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "task task-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["task", "--help"], { NODE_EXIT: "0" }).status).toBe(0);
+    expect(fixture.run(["task"], { NODE_EXIT: "0" }).status).toBe(0);
+    expect(fixture.run(["task", "help", "assign"], { NODE_EXIT: "0" }).status).toBe(0);
+    expect(fixture.run(["task", "assign", "--help"], { NODE_EXIT: "0" }).status).toBe(0);
+    expect(fixture.run(["message", "send", "--help"], { NODE_EXIT: "0" }).status).toBe(0);
+    expect(fixture.run(["task", "assign"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["task", "assign", "--to", "codex-1"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["task", "show"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["task", "accept"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["task", "block"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["task", "complete"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["task", "reopen"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["message", "send"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["handoff", "send"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["handoff", "accept"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["handoff", "complete"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["review", "approve"], { NODE_EXIT: "1" }).status).toBe(1);
+    expect(fixture.run(["review", "request-changes"], { NODE_EXIT: "1" }).status).toBe(1);
+
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      [
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task --help`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task help assign`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task assign --help`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js message send --help`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task assign`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task assign --to codex-1`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task show`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task accept`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task block`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task complete`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js task reopen`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js message send`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js handoff send`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js handoff accept`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js handoff complete`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js review approve`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js review request-changes`,
+        "",
+      ].join("\n"),
+    );
+    expect(existsSync(fixture.curlLog)).toBe(false);
+  });
+
+  it("keeps malformed workflow option values on the fast path even when they look like help", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "task task-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expectInvalidNoNode(fixture, ["task", "complete", "task-1", "--from", "--help"]);
+    expectInvalidNoNode(fixture, ["review", "approve", "task-1", "--body", "-h"]);
+  });
+
   it("falls back to the Node launcher for workflow commands when daemon health is stale", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);

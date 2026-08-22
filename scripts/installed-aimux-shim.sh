@@ -120,6 +120,34 @@ aimux_metadata_help_requested() {
   aimux_args_include_help "$@"
 }
 
+aimux_workflow_help_requested() {
+  [ "$#" -eq 1 ] && return 0
+  [ "${2:-}" = "help" ] && return 0
+  case "$#" in
+    2)
+      case "${2:-}" in -h | --help) return 0 ;; esac
+      ;;
+    3)
+      case "${3:-}" in -h | --help) return 0 ;; esac
+      ;;
+  esac
+  return 1
+}
+
+aimux_workflow_missing_required_arg() {
+  command_name="${1:-}"
+  subcommand="${2:-}"
+  case "$command_name $subcommand" in
+    "message send" | "handoff send" | "handoff accept" | "handoff complete" | \
+    "task show" | "task assign" | "task accept" | "task block" | "task complete" | "task reopen" | \
+    "review approve" | "review request-changes")
+      [ "$#" -le 2 ] && return 0
+      case "${3:-}" in -*) return 0 ;; esac
+      ;;
+  esac
+  return 1
+}
+
 aimux_try_daemon_ensure() {
   port="$(aimux_matching_daemon_port)" || return 1
   json="$(aimux_health_json "$port")"
@@ -2453,28 +2481,36 @@ case "${1:-}" in
     fi
     ;;
   message)
-    if aimux_try_message "$@"; then
+    if aimux_workflow_help_requested "$@" || aimux_workflow_missing_required_arg "$@"; then
+      :
+    elif aimux_try_message "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   handoff)
-    if aimux_try_handoff "$@"; then
+    if aimux_workflow_help_requested "$@" || aimux_workflow_missing_required_arg "$@"; then
+      :
+    elif aimux_try_handoff "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   task)
-    if aimux_try_task "$@"; then
+    if aimux_workflow_help_requested "$@" || aimux_workflow_missing_required_arg "$@"; then
+      :
+    elif aimux_try_task "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   review)
-    if aimux_try_review "$@"; then
+    if aimux_workflow_help_requested "$@" || aimux_workflow_missing_required_arg "$@"; then
+      :
+    elif aimux_try_review "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
