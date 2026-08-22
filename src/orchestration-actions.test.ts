@@ -18,6 +18,7 @@ import {
   requestTaskChanges,
   sendHandoff,
 } from "./orchestration-actions.js";
+import { sendThreadMessage } from "./orchestration.js";
 
 describe("orchestration actions", () => {
   let repoRoot = "";
@@ -146,6 +147,38 @@ describe("orchestration actions", () => {
     expect(completed.thread?.status).toBe("waiting");
     expect(completed.thread?.waitingOn).toEqual(["claude-lead"]);
     expect(completed.message?.metadata?.taskAction).toBe("completed");
+  });
+
+  it("reactivates a completed task when its thread waits on the assignee again", async () => {
+    const created = await assignTask({
+      from: "claude-lead",
+      to: "codex-worker",
+      description: "Implement the template engine",
+    });
+
+    await acceptTask({ taskId: created.task.id, from: "codex-worker" });
+    await completeTask({
+      taskId: created.task.id,
+      from: "codex-worker",
+      body: "Implementation complete.",
+    });
+    expect(readTask(created.task.id)?.status).toBe("done");
+
+    const blocker = sendThreadMessage({
+      threadId: created.thread!.id,
+      from: "claude-lead",
+      to: ["codex-worker"],
+      kind: "reply",
+      body: "Three blockers remain; please fix them before commit.",
+    });
+
+    expect(blocker.thread.status).toBe("waiting");
+    expect(blocker.thread.waitingOn).toEqual(["codex-worker"]);
+    expect(readTask(created.task.id)).toMatchObject({
+      status: "pending",
+      assignedTo: "codex-worker",
+      error: "Three blockers remain; please fix them before commit.",
+    });
   });
 
   it("approves reviews, requests changes, and reopens workflow chains", async () => {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
 import { createRuntimeExchangeStore } from "./runtime-core/exchange-store.js";
+import { appendMessage, createThread } from "./threads.js";
 
 import { readTask, readAllTasks, writeTask, hasActiveTask, cleanupTasks, type Task } from "./tasks.js";
 
@@ -88,6 +89,44 @@ describe("tasks", () => {
       mkdirSync(join(tmpDir, ".aimux", "tasks"), { recursive: true });
 
       expect(readAllTasks().map((task) => task.id)).toEqual(["good"]);
+    });
+
+    it("repairs completed task records when their thread is waiting on the assignee", async () => {
+      createThread({
+        id: "thread-review",
+        title: "Task: review",
+        kind: "task",
+        createdBy: "claude-lead",
+        participants: ["claude-lead", "codex-worker"],
+        taskId: "task-review",
+        owner: "claude-lead",
+        waitingOn: ["codex-worker"],
+        status: "waiting",
+      });
+      await writeTask(
+        makeTask({
+          id: "task-review",
+          status: "done",
+          assignedBy: "claude-lead",
+          assignedTo: "codex-worker",
+          threadId: "thread-review",
+          notifiedAt: new Date().toISOString(),
+        }),
+      );
+      appendMessage("thread-review", {
+        from: "claude-lead",
+        to: ["codex-worker"],
+        kind: "reply",
+        body: "Fix the review blockers.",
+      });
+
+      expect(readTask("task-review")).toMatchObject({
+        status: "pending",
+        assignedBy: "claude-lead",
+        error: "Fix the review blockers.",
+        notifiedAt: undefined,
+      });
+      expect(hasActiveTask("codex-worker")).toBe(false);
     });
   });
 

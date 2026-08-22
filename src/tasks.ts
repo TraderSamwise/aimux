@@ -1,5 +1,10 @@
 import { deriveRuntimeExchangeIndexes } from "./runtime-core/exchange-derived.js";
-import { createRuntimeExchangeStore, type RuntimeExchangeTask } from "./runtime-core/exchange-store.js";
+import {
+  createRuntimeExchangeStore,
+  type RuntimeExchange,
+  type RuntimeExchangeTask,
+  type RuntimeExchangeThread,
+} from "./runtime-core/exchange-store.js";
 
 // Compatibility API: task callers keep these names, but runtime exchange owns persistence.
 export type TaskStatus = RuntimeExchangeTask["status"];
@@ -44,10 +49,55 @@ function fromExchangeTask(task: RuntimeExchangeTask): Task {
   return { ...task };
 }
 
+function latestThreadMessage(exchange: RuntimeExchange, threadId: string): { from: string; body: string } | undefined {
+  return exchange.messages
+    .filter((message) => message.threadId === threadId)
+    .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))[0];
+}
+
+function isTaskThreadWaitingOnAssignee(task: RuntimeExchangeTask, thread: RuntimeExchangeThread | undefined): boolean {
+  if (!thread || (thread.kind !== "task" && thread.kind !== "review")) return false;
+  if (thread.taskId !== task.id) return false;
+  if (!task.assignedTo || !thread.waitingOn?.includes(task.assignedTo)) return false;
+  return thread.status === "waiting" && (task.status === "done" || task.status === "failed");
+}
+
+function reconcileWaitingTaskThreads(): void {
+  const updatedAt = nowIso();
+  let changed = false;
+  createRuntimeExchangeStore().update((exchange) => {
+    const threadsByTaskId = new Map(
+      exchange.threads.flatMap((thread) => (thread.taskId ? [[thread.taskId, thread]] : [])),
+    );
+    const tasks = exchange.tasks.map((task) => {
+      const thread = threadsByTaskId.get(task.id);
+      if (!isTaskThreadWaitingOnAssignee(task, thread)) return task;
+      const latest = latestThreadMessage(exchange, thread!.id);
+      if (latest?.from === task.assignedTo) return task;
+      changed = true;
+      return {
+        ...task,
+        status: "pending" as const,
+        assignedBy: latest?.from.trim() || task.assignedBy,
+        error: latest?.body.trim() || task.error,
+        notifiedAt: undefined,
+        updatedAt,
+      };
+    });
+    if (!changed) return exchange;
+    return deriveRuntimeExchangeIndexes({
+      ...exchange,
+      generatedAt: updatedAt,
+      tasks,
+    });
+  });
+}
+
 /**
  * Read a single task by ID.
  */
 export function readTask(id: string): Task | undefined {
+  reconcileWaitingTaskThreads();
   const task = createRuntimeExchangeStore()
     .read()
     .tasks.find((entry) => entry.id === id);
@@ -58,6 +108,7 @@ export function readTask(id: string): Task | undefined {
  * Read all tasks from the runtime exchange.
  */
 export function readAllTasks(): Task[] {
+  reconcileWaitingTaskThreads();
   return createRuntimeExchangeStore().read().tasks.map(fromExchangeTask);
 }
 

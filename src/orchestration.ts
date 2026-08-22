@@ -9,6 +9,7 @@ import {
   type OrchestrationThread,
   type ThreadKind,
 } from "./threads.js";
+import { readTask, writeTask } from "./tasks.js";
 
 export interface SendThreadMessageInput {
   threadId: string;
@@ -88,6 +89,22 @@ function updateThreadForMessage(
   };
 }
 
+function reactivateCompletedTaskIfWaitingOnAssignee(thread: OrchestrationThread, message: OrchestrationMessage): void {
+  if (!thread.taskId || (thread.kind !== "task" && thread.kind !== "review")) return;
+  if (thread.status !== "waiting") return;
+  const task = readTask(thread.taskId);
+  if (!task?.assignedTo) return;
+  if (task.status !== "done" && task.status !== "failed") return;
+  if (!thread.waitingOn?.includes(task.assignedTo)) return;
+  if (message.from === task.assignedTo) return;
+
+  task.status = "pending";
+  task.assignedBy = message.from.trim() || task.assignedBy;
+  task.error = message.body.trim() || task.error;
+  task.notifiedAt = undefined;
+  writeTask(task);
+}
+
 export function sendThreadMessage(input: SendThreadMessageInput): SendMessageResult {
   const thread = readThread(input.threadId);
   if (!thread) {
@@ -108,6 +125,7 @@ export function sendThreadMessage(input: SendThreadMessageInput): SendMessageRes
   if (!updated) {
     throw new Error(`thread disappeared after update: ${thread.id}`);
   }
+  reactivateCompletedTaskIfWaitingOnAssignee(updated, message);
   return {
     thread: updated,
     message,
