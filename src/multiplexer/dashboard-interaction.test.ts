@@ -2233,6 +2233,7 @@ describe("dashboardInteractionMethods", () => {
       showLibrary: vi.fn(),
       showWorktreeList: vi.fn(),
       showOverseerOverlay: vi.fn(),
+      showToolPicker: vi.fn(),
       handleAction: vi.fn(),
       getSelectedDashboardSessionForActions: vi.fn(() => selected),
       openRelevantThreadForSession: vi.fn(),
@@ -2244,12 +2245,14 @@ describe("dashboardInteractionMethods", () => {
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("W"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("O"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("R"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("S"));
 
     expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("handoff");
     expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("task");
     expect(host.showLibrary).toHaveBeenCalledOnce();
     expect(host.showWorktreeList).toHaveBeenCalledOnce();
     expect(host.showOverseerOverlay).toHaveBeenCalledOnce();
+    expect(host.showToolPicker).toHaveBeenCalledWith("codex-1", { mode: "switch-tool" });
     expect(host.handleAction).not.toHaveBeenCalledWith({ type: "create-overseer" });
     expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
   });

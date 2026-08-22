@@ -283,6 +283,7 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  n  new agent",
     "  v  new service",
     "  f  fork agent",
+    "  S  switch selected agent tool",
     "  s  send message",
     "  H  handoff",
     "  T  task",

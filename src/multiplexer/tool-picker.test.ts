@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { getGlobalConfigPath } from "../paths.js";
 
@@ -11,6 +11,8 @@ import {
   buildToolPickerOverlayOutput,
   defaultsLaunchOverride,
   formatEnvDefaults,
+  runSelectedTool,
+  showToolPicker,
 } from "./tool-picker.js";
 import { createLineState } from "../line-editor.js";
 import { initPaths } from "../paths.js";
@@ -18,6 +20,13 @@ import type { ToolConfig } from "../config.js";
 
 function tool(partial: Partial<ToolConfig>): ToolConfig {
   return { command: "claude", args: ["--base"], enabled: true, ...partial };
+}
+
+function stripAnsi(s: string): string {
+  return s
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\x1b\[\d+;\d+H/g, "")
+    .replace(/\x1b[78]/g, "");
 }
 
 describe("formatEnvDefaults", () => {
@@ -62,13 +71,6 @@ describe("defaultsLaunchOverride", () => {
 });
 
 describe("buildToolOptionsOverlayOutput", () => {
-  function stripAnsi(s: string): string {
-    return s
-      .replace(/\x1b\[[0-9;]*m/g, "")
-      .replace(/\x1b\[\d+;\d+H/g, "")
-      .replace(/\x1b[78]/g, "");
-  }
-
   it("renders a centered title-band modal with the launch fields", async () => {
     await initPaths(mkdtempSync(join(tmpdir(), "aimux-toolpicker-")));
     const host = {
@@ -125,5 +127,66 @@ describe("buildToolOptionsOverlayOutput", () => {
     const out = buildToolOptionsOverlayOutput(host, 80, 24);
     expect(out).toContain("\x1b[31m");
     expect(stripAnsi(out)).toContain("Error:");
+  });
+});
+
+describe("switch tool picker mode", () => {
+  it("renders the switch source in the tool picker title", async () => {
+    await initPaths(mkdtempSync(join(tmpdir(), "aimux-toolpicker-")));
+    const out = buildToolPickerOverlayOutput(
+      {
+        pickerMode: "switch-tool",
+        switchToolSourceSessionId: "claude-1",
+      },
+      80,
+      24,
+    );
+
+    expect(stripAnsi(out)).toContain("SWITCH CLAUDE-1");
+  });
+
+  it("uses the selected tool to switch the source session and resets picker state", () => {
+    const host: any = {
+      pickerMode: "switch-tool",
+      switchToolSourceSessionId: "claude-1",
+      forkSourceSessionId: "stale-fork",
+      toolPickerOverseer: false,
+      launchOptionsState: null,
+      startedInDashboard: false,
+      mode: "session",
+      switchAgentTool: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    runSelectedTool(host, "codex", tool({ command: "codex", args: ["--base"] }));
+
+    expect(host.switchAgentTool).toHaveBeenCalledWith("claude-1", "codex", undefined);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.pickerMode).toBe("create");
+    expect(host.forkSourceSessionId).toBeNull();
+    expect(host.switchToolSourceSessionId).toBeNull();
+  });
+
+  it("opens switch mode without carrying fork state", async () => {
+    await initPaths(mkdtempSync(join(tmpdir(), "aimux-toolpicker-")));
+    const host: any = {
+      pickerMode: "fork",
+      forkSourceSessionId: "claude-old",
+      switchToolSourceSessionId: null,
+      toolPickerOverseer: true,
+      launchOptionsState: {},
+      openDashboardOverlay: vi.fn(),
+      redrawDashboardWithOverlay: vi.fn(),
+    };
+
+    showToolPicker(host, "claude-1", { mode: "switch-tool" });
+
+    expect(host.pickerMode).toBe("switch-tool");
+    expect(host.forkSourceSessionId).toBeNull();
+    expect(host.switchToolSourceSessionId).toBe("claude-1");
+    expect(host.toolPickerOverseer).toBe(false);
+    expect(host.launchOptionsState).toBeNull();
+    expect(host.openDashboardOverlay).toHaveBeenCalledWith("tool-picker");
+    expect(host.redrawDashboardWithOverlay).toHaveBeenCalledOnce();
   });
 });

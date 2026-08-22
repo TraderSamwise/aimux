@@ -674,10 +674,6 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    if (key === "s") {
-      this.showOrchestrationRoutePicker("message");
-      return;
-    }
     if (isShiftedCommand(event, key, "h")) {
       this.showOrchestrationRoutePicker("handoff");
       return;
@@ -732,6 +728,29 @@ export const dashboardInteractionMethods = {
           this.renderDashboard();
         }
       }
+      return;
+    }
+    if (isShiftedCommand(event, key, "s")) {
+      const selected = this.getSelectedDashboardSessionForActions();
+      if (!selected) {
+        this.showDashboardError("Select an agent to switch", [
+          hasWorktrees && this.dashboardState.level === "worktrees"
+            ? "Press Enter to step into a worktree, then select a session and press Shift+S."
+            : "Select a session row and press Shift+S.",
+        ]);
+        return;
+      }
+      if (selected.status === "offline" || selected.status === "exited") {
+        this.showDashboardError("Cannot switch offline agent", [
+          `${selected.label ?? selected.command ?? selected.id} is offline. Resume it first, then switch tools.`,
+        ]);
+        return;
+      }
+      this.showToolPicker(selected.id, { mode: "switch-tool" });
+      return;
+    }
+    if (key === "s") {
+      this.showOrchestrationRoutePicker("message");
       return;
     }
 

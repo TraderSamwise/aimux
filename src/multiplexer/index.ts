@@ -166,6 +166,7 @@ export class Multiplexer {
   private dashboardOverlayState = new DashboardOverlayState();
   private pickerMode: "create" | "fork" | "switch-tool" = "create";
   private forkSourceSessionId: string | null = null;
+  private switchToolSourceSessionId: string | null = null;
   private toolPickerOverseer = false;
   private toolPickerIndex = 0;
   private launchOptionsState: LaunchOptionsState | null = null;

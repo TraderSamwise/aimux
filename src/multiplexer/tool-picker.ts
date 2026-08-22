@@ -6,13 +6,18 @@ import { truncateAnsi } from "../tui/render/text.js";
 import { renderOverlayBox } from "../tui/render/box.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
 import { style } from "../tui/render/theme.js";
-import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
+import {
+  forkDashboardAgentWithFeedback,
+  spawnDashboardAgentWithFeedback,
+  switchDashboardAgentToolWithFeedback,
+} from "./dashboard-ops.js";
 import { findMainRepo } from "../worktree.js";
 import { setSessionOverseer } from "../metadata-store.js";
 import { OVERSEER_SESSION_TEAM } from "../team.js";
 
 type ToolPickerHost = any;
 type ToolEntry = [string, ToolConfig];
+type ToolPickerMode = "create" | "fork" | "switch-tool";
 
 /** Editing state for the structured "o" launch-options overlay. */
 export interface LaunchOptionsState {
@@ -106,7 +111,11 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost, cols: number,
   const selectedIndex = clampPickerIndex(host, tools);
 
   const title =
-    host.pickerMode === "fork" && host.forkSourceSessionId ? `Fork from ${host.forkSourceSessionId}` : "Select tool";
+    host.pickerMode === "fork" && host.forkSourceSessionId
+      ? `Fork from ${host.forkSourceSessionId}`
+      : host.pickerMode === "switch-tool" && host.switchToolSourceSessionId
+        ? `Switch ${host.switchToolSourceSessionId}`
+        : "Select tool";
 
   const body: string[] = [];
   if (tools.length === 0) {
@@ -177,7 +186,9 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost, cols: number
   const title =
     host.pickerMode === "fork" && host.forkSourceSessionId
       ? `Fork ${toolKey}: launch options`
-      : `${toolKey}: launch options`;
+      : host.pickerMode === "switch-tool" && host.switchToolSourceSessionId
+        ? `Switch ${toolKey}: launch options`
+        : `${toolKey}: launch options`;
   const body = [
     `  ${style("Defaults:", "muted")} ${commandPreview(tool.command, tool.args)}`,
     "",
@@ -230,6 +241,28 @@ export function runSelectedTool(
   const override = opts.override ?? defaultsLaunchOverride(tool);
   host.launchOptionsState = null;
 
+  if (host.pickerMode === "switch-tool") {
+    const sessionId = host.switchToolSourceSessionId;
+    host.pickerMode = "create";
+    host.forkSourceSessionId = null;
+    host.switchToolSourceSessionId = null;
+    if (!sessionId) {
+      host.showDashboardError("Cannot switch agent tool", ["Switch source was lost before tool selection. Try again."]);
+      return;
+    }
+    const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
+    if (shouldRenderPending) {
+      void switchDashboardAgentToolWithFeedback(host, {
+        sessionId,
+        tool: toolKey,
+        launchOverride: override,
+      });
+      return;
+    }
+    void host.switchAgentTool(sessionId, toolKey, override);
+    return;
+  }
+
   if (host.pickerMode === "fork") {
     const sourceSessionId = host.forkSourceSessionId;
     host.pickerMode = "create";
@@ -263,6 +296,7 @@ export function runSelectedTool(
 
   host.pickerMode = "create";
   host.forkSourceSessionId = null;
+  host.switchToolSourceSessionId = null;
   const sessionId = host.generateDashboardSessionId(tool.command);
   const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
   if (shouldRenderPending) {
@@ -295,9 +329,14 @@ export function runSelectedTool(
   }
 }
 
-export function showToolPicker(host: ToolPickerHost, sourceSessionId?: string, opts?: { overseer?: boolean }): void {
-  host.pickerMode = sourceSessionId ? "fork" : "create";
-  host.forkSourceSessionId = sourceSessionId ?? null;
+export function showToolPicker(
+  host: ToolPickerHost,
+  sourceSessionId?: string,
+  opts?: { overseer?: boolean; mode?: ToolPickerMode },
+): void {
+  host.pickerMode = opts?.mode ?? (sourceSessionId ? "fork" : "create");
+  host.forkSourceSessionId = host.pickerMode === "fork" ? (sourceSessionId ?? null) : null;
+  host.switchToolSourceSessionId = host.pickerMode === "switch-tool" ? (sourceSessionId ?? null) : null;
   host.toolPickerOverseer = opts?.overseer === true;
   host.toolPickerIndex = 0;
   host.launchOptionsState = null;
@@ -319,6 +358,7 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
     host.clearDashboardOverlay();
     host.pickerMode = "create";
     host.forkSourceSessionId = null;
+    host.switchToolSourceSessionId = null;
     host.toolPickerOverseer = false;
     host.launchOptionsState = null;
     host.restoreDashboardAfterOverlayDismiss();
