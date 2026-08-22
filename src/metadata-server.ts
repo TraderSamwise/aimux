@@ -66,7 +66,10 @@ import type {
 import {
   createThread,
   listThreadSummaries,
+  markMessageDelivered,
   markThreadSeen,
+  type OrchestrationMessage,
+  type OrchestrationThread,
   readMessages,
   readThread,
   setThreadStatus,
@@ -87,6 +90,7 @@ import {
   requestTaskChanges,
   sendHandoff,
   type TaskLifecycleResult,
+  type AssignTaskResult,
 } from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
 import { buildCoordinationThreadEntries } from "./workflow.js";
@@ -2752,6 +2756,176 @@ export class MetadataServer {
     });
   }
 
+  private async sendLiveExchangePrompt(sessionId: string, text: string): Promise<boolean> {
+    const target = sessionId.trim();
+    if (!target || target === "user" || target === "aimux") return false;
+    if (!this.options.lifecycle?.sendAgentInput) return false;
+    try {
+      await this.options.lifecycle.sendAgentInput({ sessionId: target, text, waitForSubmit: false });
+      return true;
+    } catch (error) {
+      log.warn("live exchange delivery failed", "api", {
+        sessionId: target,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  private taskAssignmentPrompt(input: {
+    task: AssignTaskResult["task"];
+    thread?: Pick<OrchestrationThread, "id">;
+    recipient: string;
+  }): string {
+    const noun = input.task.type === "review" ? "review" : "task";
+    const thread = input.thread?.id ? `Thread: ${input.thread.id}\n` : "";
+    return [
+      `[aimux ${noun} assigned]`,
+      `Task: ${input.task.description}`,
+      `Task id: ${input.task.id}`,
+      thread.trimEnd(),
+      `From: ${input.task.assignedBy}`,
+      "",
+      `Accept before starting: aimux task accept ${input.task.id} --from ${input.recipient}`,
+      `Complete when done: aimux task complete ${input.task.id} --from ${input.recipient} --body "<summary>"`,
+      `Block if needed: aimux task block ${input.task.id} --from ${input.recipient} --body "<reason>"`,
+      "",
+      "Task prompt:",
+      input.task.prompt,
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
+  }
+
+  private taskOutcomePrompt(input: {
+    task: TaskLifecycleResult["task"];
+    thread?: Pick<OrchestrationThread, "id">;
+    message?: Pick<OrchestrationMessage, "from" | "body" | "kind">;
+    action: "blocked" | "completed" | "review-approved" | "review-changes-requested";
+    recipient: string;
+  }): string {
+    const label =
+      input.action === "blocked"
+        ? "blocked"
+        : input.action === "review-approved"
+          ? "review approved"
+          : input.action === "review-changes-requested"
+            ? "review changes requested"
+            : "completed";
+    const thread = input.thread?.id ? `Thread: ${input.thread.id}\n` : "";
+    const body = input.message?.body?.trim() || input.task.result?.trim() || input.task.error?.trim() || "";
+    return [
+      `[aimux task ${label}]`,
+      `Task: ${input.task.description}`,
+      `Task id: ${input.task.id}`,
+      thread.trimEnd(),
+      input.message?.from ? `From: ${input.message.from}` : "",
+      body ? "" : "",
+      body,
+      "",
+      `Inspect: aimux task show ${input.task.id}`,
+      input.thread?.id
+        ? `Reply: aimux message send "<reply>" --thread ${input.thread.id} --from ${input.recipient} --kind reply`
+        : "",
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
+  }
+
+  private threadMessagePrompt(input: {
+    thread: Pick<OrchestrationThread, "id" | "title" | "kind">;
+    message: Pick<OrchestrationMessage, "from" | "kind" | "body">;
+    recipient: string;
+  }): string {
+    const kind = input.thread.kind === "handoff" || input.message.kind === "handoff" ? "handoff" : "message";
+    const action =
+      kind === "handoff"
+        ? `Accept: aimux handoff accept ${input.thread.id} --from ${input.recipient}`
+        : `Reply: aimux message send "<reply>" --thread ${input.thread.id} --from ${input.recipient} --kind reply`;
+    return [
+      `[aimux ${kind}]`,
+      `Thread: ${input.thread.id}`,
+      `Title: ${input.thread.title}`,
+      `From: ${input.message.from}`,
+      `Kind: ${input.message.kind}`,
+      "",
+      input.message.body,
+      "",
+      action,
+    ].join("\n");
+  }
+
+  private async deliverThreadMessageToLiveRecipients(input: {
+    thread?: unknown;
+    message?: unknown;
+    explicitRecipients?: string[];
+    fallbackRecipients?: string[];
+    from?: string;
+  }): Promise<string[]> {
+    const thread = input.thread as OrchestrationThread | undefined;
+    const message = input.message as OrchestrationMessage | undefined;
+    if (!thread?.id || !message?.id) return [];
+    const recipients = resolveExchangeMessageAlertRecipients({
+      explicitRecipients: input.explicitRecipients,
+      message,
+      thread,
+      fallbackRecipients: input.fallbackRecipients,
+      from: input.from ?? message.from,
+    });
+    const deliveredTo: string[] = [];
+    for (const recipient of recipients) {
+      const delivered = await this.sendLiveExchangePrompt(
+        recipient,
+        this.threadMessagePrompt({ thread, message, recipient }),
+      );
+      if (!delivered) continue;
+      markMessageDelivered(thread.id, message.id, recipient);
+      deliveredTo.push(recipient);
+    }
+    return deliveredTo;
+  }
+
+  private async deliverAssignedTaskToLiveRecipient(input: AssignTaskResult): Promise<string[]> {
+    const recipient = resolveExchangeTaskAssignmentRecipient(input.task);
+    if (!recipient) return [];
+    const delivered = await this.sendLiveExchangePrompt(
+      recipient,
+      this.taskAssignmentPrompt({ task: input.task, thread: input.thread, recipient }),
+    );
+    if (delivered && input.thread?.id && input.message?.id) {
+      markMessageDelivered(input.thread.id, input.message.id, recipient);
+    }
+    return delivered ? [recipient] : [];
+  }
+
+  private async deliverTaskOutcomeToLiveRecipient(
+    input: TaskLifecycleResult & { action: "blocked" | "completed" | "review-approved" | "review-changes-requested" },
+  ): Promise<string[]> {
+    const recipient =
+      input.action === "review-approved" || input.action === "review-changes-requested"
+        ? resolveExchangeReviewOutcomeRecipient(input.task)
+        : resolveExchangeTaskOutcomeRecipient({
+            task: input.task,
+            thread: input.thread,
+            from: input.message?.from,
+          });
+    if (!recipient) return [];
+    const delivered = await this.sendLiveExchangePrompt(
+      recipient,
+      this.taskOutcomePrompt({
+        task: input.task,
+        thread: input.thread,
+        message: input.message,
+        action: input.action,
+        recipient,
+      }),
+    );
+    if (delivered && input.thread?.id && input.message?.id) {
+      markMessageDelivered(input.thread.id, input.message.id, recipient);
+    }
+    return delivered ? [recipient] : [];
+  }
+
   private recordSlowRequest(entry: ProjectServiceSlowRequest): void {
     this.recentSlowRequests.push(entry);
     while (this.recentSlowRequests.length > PROJECT_SERVICE_RECENT_SLOW_REQUEST_LIMIT) {
@@ -4668,6 +4842,16 @@ export class MetadataServer {
                 worktreePath: body.worktreePath,
               });
         const messageKind = body.kind ?? "request";
+        const preDeliveredTo = (result as { deliveredTo?: unknown }).deliveredTo;
+        const deliveredTo = Array.isArray(preDeliveredTo)
+          ? preDeliveredTo.filter((entry): entry is string => typeof entry === "string")
+          : await this.deliverThreadMessageToLiveRecipients({
+              thread: result.thread,
+              message: result.message,
+              explicitRecipients: explicitRecipients.length > 0 ? explicitRecipients : undefined,
+              fallbackRecipients: recipients,
+              from: body.from ?? "user",
+            });
         if (messageKind === "handoff") {
           const alertRecipients = resolveExchangeMessageAlertRecipients({
             explicitRecipients: explicitRecipients.length > 0 ? explicitRecipients : undefined,
@@ -4704,7 +4888,7 @@ export class MetadataServer {
           });
         }
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -4774,6 +4958,16 @@ export class MetadataServer {
           fallbackRecipients: explicitRecipients,
           from: body.from?.trim() || "user",
         });
+        const preDeliveredTo = (result as { deliveredTo?: unknown }).deliveredTo;
+        const deliveredTo = Array.isArray(preDeliveredTo)
+          ? preDeliveredTo.filter((entry): entry is string => typeof entry === "string")
+          : await this.deliverThreadMessageToLiveRecipients({
+              thread: result.thread,
+              message: result.message,
+              explicitRecipients,
+              fallbackRecipients: explicitRecipients,
+              from: body.from?.trim() || "user",
+            });
         this.emitThreadWaitingAlert({
           kind: "handoff_waiting",
           threadId: (result.thread as { id: string }).id,
@@ -4784,7 +4978,7 @@ export class MetadataServer {
           worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
         });
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -4797,8 +4991,13 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
+        const deliveredTo = await this.deliverThreadMessageToLiveRecipients({
+          thread: result.thread,
+          message: result.message,
+          from: body.from?.trim() || "user",
+        });
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -4811,8 +5010,13 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
+        const deliveredTo = await this.deliverThreadMessageToLiveRecipients({
+          thread: result.thread,
+          message: result.message,
+          from: body.from?.trim() || "user",
+        });
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -4846,8 +5050,9 @@ export class MetadataServer {
           iteration: body.iteration,
         });
         this.emitAssignedTaskAlert(result);
+        const deliveredTo = await this.deliverAssignedTaskToLiveRecipient(result);
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -4892,8 +5097,9 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
+        const deliveredTo = await this.deliverTaskOutcomeToLiveRecipient({ ...result, action: "blocked" });
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -4924,8 +5130,9 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
+        const deliveredTo = await this.deliverTaskOutcomeToLiveRecipient({ ...result, action: "completed" });
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -5064,6 +5271,7 @@ export class MetadataServer {
             : undefined;
         if (taskResult) {
           this.emitAssignedTaskAlert(taskResult);
+          await this.deliverAssignedTaskToLiveRecipient(taskResult);
         }
         notifyCurrentRouteChange();
         send(
@@ -5126,8 +5334,15 @@ export class MetadataServer {
             optionalString(resolved.parent.worktreePath),
         });
         this.emitAssignedTaskAlert(result);
+        const deliveredTo = await this.deliverAssignedTaskToLiveRecipient(result);
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, parentSessionId: resolved.parent.id, teammateSessionId: teammate.id, ...result });
+        send(res, 200, {
+          ok: true,
+          parentSessionId: resolved.parent.id,
+          teammateSessionId: teammate.id,
+          ...result,
+          deliveredTo,
+        });
         return;
       }
 
@@ -6314,8 +6529,9 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Review approved.",
         });
+        const deliveredTo = await this.deliverTaskOutcomeToLiveRecipient({ ...result, action: "review-approved" });
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 
@@ -6334,8 +6550,12 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Changes requested.",
         });
+        const deliveredTo = await this.deliverTaskOutcomeToLiveRecipient({
+          ...result,
+          action: "review-changes-requested",
+        });
         notifyCurrentRouteChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, deliveredTo });
         return;
       }
 

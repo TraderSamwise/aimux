@@ -29,6 +29,7 @@ export interface AssignTaskInput {
 export interface AssignTaskResult {
   task: Task;
   thread?: OrchestrationThread;
+  message?: OrchestrationMessage;
 }
 
 export interface HandoffLifecycleResult {
@@ -78,6 +79,7 @@ export async function assignTask(input: AssignTaskInput): Promise<AssignTaskResu
   }
 
   let thread: OrchestrationThread | undefined;
+  let message: OrchestrationMessage | undefined;
   const participants = unique([input.from, input.to]);
   if (input.to) {
     thread = openTaskThread(task.id, {
@@ -96,6 +98,15 @@ export async function assignTask(input: AssignTaskInput): Promise<AssignTaskResu
         waitingOn: input.to ? [input.to] : current.waitingOn,
       })) ?? thread;
     task.threadId = thread.id;
+    message = appendMessage(thread.id, {
+      from: input.from,
+      to: [input.to],
+      kind: "request",
+      body: task.prompt,
+      taskId: task.id,
+      metadata: { taskId: task.id, taskAction: "assigned" },
+    });
+    thread = readThread(thread.id) ?? thread;
   } else {
     thread = createThread({
       title: `${task.type === "review" ? "Review" : "Task"}: ${task.description}`,
@@ -112,7 +123,7 @@ export async function assignTask(input: AssignTaskInput): Promise<AssignTaskResu
   }
 
   await writeTask(task);
-  return { task, thread };
+  return { task, thread, message };
 }
 
 export function sendHandoff(input: {

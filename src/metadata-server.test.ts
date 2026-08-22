@@ -13,6 +13,7 @@ import { listNotifications, upsertNotification } from "./notifications.js";
 import { addDashboardOperationFailure, listDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { readTask } from "./tasks.js";
+import { readMessages } from "./threads.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 import { refreshProjectExposeHotSnapshots } from "./expose-hot-snapshot-worker.js";
@@ -6056,6 +6057,172 @@ describe("MetadataServer threads API", () => {
     const text = await streamRead;
     expect(text).toContain('"kind":"task_done"');
     expect(text).toContain('"sessionId":"claude-lead"');
+  });
+
+  it("live-delivers assigned tasks to the target agent", async () => {
+    const sent: Array<{ sessionId: string; text: string; waitForSubmit?: boolean }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text, waitForSubmit }) => {
+          sent.push({ sessionId, text, waitForSubmit });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const taskRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit live task delivery",
+        prompt: "Inspect the live input handoff.",
+        type: "task",
+      }),
+    });
+    const assigned = (await taskRes.json()) as {
+      deliveredTo: string[];
+      task: { id: string };
+      thread: { id: string };
+      message: { id: string };
+    };
+
+    expect(taskRes.ok).toBe(true);
+    expect(assigned.deliveredTo).toEqual(["codex-1"]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ sessionId: "codex-1", waitForSubmit: false });
+    expect(sent[0]?.text).toContain("[aimux task assigned]");
+    expect(sent[0]?.text).toContain("Task id:");
+    expect(sent[0]?.text).toContain("Accept before starting: aimux task accept");
+    expect(sent[0]?.text).toContain("Inspect the live input handoff.");
+    expect(
+      readMessages(assigned.thread.id).find((message) => message.id === assigned.message.id)?.deliveredTo,
+    ).toContain("codex-1");
+  });
+
+  it("live-delivers task blocked and completed outcomes back to the assigner", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const assignRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit outcome delivery",
+      }),
+    });
+    const assigned = (await assignRes.json()) as { task: { id: string } };
+    expect(assignRes.ok).toBe(true);
+    expect(sent.at(-1)?.sessionId).toBe("codex-1");
+
+    const blockRes = await fetch(`${base}/tasks/block`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskId: assigned.task.id,
+        from: "codex-1",
+        body: "Need a reproduction fixture.",
+      }),
+    });
+    const blocked = (await blockRes.json()) as {
+      deliveredTo: string[];
+      thread?: { id: string };
+      message?: { id: string };
+    };
+    expect(blockRes.ok).toBe(true);
+    expect(blocked.deliveredTo).toEqual(["claude-lead"]);
+    expect(sent.at(-1)).toMatchObject({ sessionId: "claude-lead" });
+    expect(sent.at(-1)?.text).toContain("[aimux task blocked]");
+    expect(sent.at(-1)?.text).toContain("Need a reproduction fixture.");
+    expect(sent.at(-1)?.text).toContain("--from claude-lead");
+
+    const completeRes = await fetch(`${base}/tasks/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskId: assigned.task.id,
+        from: "codex-1",
+        body: "Fixed the outcome path.",
+      }),
+    });
+    const completed = (await completeRes.json()) as { deliveredTo: string[] };
+    expect(completeRes.ok).toBe(true);
+    expect(completed.deliveredTo).toEqual(["claude-lead"]);
+    expect(sent.at(-1)).toMatchObject({ sessionId: "claude-lead" });
+    expect(sent.at(-1)?.text).toContain("[aimux task completed]");
+    expect(sent.at(-1)?.text).toContain("Fixed the outcome path.");
+  });
+
+  it("live-delivers thread messages and handoffs to target agents", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const sendRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: ["codex-1"],
+        kind: "request",
+        body: "Please inspect the queue.",
+        title: "Queue audit",
+      }),
+    });
+    const message = (await sendRes.json()) as { deliveredTo: string[] };
+    expect(sendRes.ok).toBe(true);
+    expect(message.deliveredTo).toEqual(["codex-1"]);
+    expect(sent.at(-1)).toMatchObject({ sessionId: "codex-1" });
+    expect(sent.at(-1)?.text).toContain("[aimux message]");
+    expect(sent.at(-1)?.text).toContain("Please inspect the queue.");
+
+    const handoffRes = await fetch(`${base}/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: ["codex-1"],
+        body: "Take over this audit.",
+        title: "Live handoff",
+      }),
+    });
+    const handoff = (await handoffRes.json()) as { deliveredTo: string[] };
+    expect(handoffRes.ok).toBe(true);
+    expect(handoff.deliveredTo).toEqual(["codex-1"]);
+    expect(sent.at(-1)).toMatchObject({ sessionId: "codex-1" });
+    expect(sent.at(-1)?.text).toContain("[aimux handoff]");
+    expect(sent.at(-1)?.text).toContain("Accept: aimux handoff accept");
   });
 
   it("does not emit generic message alerts for status messages", async () => {

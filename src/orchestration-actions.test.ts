@@ -44,6 +44,12 @@ describe("orchestration actions", () => {
     expect(result.thread?.participants).toEqual(["claude-lead", "codex-worker"]);
     expect(result.thread?.waitingOn).toEqual(["codex-worker"]);
     expect(result.thread?.kind).toBe("task");
+    expect(result.message?.kind).toBe("request");
+    expect(result.message?.to).toEqual(["codex-worker"]);
+    expect(result.message?.taskId).toBe(result.task.id);
+    expect(result.message?.metadata?.taskAction).toBe("assigned");
+    expect(readMessages(result.thread!.id).at(-1)?.id).toBe(result.message?.id);
+    expect(readThread(result.thread!.id)?.unreadBy).toContain("codex-worker");
   });
 
   it("creates a handoff thread with a handoff message", () => {
