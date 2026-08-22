@@ -254,6 +254,7 @@ function isAgentTransitionSettled(
     case "agent.resume":
     case "agent.spawn":
     case "agent.fork":
+    case "agent.switchTool":
     case "graveyard.agent.resurrect":
       return Boolean(session && session.status !== "offline" && session.status !== "exited");
     case "agent.rename":
@@ -319,6 +320,8 @@ function agentPendingAction(operation: ProjectLifecycleTransitionOperation): str
       return "starting";
     case "agent.fork":
       return "forking";
+    case "agent.switchTool":
+      return "switching";
     case "agent.stop":
       return "stopping";
     case "agent.kill":

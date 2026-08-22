@@ -74,6 +74,7 @@ function canSynthesizeMissingSession(kind: PendingDashboardActionKind): kind is 
     kind === "creating" ||
     kind === "forking" ||
     kind === "migrating" ||
+    kind === "switching" ||
     kind === "starting" ||
     kind === "stopping" ||
     kind === "graveyarding" ||

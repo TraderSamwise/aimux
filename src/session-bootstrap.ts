@@ -424,6 +424,34 @@ export class SessionBootstrapService {
       .join(" ");
   }
 
+  buildToolSwitchContinuityPreamble(opts: {
+    sessionId: string;
+    sourceTool: string;
+    targetTool: string;
+    snapshot: ForkSourceSnapshot;
+    instruction?: string;
+  }): string {
+    const { sessionId, sourceTool, targetTool, snapshot, instruction } = opts;
+    const activitySummary = this.summarizeForkSourceActivity(snapshot);
+    const summaryPath = join(getContextDir(), sessionId, "summary.md");
+    const livePath = join(getContextDir(), sessionId, "live.md");
+    const planPath = getPlanAuthorityPath(sessionId);
+    return [
+      "## Aimux Tool Switch",
+      `This Aimux session kept its stable session ID (${sessionId}) but switched from ${sourceTool} to ${targetTool}.`,
+      "You are the continuation of the same Aimux agent identity, not a new independent fork.",
+      "The previous tool's vendor/backend conversation is not available to this tool.",
+      `Read ${summaryPath}, ${livePath}, and ${planPath} first.`,
+      "Treat those files as carried-over prior context that belongs to your current identity.",
+      "Do not start with git archaeology.",
+      activitySummary ? `Recent session activity: ${activitySummary}` : undefined,
+      instruction?.trim(),
+      "After reading the carried-over context, briefly summarize what we were doing and continue from there.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   seedForkArtifacts(sourceSessionId: string, targetSessionId: string, targetToolConfigKey: string): void {
     const snapshot = this.readForkSourceSnapshot(sourceSessionId);
     const activitySummary = this.summarizeForkSourceActivity(snapshot);

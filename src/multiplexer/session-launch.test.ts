@@ -26,6 +26,7 @@ import {
   runProjectService,
   summarizeLaunchArgs,
   startProjectServiceHost,
+  switchAgentTool,
 } from "./session-launch.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
@@ -1179,6 +1180,96 @@ describe("migrateAgent", () => {
 
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(targetRoot, { recursive: true, force: true });
+  });
+});
+
+describe("switchAgentTool", () => {
+  it("relaunches a live agent under the same Aimux session id with target tool config", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-switch-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    const sessions: any[] = [];
+    const sourceSession: any = {
+      id: "claude-1",
+      command: "claude",
+      backendSessionId: "claude-backend",
+      exited: false,
+      team: { teamId: "team-1", parentSessionId: "parent-1", role: "coder" },
+      kill: vi.fn(() => {
+        sourceSession.exited = true;
+        const index = sessions.indexOf(sourceSession);
+        if (index >= 0) sessions.splice(index, 1);
+      }),
+      onExit: vi.fn(),
+    };
+    sessions.push(sourceSession);
+
+    const host: any = {
+      sessions,
+      sessionToolKeys: new Map([["claude-1", "claude"]]),
+      sessionOriginalArgs: new Map([["claude-1", ["--dangerously-skip-permissions"]]]),
+      sessionWorktreePaths: new Map([["claude-1", repoRoot]]),
+      sessionTmuxTargets: new Map(),
+      contextWatcher: { syncNow: vi.fn(async () => undefined) },
+      sessionBootstrap: {
+        ...realArgComposition(),
+        readForkSourceSnapshot: vi.fn(() => ({ historyText: "previous work", liveText: "live pane" })),
+        buildToolSwitchContinuityPreamble: vi.fn(() => "switch continuity"),
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn((session: any) => sessions.push(session)),
+      getSessionLabel: vi.fn(() => "claude"),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    await switchAgentTool(host, "claude-1", "codex");
+
+    expect(sourceSession.kill).toHaveBeenCalledOnce();
+    expect(host.contextWatcher.syncNow).toHaveBeenCalledWith("claude-1");
+    expect(host.sessionBootstrap.buildToolSwitchContinuityPreamble).toHaveBeenCalledWith({
+      sessionId: "claude-1",
+      sourceTool: "claude",
+      targetTool: "codex",
+      snapshot: expect.objectContaining({ historyText: "previous work", liveText: "live pane" }),
+      instruction: undefined,
+    });
+    expect(host.tmuxRuntimeManager.createWindow.mock.calls[0][2]).toBe(repoRoot);
+    expect(host.sessionBootstrap.buildSessionPreamble).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "claude-1",
+        command: "codex",
+        worktreePath: repoRoot,
+        extraPreamble: "switch continuity",
+        team: sourceSession.team,
+      }),
+    );
+    expect(host.registerManagedSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "claude-1", command: "codex", backendSessionId: undefined }),
+      ["--dangerously-bypass-approvals-and-sandbox"],
+      "codex",
+      repoRoot,
+      undefined,
+      expect.any(Number),
+      sourceSession.team,
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe("claude-1");
+    expect(sessions[0].command).toBe("codex");
+
+    rmSync(repoRoot, { recursive: true, force: true });
   });
 });
 

@@ -7,6 +7,7 @@ export type PendingSessionActionKind =
   | "creating"
   | "forking"
   | "migrating"
+  | "switching"
   | "starting"
   | "stopping"
   | "graveyarding"
@@ -20,6 +21,7 @@ const BLOCKING_PENDING_DASHBOARD_ACTIONS = new Set<string>([
   "creating",
   "forking",
   "migrating",
+  "switching",
   "starting",
   "stopping",
   "graveyarding",

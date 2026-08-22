@@ -85,6 +85,8 @@ import {
   type StatuslineRefreshInput,
   type StatuslineRefreshResponse,
   type StopAgentResponse,
+  type SwitchAgentToolInput,
+  type SwitchAgentToolResponse,
   type StopServiceResponse,
   type SwitchableAgentsInput,
   type SwitchableAgentsResponse,
@@ -599,6 +601,14 @@ export async function forkAgent(
   opts?: ApiOpts,
 ): Promise<ForkAgentResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.fork, opts, input);
+}
+
+export async function switchAgentTool(
+  endpoint: ServiceEndpoint,
+  input: SwitchAgentToolInput,
+  opts?: ApiOpts,
+): Promise<SwitchAgentToolResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.switchTool, opts, input);
 }
 
 export async function stopAgent(

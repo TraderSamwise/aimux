@@ -7,6 +7,7 @@ import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
+import type { LaunchOverride } from "../shell-args.js";
 import {
   extractClaudeBackendSessionIdFromArgs,
   injectClaudeHookArgs,
@@ -1255,6 +1256,95 @@ export async function migrateAgent(
     undefined,
     originalArgs,
   );
+}
+
+export async function switchAgentTool(
+  host: SessionLaunchHost,
+  sessionId: string,
+  targetToolConfigKey: string,
+  launchOverride?: LaunchOverride,
+  instruction?: string,
+): Promise<void> {
+  const session = host.sessions.find((s: any) => s.id === sessionId);
+  if (!session) {
+    throw new Error(`Session "${sessionId}" not found`);
+  }
+  if (session.exited) {
+    throw new Error(`Session "${sessionId}" is not live`);
+  }
+
+  const config = loadConfig();
+  const targetToolCfg = config.tools[targetToolConfigKey];
+  if (!targetToolCfg) {
+    throw new Error(`Unknown tool config: ${targetToolConfigKey}`);
+  }
+  if (targetToolCfg.enabled === false) {
+    throw new Error(`Tool config "${targetToolConfigKey}" is disabled`);
+  }
+
+  const sourceToolConfigKey = host.sessionToolKeys.get(sessionId) ?? session.command;
+  if (sourceToolConfigKey === targetToolConfigKey && !launchOverride) {
+    return;
+  }
+
+  const worktreePath = host.sessionWorktreePaths.get(sessionId);
+  const sourceToolCfg = config.tools[sourceToolConfigKey];
+  const sourceToolLabel = sourceToolConfigKey || session.command;
+  const targetToolLabel = targetToolConfigKey || targetToolCfg.command;
+  const originalTargetArgs = host.sessionBootstrap.stripToolActionArgs(
+    targetToolCfg,
+    launchOverride?.args ?? targetToolCfg.args,
+  );
+
+  await host.contextWatcher.syncNow(sessionId).catch(() => {});
+  const sourceSnapshot = host.sessionBootstrap.readForkSourceSnapshot(sessionId);
+  const continuityPreamble = host.sessionBootstrap.buildToolSwitchContinuityPreamble({
+    sessionId,
+    sourceTool: sourceToolLabel,
+    targetTool: targetToolLabel,
+    snapshot: sourceSnapshot,
+    instruction,
+  });
+
+  debug(`switching session ${sessionId} from ${sourceToolLabel} to ${targetToolLabel}`, "session");
+
+  const waitForExit = (timeoutMs = 8000) =>
+    new Promise<void>((resolve, reject) => {
+      if (session.exited) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${sessionId} to exit`)), timeoutMs);
+      session.onExit(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+  session.kill();
+  await waitForExit().catch(() => {});
+
+  createSession(
+    host,
+    launchOverride?.command ?? targetToolCfg.command,
+    originalTargetArgs,
+    targetToolCfg.preambleFlag,
+    targetToolConfigKey,
+    continuityPreamble,
+    targetToolCfg.sessionIdFlag,
+    worktreePath,
+    undefined,
+    sessionId,
+    !targetToolCfg.preambleFlag,
+    false,
+    session.team,
+    launchOverride?.env,
+    originalTargetArgs,
+  );
+
+  if (sourceToolCfg?.command === "claude" && targetToolCfg.command !== "claude") {
+    debug(`switched ${sessionId} away from claude without carrying backend session id`, "session");
+  }
 }
 
 export function getSessionWorktreePath(host: SessionLaunchHost, sessionId: string): string | undefined {

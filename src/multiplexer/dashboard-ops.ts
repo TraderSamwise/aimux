@@ -250,7 +250,12 @@ async function finishDashboardMutationIfSettled(
 function hasDashboardMutationTerminalState(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): boolean {
   if (opts.targetKind === "session") {
     const entry = getRawDashboardSessionEntry(host, opts.targetId) ?? getDashboardSessionEntry(host, opts.targetId);
-    if (opts.pendingAction === "creating" || opts.pendingAction === "forking" || opts.pendingAction === "starting") {
+    if (
+      opts.pendingAction === "creating" ||
+      opts.pendingAction === "forking" ||
+      opts.pendingAction === "switching" ||
+      opts.pendingAction === "starting"
+    ) {
       return isLiveDashboardSessionEntry(entry);
     }
     if (opts.pendingAction === "stopping") return !entry || !isLiveDashboardSessionEntry(entry);
@@ -282,7 +287,10 @@ function finishDashboardMutationIfTerminal(host: DashboardOpsHost, opts: Dashboa
 function shouldFastCheckDashboardMutationTerminalState(opts: DashboardMutationReconcileOptions): boolean {
   return (
     opts.targetKind === "session" &&
-    (opts.pendingAction === "creating" || opts.pendingAction === "forking" || opts.pendingAction === "starting")
+    (opts.pendingAction === "creating" ||
+      opts.pendingAction === "forking" ||
+      opts.pendingAction === "switching" ||
+      opts.pendingAction === "starting")
   );
 }
 
@@ -503,6 +511,33 @@ function isDashboardSessionResumeSettled(host: DashboardOpsHost, sessionId: stri
   );
 }
 
+function dashboardSessionToolMatches(entry: any | undefined, targetToolConfigKey: string): boolean {
+  return Boolean(entry && (entry.toolConfigKey === targetToolConfigKey || entry.tool === targetToolConfigKey));
+}
+
+function isDashboardSessionToolSwitchSettled(
+  host: DashboardOpsHost,
+  sessionId: string,
+  targetToolConfigKey: string,
+): boolean {
+  const settlement = getDashboardSessionSettlementEntry(host, sessionId);
+  const hasRawSnapshot = Array.isArray(host.dashboardRawSessionsCache);
+  if (hasRawSnapshot) {
+    return (
+      settlement.known &&
+      isLiveDashboardSessionEntry(settlement.session) &&
+      dashboardSessionToolMatches(settlement.session, targetToolConfigKey)
+    );
+  }
+  const rendered = getDashboardSessionEntry(host, sessionId);
+  return (
+    (settlement.known &&
+      isLiveDashboardSessionEntry(settlement.session) &&
+      dashboardSessionToolMatches(settlement.session, targetToolConfigKey)) ||
+    (isLiveDashboardSessionEntry(rendered) && dashboardSessionToolMatches(rendered, targetToolConfigKey))
+  );
+}
+
 function isDashboardSessionStopSettled(host: DashboardOpsHost, sessionId: string): boolean {
   const { known, session: entry } = getDashboardSessionSettlementEntry(host, sessionId);
   if (!known) return false;
@@ -561,6 +596,35 @@ async function waitForDashboardSessionResumeSettle(
     isDashboardSessionResumeSettled(host, sessionId) ||
     Boolean(opts?.allowInactiveSettle?.() && isDashboardSessionRestoreInactive(host, sessionId))
   );
+}
+
+async function waitForDashboardSessionToolSwitchSettle(
+  host: DashboardOpsHost,
+  sessionId: string,
+  targetToolConfigKey: string,
+  timeoutMs = 10_000,
+  modelLifecycle?: DashboardLifecycleToken,
+  renderLifecycle?: DashboardLifecycleToken,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let hasFreshSnapshot = false;
+  while (Date.now() < deadline) {
+    const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
+    hasFreshSnapshot ||= refreshed;
+    const hasRawSnapshot = Array.isArray(host.dashboardRawSessionsCache);
+    if (
+      (hasFreshSnapshot || !hasRawSnapshot) &&
+      isDashboardSessionToolSwitchSettled(host, sessionId, targetToolConfigKey)
+    ) {
+      renderDashboardDuringSettlement(host, renderLifecycle);
+      return true;
+    }
+    if (hasDashboardModelServiceRefreshError(host) && !hasPendingDashboardSessionAction(host, sessionId, "switching")) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return isDashboardSessionToolSwitchSettled(host, sessionId, targetToolConfigKey);
 }
 
 function isDashboardSessionRestoreInactive(host: DashboardOpsHost, sessionId: string): boolean {
@@ -974,6 +1038,75 @@ export async function forkDashboardAgentWithFeedback(
     reconcileOnRequestTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Cannot fork session",
+  });
+}
+
+export async function switchDashboardAgentToolWithFeedback(
+  host: DashboardOpsHost,
+  input: {
+    sessionId: string;
+    tool: string;
+    instruction?: string;
+    launchOverride?: LaunchOverride;
+  },
+): Promise<void> {
+  const current =
+    host.getDashboardSessions?.().find((entry: any) => entry.id === input.sessionId) ??
+    host.sessions?.find?.((entry: any) => entry.id === input.sessionId);
+  const label = current?.label ?? current?.command ?? input.sessionId;
+  const sessionSeed = current
+    ? ({
+        ...current,
+        pendingAction: "switching",
+      } satisfies DashboardSession)
+    : undefined;
+
+  if (host.mode !== "dashboard") {
+    host.setPendingDashboardSessionAction(input.sessionId, "switching", { sessionSeed });
+    try {
+      await host.switchAgentTool(input.sessionId, input.tool, input.launchOverride, input.instruction);
+      host.setPendingDashboardSessionAction(input.sessionId, null);
+      host.refreshLocalDashboardModel();
+      host.footerFlash = `Switched ${label} to ${input.tool}`;
+      host.footerFlashTicks = 3;
+      host.renderDashboard();
+    } catch (error) {
+      host.setPendingDashboardSessionAction(input.sessionId, null);
+      host.showDashboardError(`Failed to switch "${label}"`, userFacingErrorLines(error));
+    }
+    return;
+  }
+
+  await runDashboardSessionMutation(host, {
+    sessionId: input.sessionId,
+    pendingAction: "switching",
+    sessionSeed,
+    request: async () => {
+      await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.agents.switchTool,
+        {
+          sessionId: input.sessionId,
+          tool: input.tool,
+          instruction: input.instruction,
+          launchOverride: input.launchOverride,
+        },
+        { timeoutMs: 10_000 },
+      );
+    },
+    settle: (modelLifecycle, renderLifecycle) =>
+      waitForDashboardSessionToolSwitchSettle(
+        host,
+        input.sessionId,
+        input.tool,
+        10_000,
+        modelLifecycle,
+        renderLifecycle,
+      ),
+    successFlash: { message: `Switched ${label} to ${input.tool}` },
+    reconcileOnRequestTimeout: true,
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
+    errorTitle: `Failed to switch "${label}"`,
   });
 }
 

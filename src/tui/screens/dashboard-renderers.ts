@@ -44,6 +44,7 @@ const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   creating: "Creating",
   forking: "Forking",
   migrating: "Migrating",
+  switching: "Switching",
   renaming: "Renaming",
 };
 

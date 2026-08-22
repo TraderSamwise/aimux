@@ -111,6 +111,9 @@ function sessionPendingSettled(
   if (action.kind === "creating" || action.kind === "forking" || action.kind === "migrating") {
     return rawSession?.status === "running";
   }
+  if (action.kind === "switching") {
+    return rawSession?.status === "running";
+  }
   if (action.kind === "starting") {
     if (rawSession?.status === "running") return true;
     return Boolean(rawSession && pendingActionAgeMs(action.startedAt) >= PENDING_START_OFFLINE_SETTLE_MS);
@@ -142,7 +145,12 @@ function statusForPendingSessionAction(
   status: DashboardSession["status"],
   pendingAction?: DashboardSession["pendingAction"],
 ): DashboardSession["status"] {
-  if (pendingAction === "creating" || pendingAction === "forking" || pendingAction === "migrating") {
+  if (
+    pendingAction === "creating" ||
+    pendingAction === "forking" ||
+    pendingAction === "migrating" ||
+    pendingAction === "switching"
+  ) {
     return "waiting";
   }
   if (pendingAction === "starting") return "waiting";
@@ -1499,6 +1507,14 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           input.sessionId,
           "migrating",
           () => host.migrateAgent(input.sessionId, input.worktreePath),
+          findDashboardSessionSeed(host, input.sessionId),
+        ),
+      switchAgentTool: (input: any) =>
+        withMetadataSessionPending(
+          host,
+          input.sessionId,
+          "switching",
+          () => host.switchAgentTool(input.sessionId, input.tool, input.launchOverride, input.instruction),
           findDashboardSessionSeed(host, input.sessionId),
         ),
       killAgent: (input: any) =>

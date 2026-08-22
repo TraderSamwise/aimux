@@ -1155,6 +1155,46 @@ describe("MetadataServer threads API", () => {
     expect(calls).toEqual([{ sessionId: "claude-1", backendSessionId: "0710a963" }]);
   });
 
+  it("switches agent tools over HTTP", async () => {
+    server?.stop();
+    const calls: Array<{ sessionId: string; tool: string; instruction?: string }> = [];
+    server = new MetadataServer({
+      lifecycle: {
+        switchAgentTool: (input) => {
+          calls.push(input);
+          return { sessionId: input.sessionId, tool: input.tool, status: "running" };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/switch-tool`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "claude-1", tool: "codex", instruction: "continue" }),
+    });
+    const body = (await res.json()) as {
+      ok: boolean;
+      sessionId: string;
+      tool: string;
+      status: string;
+      transition?: { operation: string; targetId?: string };
+    };
+    expect(res.ok).toBe(true);
+    expect(body).toMatchObject({
+      ok: true,
+      sessionId: "claude-1",
+      tool: "codex",
+      status: "running",
+      transition: { operation: "agent.switchTool", targetId: "claude-1" },
+    });
+    expect(calls).toEqual([{ sessionId: "claude-1", tool: "codex", instruction: "continue" }]);
+  });
+
   it("lists direct teammates from runtime topology instead of desktop pending overlays", async () => {
     server?.stop();
     seedAgentTopology([

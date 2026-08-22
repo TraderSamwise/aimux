@@ -77,6 +77,7 @@ import {
   runDashboard as runDashboardImpl,
   runProjectService as runProjectServiceImpl,
   startProjectServiceHost as startProjectServiceHostImpl,
+  switchAgentTool as switchAgentToolImpl,
 } from "./session-launch.js";
 
 export type MuxMode = "dashboard" | "project-service";
@@ -163,7 +164,7 @@ export class Multiplexer {
   private defaultArgs: string[] = [];
   private startedInDashboard = false;
   private dashboardOverlayState = new DashboardOverlayState();
-  private pickerMode: "create" | "fork" = "create";
+  private pickerMode: "create" | "fork" | "switch-tool" = "create";
   private forkSourceSessionId: string | null = null;
   private toolPickerOverseer = false;
   private toolPickerIndex = 0;
@@ -532,6 +533,15 @@ export class Multiplexer {
    */
   async migrateAgent(sessionId: string, targetWorktreePath: string): Promise<void> {
     await migrateAgentImpl(this, sessionId, targetWorktreePath);
+  }
+
+  async switchAgentTool(
+    sessionId: string,
+    targetToolConfigKey: string,
+    launchOverride?: LaunchOverride,
+    instruction?: string,
+  ): Promise<void> {
+    await switchAgentToolImpl(this, sessionId, targetToolConfigKey, launchOverride, instruction);
   }
 
   /** Get worktree path for a session */

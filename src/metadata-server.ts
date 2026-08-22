@@ -615,6 +615,22 @@ export interface MetadataServerOptions {
       open?: boolean;
       launchOverride?: LaunchOverride;
     }) => Promise<{ sessionId: string; threadId: string }> | { sessionId: string; threadId: string };
+    switchAgentTool?: (input: {
+      sessionId: string;
+      tool: string;
+      instruction?: string;
+      launchOverride?: LaunchOverride;
+    }) =>
+      | Promise<{
+          sessionId: string;
+          tool: string;
+          status: "running";
+        }>
+      | {
+          sessionId: string;
+          tool: string;
+          status: "running";
+        };
     stopAgent?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
       | {
@@ -5277,6 +5293,34 @@ export class MetadataServer {
             operation: "agent.fork",
             targetKind: "agent",
             targetId: result.sessionId ?? body.targetSessionId,
+          }),
+        );
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.switchTool) {
+        const body = (await readJson(req)) as {
+          sessionId: string;
+          tool: string;
+          instruction?: string;
+          launchOverride?: LaunchOverride;
+        };
+        if (!this.options.lifecycle?.switchAgentTool) {
+          send(res, 501, { ok: false, error: "agent tool switch not supported by this service" });
+          return;
+        }
+        const result = await runLifecycle(
+          { operation: "agent.switchTool", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.switchAgentTool!(body),
+        );
+        notifyCurrentRouteChange();
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.switchTool",
+            targetKind: "agent",
+            targetId: body.sessionId,
           }),
         );
         return;

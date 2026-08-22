@@ -47,6 +47,7 @@ import {
   setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
   stopDashboardServiceWithFeedback as stopDashboardServiceWithFeedbackImpl,
   stopSessionToOfflineWithFeedback as stopSessionToOfflineWithFeedbackImpl,
+  switchDashboardAgentToolWithFeedback as switchDashboardAgentToolWithFeedbackImpl,
   truncateAnsiForHost,
   truncatePlainForHost,
   waitForSessionStartForHost,
@@ -762,6 +763,10 @@ export type DashboardTailMethods = {
     targetPath: string,
     targetName: string,
   ): Promise<void>;
+  switchDashboardAgentToolWithFeedback(
+    this: Multiplexer,
+    input: { sessionId: string; tool: string; instruction?: string; launchOverride?: LaunchOverride },
+  ): Promise<void>;
   handleMigratePickerKey(this: Multiplexer, data: Buffer): void;
   getDashboardSessions(this: Multiplexer): DashboardSession[];
   getDashboardServices(this: Multiplexer): DashboardService[];
@@ -1094,6 +1099,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async migrateSessionWithFeedback(session, targetPath, targetName) {
     await migrateSessionWithFeedbackImpl(this, session, targetPath, targetName);
+  },
+  async switchDashboardAgentToolWithFeedback(input) {
+    await switchDashboardAgentToolWithFeedbackImpl(this, input);
   },
   handleMigratePickerKey(data) {
     handleMigratePickerKeyImpl(this, data);

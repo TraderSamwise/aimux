@@ -43,6 +43,7 @@ export const PROJECT_API_ROUTES = {
     promptContext: "/agents/prompt-context",
     spawn: "/agents/spawn",
     fork: "/agents/fork",
+    switchTool: "/agents/switch-tool",
     stop: "/agents/stop",
     resume: "/agents/resume",
     kill: "/agents/kill",
@@ -935,6 +936,7 @@ export type ProjectLifecycleTransitionPhase = "queued" | "started" | "settling" 
 export type ProjectLifecycleTransitionOperation =
   | "agent.spawn"
   | "agent.fork"
+  | "agent.switchTool"
   | "agent.stop"
   | "agent.resume"
   | "agent.kill"
@@ -1152,6 +1154,19 @@ export interface ForkAgentInput {
 export interface ForkAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId?: string;
   sourceSessionId?: string;
+  [k: string]: unknown;
+}
+
+export interface SwitchAgentToolInput extends AgentSessionInput {
+  tool: string;
+  instruction?: string;
+  launchOverride?: unknown;
+}
+
+export interface SwitchAgentToolResponse extends ProjectLifecycleTransitionResponse {
+  sessionId: string;
+  tool: string;
+  status: "running";
   [k: string]: unknown;
 }
 
