@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildAgentRestoreConfirmOverlayOutput,
   buildHelpOverlayOutput,
   buildOverseerOverlayOutput,
   buildWorktreeListOverlayOutput,
@@ -28,6 +29,36 @@ describe("buildWorktreeListOverlayOutput", () => {
     expect(output).toContain("Main Checkout");
     expect(output).toContain("feature");
     expect(ctx.listAllWorktrees).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildAgentRestoreConfirmOverlayOutput", () => {
+  it("renders restore and cancel as modal choices", () => {
+    const output = plain(
+      buildAgentRestoreConfirmOverlayOutput(
+        {
+          agentRestoreConfirmSelection: "cancel",
+          dashboardAgentRestoreOfferCache: {
+            sessionIds: ["claude-1", "codex-2"],
+            sessions: [
+              { id: "claude-1", label: "claude(coder)" },
+              { id: "codex-2", label: "codex(coder)" },
+            ],
+          },
+        },
+        100,
+        30,
+      ) ?? "",
+    );
+
+    expect(output).toContain("RESTORE AGENTS");
+    expect(output).toContain("Restore 2 previously running agents for this project?");
+    expect(output).toContain("claude(coder), codex(coder)");
+    expect(output).toContain("Restore");
+    expect(output).toContain("Cancel");
+    expect(output).toContain("←/→  choose");
+    expect(output).toContain("Enter  confirm");
+    expect(output).toContain("Esc  cancel");
   });
 });
 

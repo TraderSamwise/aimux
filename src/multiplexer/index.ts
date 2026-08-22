@@ -290,6 +290,7 @@ export class Multiplexer {
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
   private dashboardAgentRestoreOfferCache: unknown = null;
+  private agentRestoreConfirmSelection: "restore" | "cancel" = "restore";
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;

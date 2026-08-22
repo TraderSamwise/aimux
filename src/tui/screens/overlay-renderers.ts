@@ -100,6 +100,39 @@ export function renderWorktreeRemoveConfirmOverlay(ctx: any): void {
   if (output) process.stdout.write(output);
 }
 
+function restoreConfirmAction(ctx: any): "restore" | "cancel" {
+  return ctx.agentRestoreConfirmSelection === "cancel" ? "cancel" : "restore";
+}
+
+function restoreConfirmButton(label: string, active: boolean): string {
+  return active ? `\x1b[7m ${label} \x1b[0m` : style(` ${label} `, "muted");
+}
+
+export function buildAgentRestoreConfirmOverlayOutput(ctx: any, cols: number, rows: number): string | null {
+  const offer = ctx.dashboardAgentRestoreOfferCache;
+  if (!offer || !Array.isArray(offer.sessions) || !Array.isArray(offer.sessionIds)) return null;
+  const selected = restoreConfirmAction(ctx);
+  const labels = offer.sessions
+    .slice(0, 5)
+    .map((session: any) => session.label ?? session.command ?? session.tool ?? session.id)
+    .join(", ");
+  const extra = offer.sessions.length > 5 ? `, +${offer.sessions.length - 5} more` : "";
+  const count = offer.sessionIds.length;
+  const body = [
+    `  Restore ${count} previously running agent${count === 1 ? "" : "s"} for this project?`,
+    labels ? `  ${style(`${labels}${extra}`, "muted")}` : "",
+    "",
+    `  ${restoreConfirmButton("Restore", selected === "restore")}  ${restoreConfirmButton("Cancel", selected === "cancel")}`,
+    "",
+    hints([
+      ["←/→", "choose"],
+      ["Enter", "confirm"],
+      ["Esc", "cancel"],
+    ]),
+  ].filter(Boolean);
+  return renderOverlayBox({ title: "Restore agents", body, cols, rows });
+}
+
 export function buildDashboardBusyOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const busy = ctx.dashboardBusyState;
   if (!busy) return null;

@@ -200,6 +200,20 @@ export const dashboardViewMethods = {
           : undefined,
         derivedStatusLabel,
       });
+      if (
+        this.dashboardAgentRestoreOfferCache &&
+        (this.dashboardOverlayState?.kind ?? "none") === "none" &&
+        !this.dashboardBusyState &&
+        !this.dashboardErrorState
+      ) {
+        this.agentRestoreConfirmSelection = "restore";
+        this.openDashboardOverlay("agent-restore-confirm");
+      } else if (
+        !this.dashboardAgentRestoreOfferCache &&
+        this.dashboardOverlayState?.kind === "agent-restore-confirm"
+      ) {
+        this.clearDashboardOverlay();
+      }
       this.syncTuiNotificationContext(false);
       this.writeFrame(this.dashboard.render(cols, rows));
     } catch (error) {

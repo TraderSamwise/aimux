@@ -31,6 +31,7 @@ import {
   buildDashboardBusyOverlayOutput,
   buildDashboardErrorOverlayOutput,
   buildDashboardRuntimeGuardOverlayOutput,
+  buildAgentRestoreConfirmOverlayOutput,
   buildLabelInputOverlayOutput,
   buildMigratePickerOverlayOutput,
   buildOverseerOverlayOutput,
@@ -809,6 +810,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     return true;
   }
   switch (host.dashboardOverlayState.kind) {
+    case "agent-restore-confirm":
+      handleAgentRestoreConfirmKey(host, data);
+      return true;
     case "tool-picker":
       host.handleToolPickerKey(data);
       return true;
@@ -856,6 +860,71 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
   }
 }
 
+function restoreAgentRestoreOffer(host: DashboardControlHost): void {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  host.clearDashboardOverlay();
+  host.agentRestoreConfirmSelection = "restore";
+  host.footerFlash = "Restoring previously running agents";
+  host.footerFlashTicks = 4;
+  host.renderDashboard();
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.agents.restorePrevious, {}, { timeoutMs: 120_000 })
+    .then(async (result: any) => {
+      await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      const restored = Array.isArray(result?.restored) ? result.restored.length : 0;
+      const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+      host.footerFlash = failed > 0 ? `Restored ${restored}; ${failed} failed` : `Restored ${restored}`;
+      host.footerFlashTicks = 4;
+      host.renderDashboard();
+    })
+    .catch((error: unknown) => {
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.showDashboardError("Failed to restore agents", [error instanceof Error ? error.message : String(error)]);
+    });
+}
+
+function dismissAgentRestoreOffer(host: DashboardControlHost): void {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  host.clearDashboardOverlay();
+  host.agentRestoreConfirmSelection = "restore";
+  host.footerFlash = "Dismissed agent restore";
+  host.footerFlashTicks = 3;
+  host.renderDashboard();
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.agents.dismissRestorePrevious, {})
+    .then(async () => {
+      await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+      renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
+    })
+    .catch((error: unknown) => {
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.showDashboardError("Failed to dismiss agent restore", [
+        error instanceof Error ? error.message : String(error),
+      ]);
+    });
+}
+
+function handleAgentRestoreConfirmKey(host: DashboardControlHost, data: Buffer): void {
+  const events = parseKeys(data);
+  if (events.length === 0) return;
+  const key = commandKey(events[0]);
+  if (key === "left" || key === "right") {
+    host.agentRestoreConfirmSelection = host.agentRestoreConfirmSelection === "cancel" ? "restore" : "cancel";
+    host.redrawDashboardWithOverlay?.();
+    return;
+  }
+  if (key === "escape") {
+    dismissAgentRestoreOffer(host);
+    return;
+  }
+  if (key === "enter" || key === "return") {
+    if (host.agentRestoreConfirmSelection === "cancel") {
+      dismissAgentRestoreOffer(host);
+    } else {
+      restoreAgentRestoreOffer(host);
+    }
+  }
+}
+
 export function renderActiveDashboardOverlay(host: DashboardControlHost): boolean {
   if (!buildActiveDashboardOverlayOutput(host)) return false;
   host.redrawDashboardWithOverlay?.();
@@ -873,6 +942,9 @@ export function buildActiveDashboardOverlayOutput(
   const { cols, rows } = viewport ?? host.getViewportSize();
   if (host.dashboardOverlayState.kind === "worktree-remove-confirm") {
     return buildWorktreeRemoveConfirmOverlayOutput(host, cols, rows);
+  }
+  if (host.dashboardOverlayState.kind === "agent-restore-confirm") {
+    return buildAgentRestoreConfirmOverlayOutput(host, cols, rows);
   }
   if (host.dashboardErrorState) {
     return buildDashboardErrorOverlayOutput(host, cols, rows);

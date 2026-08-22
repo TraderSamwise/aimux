@@ -108,6 +108,49 @@ describe("dashboardViewMethods.renderDashboard", () => {
     expect(host.writeFrame).toHaveBeenCalledWith("base-frame");
   });
 
+  it("opens agent restore offers as a dashboard modal", () => {
+    const host: any = {
+      dashboardRenderOptions: null,
+      writeStatuslineFile: vi.fn(),
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+      dashboardAgentRestoreOfferCache: {
+        id: "restore-1",
+        sessionIds: ["claude-1"],
+        sessions: [{ id: "claude-1", label: "claude(coder)" }],
+      },
+      dashboardState: {
+        focusedWorktreePath: undefined,
+        level: "sessions",
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      dashboardOverlayState: { kind: "none" },
+      agentRestoreConfirmSelection: "cancel",
+      openDashboardOverlay: vi.fn((kind: string) => {
+        host.dashboardOverlayState.kind = kind;
+      }),
+      dashboard: {
+        update: vi.fn(),
+        render: vi.fn(() => "base-frame"),
+      },
+      syncTuiNotificationContext: vi.fn(),
+      writeFrame: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      dashboardBusyState: null,
+      dashboardErrorState: null,
+    };
+
+    dashboardViewMethods.renderDashboard.call(host);
+
+    expect(host.openDashboardOverlay).toHaveBeenCalledWith("agent-restore-confirm");
+    expect(host.agentRestoreConfirmSelection).toBe("restore");
+    expect(host.writeFrame).toHaveBeenCalledWith("base-frame");
+  });
+
   it("writes a visible static error frame if dashboard rendering throws", () => {
     const host: any = {
       dashboardRenderOptions: null,

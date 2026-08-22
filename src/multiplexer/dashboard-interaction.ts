@@ -717,47 +717,6 @@ export const dashboardInteractionMethods = {
         });
       return;
     }
-    if (isShiftedCommand(event, key, "c")) {
-      if (!this.dashboardAgentRestoreOfferCache) return;
-      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
-      this.footerFlash = "Restoring previously running agents";
-      this.footerFlashTicks = 4;
-      this.renderDashboard();
-      void mutateDashboardApi(this, PROJECT_API_ROUTES.agents.restorePrevious, {}, { timeoutMs: 120_000 })
-        .then(async (result: any) => {
-          await refreshDashboardModelThroughApi(this, { force: true, lifecycle });
-          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
-          const restored = Array.isArray(result?.restored) ? result.restored.length : 0;
-          const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
-          this.footerFlash = failed > 0 ? `Restored ${restored}; ${failed} failed` : `Restored ${restored}`;
-          this.footerFlashTicks = 4;
-          this.renderDashboard();
-        })
-        .catch((error: unknown) => {
-          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
-          this.showDashboardError("Failed to restore agents", [error instanceof Error ? error.message : String(error)]);
-        });
-      return;
-    }
-    if (isShiftedCommand(event, key, "d")) {
-      if (!this.dashboardAgentRestoreOfferCache) return;
-      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
-      this.footerFlash = "Dismissed agent restore";
-      this.footerFlashTicks = 3;
-      this.renderDashboard();
-      void mutateDashboardApi(this, PROJECT_API_ROUTES.agents.dismissRestorePrevious, {})
-        .then(async () => {
-          await refreshDashboardModelThroughApi(this, { force: true, lifecycle });
-          renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
-        })
-        .catch((error: unknown) => {
-          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
-          this.showDashboardError("Failed to dismiss agent restore", [
-            error instanceof Error ? error.message : String(error),
-          ]);
-        });
-      return;
-    }
     if (isShiftedCommand(event, key, "r")) {
       const selected = this.getSelectedDashboardSessionForActions();
       if (selected) {

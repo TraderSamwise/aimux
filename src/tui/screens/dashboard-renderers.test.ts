@@ -767,7 +767,7 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(stripAnsi(inactive.frame)).not.toContain("hidden");
   });
 
-  it("renders a one-shot agent restore prompt when previous agents can be restored", () => {
+  it("keeps agent restore prompts out of dashboard frame hotkeys", () => {
     const agentRestoreOffer = {
       id: "restore-old",
       updatedAt: "2026-08-22T01:00:00.000Z",
@@ -782,16 +782,12 @@ describe("renderDashboardFrame worktree progress", () => {
       buildDashboardFooterHints(baseDashboardViewModel({ agentRestoreOffer })).filter((hint) =>
         ["C", "D"].includes(hint[0]),
       ),
-    ).toEqual([
-      ["C", "restore agents"],
-      ["D", "dismiss restore"],
-    ]);
+    ).toEqual([]);
 
     const { frame } = renderDashboardFrame(baseDashboardViewModel({ agentRestoreOffer }), 120, 40);
     const plain = stripAnsi(frame);
-    expect(plain).toContain("RESTORE AGENTS");
-    expect(plain).toContain("2 previously running agents can be restored.");
-    expect(plain).toContain("claude(coder), codex(coder)");
+    expect(plain).not.toContain("RESTORE AGENTS");
+    expect(plain).not.toContain("previously running agents can be restored");
   });
 
   it("numbers agents within a worktree group for quick jump", () => {

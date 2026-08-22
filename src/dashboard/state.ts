@@ -13,6 +13,7 @@ export type DashboardOverlayKind =
   | "orchestration-route-picker"
   | "worktree-list"
   | "worktree-remove-confirm"
+  | "agent-restore-confirm"
   | "migrate-picker"
   | "thread-reply"
   | "teammate-picker"

@@ -2447,6 +2447,76 @@ describe("refreshRuntimeGuard", () => {
   });
 });
 
+describe("agent restore confirm overlay", () => {
+  beforeEach(() => {
+    resetDashboardControlMocks();
+  });
+
+  function restoreOverlayHost() {
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardBusyState: null,
+      dashboardErrorState: null,
+      dashboardOverlayState: { kind: "agent-restore-confirm" },
+      agentRestoreConfirmSelection: "restore",
+      clearDashboardOverlay: vi.fn(() => {
+        host.dashboardOverlayState.kind = "none";
+      }),
+      redrawDashboardWithOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardModelServiceRefreshError: null,
+      postToProjectService: vi.fn(async (path: string) => {
+        if (path === "/agents/restore-previous") {
+          return { ok: true, restored: [{ id: "claude-1" }], failed: [] };
+        }
+        return { ok: true };
+      }),
+    };
+    return host;
+  }
+
+  it("uses arrow keys to choose without invoking a restore hotkey", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = restoreOverlayHost();
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\x1b[C"))).toBe(true);
+
+    expect(host.agentRestoreConfirmSelection).toBe("cancel");
+    expect(host.redrawDashboardWithOverlay).toHaveBeenCalledOnce();
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+  });
+
+  it("restores on Enter through the project API", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = restoreOverlayHost();
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(host.postToProjectService).toHaveBeenCalledWith("/agents/restore-previous", {}, { timeoutMs: 120_000 });
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, expect.anything());
+    });
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+  });
+
+  it("dismisses on Esc through the project API", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = restoreOverlayHost();
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\x1b"))).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(host.postToProjectService).toHaveBeenCalledWith("/agents/restore-previous/dismiss", {});
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, expect.anything());
+    });
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+  });
+});
+
 describe("handleDashboardSubscreenNavigationKey", () => {
   function makeHost() {
     return {
