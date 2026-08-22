@@ -71,7 +71,9 @@ export function buildAimuxAgentInstructions(
   const teamCoordinationLine = includeTeammates
     ? "- Do not directly spawn or control other agents unless the user gives an explicit aimux CLI command.\n" +
       "- Do not call aimux metadata APIs from inside an agent unless the user gives an explicit CLI/API command.\n"
-    : "- This session is already a teammate; do not create nested teammate teams.\n";
+    : "- This session is already a teammate; do not create nested teammate teams.\n" +
+      "- Do not directly spawn or control other agents unless the user gives an explicit aimux CLI command.\n" +
+      "- Do not call aimux metadata APIs from inside an agent unless the user gives an explicit CLI/API command.\n";
   const delegationProtocol = includeTeammates
     ? "When the user specifically asks for delegation, handoff, or teammate coordination, use explicit aimux CLI/API commands so the runtime exchange records the work. " +
       'For generic delegation or handoff records, create them with `aimux task assign` or the project service task endpoint with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
@@ -90,6 +92,20 @@ export function buildAimuxAgentInstructions(
     "- To show a local output file in GUI chat, publish it with `aimux attachment publish <path> --session <session-id>`.\n" +
     teamCoordinationLine +
     "\n" +
+    "## Aimux Inventory And Coordination\n" +
+    "- `aimux ps [--project <path>] [--json]` is the authoritative inventory for Aimux-managed agents in a project, across worktrees.\n" +
+    "- `aimux host agent-read <session-id> [--project <path>]` reads another Aimux agent's recent terminal output.\n" +
+    '- `aimux task assign "<description>" --to <session-id> --prompt "<instructions>" [--project <path>]` creates a durable task.\n' +
+    '- `aimux handoff send "<context>" --to <session-id> [--project <path>]` opens an explicit handoff thread.\n' +
+    '- `aimux message send "<message>" --to <session-id> [--project <path>]` sends a directed coordination message.\n' +
+    "- For generic private sub-agent work, use your own tool's native sub-agent mechanism and lifecycle. Do not turn generic sub-agent requests into Aimux coordination unless the user explicitly asks for Aimux.\n" +
+    "- When the user explicitly asks for Aimux channels, Aimux comms, Aimux tasks, Aimux handoffs, teammate coordination, or another Aimux CLI/API operation, use Aimux commands exclusively for that coordination path.\n" +
+    "- Claude/ListAgents-style vendor session lists can be valid for the vendor tool's own native subagents, but they are not Aimux inventory. Do not use them to discover, address, or rule out Aimux-managed Codex, Claude, Aider, or shell sessions.\n" +
+    "- Socket files, context files, and history artifacts are not Aimux inventory. If any non-Aimux source disagrees with `aimux ps`, trust `aimux ps`.\n" +
+    "- If an explicit Aimux coordination request cannot be completed with Aimux CLI/API commands, say you are stuck. Do not work around Aimux by probing sockets, private files, or vendor registries.\n" +
+    "- If an Aimux CLI command is unclear, inspect `aimux --help` and use the concrete shapes above only for coordination actions the user explicitly requested.\n" +
+    "- Do not infer liveness from private implementation files. Use project-service/runtime APIs directly only when the user explicitly asks for an Aimux CLI/API-level operation.\n" +
+    "\n" +
     "## Shared Context Files\n" +
     `- .aimux/context/${sessionPath}/live.md — recent conversation for this session\n` +
     `- .aimux/context/${sessionPath}/summary.md — compacted history for this session\n` +
@@ -99,7 +115,7 @@ export function buildAimuxAgentInstructions(
     "- .aimux/history/ — raw conversation history artifacts when available (JSONL)\n" +
     "\n" +
     "Treat these files as continuity artifacts, not as the source of truth for whether a session is managed or alive. " +
-    "Use `aimux ps`, `aimux host agent-read <session-id>`, or project-service/runtime state for liveness.\n" +
+    "For ordinary agent work, use `aimux ps` and `aimux host agent-read <session-id>` for Aimux liveness and output checks; use project-service/runtime state directly only when explicitly asked for an Aimux CLI/API-level operation.\n" +
     "\n" +
     "Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks. " +
     "Only update those files when the user asks for coordination/delegation, when the task is explicitly long-running, or when state would materially help another agent continue the work.\n" +

@@ -42,6 +42,37 @@ describe("buildAimuxAgentInstructions", () => {
     expect(instructions).toContain("Your aimux session ID is codex-123");
     expect(instructions).toContain("runtime exchange");
     expect(instructions).toContain("messages prefixed like `[name]`");
+    expect(instructions).toContain("`aimux ps [--project <path>] [--json]` is the authoritative inventory");
+    expect(instructions).toContain("`aimux host agent-read <session-id> [--project <path>]`");
+    expect(instructions).toContain('`aimux task assign "<description>" --to <session-id>');
+    expect(instructions).toContain('`aimux handoff send "<context>" --to <session-id>');
+    expect(instructions).toContain('`aimux message send "<message>" --to <session-id>');
+    expect(instructions).toContain(
+      "For generic private sub-agent work, use your own tool's native sub-agent mechanism and lifecycle",
+    );
+    expect(instructions).toContain(
+      "Do not turn generic sub-agent requests into Aimux coordination unless the user explicitly asks for Aimux",
+    );
+    expect(instructions).toContain(
+      "When the user explicitly asks for Aimux channels, Aimux comms, Aimux tasks, Aimux handoffs",
+    );
+    expect(instructions).toContain("use Aimux commands exclusively for that coordination path");
+    expect(instructions).toContain(
+      "Claude/ListAgents-style vendor session lists can be valid for the vendor tool's own native subagents",
+    );
+    expect(instructions).toContain(
+      "Do not use them to discover, address, or rule out Aimux-managed Codex, Claude, Aider, or shell sessions",
+    );
+    expect(instructions).toContain("Socket files, context files, and history artifacts are not Aimux inventory");
+    expect(instructions).toContain("If any non-Aimux source disagrees with `aimux ps`, trust `aimux ps`.");
+    expect(instructions).toContain(
+      "If an explicit Aimux coordination request cannot be completed with Aimux CLI/API commands, say you are stuck",
+    );
+    expect(instructions).toContain("Do not work around Aimux by probing sockets, private files, or vendor registries");
+    expect(instructions).toContain("only for coordination actions the user explicitly requested");
+    expect(instructions).toContain("Do not infer liveness from private implementation files");
+    expect(instructions).toContain("For ordinary agent work, use `aimux ps` and `aimux host agent-read <session-id>`");
+    expect(instructions).toContain("use project-service/runtime state directly only when explicitly asked");
     expect(instructions).toContain("Do not directly spawn or control other agents");
     expect(instructions).toContain("Do not call aimux metadata APIs from inside an agent");
     expect(instructions).toContain("For generic delegation or handoff records");
@@ -90,6 +121,12 @@ describe("SessionBootstrapService", () => {
 
     expect(preamble).toContain('You are a teammate for aimux parent agent "codex-parent".');
     expect(preamble).toContain("This session is already a teammate; do not create nested teammate teams.");
+    expect(preamble).toContain(
+      "Do not directly spawn or control other agents unless the user gives an explicit aimux CLI command.",
+    );
+    expect(preamble).toContain(
+      "Do not call aimux metadata APIs from inside an agent unless the user gives an explicit CLI/API command.",
+    );
     expect(preamble).not.toContain("/agents/teammates/create");
     expect(preamble).not.toContain("Reuse existing teammates first");
     expect(preamble).not.toContain("Team lifecycle uses the local metadata teammate API");
