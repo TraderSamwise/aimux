@@ -511,7 +511,7 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("yarn devpp");
   });
 
-  it("preserves statusline session order for footer chips instead of tmux window order", () => {
+  it("orders scoped footer agent chips by tmux window order", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -559,8 +559,8 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered.indexOf("codex")).toBeLessThan(rendered.indexOf("claude"));
-    expect(rendered.indexOf("claude")).toBeLessThan(rendered.indexOf("shell[svc]"));
+    expect(rendered.indexOf("claude")).toBeLessThan(rendered.indexOf("codex"));
+    expect(rendered.indexOf("codex")).toBeLessThan(rendered.indexOf("shell[svc]"));
   });
 
   it("renders current parent teammates separately from scoped footer chips", () => {
