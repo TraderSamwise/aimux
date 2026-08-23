@@ -143,6 +143,7 @@ const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 const SCROLL_BOTTOM_EPSILON = 24;
+const SCROLL_BOTTOM_SETTLE_FRAMES = Platform.OS === "web" ? 3 : 1;
 const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
 const COMPOSER_INPUT_VERTICAL_PADDING = 6;
@@ -1071,7 +1072,9 @@ export default function ChatScreen() {
       ref.scrollTo({ y: Math.max(0, offsetY), animated: false });
       requestAnimationFrame(() => {
         programmaticScrollRef.current[pane] = false;
-        pendingBottomPinRef.current[pane] = false;
+        if (isOffsetPinnedToBottom(scrollMetricsRef.current[pane])) {
+          pendingBottomPinRef.current[pane] = false;
+        }
       });
     },
     [getScrollRef],
@@ -1101,7 +1104,17 @@ export default function ChatScreen() {
       const metrics = scrollMetricsRef.current[pane];
       const maxY = getScrollableHeight(metrics);
       if (metrics.initialized && !metrics.pinnedToBottom && metrics.offsetY <= maxY) return;
-      requestAnimationFrame(() => applyPaneScrollPosition(pane));
+      let remainingFrames = SCROLL_BOTTOM_SETTLE_FRAMES;
+      const settle = () => {
+        if (isUserScrollActive(pane)) return;
+        const latestMetrics = scrollMetricsRef.current[pane];
+        if (latestMetrics.pinnedToBottom || pendingBottomPinRef.current[pane]) {
+          applyPaneScrollPosition(pane);
+        }
+        remainingFrames -= 1;
+        if (remainingFrames > 0) requestAnimationFrame(settle);
+      };
+      requestAnimationFrame(settle);
     },
     [applyPaneScrollPosition, isUserScrollActive],
   );
@@ -2501,6 +2514,18 @@ function KeyboardManagedScrollView({
       {children}
     </>
   );
+  const measuredContent =
+    Platform.OS === "web" ? (
+      <View
+        onLayout={(event: LayoutChangeEvent) =>
+          onContentSizeChange(pane, event.nativeEvent.layout.height)
+        }
+      >
+        {content}
+      </View>
+    ) : (
+      content
+    );
   const commonProps = {
     automaticallyAdjustKeyboardInsets: false,
     className: showLiveOutputLabel ? "flex-1 px-4 py-3" : "flex-1 px-4 py-2",
@@ -2545,7 +2570,7 @@ function KeyboardManagedScrollView({
 
   return (
     <ScrollView ref={scrollViewRef as React.RefObject<ScrollView>} {...commonProps}>
-      {content}
+      {measuredContent}
     </ScrollView>
   );
 }
