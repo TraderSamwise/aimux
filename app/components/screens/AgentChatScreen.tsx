@@ -1275,6 +1275,14 @@ export default function ChatScreen() {
   }, [keyboardVisible, setNativeComposerHidden, showTerminalOnly]);
 
   useEffect(() => {
+    if (scrollMetricsRef.current.chat.pinnedToBottom && !isUserScrollActive("chat")) {
+      pendingBottomPinRef.current.chat = true;
+    }
+    if (usesNativeKeyboardController && nativeChatPinnedToEndRef.current) {
+      requestAnimationFrame(() => {
+        chatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+      });
+    }
     requestAnimationFrame(() => {
       if (scrollMetricsRef.current.chat.pinnedToBottom && !isUserScrollActive("chat")) {
         applyPaneScrollPosition("chat");
@@ -1283,7 +1291,13 @@ export default function ChatScreen() {
         applyPaneScrollPosition("terminal");
       }
     });
-  }, [allMessages, applyPaneScrollPosition, isUserScrollActive, output]);
+  }, [
+    allMessages,
+    applyPaneScrollPosition,
+    isUserScrollActive,
+    output,
+    usesNativeKeyboardController,
+  ]);
 
   useEffect(() => {
     if (usesNativeKeyboardController && !showTerminalOnly) return;

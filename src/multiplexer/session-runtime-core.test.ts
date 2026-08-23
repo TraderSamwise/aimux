@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getContextDir, initPaths } from "../paths.js";
+import { updateSessionMetadata } from "../metadata-store.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import { loadOfflineTopologySessions } from "./runtime-state.js";
@@ -463,6 +464,50 @@ describe("session runtime prompt submission", () => {
       expect(tmuxRuntimeManager.captureTarget.mock.calls[0]![0]).toEqual(stale);
       expect(tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalled();
       expect(host.sessionTmuxTargets.get("claude-1")).toEqual(moved);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports interrupted when the live pane shows an interrupted prompt", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      updateSessionMetadata(
+        "claude-1",
+        (current) => ({
+          ...current,
+          derived: { ...(current.derived ?? {}), activity: "running", attention: "normal" },
+        }),
+        repoRoot,
+      );
+      const target = { sessionName: "aimux-test", windowId: "@3", windowIndex: 3, windowName: "claude" };
+      const tmuxRuntimeManager = {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-1" })),
+        captureTarget: vi.fn(() =>
+          ["• Working (4s · esc to interrupt)", "", "Interrupted · What should Claude do instead?"].join("\n"),
+        ),
+        listProjectManagedWindows: vi.fn(() => []),
+        isWindowAlive: vi.fn(() => true),
+      };
+      const host: any = {
+        sessions: [{ id: "claude-1", command: "claude", status: "running" }],
+        sessionTmuxTargets: new Map([["claude-1", target]]),
+        sessionToolKeys: new Map([["claude-1", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-1", repoRoot]]),
+        sessionLabels: new Map(),
+        sessionRoles: new Map(),
+        sessionOriginalArgs: new Map([["claude-1", []]]),
+        offlineSessions: [],
+        tmuxRuntimeManager,
+        projectRoot: repoRoot,
+      };
+
+      const result = await readAgentOutput(host, "claude-1");
+
+      expect(result.activity).toBe("interrupted");
+      expect(result.activityText).toBe("");
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -1008,6 +1053,11 @@ describe("reconcileAgentActivity", () => {
     expect(reconcileAgentActivity("waiting", "Frosting... (2s)")).toBe("waiting");
     expect(reconcileAgentActivity("error", "Frosting... (2s)")).toBe("error");
     expect(reconcileAgentActivity("interrupted", "Frosting... (2s)")).toBe("interrupted");
+  });
+
+  it("believes the pane when the visible prompt is interrupted", () => {
+    expect(reconcileAgentActivity("running", "", { interruptedVisible: true })).toBe("interrupted");
+    expect(reconcileAgentActivity("running", "Frosting... (2s)", { interruptedVisible: true })).toBe("interrupted");
   });
 });
 

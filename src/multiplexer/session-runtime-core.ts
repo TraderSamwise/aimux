@@ -20,6 +20,7 @@ import {
   messagesFromParsedAgentOutput,
   type AgentTranscriptMessage,
 } from "../agent-transcript.js";
+import { classifyToolPane } from "../tool-output-watchers.js";
 import {
   anchorSessionAttachment,
   forgetSessionAttachments,
@@ -376,7 +377,9 @@ function stripParsedSourceLines(parsed: any): any {
 export function reconcileAgentActivity(
   reported: AgentActivityState | undefined,
   activityText: string | undefined,
+  paneState?: { interruptedVisible?: boolean },
 ): AgentActivityState | undefined {
+  if (paneState?.interruptedVisible) return "interrupted";
   if (!activityText) return reported;
   if (reported === "waiting" || reported === "error" || reported === "interrupted") return reported;
   return "running";
@@ -460,7 +463,9 @@ export async function readAgentOutput(
     includeEscapes: true,
   });
   const output = stripSgr(outputAnsi);
-  writeLivePaneSnapshot({ id: sessionId, command: host.sessionToolKeys.get(sessionId) ?? runtime.command }, output);
+  const toolKey = host.sessionToolKeys.get(sessionId) ?? runtime.command;
+  const paneState = classifyToolPane(toolKey, output);
+  writeLivePaneSnapshot({ id: sessionId, command: toolKey }, output);
 
   // Read every time rather than cached with the transcript below: activity
   // moves independently of the pane — an agent finishing leaves the last frame
@@ -468,7 +473,7 @@ export async function readAgentOutput(
   const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
 
   const livenessFor = (activityText?: string) => ({
-    activity: reconcileAgentActivity(derived?.activity, activityText),
+    activity: reconcileAgentActivity(derived?.activity, activityText, paneState),
     attention: derived?.attention,
   });
 
@@ -479,6 +484,7 @@ export async function readAgentOutput(
   const cacheKey = `${sessionId}:${startLine ?? -120}`;
   const cached = transcriptCache.get(cacheKey);
   if (cached && cached.output === output && cached.outputAnsi === outputAnsi && cached.publishedKey === publishedKey) {
+    const activityText = paneState.interruptedVisible ? "" : cached.activityText;
     return {
       sessionId,
       output,
@@ -486,15 +492,15 @@ export async function readAgentOutput(
       startLine: startLine ?? -120,
       parsed: cached.parsed,
       messages: cached.messages,
-      activityText: cached.activityText,
-      ...livenessFor(cached.activityText),
+      activityText,
+      ...livenessFor(activityText),
     };
   }
 
   const richLines = containsSgr(outputAnsi) ? parseSgrRichTextLines(outputAnsi) : undefined;
   const parsedForMessages = parseAgentOutput(output, {
     includeSource: Boolean(richLines),
-    tool: host.sessionToolKeys.get(sessionId),
+    tool: toolKey,
   });
   const parsed = stripParsedSourceLines(parsedForMessages);
   // Projected here rather than in each client. Two of them had grown their own
@@ -533,7 +539,7 @@ export async function readAgentOutput(
   for (const anchor of merged.anchors) {
     anchorSessionAttachment(sessionId, anchor.attachmentId, anchor.messageId);
   }
-  const activityText = activityTextFromParsedAgentOutput(parsed);
+  const activityText = paneState.interruptedVisible ? "" : activityTextFromParsedAgentOutput(parsed);
   transcriptCache.set(cacheKey, { output, outputAnsi, parsed, messages, activityText, publishedKey });
 
   return {

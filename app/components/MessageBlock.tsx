@@ -2,6 +2,7 @@ import React from "react";
 import {
   Image,
   Platform,
+  ScrollView,
   Text as RNText,
   View,
   type TextStyle,
@@ -45,6 +46,8 @@ const MESSAGE_TEXT_STYLE: TextStyle = {
   ...(Platform.OS === "web" ? { fontSize: 15, lineHeight: 21 } : {}),
   maxWidth: "100%",
 };
+
+export type TextSegment = { kind: "text" | "table"; text: string };
 
 export function resolveImageUrl(
   part: HistoryImagePart | HistoryImageReferencePart | HistoryAttachmentReferencePart,
@@ -94,6 +97,50 @@ function attachmentPreviewKind(part: HistoryAttachmentReferencePart): string {
 
 function spanText(spans: readonly HistoryTextSpan[]): string {
   return spans.map((span) => span.text).join("");
+}
+
+function isMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return /^\|.*\|$/.test(trimmed) && trimmed.split("|").length >= 3;
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  return /^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed);
+}
+
+export function splitMarkdownTableSegments(text: string): TextSegment[] {
+  const lines = text.split("\n");
+  const segments: TextSegment[] = [];
+  const textLines: string[] = [];
+  const flushText = () => {
+    const value = textLines.join("\n").replace(/^\n+/, "").trimEnd();
+    textLines.length = 0;
+    if (value) segments.push({ kind: "text", text: value });
+  };
+
+  for (let index = 0; index < lines.length; ) {
+    if (
+      index + 1 < lines.length &&
+      isMarkdownTableRow(lines[index] ?? "") &&
+      isMarkdownTableSeparator(lines[index + 1] ?? "")
+    ) {
+      flushText();
+      const tableLines = [lines[index] ?? "", lines[index + 1] ?? ""];
+      index += 2;
+      while (index < lines.length && isMarkdownTableRow(lines[index] ?? "")) {
+        tableLines.push(lines[index] ?? "");
+        index += 1;
+      }
+      segments.push({ kind: "table", text: tableLines.join("\n") });
+      continue;
+    }
+    textLines.push(lines[index] ?? "");
+    index += 1;
+  }
+
+  flushText();
+  return segments;
 }
 
 export function canRenderRichText(
@@ -158,6 +205,64 @@ function RichText({
         </RNText>
       ))}
     </Text>
+  );
+}
+
+function MarkdownTableText({ className, text }: { className: string; text: string }) {
+  if (Platform.OS === "web") {
+    return (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="my-1 max-w-full">
+        {React.createElement(
+          "pre",
+          {
+            style: {
+              color: "inherit",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: 14,
+              lineHeight: "20px",
+              margin: 0,
+              whiteSpace: "pre",
+            },
+          },
+          text,
+        )}
+      </ScrollView>
+    );
+  }
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="my-1 max-w-full">
+      <Text
+        className={`${className} font-mono`}
+        style={[MESSAGE_TEXT_STYLE, { flexWrap: "nowrap" }]}
+      >
+        {text}
+      </Text>
+    </ScrollView>
+  );
+}
+
+function PlainTextPart({
+  className,
+  dividerWidth,
+  text,
+}: {
+  className: string;
+  dividerWidth?: number;
+  text: string;
+}) {
+  const segments = React.useMemo(() => splitMarkdownTableSegments(text), [text]);
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.kind === "table" ? (
+          <MarkdownTableText key={index} className={className} text={segment.text} />
+        ) : (
+          <Text key={index} className={className} style={MESSAGE_TEXT_STYLE}>
+            {formatPlainTextForDisplay(segment.text, { dividerWidth })}
+          </Text>
+        ),
+      )}
+    </>
   );
 }
 
@@ -335,10 +440,6 @@ export const MessageBlock = React.memo(function MessageBlock({
   const isUser = role === "user";
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
   const richTerminalColors = useAtomValue(chatRichTerminalColorsAtom);
-  const formatMessageText = React.useCallback(
-    (text: string) => formatPlainTextForDisplay(text, { dividerWidth }),
-    [dividerWidth],
-  );
 
   return (
     <View
@@ -382,9 +483,12 @@ export const MessageBlock = React.memo(function MessageBlock({
               );
             }
             return (
-              <Text key={idx} className={className} style={MESSAGE_TEXT_STYLE}>
-                {formatMessageText(part.text)}
-              </Text>
+              <PlainTextPart
+                key={idx}
+                className={className}
+                dividerWidth={dividerWidth}
+                text={part.text}
+              />
             );
           }
           if (part.type === "image" || part.type === "image_reference") {
@@ -407,12 +511,11 @@ export const MessageBlock = React.memo(function MessageBlock({
           );
         })
       ) : (
-        <Text
+        <PlainTextPart
           className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}
-          style={MESSAGE_TEXT_STYLE}
-        >
-          {formatMessageText(message.text ?? "")}
-        </Text>
+          dividerWidth={dividerWidth}
+          text={message.text ?? ""}
+        />
       )}
     </View>
   );

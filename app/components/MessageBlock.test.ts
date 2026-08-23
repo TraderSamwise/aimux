@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("react-native", () => ({
   Image: "Image",
   Platform: { OS: "web" },
+  ScrollView: "ScrollView",
   Text: "Text",
   View: "View",
 }));
@@ -12,6 +13,7 @@ import {
   messageSpeakerLabel,
   resolveImageUrl,
   shouldRenderRichTerminalText,
+  splitMarkdownTableSegments,
 } from "@/components/MessageBlock";
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
@@ -178,5 +180,36 @@ describe("MessageBlock rich text guard", () => {
         spans: [{ text: "Building", foreground: { model: "rgb", value: "#56b6c2" } }],
       }),
     ).toBe(true);
+  });
+});
+
+describe("MessageBlock table text", () => {
+  it("splits markdown tables into horizontally scrollable text segments", () => {
+    expect(
+      splitMarkdownTableSegments(
+        [
+          "Before",
+          "",
+          "| year | payouts | USDT |",
+          "| --- | ---: | ---: |",
+          "| 2023 | 239 | 3,027.30 |",
+          "| 2024 | 215 | 51.31 |",
+          "",
+          "After",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "text", text: "Before" },
+      {
+        kind: "table",
+        text: [
+          "| year | payouts | USDT |",
+          "| --- | ---: | ---: |",
+          "| 2023 | 239 | 3,027.30 |",
+          "| 2024 | 215 | 51.31 |",
+        ].join("\n"),
+      },
+      { kind: "text", text: "After" },
+    ]);
   });
 });

@@ -269,8 +269,15 @@ export function parseAgentOutput(
       /bypass permissions|shift\+tab|to cycle/i.test(trimmed)
     );
   };
+  const isBoxTableContentLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!/^│.*│$/.test(trimmed)) return false;
+    const inner = trimmed.slice(1, -1).trim();
+    return Boolean(inner) && inner.includes("│");
+  };
   const isCodexUiLine = (line: string) => {
     const trimmed = line.trim();
+    if (isBoxTableContentLine(trimmed)) return false;
     return /^│/.test(trimmed) || /^╰/.test(trimmed) || /^╭/.test(trimmed);
   };
   const isStatusLine = (line: string) => {

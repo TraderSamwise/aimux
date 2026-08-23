@@ -831,4 +831,27 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toContain("i mean i set it when i made the bot");
     expect(parsed.blocks[2]?.text).toContain("Good question");
   });
+
+  it("keeps Claude box-table rows in response text", () => {
+    const raw = [
+      "❯ reprint the table",
+      "",
+      "● BitMEX Affiliate — USD by calendar year",
+      "",
+      "┌──────┬─────────┬──────────┐",
+      "│ year │ payouts │ USDT     │",
+      "├──────┼─────────┼──────────┤",
+      "│ 2023 │ 239     │ 3,027.30 │",
+      "│ 2024 │ 215     │ 51.31    │",
+      "└──────┴─────────┴──────────┘",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+    const messages = messagesFromParsedAgentOutput(parsed);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]?.text).toContain("BitMEX Affiliate");
+    expect(messages[1]?.text).toContain("│ year │ payouts │ USDT");
+    expect(messages[1]?.text).toContain("│ 2023 │ 239");
+  });
 });
