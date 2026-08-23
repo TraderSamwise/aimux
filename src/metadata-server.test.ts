@@ -543,7 +543,7 @@ describe("MetadataServer threads API", () => {
     // dirty — the settle loops force precisely to observe changes the dirty flag
     // does not see, such as a window killed in tmux directly.
     const builds = getState.mock.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     await forced();
     expect(getState.mock.calls.length).toBe(builds + 1);
   });

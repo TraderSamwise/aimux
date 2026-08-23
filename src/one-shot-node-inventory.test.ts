@@ -47,6 +47,7 @@ const allowedRuntimePatternMatches = new Set<string>();
 const allowedProcessExecPathFiles = new Set(["src/cli-launcher.ts"]);
 const allowedChildProcessFiles = new Set([
   // Drives the installed CLI, git and tmux to prove hosted mode end to end.
+  "scripts/captest.mjs",
   "scripts/hosted-check.mjs",
   "src/context/compactor.ts",
   "src/core-project-actor.ts",

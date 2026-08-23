@@ -1022,7 +1022,7 @@ function mergeExposePreviewSnapshots(
  * real rebuild every poll. It exists only to absorb the burst of every
  * connected dashboard forcing within a beat of one change event.
  */
-const DESKTOP_STATE_FORCED_COALESCE_MS = 50;
+const DESKTOP_STATE_FORCED_COALESCE_MS = 90;
 
 interface ProjectServiceResourceSnapshot {
   uptimeMs: number;
