@@ -249,7 +249,8 @@ async function finishDashboardMutationIfSettled(
 
 function hasDashboardMutationTerminalState(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): boolean {
   if (opts.targetKind === "session") {
-    const entry = getRawDashboardSessionEntry(host, opts.targetId) ?? getDashboardSessionEntry(host, opts.targetId);
+    const rawEntry = getRawDashboardSessionEntry(host, opts.targetId);
+    const entry = rawEntry ?? getDashboardSessionEntry(host, opts.targetId);
     if (
       opts.pendingAction === "creating" ||
       opts.pendingAction === "forking" ||
@@ -258,8 +259,10 @@ function hasDashboardMutationTerminalState(host: DashboardOpsHost, opts: Dashboa
     ) {
       return isLiveDashboardSessionEntry(entry);
     }
-    if (opts.pendingAction === "stopping") return !entry || !isLiveDashboardSessionEntry(entry);
-    if (opts.pendingAction === "graveyarding") return !entry;
+    if (opts.pendingAction === "stopping") {
+      return rawEntry ? !isLiveDashboardSessionEntry(rawEntry) : !entry || !isLiveDashboardSessionEntry(entry);
+    }
+    if (opts.pendingAction === "graveyarding") return !rawEntry;
     return false;
   }
   const service = getRawDashboardServiceEntry(host, opts.targetId) ?? getDashboardServiceEntry(host, opts.targetId);
@@ -290,7 +293,9 @@ function shouldFastCheckDashboardMutationTerminalState(opts: DashboardMutationRe
     (opts.pendingAction === "creating" ||
       opts.pendingAction === "forking" ||
       opts.pendingAction === "switching" ||
-      opts.pendingAction === "starting")
+      opts.pendingAction === "starting" ||
+      opts.pendingAction === "stopping" ||
+      opts.pendingAction === "graveyarding")
   );
 }
 

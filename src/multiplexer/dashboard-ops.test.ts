@@ -2230,6 +2230,63 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears a graveyard pending row when raw state drops it during stale refresh recovery", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawSessionsCache: [session] as any[],
+      offlineSessions: [] as any[],
+      sessions: [session],
+      dashboardPendingActions: makePendingActionsFake(),
+      dashboardModelServiceRefreshError: null as Error | null,
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      getSessionLabel: vi.fn(() => "claude"),
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawSessionsCache = [];
+        host.dashboardModelServiceRefreshError = new Error("stale project service refresh");
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardPendingActions.getSessionAction("sess-1") === "graveyarding"
+          ? [{ ...session, status: "offline", pendingAction: "graveyarding", optimistic: true }]
+          : [],
+      ),
+      adjustAfterRemove: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = graveyardSessionWithFeedback(host, "sess-1", true);
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("graveyarding");
+
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
+    expect(host.footerFlash).toBe("Sent claude to graveyard");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("settles graveyard when the fresh rendered model drops a stale raw row", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
     let refreshCount = 0;
