@@ -256,15 +256,15 @@ function scheduleDashboardWorktreeMutationReconcile(
       return;
     }
     if (!hasPendingDashboardWorktreeAction(host, opts.pendingPath, opts.pendingAction)) return;
-    const error = new Error(
-      `worktree ${opts.pendingAction} is still not reflected by the project service after extended reconciliation`,
-    );
-    if (!opts.clearPending()) return;
     if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
-      opts.onStaleError?.(error);
+      opts.onStaleProgress?.();
+      scheduleDashboardWorktreeMutationReconcile(host, opts);
       return;
     }
-    opts.onError?.(error);
+    host.footerFlash = `worktree ${opts.pendingAction} is still settling`;
+    host.footerFlashTicks = 4;
+    host.renderDashboard?.();
+    scheduleDashboardWorktreeMutationReconcile(host, opts);
   })().catch((error: unknown) => {
     if (!opts.clearPending()) return;
     if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
@@ -484,15 +484,20 @@ function scheduleDashboardWorktreeCreateReconcile(
       return;
     }
     if (!hasPendingDashboardWorktreeAction(host, opts.targetPath, "creating")) return;
-    if (!clearPendingDashboardWorktreeAction(host, opts.targetPath, opts.token)) return;
     await refreshDashboardWorktreeCreateFailure(host, opts.targetPath);
-    if (!isDashboardLifecycleCurrent(host, opts.uiLifecycle)) return;
-    showDashboardWorktreeCreateFailure(
-      host,
-      opts.name,
-      opts.targetPath,
-      new Error("worktree creating is still not reflected by the project service after extended reconciliation"),
-    );
+    const failure = findDashboardWorktreeCreateFailure(host, opts.targetPath);
+    if (failure) {
+      if (!clearPendingDashboardWorktreeAction(host, opts.targetPath, opts.token)) return;
+      if (!isDashboardLifecycleCurrent(host, opts.uiLifecycle)) return;
+      showDashboardWorktreeCreateFailure(host, opts.name, opts.targetPath, failure);
+      return;
+    }
+    if (isDashboardLifecycleCurrent(host, opts.uiLifecycle)) {
+      host.footerFlash = "worktree creating is still settling";
+      host.footerFlashTicks = 4;
+      host.renderDashboard?.();
+    }
+    scheduleDashboardWorktreeCreateReconcile(host, opts);
   })().catch(async (error: unknown) => {
     if (!clearPendingDashboardWorktreeAction(host, opts.targetPath, opts.token)) return;
     await refreshDashboardWorktreeCreateFailure(host, opts.targetPath);

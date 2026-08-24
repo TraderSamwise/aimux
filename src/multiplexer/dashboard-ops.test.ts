@@ -249,7 +249,7 @@ describe("dashboard-ops", () => {
     }
   });
 
-  it("escalates a service create that never reconciles", async () => {
+  it("keeps a service create pending when reconciliation stays unavailable", async () => {
     vi.useFakeTimers();
     let createdServiceId = "";
     const host = {
@@ -288,17 +288,13 @@ describe("dashboard-ops", () => {
       expect(host.showDashboardError).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(95_000);
-      await vi.waitFor(() => expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull());
     } finally {
       vi.useRealTimers();
     }
 
-    expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
     expect(host.footerFlash).not.toBe("◆ Created service shell");
-    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to create service", [
-      "creating is still not reflected by the project service after extended reconciliation",
-      "Run aimux restart if it does not recover automatically.",
-    ]);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("shows optimistic starting state and clears it on successful service resume", async () => {
@@ -1901,7 +1897,7 @@ describe("dashboard-ops", () => {
     );
   });
 
-  it("keeps restore pending before escalating when the service snapshot stays unreachable", async () => {
+  it("keeps restore pending while the service snapshot stays unreachable", async () => {
     vi.useFakeTimers();
     const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const host = {
@@ -1935,17 +1931,13 @@ describe("dashboard-ops", () => {
       expect(host.showDashboardError).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(95_000);
-      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
     } finally {
       vi.useRealTimers();
     }
 
-    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("starting");
     expect(host.waitForSessionStart).toHaveBeenCalled();
-    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to restore "codex"', [
-      "starting is still not reflected by the project service after extended reconciliation",
-      "Run aimux restart if it does not recover automatically.",
-    ]);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("keeps restore pending across a transient service snapshot miss", async () => {

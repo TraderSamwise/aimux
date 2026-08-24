@@ -3636,6 +3636,61 @@ describe("MetadataServer threads API", () => {
     expect(finished).toEqual(["codex-1", "codex-2"]);
   });
 
+  it("serializes worktree and service lifecycle mutations through the same queue", async () => {
+    server?.stop();
+    rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    const started: string[] = [];
+    const resolvers = new Map<string, () => void>();
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        createWorktree: ({ name }) =>
+          new Promise<{ path: string }>((resolve) => {
+            started.push(`worktree:${name}`);
+            resolvers.set(`worktree:${name}`, () => resolve({ path: join(repoRoot, ".aimux", "worktrees", name) }));
+          }),
+        stopService: ({ serviceId }) =>
+          new Promise<{ serviceId: string; status: "stopped" }>((resolve) => {
+            started.push(`service:${serviceId}`);
+            resolvers.set(`service:${serviceId}`, () => resolve({ serviceId, status: "stopped" }));
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const worktree = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "queued" });
+    const servicePromise = post(PROJECT_API_ROUTES.services.stop, { serviceId: "svc-queued" });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    const service = await servicePromise;
+
+    expect(worktree.status).toBe(202);
+    expect(service.status).toBe(202);
+    expect(started).toEqual(["worktree:queued"]);
+    expect(service.body).toMatchObject({
+      ok: true,
+      serviceId: "svc-queued",
+      status: "offline",
+      transition: { operation: "service.stop", targetKind: "service", targetId: "svc-queued", phase: "settling" },
+    });
+
+    resolvers.get("worktree:queued")?.();
+    await waitForCondition(() => started.includes("service:svc-queued"));
+    resolvers.get("service:svc-queued")?.();
+
+    expect(started).toEqual(["worktree:queued", "service:svc-queued"]);
+  });
+
   it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
     server?.stop();
     const calls: string[] = [];

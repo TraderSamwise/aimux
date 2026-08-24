@@ -302,41 +302,6 @@ function shouldFastCheckDashboardMutationTerminalState(opts: DashboardMutationRe
   );
 }
 
-function hasMatchingDashboardMutationError(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): boolean {
-  return host.dashboardErrorState?.title === opts.errorTitle;
-}
-
-function scheduleDashboardMutationErrorRecovery(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): void {
-  const startedAt = Date.now();
-  const maxRecoveryMs = 60_000;
-  void (async () => {
-    while (
-      Date.now() - startedAt < maxRecoveryMs &&
-      isDashboardLifecycleCurrent(host, opts.renderLifecycle) &&
-      hasMatchingDashboardMutationError(host, opts)
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      await refreshDashboardModelForMutationFinalCheck(host);
-      if (finishDashboardMutationIfTerminal(host, opts)) return;
-    }
-  })().catch(() => undefined);
-}
-
-async function waitForDashboardMutationFinalState(
-  host: DashboardOpsHost,
-  opts: DashboardMutationReconcileOptions,
-  timeoutMs: number,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await refreshDashboardModelForMutationFinalCheck(host);
-    if (await finishDashboardMutationIfSettled(host, opts)) return true;
-    if (finishDashboardMutationIfTerminal(host, opts)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  return false;
-}
-
 function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): void {
   if (!hasPendingDashboardMutationAction(host, opts)) return;
   const startedAt = Date.now();
@@ -358,24 +323,12 @@ function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: Dashbo
     await refreshDashboardModelForMutationFinalCheck(host);
     if (finishDashboardMutationIfTerminal(host, opts)) return;
     if (await finishDashboardMutationIfSettled(host, opts)) return;
-    if (opts.keepReconcilingOnTimeout) {
-      if (isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
-        host.footerFlash = `${opts.pendingAction} is still settling`;
-        host.footerFlashTicks = 4;
-        renderDashboardMutationFrame(host, opts.renderLifecycle);
-      }
-      scheduleDashboardMutationReconcile(host, opts);
-      return;
+    if (isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+      host.footerFlash = `${opts.pendingAction} is still settling`;
+      host.footerFlashTicks = 4;
+      renderDashboardMutationFrame(host, opts.renderLifecycle);
     }
-    if (!opts.clearPending()) return;
-    await opts.onError?.(opts.modelLifecycle);
-    if (await waitForDashboardMutationFinalState(host, opts, 15_000)) return;
-    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
-    host.showDashboardError(opts.errorTitle, [
-      `${opts.pendingAction} is still not reflected by the project service after extended reconciliation`,
-      "Run aimux restart if it does not recover automatically.",
-    ]);
-    scheduleDashboardMutationErrorRecovery(host, opts);
+    scheduleDashboardMutationReconcile(host, opts);
   })().catch((error: unknown) => {
     if (!opts.clearPending()) return;
     if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
