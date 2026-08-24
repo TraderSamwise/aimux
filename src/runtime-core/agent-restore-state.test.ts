@@ -71,16 +71,34 @@ describe("agent restore state", () => {
       ],
     });
 
-    const offer = deriveAgentRestoreOffer(["claude-1"], { now: "2026-08-22T01:02:00.000Z" });
+    const offer = deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" });
 
     expect(offer?.snapshotId).toBe("snapshot-old");
-    expect(offer?.sessionIds).toEqual(["codex-2"]);
-    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-2"]);
+    expect(offer?.sessionIds).toEqual(["claude-1", "codex-2"]);
+    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["claude-1", "codex-2"]);
 
     acknowledgeAgentRestoreOffer();
 
     expect(readAgentRestoreOffer()).toBeNull();
     expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:03:00.000Z" })).toBeNull();
+  });
+
+  it("does not create a previous-writer offer while any agent is live", () => {
+    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+      version: 1,
+      id: "snapshot-old",
+      writerInstanceId: "previous-process",
+      createdAt: "2026-08-22T01:00:00.000Z",
+      updatedAt: "2026-08-22T01:00:00.000Z",
+      sessionIds: ["claude-1", "codex-2"],
+      sessions: [
+        { id: "claude-1", command: "claude", label: "claude(coder)" },
+        { id: "codex-2", command: "codex", label: "codex(coder)" },
+      ],
+    });
+
+    expect(deriveAgentRestoreOffer(["claude-1"], { now: "2026-08-22T01:02:00.000Z" })).toBeNull();
+    expect(readAgentRestoreOffer()).toBeNull();
   });
 
   it("starts a new prompt generation when a new writer records the same session ids", () => {
@@ -158,11 +176,8 @@ describe("agent restore state", () => {
 
   it("creates a one-shot offer from restorable inventory when no online snapshot exists", () => {
     const offer = deriveAgentRestoreOfferFromRestorableInventory(
-      ["claude-live"],
-      [
-        { id: "claude-live", command: "claude" },
-        { id: "codex-offline", command: "codex", label: "codex(coder)" },
-      ],
+      [],
+      [{ id: "codex-offline", command: "codex", label: "codex(coder)" }],
       { now: "2026-08-22T01:04:00.000Z" },
     );
 
@@ -179,6 +194,19 @@ describe("agent restore state", () => {
         { now: "2026-08-22T01:05:00.000Z" },
       ),
     ).toBeNull();
+  });
+
+  it("clears inventory offers when live agents are present", () => {
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [{ id: "codex-offline", command: "codex", label: "codex(coder)" }],
+        { now: "2026-08-22T01:08:00.000Z" },
+      )?.source,
+    ).toBe("restorable-inventory");
+
+    expect(deriveAgentRestoreOffer(["codex-live"], { now: "2026-08-22T01:09:00.000Z" })).toBeNull();
+    expect(readAgentRestoreOffer()).toBeNull();
   });
 
   it("does not re-offer dismissed inventory sessions when the restorable set changes", () => {

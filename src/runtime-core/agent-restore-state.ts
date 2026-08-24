@@ -234,6 +234,11 @@ export function deriveAgentRestoreOffer(
   input: { projectRoot?: string; now?: string } = {},
 ): AgentRestoreOffer | null {
   const derive = () => {
+    const liveIds = new Set(liveSessionIds);
+    if (liveIds.size > 0) {
+      rmSync(offerPath(), { force: true });
+      return null;
+    }
     const existing = readAgentRestoreOffer();
     const snapshot = readLastOnlineAgentsSnapshot();
     if (
@@ -250,7 +255,6 @@ export function deriveAgentRestoreOffer(
       return null;
     }
 
-    const liveIds = new Set(liveSessionIds);
     const sessions = snapshot.sessions.filter((session) => !liveIds.has(session.id));
     if (sessions.length === 0) {
       rmSync(offerPath(), { force: true });

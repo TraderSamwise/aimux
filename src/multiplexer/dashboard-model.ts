@@ -1199,7 +1199,11 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
   const liveRestoreSessionIds = onlineRestoreSessions.map((session) => session.id);
   const agentRestoreOffer =
     deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot }) ??
-    deriveAgentRestoreOfferFromRestorableInventory(liveRestoreSessionIds, restorableOfflineSessions, { projectRoot });
+    (onlineRestoreSessions.length === 0
+      ? deriveAgentRestoreOfferFromRestorableInventory(liveRestoreSessionIds, restorableOfflineSessions, {
+          projectRoot,
+        })
+      : null);
   const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
   const shouldRecordRestoreSnapshot =
     onlineRestoreSessions.length > 0 ||
