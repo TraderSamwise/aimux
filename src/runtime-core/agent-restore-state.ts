@@ -39,6 +39,8 @@ export interface AgentRestoreOffer {
 interface RestoreOfferAck {
   version: 1;
   snapshotId: string;
+  source?: "last-online" | "restorable-inventory";
+  inventorySessionIds?: string[];
   acknowledgedAt: string;
 }
 
@@ -85,6 +87,11 @@ function normalizeSessions(value: unknown): AgentRestoreSession[] {
     byId.set(session.id, session);
   }
   return [...byId.values()];
+}
+
+function normalizeSessionIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((id): id is string => typeof id === "string" && Boolean(id.trim())))];
 }
 
 export function agentRestoreSessionKey(sessions: AgentRestoreSession[]): string {
@@ -169,6 +176,8 @@ function normalizeAck(value: unknown): RestoreOfferAck | null {
   return {
     version: 1,
     snapshotId: record.snapshotId,
+    source: record.source === "restorable-inventory" ? "restorable-inventory" : "last-online",
+    inventorySessionIds: normalizeSessionIds(record.inventorySessionIds),
     acknowledgedAt:
       typeof record.acknowledgedAt === "string" && record.acknowledgedAt.trim()
         ? record.acknowledgedAt
@@ -275,15 +284,19 @@ export function deriveAgentRestoreOfferFromRestorableInventory(
     const existing = readAgentRestoreOffer();
     if (existing) return existing;
 
+    const ack = readJsonFile(ackPath(), normalizeAck);
+    const dismissedInventoryIds =
+      ack?.source === "restorable-inventory" ? new Set(ack.inventorySessionIds ?? []) : new Set<string>();
     const liveIds = new Set(liveSessionIds);
-    const sessions = normalizeSessions(candidateSessions).filter((session) => !liveIds.has(session.id));
+    const sessions = normalizeSessions(candidateSessions).filter(
+      (session) => !liveIds.has(session.id) && !dismissedInventoryIds.has(session.id),
+    );
     if (sessions.length === 0) {
       rmSync(offerPath(), { force: true });
       return null;
     }
 
     const snapshotId = inventorySnapshotId(sessions);
-    const ack = readJsonFile(ackPath(), normalizeAck);
     if (ack?.snapshotId === snapshotId) {
       rmSync(offerPath(), { force: true });
       return null;
@@ -314,6 +327,8 @@ export function acknowledgeAgentRestoreOffer(projectRoot?: string): void {
       writeJsonAtomic(ackPath(), {
         version: 1,
         snapshotId: offer.snapshotId,
+        source: offer.source ?? "last-online",
+        inventorySessionIds: offer.source === "restorable-inventory" ? offer.sessionIds : undefined,
         acknowledgedAt: new Date().toISOString(),
       } satisfies RestoreOfferAck);
     }

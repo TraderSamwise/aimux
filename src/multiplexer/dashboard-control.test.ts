@@ -2503,6 +2503,30 @@ describe("agent restore confirm overlay", () => {
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
   });
 
+  it("ignores immediate Enter after opening the restore overlay", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = restoreOverlayHost();
+    host.agentRestoreConfirmOpenedAt = Date.now();
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(true);
+
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.clearDashboardOverlay).not.toHaveBeenCalled();
+    expect(host.redrawDashboardWithOverlay).toHaveBeenCalledOnce();
+  });
+
+  it("restores on Enter after the restore overlay activation delay", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = restoreOverlayHost();
+    host.agentRestoreConfirmOpenedAt = Date.now() - 1000;
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(host.postToProjectService).toHaveBeenCalledWith("/agents/restore-previous", {}, { timeoutMs: 120_000 });
+    });
+  });
+
   it("dismisses on Esc through the project API", async () => {
     const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
     const host = restoreOverlayHost();

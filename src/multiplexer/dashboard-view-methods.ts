@@ -207,11 +207,13 @@ export const dashboardViewMethods = {
         !this.dashboardErrorState
       ) {
         this.agentRestoreConfirmSelection = "restore";
+        this.agentRestoreConfirmOpenedAt = Date.now();
         this.openDashboardOverlay("agent-restore-confirm");
       } else if (
         !this.dashboardAgentRestoreOfferCache &&
         this.dashboardOverlayState?.kind === "agent-restore-confirm"
       ) {
+        this.agentRestoreConfirmOpenedAt = 0;
         this.clearDashboardOverlay();
       }
       this.syncTuiNotificationContext(false);

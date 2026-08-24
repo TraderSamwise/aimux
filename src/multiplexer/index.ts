@@ -291,6 +291,7 @@ export class Multiplexer {
   private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
   private dashboardAgentRestoreOfferCache: unknown = null;
   private agentRestoreConfirmSelection: "restore" | "cancel" = "restore";
+  private agentRestoreConfirmOpenedAt = 0;
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;

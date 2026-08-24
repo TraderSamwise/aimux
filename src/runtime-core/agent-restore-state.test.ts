@@ -180,4 +180,30 @@ describe("agent restore state", () => {
       ),
     ).toBeNull();
   });
+
+  it("does not re-offer dismissed inventory sessions when the restorable set changes", () => {
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [
+          { id: "codex-a", command: "codex", label: "codex(a)" },
+          { id: "codex-b", command: "codex", label: "codex(b)" },
+        ],
+        { now: "2026-08-22T01:06:00.000Z" },
+      )?.sessionIds,
+    ).toEqual(["codex-a", "codex-b"]);
+
+    acknowledgeAgentRestoreOffer();
+
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [
+          { id: "codex-b", command: "codex", label: "codex(b-renamed)" },
+          { id: "codex-c", command: "codex", label: "codex(c)" },
+        ],
+        { now: "2026-08-22T01:07:00.000Z" },
+      )?.sessionIds,
+    ).toEqual(["codex-c"]);
+  });
 });

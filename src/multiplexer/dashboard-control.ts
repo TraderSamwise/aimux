@@ -78,6 +78,7 @@ const RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS = 120_000;
 const RUNTIME_GUARD_REPAIR_FLAP_LIMIT = 5;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 const PENDING_DASHBOARD_LOCAL_NAVIGATION_TTL_MS = 10_000;
+const AGENT_RESTORE_CONFIRM_ACTIVATION_DELAY_MS = 750;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
 export function dashboardProjectRoot(host: DashboardControlHost): string {
@@ -917,6 +918,11 @@ function handleAgentRestoreConfirmKey(host: DashboardControlHost, data: Buffer):
     return;
   }
   if (key === "enter" || key === "return") {
+    const openedAt = Number(host.agentRestoreConfirmOpenedAt ?? 0);
+    if (openedAt > 0 && Date.now() - openedAt < AGENT_RESTORE_CONFIRM_ACTIVATION_DELAY_MS) {
+      host.redrawDashboardWithOverlay?.();
+      return;
+    }
     if (host.agentRestoreConfirmSelection === "cancel") {
       dismissAgentRestoreOffer(host);
     } else {
