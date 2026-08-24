@@ -3640,6 +3640,235 @@ describe("MetadataServer threads API", () => {
     expect(finished).toEqual(["codex-1", "codex-2"]);
   });
 
+  it("rejects overlapping lifecycle mutations for the same agent target", async () => {
+    server?.stop();
+    let releaseStop: (() => void) | undefined;
+    const stopped: string[] = [];
+    const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => ({ sessionId, status: "running" }));
+    server = new MetadataServer({
+      desktop: { resumeAgent },
+      lifecycle: {
+        stopAgent: ({ sessionId }) =>
+          new Promise<{ sessionId: string; status: "offline" }>((resolve) => {
+            releaseStop = () => {
+              stopped.push(sessionId);
+              resolve({ sessionId, status: "offline" });
+            };
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const stop = await post(PROJECT_API_ROUTES.agents.stop, { sessionId: "codex-1" });
+    const blockedAttempts = await Promise.all([
+      post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" }),
+      post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" }),
+      post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" }),
+    ]);
+
+    expect(stop.status).toBe(202);
+    expect(blockedAttempts.map((attempt) => attempt.status)).toEqual([409, 409, 409]);
+    for (const attempt of blockedAttempts) {
+      expect(attempt.body).toMatchObject({
+        ok: false,
+        transition: { operation: "agent.resume", targetKind: "agent", targetId: "codex-1", phase: "failed" },
+        activeTransition: { operation: "agent.stop", targetKind: "agent", targetId: "codex-1", phase: "settling" },
+      });
+    }
+    expect(resumeAgent).not.toHaveBeenCalled();
+
+    releaseStop?.();
+    await waitForCondition(() => stopped.includes("codex-1"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const resumed = await post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" });
+
+    expect(resumed.status).toBe(200);
+    expect(resumeAgent).toHaveBeenCalledOnce();
+    expect(resumed.body).toMatchObject({
+      ok: true,
+      sessionId: "codex-1",
+      status: "running",
+      transition: { operation: "agent.resume", targetKind: "agent", targetId: "codex-1" },
+    });
+  });
+
+  it("releases lifecycle target reservations after the admitted action fails", async () => {
+    server?.stop();
+    let rejectStop: ((error: Error) => void) | undefined;
+    const failed: string[] = [];
+    const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => ({ sessionId, status: "running" }));
+    server = new MetadataServer({
+      desktop: { resumeAgent },
+      lifecycle: {
+        stopAgent: ({ sessionId }) =>
+          new Promise<{ sessionId: string; status: "offline" }>((_resolve, reject) => {
+            rejectStop = (error: Error) => {
+              failed.push(sessionId);
+              reject(error);
+            };
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const stop = await post(PROJECT_API_ROUTES.agents.stop, { sessionId: "codex-1" });
+    const blockedResume = await post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" });
+
+    expect(stop.status).toBe(202);
+    expect(blockedResume.status).toBe(409);
+    expect(resumeAgent).not.toHaveBeenCalled();
+
+    rejectStop?.(new Error("stop failed"));
+    await waitForCondition(() => failed.includes("codex-1"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const resumed = await post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" });
+
+    expect(resumed.status).toBe(200);
+    expect(resumeAgent).toHaveBeenCalledOnce();
+    expect(resumed.body).toMatchObject({
+      ok: true,
+      sessionId: "codex-1",
+      status: "running",
+      transition: { operation: "agent.resume", targetKind: "agent", targetId: "codex-1" },
+    });
+  });
+
+  it("rejects rename and interrupt while the same agent target is mutating", async () => {
+    server?.stop();
+    let releaseStop: (() => void) | undefined;
+    const stopped: string[] = [];
+    const renameAgent = vi.fn(({ sessionId, label }: { sessionId: string; label?: string }) => ({
+      sessionId,
+      label,
+    }));
+    const interruptAgent = vi.fn(({ sessionId }: { sessionId: string }) => ({ sessionId, interrupted: true }));
+    server = new MetadataServer({
+      lifecycle: {
+        renameAgent,
+        interruptAgent,
+        stopAgent: ({ sessionId }) =>
+          new Promise<{ sessionId: string; status: "offline" }>((resolve) => {
+            releaseStop = () => {
+              stopped.push(sessionId);
+              resolve({ sessionId, status: "offline" });
+            };
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const stop = await post(PROJECT_API_ROUTES.agents.stop, { sessionId: "codex-1" });
+    const rename = await post(PROJECT_API_ROUTES.agents.rename, { sessionId: "codex-1", label: "New name" });
+    const interrupt = await post(PROJECT_API_ROUTES.agents.interrupt, { sessionId: "codex-1" });
+
+    expect(stop.status).toBe(202);
+    expect(rename.status).toBe(409);
+    expect(interrupt.status).toBe(409);
+    expect(rename.body).toMatchObject({
+      ok: false,
+      transition: { operation: "agent.rename", targetKind: "agent", targetId: "codex-1", phase: "failed" },
+      activeTransition: { operation: "agent.stop", targetKind: "agent", targetId: "codex-1", phase: "settling" },
+    });
+    expect(interrupt.body).toMatchObject({
+      ok: false,
+      transition: { operation: "agent.interrupt", targetKind: "agent", targetId: "codex-1", phase: "failed" },
+      activeTransition: { operation: "agent.stop", targetKind: "agent", targetId: "codex-1", phase: "settling" },
+    });
+    expect(renameAgent).not.toHaveBeenCalled();
+    expect(interruptAgent).not.toHaveBeenCalled();
+
+    releaseStop?.();
+    await waitForCondition(() => stopped.includes("codex-1"));
+  });
+
+  it("rejects path-targeted worktree mutations while that worktree is being created", async () => {
+    server?.stop();
+    rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    const canonicalRepoRoot = realpathSync(repoRoot);
+    const targetPath = join(canonicalRepoRoot, ".aimux", "worktrees", "feature-a");
+    let releaseCreate: (() => void) | undefined;
+    const removeWorktree = vi.fn(({ path }: { path: string }) => ({ path, status: "removed" }));
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        removeWorktree,
+        createWorktree: ({ name }) =>
+          new Promise<{ path: string }>((resolve) => {
+            releaseCreate = () => resolve({ path: join(repoRoot, ".aimux", "worktrees", name) });
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const create = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "feature-a" });
+    const remove = await post(PROJECT_API_ROUTES.worktreeActions.remove, { path: targetPath });
+
+    expect(create.status).toBe(202);
+    expect(remove.status).toBe(409);
+    expect(remove.body).toMatchObject({
+      ok: false,
+      transition: {
+        operation: "worktree.remove",
+        targetKind: "worktree",
+        targetPath,
+        phase: "failed",
+      },
+      activeTransition: {
+        operation: "worktree.create",
+        targetKind: "worktree",
+        targetId: "feature-a",
+        targetPath,
+        phase: "settling",
+      },
+    });
+    expect(removeWorktree).not.toHaveBeenCalled();
+
+    releaseCreate?.();
+  });
+
   it("serializes worktree and service lifecycle mutations through the same queue", async () => {
     server?.stop();
     rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
@@ -3693,6 +3922,53 @@ describe("MetadataServer threads API", () => {
     resolvers.get("service:svc-queued")?.();
 
     expect(started).toEqual(["worktree:queued", "service:svc-queued"]);
+  });
+
+  it("serializes graveyard cleanup behind queued worktree lifecycle mutations", async () => {
+    server?.stop();
+    rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    const started: string[] = [];
+    let releaseCreate: (() => void) | undefined;
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        createWorktree: ({ name }) =>
+          new Promise<{ path: string }>((resolve) => {
+            started.push(`worktree:${name}`);
+            releaseCreate = () => resolve({ path: join(repoRoot, ".aimux", "worktrees", name) });
+          }),
+        cleanupGraveyard: ({ dryRun }) => {
+          started.push(`cleanup:${dryRun ? "dry" : "apply"}`);
+          return { removed: [] };
+        },
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const create = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "cleanup-queued" });
+    const cleanupPromise = post(PROJECT_API_ROUTES.graveyardActions.cleanup, { dryRun: true });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+
+    expect(create.status).toBe(202);
+    expect(started).toEqual(["worktree:cleanup-queued"]);
+
+    releaseCreate?.();
+    const cleanup = await cleanupPromise;
+
+    expect(cleanup.status).toBe(200);
+    expect(cleanup.body).toMatchObject({ ok: true, removed: [] });
+    expect(started).toEqual(["worktree:cleanup-queued", "cleanup:dry"]);
   });
 
   it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
@@ -4141,6 +4417,59 @@ describe("MetadataServer threads API", () => {
     expect(body.offer?.sessionIds).toEqual(["claude-fail"]);
     expect(readAgentRestoreOffer(repoRoot)?.sessionIds).toEqual(["claude-fail"]);
     expect(resumeAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("serializes restore-previous agent resumes through the lifecycle queue", async () => {
+    server?.stop();
+    deriveAgentRestoreOfferFromRestorableInventory(
+      [],
+      [
+        { id: "codex-a", command: "codex" },
+        { id: "codex-b", command: "codex" },
+      ],
+      { projectRoot: repoRoot, now: "2026-08-24T16:15:00.000Z" },
+    );
+    const started: string[] = [];
+    const resolvers = new Map<string, () => void>();
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        resumeAgent: ({ sessionId }) =>
+          new Promise<{ sessionId: string; status: "running" }>((resolve) => {
+            started.push(sessionId);
+            resolvers.set(sessionId, () => resolve({ sessionId, status: "running" }));
+          }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const restorePromise = fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    await waitForCondition(() => started.includes("codex-a"));
+    await new Promise((resolve) => setTimeout(resolve, 75));
+
+    expect(started).toEqual(["codex-a"]);
+
+    resolvers.get("codex-a")?.();
+    await waitForCondition(() => started.includes("codex-b"));
+    resolvers.get("codex-b")?.();
+
+    const body = (await (await restorePromise).json()) as {
+      ok: boolean;
+      restored: Array<{ sessionId: string; status: string }>;
+      failed: Array<{ sessionId: string; error: string }>;
+    };
+
+    expect(body.ok).toBe(true);
+    expect(body.restored).toEqual([
+      { sessionId: "codex-a", status: "running" },
+      { sessionId: "codex-b", status: "running" },
+    ]);
+    expect(body.failed).toEqual([]);
+    expect(started).toEqual(["codex-a", "codex-b"]);
   });
 
   it("persists the current live window as the preferred dashboard selection when reopening dashboard", async () => {

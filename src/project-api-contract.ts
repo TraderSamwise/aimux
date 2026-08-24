@@ -954,7 +954,8 @@ export type ProjectLifecycleTransitionOperation =
   | "worktree.graveyard"
   | "graveyard.agent.resurrect"
   | "graveyard.worktree.resurrect"
-  | "graveyard.worktree.delete";
+  | "graveyard.worktree.delete"
+  | "graveyard.cleanup";
 
 export interface ProjectLifecycleTransition {
   operationId: string;

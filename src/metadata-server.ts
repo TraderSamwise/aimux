@@ -251,6 +251,34 @@ type EarlyLifecycleResult<T> =
   | { kind: "rejected"; error: unknown }
   | { kind: "pending" };
 
+class LifecycleMutationConflictError extends Error {
+  readonly status = 409;
+
+  constructor(
+    readonly requested: LifecycleTransitionInput,
+    readonly active: LifecycleTransitionInput,
+  ) {
+    const target = requested.targetId ?? requested.targetPath ?? "unknown";
+    super(`lifecycle mutation already in progress for ${requested.targetKind} ${target}`);
+  }
+}
+
+function lifecycleTargetKey(input: LifecycleTransitionInput): string | undefined {
+  const target =
+    input.targetKind === "worktree"
+      ? input.targetPath?.trim() || input.targetId?.trim()
+      : input.targetId?.trim() || input.targetPath?.trim();
+  return target ? `${input.targetKind}:${target}` : undefined;
+}
+
+function safeWorktreeCreatePath(name: string, projectRoot: string): string {
+  try {
+    return getWorktreeCreatePath(name, projectRoot);
+  } catch {
+    return join(projectRoot, ".aimux", "worktrees", name);
+  }
+}
+
 async function waitForEarlyLifecycleResult<T>(promise: Promise<T>, timeoutMs = 50): Promise<EarlyLifecycleResult<T>> {
   return Promise.race([
     promise.then(
@@ -1662,6 +1690,7 @@ export class MetadataServer {
   private exposeHotSnapshotWorker: Worker | null = null;
   private readonly promptContexts = new PromptContextStore();
   private lifecycleMutationQueue: Promise<void> = Promise.resolve();
+  private readonly lifecycleMutationTargets = new Map<string, LifecycleTransitionInput>();
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -1688,13 +1717,23 @@ export class MetadataServer {
     });
   }
 
-  private enqueueLifecycleMutation<T>(action: () => Promise<T> | T): Promise<T> {
+  private enqueueLifecycleMutation<T>(action: () => Promise<T> | T, transition?: LifecycleTransitionInput): Promise<T> {
+    const targetKey = transition ? lifecycleTargetKey(transition) : undefined;
+    if (targetKey && transition && this.lifecycleMutationTargets.has(targetKey)) {
+      throw new LifecycleMutationConflictError(transition, this.lifecycleMutationTargets.get(targetKey)!);
+    }
+    if (targetKey && transition) this.lifecycleMutationTargets.set(targetKey, transition);
     const queued = this.lifecycleMutationQueue.catch(() => undefined).then(action);
-    this.lifecycleMutationQueue = queued.then(
+    const tracked = queued.finally(() => {
+      if (targetKey && this.lifecycleMutationTargets.get(targetKey) === transition) {
+        this.lifecycleMutationTargets.delete(targetKey);
+      }
+    });
+    this.lifecycleMutationQueue = tracked.then(
       () => undefined,
       () => undefined,
     );
-    return queued;
+    return tracked;
   }
 
   private notifyLifecycleSettled(
@@ -3615,7 +3654,10 @@ export class MetadataServer {
       actionName: string;
       acceptedStatus?: number;
     }): Promise<void> => {
-      const resultPromise = this.enqueueLifecycleMutation(() => runLifecycle(opts.transition, opts.action));
+      const resultPromise = this.enqueueLifecycleMutation(
+        () => runLifecycle(opts.transition, opts.action),
+        opts.transition,
+      );
       const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
       if (earlyResult.kind === "resolved") {
         notifyCurrentRouteChange();
@@ -5262,8 +5304,9 @@ export class MetadataServer {
           });
           return;
         }
-        const resultPromise = this.enqueueLifecycleMutation(() =>
-          runLifecycle(transitionInput, () => this.options.lifecycle!.spawnAgent!(body)),
+        const resultPromise = this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => this.options.lifecycle!.spawnAgent!(body)),
+          transitionInput,
         );
         const result = await resultPromise;
         notifyCurrentRouteChange();
@@ -5403,9 +5446,14 @@ export class MetadataServer {
           });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.spawn", targetKind: "agent", targetId: body.sessionId },
-          createTeammate,
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.spawn",
+          targetKind: "agent",
+          targetId: body.sessionId,
+        };
+        const result = await this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, createTeammate),
+          transitionInput,
         );
         notifyCurrentRouteChange();
         send(
@@ -5504,8 +5552,12 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: resolved.teammate.id,
         };
-        const resultPromise = this.enqueueLifecycleMutation(() =>
-          runLifecycle(transitionInput, () => this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id })),
+        const resultPromise = this.enqueueLifecycleMutation(
+          () =>
+            runLifecycle(transitionInput, () =>
+              this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id }),
+            ),
+          transitionInput,
         );
         const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
         if (earlyResult.kind === "resolved") {
@@ -5595,12 +5647,14 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: resolved.teammate.id,
         };
-        const resultPromise = this.enqueueLifecycleMutation(() =>
-          runLifecycle(transitionInput, () =>
-            this.options.lifecycle!.killAgent!({
-              sessionId: resolved.teammate.id,
-            }),
-          ),
+        const resultPromise = this.enqueueLifecycleMutation(
+          () =>
+            runLifecycle(transitionInput, () =>
+              this.options.lifecycle!.killAgent!({
+                sessionId: resolved.teammate.id,
+              }),
+            ),
+          transitionInput,
         );
         this.promptContexts.clear(resolved.teammate.id);
         const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
@@ -5702,9 +5756,14 @@ export class MetadataServer {
           });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.fork", targetKind: "agent", targetId: body.targetSessionId },
-          () => this.options.lifecycle!.forkAgent!(body),
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.fork",
+          targetKind: "agent",
+          targetId: body.targetSessionId,
+        };
+        const result = await this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => this.options.lifecycle!.forkAgent!(body)),
+          transitionInput,
         );
         notifyCurrentRouteChange();
         send(
@@ -5747,8 +5806,9 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: sessionId,
         };
-        const resultPromise = this.enqueueLifecycleMutation(() =>
-          runLifecycle(transitionInput, () => this.options.lifecycle!.stopAgent!({ sessionId })),
+        const resultPromise = this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => this.options.lifecycle!.stopAgent!({ sessionId })),
+          transitionInput,
         );
         const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
         if (earlyResult.kind === "resolved") {
@@ -5815,10 +5875,15 @@ export class MetadataServer {
           | { sessionId: string; error: string; status?: never };
         const attempts: RestoreAttempt[] = await Promise.all(
           offer.sessionIds.map(async (sessionId) => {
+            const transitionInput: LifecycleTransitionInput = {
+              operation: "agent.resume",
+              targetKind: "agent",
+              targetId: sessionId,
+            };
             try {
-              const result = await runLifecycle(
-                { operation: "agent.resume", targetKind: "agent", targetId: sessionId },
-                () => this.options.desktop!.resumeAgent!({ sessionId }),
+              const result = await this.enqueueLifecycleMutation(
+                () => runLifecycle(transitionInput, () => this.options.desktop!.resumeAgent!({ sessionId })),
+                transitionInput,
               );
               return { sessionId, status: result.status };
             } catch (error) {
@@ -5882,9 +5947,14 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId },
-          () => this.options.lifecycle!.interruptAgent!({ sessionId }),
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.interrupt",
+          targetKind: "agent",
+          targetId: sessionId,
+        };
+        const result = await this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => this.options.lifecycle!.interruptAgent!({ sessionId })),
+          transitionInput,
         );
         notifyCurrentRouteChange();
         send(res, 200, lifecycleOk(result, { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId }));
@@ -5927,9 +5997,14 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent rename not supported by this service" });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.rename", targetKind: "agent", targetId: body.sessionId },
-          () => this.options.lifecycle!.renameAgent!(body),
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.rename",
+          targetKind: "agent",
+          targetId: body.sessionId,
+        };
+        const result = await this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => this.options.lifecycle!.renameAgent!(body)),
+          transitionInput,
         );
         notifyCurrentRouteChange();
         send(
@@ -5976,8 +6051,9 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: sessionId,
         };
-        const resultPromise = this.enqueueLifecycleMutation(() =>
-          runLifecycle(transitionInput, () => this.options.lifecycle!.killAgent!({ sessionId })),
+        const resultPromise = this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => this.options.lifecycle!.killAgent!({ sessionId })),
+          transitionInput,
         );
         // A resurrected session comes back under the same id, so a context left
         // here would attach itself to a conversation that never asked for it.
@@ -6473,10 +6549,16 @@ export class MetadataServer {
           return;
         }
         const desktop = this.options.desktop;
-        const resultPromise = this.enqueueLifecycleMutation(() =>
-          runLifecycle({ operation: "worktree.create", targetKind: "worktree", targetId: body.name }, () =>
-            desktop.createWorktree!(body),
-          ),
+        const targetPath = safeWorktreeCreatePath(body.name, this.currentProjectRoot());
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "worktree.create",
+          targetKind: "worktree",
+          targetId: body.name,
+          targetPath,
+        };
+        const resultPromise = this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => desktop.createWorktree!(body)),
+          transitionInput,
         );
         const earlyResult:
           | { kind: "resolved"; result: any }
@@ -6524,7 +6606,6 @@ export class MetadataServer {
         }
         notifyCurrentRouteChange();
         this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "worktree create");
-        const targetPath = getWorktreeCreatePath(body.name, this.projectRoot);
         send(
           res,
           202,
@@ -6549,10 +6630,14 @@ export class MetadataServer {
           return;
         }
         const desktop = this.options.desktop;
-        const resultPromise = this.enqueueLifecycleMutation(() =>
-          runLifecycle({ operation: "worktree.remove", targetKind: "worktree", targetPath: body.path }, () =>
-            desktop.removeWorktree!(body),
-          ),
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "worktree.remove",
+          targetKind: "worktree",
+          targetPath: body.path,
+        };
+        const resultPromise = this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => desktop.removeWorktree!(body)),
+          transitionInput,
         );
         const earlyResult:
           | { kind: "resolved"; result: any }
@@ -6642,9 +6727,14 @@ export class MetadataServer {
           });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "service.create", targetKind: "service", targetId: body.serviceId },
-          () => this.options.desktop!.createService!(body),
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "service.create",
+          targetKind: "service",
+          targetId: body.serviceId,
+        };
+        const result = await this.enqueueLifecycleMutation(
+          () => runLifecycle(transitionInput, () => this.options.desktop!.createService!(body)),
+          transitionInput,
         );
         notifyCurrentRouteChange();
         send(
@@ -6756,7 +6846,17 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "graveyard cleanup not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.cleanupGraveyard({ dryRun: body.dryRun === true });
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "graveyard.cleanup",
+          targetKind: "worktree",
+        };
+        const result = await this.enqueueLifecycleMutation(
+          () =>
+            runLifecycle(transitionInput, () =>
+              this.options.desktop!.cleanupGraveyard!({ dryRun: body.dryRun === true }),
+            ),
+          transitionInput,
+        );
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...(typeof result === "object" && result ? result : { result }) });
         return;
@@ -6822,6 +6922,22 @@ export class MetadataServer {
       }
     } catch (error) {
       const message = userFacingErrorMessage(error);
+      if (error instanceof LifecycleMutationConflictError) {
+        send(res, error.status, {
+          ok: false,
+          error: message,
+          transition: buildLifecycleTransition({
+            ...error.requested,
+            phase: "failed",
+            error: message,
+          }),
+          activeTransition: buildLifecycleTransition({
+            ...error.active,
+            phase: "settling",
+          }),
+        });
+        return;
+      }
       const lifecycleTransition = activeLifecycleTransition ?? failedLifecycleTransition;
       failedLifecycleTransition = undefined;
       if (lifecycleTransition) {
