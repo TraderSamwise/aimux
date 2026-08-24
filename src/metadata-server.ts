@@ -117,7 +117,11 @@ import { log } from "./debug.js";
 import { userFacingErrorMessage } from "./error-display.js";
 import { loadLibraryEntries } from "./library.js";
 import { getWorktreeCreatePath } from "./worktree.js";
-import { acknowledgeAgentRestoreOffer, readAgentRestoreOffer } from "./runtime-core/agent-restore-state.js";
+import {
+  acknowledgeAgentRestoreOffer,
+  readAgentRestoreOffer,
+  removeAgentRestoreOfferSessions,
+} from "./runtime-core/agent-restore-state.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
@@ -5806,26 +5810,41 @@ export class MetadataServer {
           send(res, 200, { ok: true, restored: [], failed: [], offer: null });
           return;
         }
-        const restored: Array<{ sessionId: string; status: string }> = [];
-        const failed: Array<{ sessionId: string; error: string }> = [];
-        for (const sessionId of offer.sessionIds) {
-          try {
-            const result = await runLifecycle(
-              { operation: "agent.resume", targetKind: "agent", targetId: sessionId },
-              () => this.options.desktop!.resumeAgent!({ sessionId }),
-            );
-            restored.push({ sessionId, status: result.status });
-          } catch (error) {
-            failed.push({ sessionId, error: userFacingErrorMessage(error) });
-          }
-        }
-        acknowledgeAgentRestoreOffer(this.currentProjectRoot());
+        type RestoreAttempt =
+          | { sessionId: string; status: string; error?: never }
+          | { sessionId: string; error: string; status?: never };
+        const attempts: RestoreAttempt[] = await Promise.all(
+          offer.sessionIds.map(async (sessionId) => {
+            try {
+              const result = await runLifecycle(
+                { operation: "agent.resume", targetKind: "agent", targetId: sessionId },
+                () => this.options.desktop!.resumeAgent!({ sessionId }),
+              );
+              return { sessionId, status: result.status };
+            } catch (error) {
+              return { sessionId, error: userFacingErrorMessage(error) };
+            }
+          }),
+        );
+        const restored = attempts.filter((result): result is Extract<RestoreAttempt, { status: string }> => {
+          return "status" in result;
+        });
+        const failed = attempts.filter((result): result is Extract<RestoreAttempt, { error: string }> => {
+          return "error" in result;
+        });
+        const updatedOffer =
+          restored.length > 0
+            ? removeAgentRestoreOfferSessions(
+                restored.map((result) => result.sessionId),
+                this.currentProjectRoot(),
+              )
+            : readAgentRestoreOffer(this.currentProjectRoot());
         notifyCurrentRouteChange();
         send(res, 200, {
           ok: failed.length === 0,
           restored,
           failed,
-          offer: readAgentRestoreOffer(this.currentProjectRoot()),
+          offer: updatedOffer,
         });
         return;
       }

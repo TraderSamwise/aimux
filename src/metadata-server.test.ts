@@ -25,6 +25,10 @@ import {
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
 import {
+  deriveAgentRestoreOfferFromRestorableInventory,
+  readAgentRestoreOffer,
+} from "./runtime-core/agent-restore-state.js";
+import {
   getRuntimeOwnerId,
   TMUX_DASHBOARD_OWNER_OPTION,
   TMUX_DASHBOARD_READY_OPTION,
@@ -4096,6 +4100,47 @@ describe("MetadataServer threads API", () => {
       status: "running",
       transition: { operation: "agent.resume", targetKind: "agent", targetId: "claude-1" },
     });
+  });
+
+  it("keeps failed previous-restore sessions in the retry offer", async () => {
+    server?.stop();
+    deriveAgentRestoreOfferFromRestorableInventory(
+      [],
+      [
+        { id: "codex-ok", command: "codex" },
+        { id: "claude-fail", command: "claude" },
+      ],
+      { projectRoot: repoRoot, now: "2026-08-24T13:40:00.000Z" },
+    );
+    const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => {
+      if (sessionId === "claude-fail") throw new Error("resume unavailable");
+      return { sessionId, status: "running" };
+    });
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: { resumeAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      restored: Array<{ sessionId: string; status: string }>;
+      failed: Array<{ sessionId: string; error: string }>;
+      offer: { sessionIds: string[] } | null;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(false);
+    expect(body.restored).toEqual([{ sessionId: "codex-ok", status: "running" }]);
+    expect(body.failed).toEqual([{ sessionId: "claude-fail", error: "resume unavailable" }]);
+    expect(body.offer?.sessionIds).toEqual(["claude-fail"]);
+    expect(readAgentRestoreOffer(repoRoot)?.sessionIds).toEqual(["claude-fail"]);
+    expect(resumeAgent).toHaveBeenCalledTimes(2);
   });
 
   it("persists the current live window as the preferred dashboard selection when reopening dashboard", async () => {
