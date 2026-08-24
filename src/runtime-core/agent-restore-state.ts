@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
@@ -29,6 +29,7 @@ export interface AgentRestoreOffer {
   id: string;
   snapshotId: string;
   snapshotUpdatedAt: string;
+  source?: "last-online" | "restorable-inventory";
   createdAt: string;
   updatedAt: string;
   sessionIds: string[];
@@ -98,6 +99,10 @@ export function agentRestoreSessionKey(sessions: AgentRestoreSession[]): string 
   );
 }
 
+function inventorySnapshotId(sessions: AgentRestoreSession[]): string {
+  return `inventory-${createHash("sha256").update(agentRestoreSessionKey(sessions)).digest("hex").slice(0, 16)}`;
+}
+
 function sameSessionIds(left: AgentRestoreSession[], right: AgentRestoreSession[]): boolean {
   if (left.length !== right.length) return false;
   return left.every((session, index) => session.id === right[index]?.id);
@@ -149,6 +154,7 @@ function normalizeOffer(value: unknown): AgentRestoreOffer | null {
     snapshotId,
     snapshotUpdatedAt:
       typeof record.snapshotUpdatedAt === "string" && record.snapshotUpdatedAt.trim() ? record.snapshotUpdatedAt : now,
+    source: record.source === "restorable-inventory" ? "restorable-inventory" : "last-online",
     createdAt: typeof record.createdAt === "string" && record.createdAt.trim() ? record.createdAt : now,
     updatedAt: typeof record.updatedAt === "string" && record.updatedAt.trim() ? record.updatedAt : now,
     sessionIds: sessions.map((session) => session.id),
@@ -248,6 +254,48 @@ export function deriveAgentRestoreOffer(
       id: `restore-${snapshot.id}`,
       snapshotId: snapshot.id,
       snapshotUpdatedAt: snapshot.updatedAt,
+      source: "last-online",
+      createdAt: now,
+      updatedAt: now,
+      sessionIds: sessions.map((session) => session.id),
+      sessions,
+    };
+    writeJsonAtomic(offerPath(), offer);
+    return offer;
+  };
+  return input.projectRoot ? withProjectPaths(input.projectRoot, derive) : derive();
+}
+
+export function deriveAgentRestoreOfferFromRestorableInventory(
+  liveSessionIds: Iterable<string>,
+  candidateSessions: AgentRestoreSession[],
+  input: { projectRoot?: string; now?: string } = {},
+): AgentRestoreOffer | null {
+  const derive = () => {
+    const existing = readAgentRestoreOffer();
+    if (existing) return existing;
+
+    const liveIds = new Set(liveSessionIds);
+    const sessions = normalizeSessions(candidateSessions).filter((session) => !liveIds.has(session.id));
+    if (sessions.length === 0) {
+      rmSync(offerPath(), { force: true });
+      return null;
+    }
+
+    const snapshotId = inventorySnapshotId(sessions);
+    const ack = readJsonFile(ackPath(), normalizeAck);
+    if (ack?.snapshotId === snapshotId) {
+      rmSync(offerPath(), { force: true });
+      return null;
+    }
+
+    const now = input.now ?? new Date().toISOString();
+    const offer: AgentRestoreOffer = {
+      version: 1,
+      id: `restore-${snapshotId}`,
+      snapshotId,
+      snapshotUpdatedAt: now,
+      source: "restorable-inventory",
       createdAt: now,
       updatedAt: now,
       sessionIds: sessions.map((session) => session.id),

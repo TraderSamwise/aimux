@@ -7,6 +7,7 @@ import { getProjectStateDir, initPaths } from "../paths.js";
 import {
   acknowledgeAgentRestoreOffer,
   deriveAgentRestoreOffer,
+  deriveAgentRestoreOfferFromRestorableInventory,
   readAgentRestoreOffer,
   readLastOnlineAgentsSnapshot,
   recordLastOnlineAgents,
@@ -153,5 +154,30 @@ describe("agent restore state", () => {
     expect(removeAgentRestoreOfferSessions(["codex-2"])).toBeNull();
     expect(readAgentRestoreOffer()).toBeNull();
     expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:03:00.000Z" })).toBeNull();
+  });
+
+  it("creates a one-shot offer from restorable inventory when no online snapshot exists", () => {
+    const offer = deriveAgentRestoreOfferFromRestorableInventory(
+      ["claude-live"],
+      [
+        { id: "claude-live", command: "claude" },
+        { id: "codex-offline", command: "codex", label: "codex(coder)" },
+      ],
+      { now: "2026-08-22T01:04:00.000Z" },
+    );
+
+    expect(offer?.source).toBe("restorable-inventory");
+    expect(offer?.sessionIds).toEqual(["codex-offline"]);
+    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-offline"]);
+
+    acknowledgeAgentRestoreOffer();
+
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [{ id: "codex-offline", command: "codex", label: "codex(coder)" }],
+        { now: "2026-08-22T01:05:00.000Z" },
+      ),
+    ).toBeNull();
   });
 });

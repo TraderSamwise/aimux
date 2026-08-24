@@ -136,6 +136,7 @@ export interface DashboardWorktreeRemovalInfo {
 export interface DashboardAgentRestoreOffer {
   id: string;
   updatedAt: string;
+  source?: "last-online" | "restorable-inventory";
   sessionIds: string[];
   sessions: Array<{
     id: string;
