@@ -3575,6 +3575,67 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("accepts agent kills quickly and serializes the runtime lifecycle work", async () => {
+    server?.stop();
+    const started: string[] = [];
+    const finished: string[] = [];
+    const resolvers = new Map<string, () => void>();
+    server = new MetadataServer({
+      lifecycle: {
+        killAgent: ({ sessionId }) =>
+          new Promise<{ sessionId: string; status: "graveyard"; previousStatus: "running" }>((resolve) => {
+            started.push(sessionId);
+            resolvers.set(sessionId, () => {
+              finished.push(sessionId);
+              resolve({ sessionId, status: "graveyard", previousStatus: "running" });
+            });
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const kill = async (sessionId: string) => {
+      const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.kill}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const first = await kill("codex-1");
+    const secondPromise = kill("codex-2");
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    const second = await secondPromise;
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(first.body).toMatchObject({
+      ok: true,
+      sessionId: "codex-1",
+      status: "graveyard",
+      previousStatus: "running",
+      transition: { operation: "agent.kill", targetKind: "agent", targetId: "codex-1", phase: "settling" },
+    });
+    expect(second.body).toMatchObject({
+      ok: true,
+      sessionId: "codex-2",
+      status: "graveyard",
+      previousStatus: "running",
+      transition: { operation: "agent.kill", targetKind: "agent", targetId: "codex-2", phase: "settling" },
+    });
+    expect(started).toEqual(["codex-1"]);
+
+    resolvers.get("codex-1")?.();
+    await waitForCondition(() => started.includes("codex-2"));
+    resolvers.get("codex-2")?.();
+    await waitForCondition(() => finished.length === 2);
+
+    expect(started).toEqual(["codex-1", "codex-2"]);
+    expect(finished).toEqual(["codex-1", "codex-2"]);
+  });
+
   it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
     server?.stop();
     const calls: string[] = [];

@@ -242,6 +242,22 @@ function lifecycleOk<T extends object>(
 }
 
 type LifecycleTransitionInput = Parameters<typeof buildLifecycleTransition>[0];
+type EarlyLifecycleResult<T> =
+  | { kind: "resolved"; result: T }
+  | { kind: "rejected"; error: unknown }
+  | { kind: "pending" };
+
+async function waitForEarlyLifecycleResult<T>(promise: Promise<T>, timeoutMs = 50): Promise<EarlyLifecycleResult<T>> {
+  return Promise.race([
+    promise.then(
+      (result) => ({ kind: "resolved" as const, result }),
+      (error) => ({ kind: "rejected" as const, error }),
+    ),
+    new Promise<{ kind: "pending" }>((resolve) => {
+      setTimeout(() => resolve({ kind: "pending" }), timeoutMs);
+    }),
+  ]);
+}
 
 function buildTopologyWorktreesFromDesktopState(state: {
   sessions?: any[];
@@ -1641,6 +1657,7 @@ export class MetadataServer {
   private exposeHotSnapshotRefreshing = false;
   private exposeHotSnapshotWorker: Worker | null = null;
   private readonly promptContexts = new PromptContextStore();
+  private lifecycleMutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -1665,6 +1682,31 @@ export class MetadataServer {
       this.scheduleDesktopStateRefresh();
       notifyAlert(event);
     });
+  }
+
+  private enqueueLifecycleMutation<T>(action: () => Promise<T> | T): Promise<T> {
+    const queued = this.lifecycleMutationQueue.catch(() => undefined).then(action);
+    this.lifecycleMutationQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
+  }
+
+  private notifyLifecycleSettled(
+    promise: Promise<unknown>,
+    notifyCurrentRouteChange: () => void,
+    action: string,
+  ): void {
+    void promise.then(
+      () => notifyCurrentRouteChange(),
+      (error: unknown) => {
+        log.warn(`${action} failed after async acceptance`, "api", {
+          error: userFacingErrorMessage(error),
+        });
+        notifyCurrentRouteChange();
+      },
+    );
   }
 
   async start(): Promise<void> {
@@ -5163,10 +5205,51 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.spawn", targetKind: "agent", targetId: body.sessionId },
-          () => this.options.lifecycle!.spawnAgent!(body),
+        const requestedSessionId = body.sessionId?.trim() || undefined;
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.spawn",
+          targetKind: "agent",
+          targetId: requestedSessionId,
+        };
+        const resultPromise = this.enqueueLifecycleMutation(() =>
+          runLifecycle(transitionInput, () => this.options.lifecycle!.spawnAgent!(body)),
         );
+        if (requestedSessionId) {
+          const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
+          if (earlyResult.kind === "resolved") {
+            notifyCurrentRouteChange();
+            send(
+              res,
+              200,
+              lifecycleOk(earlyResult.result, {
+                operation: "agent.spawn",
+                targetKind: "agent",
+                targetId: earlyResult.result.sessionId ?? requestedSessionId,
+              }),
+            );
+            return;
+          }
+          if (earlyResult.kind === "rejected") {
+            throw earlyResult.error;
+          }
+          notifyCurrentRouteChange();
+          this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent spawn");
+          send(
+            res,
+            202,
+            lifecycleOk(
+              { sessionId: requestedSessionId, status: "creating" },
+              {
+                operation: "agent.spawn",
+                targetKind: "agent",
+                targetId: requestedSessionId,
+                phase: "settling",
+              },
+            ),
+          );
+          return;
+        }
+        const result = await resultPromise;
         notifyCurrentRouteChange();
         send(
           res,
@@ -5382,17 +5465,43 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
-          () => this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id }),
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.stop",
+          targetKind: "agent",
+          targetId: resolved.teammate.id,
+        };
+        const resultPromise = this.enqueueLifecycleMutation(() =>
+          runLifecycle(transitionInput, () => this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id })),
         );
+        const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
+        if (earlyResult.kind === "resolved") {
+          notifyCurrentRouteChange();
+          send(
+            res,
+            200,
+            lifecycleOk(
+              { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...earlyResult.result },
+              { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
+            ),
+          );
+          return;
+        }
+        if (earlyResult.kind === "rejected") {
+          throw earlyResult.error;
+        }
         notifyCurrentRouteChange();
+        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent stop teammate");
         send(
           res,
-          200,
+          202,
           lifecycleOk(
-            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
-            { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
+            {
+              parentSessionId: resolved.parent.id,
+              teammateSessionId: resolved.teammate.id,
+              sessionId: resolved.teammate.id,
+              status: "offline",
+            },
+            { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id, phase: "settling" },
           ),
         );
         return;
@@ -5446,21 +5555,49 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id },
-          () =>
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.kill",
+          targetKind: "agent",
+          targetId: resolved.teammate.id,
+        };
+        const resultPromise = this.enqueueLifecycleMutation(() =>
+          runLifecycle(transitionInput, () =>
             this.options.lifecycle!.killAgent!({
               sessionId: resolved.teammate.id,
             }),
+          ),
         );
         this.promptContexts.clear(resolved.teammate.id);
+        const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
+        if (earlyResult.kind === "resolved") {
+          notifyCurrentRouteChange();
+          send(
+            res,
+            200,
+            lifecycleOk(
+              { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...earlyResult.result },
+              { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id },
+            ),
+          );
+          return;
+        }
+        if (earlyResult.kind === "rejected") {
+          throw earlyResult.error;
+        }
         notifyCurrentRouteChange();
+        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent kill teammate");
         send(
           res,
-          200,
+          202,
           lifecycleOk(
-            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
-            { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id },
+            {
+              parentSessionId: resolved.parent.id,
+              teammateSessionId: resolved.teammate.id,
+              sessionId: resolved.teammate.id,
+              status: "graveyard",
+              previousStatus: "running",
+            },
+            { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id, phase: "settling" },
           ),
         );
         return;
@@ -5561,19 +5698,46 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.stop", targetKind: "agent", targetId: body.sessionId },
-          () => this.options.lifecycle!.stopAgent!(body),
+        const sessionId = body.sessionId?.trim() ?? "";
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.stop",
+          targetKind: "agent",
+          targetId: sessionId,
+        };
+        const resultPromise = this.enqueueLifecycleMutation(() =>
+          runLifecycle(transitionInput, () => this.options.lifecycle!.stopAgent!({ sessionId })),
         );
+        const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
+        if (earlyResult.kind === "resolved") {
+          notifyCurrentRouteChange();
+          send(
+            res,
+            200,
+            lifecycleOk(earlyResult.result, {
+              operation: "agent.stop",
+              targetKind: "agent",
+              targetId: sessionId,
+            }),
+          );
+          return;
+        }
+        if (earlyResult.kind === "rejected") {
+          throw earlyResult.error;
+        }
         notifyCurrentRouteChange();
+        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent stop");
         send(
           res,
-          200,
-          lifecycleOk(result, {
-            operation: "agent.stop",
-            targetKind: "agent",
-            targetId: body.sessionId,
-          }),
+          202,
+          lifecycleOk(
+            { sessionId, status: "offline" },
+            {
+              operation: "agent.stop",
+              targetKind: "agent",
+              targetId: sessionId,
+              phase: "settling",
+            },
+          ),
         );
         return;
       }
@@ -5760,23 +5924,50 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await runLifecycle(
-          { operation: "agent.kill", targetKind: "agent", targetId: body.sessionId },
-          () => this.options.lifecycle!.killAgent!({ sessionId: body.sessionId }),
+        const sessionId = body.sessionId?.trim() ?? "";
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "agent.kill",
+          targetKind: "agent",
+          targetId: sessionId,
+        };
+        const resultPromise = this.enqueueLifecycleMutation(() =>
+          runLifecycle(transitionInput, () => this.options.lifecycle!.killAgent!({ sessionId })),
         );
         // A resurrected session comes back under the same id, so a context left
         // here would attach itself to a conversation that never asked for it.
         // Trimmed to match how `set` stored it, or a padded id misses.
-        this.promptContexts.clear(body.sessionId?.trim() ?? "");
+        this.promptContexts.clear(sessionId);
+        const earlyResult = await waitForEarlyLifecycleResult(resultPromise);
+        if (earlyResult.kind === "resolved") {
+          notifyCurrentRouteChange();
+          send(
+            res,
+            200,
+            lifecycleOk(earlyResult.result, {
+              operation: "agent.kill",
+              targetKind: "agent",
+              targetId: sessionId,
+            }),
+          );
+          return;
+        }
+        if (earlyResult.kind === "rejected") {
+          throw earlyResult.error;
+        }
         notifyCurrentRouteChange();
+        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent kill");
         send(
           res,
-          200,
-          lifecycleOk(result, {
-            operation: "agent.kill",
-            targetKind: "agent",
-            targetId: body.sessionId,
-          }),
+          202,
+          lifecycleOk(
+            { sessionId, status: "graveyard", previousStatus: "running" },
+            {
+              operation: "agent.kill",
+              targetKind: "agent",
+              targetId: sessionId,
+              phase: "settling",
+            },
+          ),
         );
         return;
       }

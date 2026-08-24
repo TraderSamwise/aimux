@@ -109,6 +109,7 @@ interface DashboardSessionMutationOptions {
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
   reconcileOnRequestTimeout?: boolean;
+  keepReconcilingOnTimeout?: boolean;
   errorTitle: string;
 }
 
@@ -125,6 +126,7 @@ interface DashboardServiceMutationOptions {
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
   reconcileOnRequestTimeout?: boolean;
+  keepReconcilingOnTimeout?: boolean;
   errorTitle: string;
 }
 
@@ -140,6 +142,7 @@ interface DashboardMutationReconcileOptions {
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
+  keepReconcilingOnTimeout?: boolean;
   errorTitle: string;
 }
 
@@ -355,6 +358,15 @@ function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: Dashbo
     await refreshDashboardModelForMutationFinalCheck(host);
     if (finishDashboardMutationIfTerminal(host, opts)) return;
     if (await finishDashboardMutationIfSettled(host, opts)) return;
+    if (opts.keepReconcilingOnTimeout) {
+      if (isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+        host.footerFlash = `${opts.pendingAction} is still settling`;
+        host.footerFlashTicks = 4;
+        renderDashboardMutationFrame(host, opts.renderLifecycle);
+      }
+      scheduleDashboardMutationReconcile(host, opts);
+      return;
+    }
     if (!opts.clearPending()) return;
     await opts.onError?.(opts.modelLifecycle);
     if (await waitForDashboardMutationFinalState(host, opts, 15_000)) return;
@@ -832,6 +844,7 @@ async function runDashboardSessionMutation(
     onAfterSettle: opts.onAfterSettle,
     onError: opts.onError,
     successFlash: opts.successFlash,
+    keepReconcilingOnTimeout: opts.keepReconcilingOnTimeout,
     errorTitle: opts.errorTitle,
   };
   try {
@@ -909,6 +922,7 @@ async function runDashboardServiceMutation(
     onAfterSettle: opts.onAfterSettle,
     onError: opts.onError,
     successFlash: opts.successFlash,
+    keepReconcilingOnTimeout: opts.keepReconcilingOnTimeout,
     errorTitle: opts.errorTitle,
   };
   try {
@@ -993,6 +1007,7 @@ export async function spawnDashboardAgentWithFeedback(
     settle: (modelLifecycle, renderLifecycle) =>
       waitForDashboardSessionResumeSettle(host, input.sessionId, 10_000, modelLifecycle, renderLifecycle),
     reconcileOnRequestTimeout: true,
+    keepReconcilingOnTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: `Failed to create ${input.tool} agent`,
   });
@@ -1314,6 +1329,7 @@ export async function graveyardSessionWithFeedback(
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
       successFlash: { message: `Sent ${label} to graveyard` },
       reconcileOnRequestTimeout: true,
+      keepReconcilingOnTimeout: true,
       onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to graveyard "${label}"`,
     });

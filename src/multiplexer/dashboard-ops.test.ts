@@ -2230,6 +2230,51 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("keeps accepted graveyard work pending instead of erroring when inventory is slow to reflect it", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardRawSessionsCache: [session] as any[],
+      offlineSessions: [] as any[],
+      sessions: [session],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      getSessionLabel: vi.fn(() => "claude"),
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardPendingActions.getSessionAction("sess-1") === "graveyarding"
+          ? [{ ...session, status: "offline", pendingAction: "graveyarding", optimistic: true }]
+          : [session],
+      ),
+      adjustAfterRemove: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = graveyardSessionWithFeedback(host, "sess-1", true);
+      await vi.advanceTimersByTimeAsync(10_500);
+      await action;
+      await vi.advanceTimersByTimeAsync(76_000);
+
+      expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("graveyarding");
+      expect(host.footerFlash).toBe("graveyarding is still settling");
+      expect(host.adjustAfterRemove).not.toHaveBeenCalled();
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears a graveyard pending row when raw state drops it during stale refresh recovery", async () => {
     vi.useFakeTimers();
     const session = { id: "sess-1", command: "claude", label: "claude" };
