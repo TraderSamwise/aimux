@@ -96,12 +96,27 @@ function reconcileWaitingTaskThreads(): void {
 /**
  * Read a single task by ID.
  */
-export function readTask(id: string): Task | undefined {
-  reconcileWaitingTaskThreads();
+function readTaskFromExchange(id: string): Task | undefined {
   const task = createRuntimeExchangeStore()
     .read()
     .tasks.find((entry) => entry.id === id);
   return task ? fromExchangeTask(task) : undefined;
+}
+
+export function readTaskSnapshot(id: string): Task | undefined {
+  return readTaskFromExchange(id);
+}
+
+export function readTask(id: string): Task | undefined {
+  reconcileWaitingTaskThreads();
+  return readTaskFromExchange(id);
+}
+
+/**
+ * Read all tasks from the runtime exchange.
+ */
+export function readAllTaskSnapshots(): Task[] {
+  return createRuntimeExchangeStore().read().tasks.map(fromExchangeTask);
 }
 
 /**
@@ -109,7 +124,7 @@ export function readTask(id: string): Task | undefined {
  */
 export function readAllTasks(): Task[] {
   reconcileWaitingTaskThreads();
-  return createRuntimeExchangeStore().read().tasks.map(fromExchangeTask);
+  return readAllTaskSnapshots();
 }
 
 /**

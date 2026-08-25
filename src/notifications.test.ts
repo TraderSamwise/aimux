@@ -6,6 +6,7 @@ import { initPaths } from "./paths.js";
 import {
   addNotification,
   clearNotifications,
+  listNotificationSnapshot,
   listNotifications,
   markNotificationsRead,
   upsertNotification,
@@ -34,6 +35,22 @@ describe("notifications store", () => {
     expect(unreadNotificationCount()).toBe(2);
     expect(unreadNotificationCount({ sessionId: "claude-1" })).toBe(1);
     expect(listNotifications({ sessionId: "claude-2" })).toHaveLength(1);
+  });
+
+  it("returns bounded notification snapshots with total and unread counts", () => {
+    addNotification({ title: "One", body: "First", sessionId: "claude-1" });
+    addNotification({ title: "Two", body: "Second", sessionId: "claude-1", unread: false });
+    addNotification({ title: "Three", body: "Third", sessionId: "claude-1" });
+
+    const snapshot = listNotificationSnapshot({ sessionId: "claude-1", limit: 2 });
+
+    expect(snapshot.notifications).toHaveLength(2);
+    expect(snapshot).toMatchObject({
+      total: 3,
+      unreadCount: 2,
+      limit: 2,
+      truncated: true,
+    });
   });
 
   it("marks notifications read and clears them", () => {

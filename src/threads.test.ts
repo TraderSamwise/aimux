@@ -7,11 +7,13 @@ import { createRuntimeExchangeStore } from "./runtime-core/exchange-store.js";
 import {
   appendMessage,
   createThread,
+  listThreadSummarySnapshot,
   listThreads,
   listThreadsForParticipant,
   listThreadSummaries,
   markThreadSeen,
   openTaskThread,
+  readMessageSnapshot,
   readMessages,
   readThread,
   setThreadStatus,
@@ -151,5 +153,32 @@ describe("threads", () => {
     expect(listThreadsForParticipant("claude-1").map((thread) => thread.id)).not.toContain(second.id);
     expect(listThreadSummaries("codex-1")).toHaveLength(2);
     expect(listThreadSummaries("codex-1")[0]?.latestMessage?.body).toBeTruthy();
+  });
+
+  it("bounds thread summaries and message snapshots", () => {
+    const thread = createThread({
+      title: "Long thread",
+      kind: "conversation",
+      createdBy: "claude-1",
+      participants: ["claude-1", "codex-1"],
+    });
+    for (let index = 0; index < 5; index += 1) {
+      appendMessage(thread.id, {
+        id: `msg-${index}`,
+        ts: `2026-08-25T00:00:0${index}.000Z`,
+        from: index % 2 === 0 ? "claude-1" : "codex-1",
+        kind: "request",
+        body: `message ${index}`,
+      });
+    }
+
+    expect(readMessages(thread.id, { limit: 2 }).map((message) => message.body)).toEqual(["message 3", "message 4"]);
+    expect(readMessageSnapshot(thread.id, { limit: 2 })).toMatchObject({
+      total: 5,
+      limit: 2,
+      truncated: true,
+    });
+    expect(listThreadSummaries(undefined, { limit: 1 })).toHaveLength(1);
+    expect(listThreadSummarySnapshot(undefined, { includeMessageGroups: false }).messagesByThreadId.size).toBe(0);
   });
 });

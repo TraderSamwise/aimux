@@ -23,6 +23,22 @@ export interface ThreadSummarySnapshot {
   messagesByThreadId: Map<string, OrchestrationMessage[]>;
 }
 
+export interface ThreadListOptions {
+  limit?: number;
+  includeMessageGroups?: boolean;
+}
+
+export interface ThreadMessageListOptions {
+  limit?: number;
+}
+
+export interface ThreadMessageSnapshot {
+  messages: OrchestrationMessage[];
+  total: number;
+  limit?: number;
+  truncated: boolean;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -156,11 +172,28 @@ export function appendMessage(
   return message;
 }
 
-export function readMessages(threadId: string): OrchestrationMessage[] {
-  return createRuntimeExchangeStore()
+function boundedItems<T>(items: T[], limit?: number): T[] {
+  if (limit === undefined) return items;
+  if (limit <= 0) return [];
+  return items.slice(-limit);
+}
+
+export function readMessages(threadId: string, options: ThreadMessageListOptions = {}): OrchestrationMessage[] {
+  return readMessageSnapshot(threadId, options).messages;
+}
+
+export function readMessageSnapshot(threadId: string, options: ThreadMessageListOptions = {}): ThreadMessageSnapshot {
+  const messages = createRuntimeExchangeStore()
     .read()
     .messages.filter((message) => message.threadId === threadId)
     .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  const bounded = boundedItems(messages, options.limit);
+  return {
+    messages: bounded,
+    total: messages.length,
+    limit: options.limit,
+    truncated: bounded.length < messages.length,
+  };
 }
 
 export function updateMessage(
@@ -250,29 +283,40 @@ export function listThreadsForParticipant(participantId: string): OrchestrationT
   return listThreads().filter((thread) => thread.participants.includes(participantId));
 }
 
-export function listThreadSummaries(participantId?: string): ThreadSummary[] {
-  return listThreadSummarySnapshot(participantId).summaries;
+export function listThreadSummaries(participantId?: string, options: ThreadListOptions = {}): ThreadSummary[] {
+  return listThreadSummarySnapshot(participantId, { ...options, includeMessageGroups: false }).summaries;
 }
 
-export function listThreadSummarySnapshot(participantId?: string): ThreadSummarySnapshot {
+export function listThreadSummarySnapshot(
+  participantId?: string,
+  options: ThreadListOptions = {},
+): ThreadSummarySnapshot {
   const exchange = createRuntimeExchangeStore().read();
   const threads = [...exchange.threads]
     .filter((thread) => !participantId || thread.participants.includes(participantId))
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+    .slice(0, options.limit);
+  const threadIds = new Set(threads.map((thread) => thread.id));
   const messagesByThreadId = new Map<string, OrchestrationMessage[]>();
+  const latestMessageByThreadId = new Map<string, OrchestrationMessage>();
   for (const message of exchange.messages) {
+    if (!threadIds.has(message.threadId)) continue;
+    const latest = latestMessageByThreadId.get(message.threadId);
+    if (!latest || latest.ts <= message.ts) latestMessageByThreadId.set(message.threadId, message);
+    if (options.includeMessageGroups === false) continue;
     const messages = messagesByThreadId.get(message.threadId) ?? [];
     messages.push(message);
     messagesByThreadId.set(message.threadId, messages);
   }
-  for (const messages of messagesByThreadId.values()) {
-    messages.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  if (options.includeMessageGroups !== false) {
+    for (const messages of messagesByThreadId.values()) {
+      messages.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+    }
   }
   const summaries = threads.map((thread) => {
-    const messages = messagesByThreadId.get(thread.id) ?? [];
     return {
       thread,
-      latestMessage: messages[messages.length - 1],
+      latestMessage: latestMessageByThreadId.get(thread.id),
     };
   });
   return { summaries, messagesByThreadId };

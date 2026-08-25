@@ -48,9 +48,9 @@ import {
 import { notifyAlert } from "./notify.js";
 import {
   clearNotifications,
+  listNotificationSnapshot,
   listNotifications,
   markNotificationsRead,
-  unreadNotificationCount,
 } from "./notifications.js";
 import { updateNotificationContext } from "./notification-context.js";
 import { markSessionViewed } from "./session-viewed.js";
@@ -71,6 +71,7 @@ import {
   type OrchestrationMessage,
   type OrchestrationThread,
   readMessages,
+  readMessageSnapshot,
   readThread,
   setThreadStatus,
   type MessageKind,
@@ -92,7 +93,7 @@ import {
   type TaskLifecycleResult,
   type AssignTaskResult,
 } from "./orchestration-actions.js";
-import { readAllTasks, readTask } from "./tasks.js";
+import { readAllTaskSnapshots, readAllTasks, readTaskSnapshot } from "./tasks.js";
 import { buildCoordinationThreadEntries } from "./workflow.js";
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
@@ -1536,6 +1537,22 @@ function parsePositiveInteger(
   if (!parsed.ok) return parsed;
   if (parsed.value < 1) return { ok: false, error: `${field} must be an integer >= 1` };
   return parsed;
+}
+
+const DEFAULT_PROJECT_LIST_LIMIT = 200;
+const MAX_PROJECT_LIST_LIMIT = 500;
+const DEFAULT_PROJECT_DETAIL_MESSAGE_LIMIT = 500;
+const MAX_PROJECT_DETAIL_MESSAGE_LIMIT = 1_000;
+
+function parseBoundedLimit(
+  raw: string | null,
+  field: string,
+  defaults: { defaultValue: number; maxValue: number },
+): { ok: true; value: number } | { ok: false; error: string } {
+  if (raw === null || raw.trim() === "") return { ok: true, value: defaults.defaultValue };
+  const parsed = parsePositiveInteger(raw, field);
+  if (!parsed.ok) return parsed;
+  return { ok: true, value: Math.min(parsed.value, defaults.maxValue) };
 }
 
 type DesktopSessionRecord = Record<string, unknown> & {
@@ -3402,11 +3419,22 @@ export class MetadataServer {
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.notifications.list) {
       const unreadOnly = url.searchParams.get("unread") === "1";
       const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
-      const notifications = listNotifications({ unreadOnly, sessionId });
+      const parsedLimit = parseBoundedLimit(url.searchParams.get("limit"), "limit", {
+        defaultValue: DEFAULT_PROJECT_LIST_LIMIT,
+        maxValue: MAX_PROJECT_LIST_LIMIT,
+      });
+      if (!parsedLimit.ok) {
+        send(res, 400, { ok: false, error: parsedLimit.error });
+        return;
+      }
+      const snapshot = listNotificationSnapshot({ unreadOnly, sessionId, limit: parsedLimit.value });
       send(res, 200, {
         ok: true,
-        notifications,
-        unreadCount: unreadNotificationCount({ sessionId }),
+        notifications: snapshot.notifications,
+        unreadCount: snapshot.unreadCount,
+        total: snapshot.total,
+        limit: snapshot.limit,
+        truncated: snapshot.truncated,
       });
       return;
     }
@@ -3507,12 +3535,13 @@ export class MetadataServer {
       }
       const participant = url.searchParams.get("participant")?.trim() || "user";
       const state = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[]; services?: any[] };
-      const threads = buildCoordinationThreadEntries(participant);
+      const threads = buildCoordinationThreadEntries(participant, { readOnly: true });
+      const notificationSnapshot = listNotificationSnapshot({ limit: DEFAULT_PROJECT_LIST_LIMIT });
       const { model, worklist } = buildCoordinationView({
         sessions: state.sessions ?? [],
         teammates: state.teammates ?? [],
         services: state.services ?? [],
-        notifications: listNotifications(),
+        notifications: notificationSnapshot.notifications,
         threads,
         currentParticipant: participant,
       });
@@ -3530,12 +3559,14 @@ export class MetadataServer {
         services?: any[];
         worktrees?: any[];
       };
+      const notificationSnapshot = listNotificationSnapshot({ limit: DEFAULT_PROJECT_LIST_LIMIT });
       const project = buildProjectObservability({
         sessions: [...(state.sessions ?? []), ...(state.teammates ?? [])],
         services: state.services ?? [],
         worktrees: state.worktrees ?? [],
-        tasks: readAllTasks(),
-        notifications: listNotifications(),
+        tasks: readAllTaskSnapshots(),
+        notifications: notificationSnapshot.notifications,
+        notificationUnreadCount: notificationSnapshot.unreadCount,
       });
       send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), project });
       return;
@@ -3607,7 +3638,7 @@ export class MetadataServer {
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.list) {
       const metadataState = loadMetadataState();
-      const tasks = readAllTasks();
+      const tasks = readAllTaskSnapshots();
       const activeTaskFor = (sessionId: string) =>
         tasks.find((task) => task.assignedTo === sessionId && task.status !== "done" && task.status !== "failed");
       const agents = topologyDesktopSessionList(["starting", "running", "idle", "offline"]).map((session) => {
@@ -3637,16 +3668,46 @@ export class MetadataServer {
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.threads.list) {
-      send(res, 200, listThreadSummaries(url.searchParams.get("session") ?? undefined));
+      const parsedLimit = parseBoundedLimit(url.searchParams.get("limit"), "limit", {
+        defaultValue: DEFAULT_PROJECT_LIST_LIMIT,
+        maxValue: MAX_PROJECT_LIST_LIMIT,
+      });
+      if (!parsedLimit.ok) {
+        send(res, 400, { ok: false, error: parsedLimit.error });
+        return;
+      }
+      send(
+        res,
+        200,
+        listThreadSummaries(url.searchParams.get("session") ?? undefined, {
+          limit: parsedLimit.value,
+          includeMessageGroups: false,
+        }),
+      );
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.tasks.list) {
       const sessionId = url.searchParams.get("session")?.trim();
       const status = url.searchParams.get("status")?.trim();
-      const tasks = readAllTasks()
+      const parsedLimit = parseBoundedLimit(url.searchParams.get("limit"), "limit", {
+        defaultValue: DEFAULT_PROJECT_LIST_LIMIT,
+        maxValue: MAX_PROJECT_LIST_LIMIT,
+      });
+      if (!parsedLimit.ok) {
+        send(res, 400, { ok: false, error: parsedLimit.error });
+        return;
+      }
+      const allTasks = readAllTaskSnapshots()
         .filter((task) => !sessionId || task.assignedTo === sessionId || task.assignedBy === sessionId)
         .filter((task) => !status || task.status === status);
-      send(res, 200, { ok: true, tasks });
+      const tasks = allTasks.slice(0, parsedLimit.value);
+      send(res, 200, {
+        ok: true,
+        tasks,
+        total: allTasks.length,
+        limit: parsedLimit.value,
+        truncated: tasks.length < allTasks.length,
+      });
       return;
     }
     if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.usageMark) {
@@ -3850,7 +3911,22 @@ export class MetadataServer {
         send(res, 404, { ok: false, error: "thread not found" });
         return;
       }
-      send(res, 200, { thread, messages: readMessages(threadId) });
+      const parsedLimit = parseBoundedLimit(url.searchParams.get("messageLimit"), "messageLimit", {
+        defaultValue: DEFAULT_PROJECT_DETAIL_MESSAGE_LIMIT,
+        maxValue: MAX_PROJECT_DETAIL_MESSAGE_LIMIT,
+      });
+      if (!parsedLimit.ok) {
+        send(res, 400, { ok: false, error: parsedLimit.error });
+        return;
+      }
+      const messageSnapshot = readMessageSnapshot(threadId, { limit: parsedLimit.value });
+      send(res, 200, {
+        thread,
+        messages: messageSnapshot.messages,
+        messageTotal: messageSnapshot.total,
+        messageLimit: messageSnapshot.limit,
+        messagesTruncated: messageSnapshot.truncated,
+      });
       return;
     }
     const taskRoutePrefix = `${PROJECT_API_ROUTES.tasks.list}/`;
@@ -3862,14 +3938,32 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: "invalid taskId" });
         return;
       }
-      const task = readTask(taskId);
+      const task = readTaskSnapshot(taskId);
       if (!task) {
         send(res, 404, { ok: false, error: "task not found" });
         return;
       }
       const thread = task.threadId ? readThread(task.threadId) : undefined;
-      const messages = task.threadId ? readMessages(task.threadId) : [];
-      send(res, 200, { ok: true, task, thread, messages });
+      const parsedLimit = parseBoundedLimit(url.searchParams.get("messageLimit"), "messageLimit", {
+        defaultValue: DEFAULT_PROJECT_DETAIL_MESSAGE_LIMIT,
+        maxValue: MAX_PROJECT_DETAIL_MESSAGE_LIMIT,
+      });
+      if (!parsedLimit.ok) {
+        send(res, 400, { ok: false, error: parsedLimit.error });
+        return;
+      }
+      const messageSnapshot = task.threadId
+        ? readMessageSnapshot(task.threadId, { limit: parsedLimit.value })
+        : { messages: [], total: 0, limit: parsedLimit.value, truncated: false };
+      send(res, 200, {
+        ok: true,
+        task,
+        thread,
+        messages: messageSnapshot.messages,
+        messageTotal: messageSnapshot.total,
+        messageLimit: messageSnapshot.limit,
+        messagesTruncated: messageSnapshot.truncated,
+      });
       return;
     }
 

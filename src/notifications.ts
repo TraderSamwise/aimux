@@ -130,6 +130,14 @@ function notificationRecords(exchange = createRuntimeExchangeStore().read()): No
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+export interface NotificationSnapshot {
+  notifications: NotificationRecord[];
+  total: number;
+  unreadCount: number;
+  limit?: number;
+  truncated: boolean;
+}
+
 function writeNotification(input: {
   title: string;
   subtitle?: string;
@@ -277,14 +285,40 @@ export function listNotifications(
     unreadOnly?: boolean;
     includeCleared?: boolean;
     sessionId?: string;
+    limit?: number;
   } & NotificationStoreOptions,
 ): NotificationRecord[] {
-  return notificationRecords(notificationStore(opts?.projectRoot).read()).filter((record) => {
+  return listNotificationSnapshot(opts).notifications;
+}
+
+export function listNotificationSnapshot(
+  opts?: {
+    unreadOnly?: boolean;
+    includeCleared?: boolean;
+    sessionId?: string;
+    limit?: number;
+  } & NotificationStoreOptions,
+): NotificationSnapshot {
+  const allRecords = notificationRecords(notificationStore(opts?.projectRoot).read());
+  const unreadCount = allRecords.filter((record) => {
+    if (!opts?.includeCleared && record.cleared) return false;
+    if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
+    return record.unread;
+  }).length;
+  const records = allRecords.filter((record) => {
     if (!opts?.includeCleared && record.cleared) return false;
     if (opts?.unreadOnly && !record.unread) return false;
     if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
     return true;
   });
+  const bounded = opts?.limit === undefined ? records : records.slice(0, Math.max(0, opts.limit));
+  return {
+    notifications: bounded,
+    total: records.length,
+    unreadCount,
+    limit: opts?.limit,
+    truncated: bounded.length < records.length,
+  };
 }
 
 export function markNotificationsRead(

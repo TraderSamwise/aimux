@@ -12,8 +12,8 @@ import { loadNotificationContexts } from "./notification-context.js";
 import { listNotifications, upsertNotification } from "./notifications.js";
 import { addDashboardOperationFailure, listDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
-import { readTask } from "./tasks.js";
-import { readMessages } from "./threads.js";
+import { readTask, writeTask, type Task } from "./tasks.js";
+import { appendMessage, createThread, readMessages } from "./threads.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 import { refreshProjectExposeHotSnapshots } from "./expose-hot-snapshot-worker.js";
@@ -95,6 +95,94 @@ describe("MetadataServer threads API", () => {
     expect(json.resources).toBeUndefined();
     expect(json.recentSlowRequests).toBeUndefined();
     expect(json.plugins).toBeUndefined();
+  });
+
+  it("bounds hot list and detail endpoints by default", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://127.0.0.1:${endpoint!.port}`;
+    const now = new Date().toISOString();
+    const thread = createThread({
+      id: "thread-many",
+      title: "Many messages",
+      kind: "conversation",
+      createdBy: "claude-1",
+      participants: ["claude-1", "codex-1"],
+    });
+    for (let index = 0; index < 3; index += 1) {
+      appendMessage(thread.id, {
+        id: `message-${index}`,
+        ts: `2026-08-25T00:00:0${index}.000Z`,
+        from: "claude-1",
+        kind: "note",
+        body: `message ${index}`,
+      });
+    }
+    const task: Task = {
+      id: "task-many",
+      status: "pending",
+      assignedBy: "claude-1",
+      description: "Many task messages",
+      prompt: "Do the thing",
+      threadId: thread.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeTask(task);
+    for (let index = 0; index < 3; index += 1) {
+      upsertNotification({
+        title: `Notification ${index}`,
+        body: `Body ${index}`,
+        sessionId: `codex-${index}`,
+        kind: "note",
+      });
+    }
+
+    const threadRes = await fetch(
+      `${base}${PROJECT_API_ROUTES.threads.list}/${encodeURIComponent(thread.id)}?messageLimit=2`,
+    );
+    const threadBody = (await threadRes.json()) as {
+      messages: Array<{ body?: string }>;
+      messageTotal: number;
+      messageLimit: number;
+      messagesTruncated: boolean;
+    };
+    expect(threadBody.messages.map((message) => message.body)).toEqual(["message 1", "message 2"]);
+    expect(threadBody).toMatchObject({ messageTotal: 3, messageLimit: 2, messagesTruncated: true });
+
+    const tasksRes = await fetch(`${base}${PROJECT_API_ROUTES.tasks.list}?limit=1`);
+    const tasksBody = (await tasksRes.json()) as { tasks: unknown[]; total: number; limit: number; truncated: boolean };
+    expect(tasksBody).toMatchObject({ total: 1, limit: 1, truncated: false });
+    expect(tasksBody.tasks).toHaveLength(1);
+
+    const notificationsRes = await fetch(`${base}${PROJECT_API_ROUTES.notifications.list}?limit=2`);
+    const notificationsBody = (await notificationsRes.json()) as {
+      notifications: unknown[];
+      total: number;
+      unreadCount: number;
+      limit: number;
+      truncated: boolean;
+    };
+    expect(notificationsBody).toMatchObject({ total: 3, unreadCount: 3, limit: 2, truncated: true });
+    expect(notificationsBody.notifications).toHaveLength(2);
+  });
+
+  it("rejects invalid hot endpoint limits", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://127.0.0.1:${endpoint!.port}`;
+
+    for (const path of [
+      `${PROJECT_API_ROUTES.notifications.list}?limit=0`,
+      `${PROJECT_API_ROUTES.threads.list}?limit=abc`,
+      `${PROJECT_API_ROUTES.tasks.list}?limit=-1`,
+    ]) {
+      const response = await fetch(`${base}${path}`);
+      const body = (await response.json()) as { ok: boolean; error: string };
+      expect(response.status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("limit");
+    }
   });
 
   it("runs scheduled worktree cache cleanup as a dry-run report by default", async () => {

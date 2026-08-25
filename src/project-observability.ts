@@ -46,6 +46,7 @@ export interface ProjectObservabilityInput {
   worktrees: unknown[];
   tasks: Task[];
   notifications: NotificationRecord[];
+  notificationUnreadCount?: number;
   storyLimit?: number;
 }
 
@@ -70,7 +71,7 @@ export function buildProjectObservability(input: ProjectObservabilityInput): Pro
     worktrees: worktrees.length,
     openTasks: tasks.filter((t) => isOpenTask(t.status)).length,
     doneTasks: tasks.filter((t) => t.status === "done").length,
-    unreadNotifications: notifications.filter((n) => n.unread).length,
+    unreadNotifications: input.notificationUnreadCount ?? notifications.filter((n) => n.unread).length,
   };
 
   const progress: TaskProgress = {

@@ -796,6 +796,9 @@ export interface NotificationMutationInput {
 export interface NotificationsResponse extends ProjectApiOk {
   notifications: NotificationRecord[];
   unreadCount: number;
+  total?: number;
+  limit?: number;
+  truncated?: boolean;
 }
 
 export interface NotificationReadResponse extends ProjectApiOk {
@@ -916,6 +919,9 @@ export interface TaskSummaryResponse {
 
 export interface TaskListResponse extends ProjectApiOk {
   tasks: TaskSummaryResponse[];
+  total?: number;
+  limit?: number;
+  truncated?: boolean;
   [k: string]: unknown;
 }
 
@@ -923,6 +929,9 @@ export interface TaskDetailResponse extends ProjectApiOk {
   task: TaskSummaryResponse;
   thread?: ThreadSummaryResponse["thread"];
   messages?: Array<{ id?: string; body?: string; [k: string]: unknown }>;
+  messageTotal?: number;
+  messageLimit?: number;
+  messagesTruncated?: boolean;
   [k: string]: unknown;
 }
 

@@ -884,7 +884,7 @@ export function computeDashboardSessions(
       threadStats.set(participant, current);
     }
   }
-  const workflowEntries = buildWorkflowEntries("user");
+  const workflowEntries = buildWorkflowEntries("user", { readOnly: true });
   for (const entry of workflowEntries) {
     const familyKey = entry.familyRootTaskId ?? entry.thread.id;
     for (const participant of entry.thread.participants) {

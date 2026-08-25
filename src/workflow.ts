@@ -1,6 +1,6 @@
 import { NOTIFICATION_TAG } from "./notifications.js";
-import { normalizeReviewStatus, readAllTasks, type Task } from "./tasks.js";
-import { listThreadSummaries, readMessages, type OrchestrationMessage, type ThreadSummary } from "./threads.js";
+import { normalizeReviewStatus, readAllTaskSnapshots, readAllTasks, type Task } from "./tasks.js";
+import { listThreadSummarySnapshot, type OrchestrationMessage, type ThreadSummary } from "./threads.js";
 
 export interface ThreadEntry extends ThreadSummary {
   displayTitle: string;
@@ -20,14 +20,15 @@ export interface WorkflowEntry extends ThreadEntry {
 export type WorkflowFilter = "all" | "on_me" | "blocked" | "families";
 
 export function buildThreadEntries(): ThreadEntry[] {
+  const snapshot = listThreadSummarySnapshot(undefined, { includeMessageGroups: true });
   return (
-    listThreadSummaries()
+    snapshot.summaries
       // Notification records are stored as exchange threads tagged `notification`; they are the
       // Inbox's domain, not workflow threads. Excluding them stops the Coordination Threads
       // section from mirroring the Inbox.
       .filter((summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG))
       .map((summary) => {
-        const messages = readMessages(summary.thread.id);
+        const messages = snapshot.messagesByThreadId.get(summary.thread.id) ?? [];
         const pending = messages.flatMap((message) =>
           (message.to ?? []).filter((recipient) => !(message.deliveredTo ?? []).includes(recipient)),
         );
@@ -49,8 +50,11 @@ export function buildThreadEntries(): ThreadEntry[] {
   );
 }
 
-export function buildWorkflowEntries(currentParticipant = "user", opts?: { allKinds?: boolean }): WorkflowEntry[] {
-  const tasks = readAllTasks();
+export function buildWorkflowEntries(
+  currentParticipant = "user",
+  opts?: { allKinds?: boolean; readOnly?: boolean },
+): WorkflowEntry[] {
+  const tasks = opts?.readOnly ? readAllTaskSnapshots() : readAllTasks();
   const taskById = new Map(tasks.map((task) => [task.id, task] as const));
   const familyByRoot = new Map<string, Task[]>();
   for (const task of tasks) {
@@ -104,8 +108,11 @@ export function buildWorkflowEntries(currentParticipant = "user", opts?: { allKi
 }
 
 /** All-kinds, task-aware thread entries for the merged Coordination screen. */
-export function buildCoordinationThreadEntries(currentParticipant = "user"): WorkflowEntry[] {
-  return buildWorkflowEntries(currentParticipant, { allKinds: true });
+export function buildCoordinationThreadEntries(
+  currentParticipant = "user",
+  opts?: { readOnly?: boolean },
+): WorkflowEntry[] {
+  return buildWorkflowEntries(currentParticipant, { allKinds: true, readOnly: opts?.readOnly });
 }
 
 export function filterWorkflowEntries(

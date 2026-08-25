@@ -1207,11 +1207,12 @@ export async function getDesktopState(
 
 export async function listNotifications(
   endpoint: ServiceEndpoint,
-  opts?: ApiOpts & { unreadOnly?: boolean; sessionId?: string },
+  opts?: ApiOpts & { unreadOnly?: boolean; sessionId?: string; limit?: number },
 ): Promise<NotificationsResponse> {
   const params = new URLSearchParams();
   if (opts?.unreadOnly) params.set("unread", "1");
   if (opts?.sessionId) params.set("sessionId", opts.sessionId);
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   const query = params.toString();
   return callProjectJson<NotificationsResponse>(
     endpoint,
@@ -1406,11 +1407,13 @@ export async function cleanupGraveyard(
 export async function listThreads(
   endpoint: ServiceEndpoint,
   sessionId?: string,
-  opts?: ApiOpts,
+  opts?: ApiOpts & { limit?: number },
 ): Promise<ThreadSummaryResponse[]> {
-  const path = sessionId
-    ? `${PROJECT_API_ROUTES.threads.list}?session=${encodeURIComponent(sessionId)}`
-    : PROJECT_API_ROUTES.threads.list;
+  const params = new URLSearchParams();
+  if (sessionId) params.set("session", sessionId);
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  const query = params.toString();
+  const path = `${PROJECT_API_ROUTES.threads.list}${query ? `?${query}` : ""}`;
   return callProjectJson<ThreadSummaryResponse[]>(endpoint, "GET", path, opts);
 }
 
@@ -1612,12 +1615,13 @@ export async function requestReviewChanges(
 
 export async function listTasks(
   endpoint: ServiceEndpoint,
-  filters?: { sessionId?: string; status?: string },
+  filters?: { sessionId?: string; status?: string; limit?: number },
   opts?: ApiOpts,
 ): Promise<TaskListResponse> {
   const params = new URLSearchParams();
   if (filters?.sessionId) params.set("session", filters.sessionId);
   if (filters?.status) params.set("status", filters.status);
+  if (filters?.limit !== undefined) params.set("limit", String(filters.limit));
   const query = params.toString();
   return callProjectJson<TaskListResponse>(
     endpoint,
