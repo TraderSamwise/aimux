@@ -30,6 +30,8 @@ export interface NotificationConfig {
 export interface WorktreeConfig {
   /** Base directory for created worktrees. Relative paths are resolved from the main repo root. */
   baseDir: string;
+  /** Regenerable directory names removed by worktree cache cleanup. */
+  cacheCleanupDirs: string[];
 }
 
 export interface TmuxRuntimeConfig {
@@ -216,6 +218,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
   },
   worktrees: {
     baseDir: ".aimux/worktrees",
+    cacheCleanupDirs: ["node_modules", ".next"],
   },
   loop: {
     scanIntervalMs: 15000,

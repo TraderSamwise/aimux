@@ -86,6 +86,7 @@ export const PROJECT_API_ROUTES = {
   },
   worktreeActions: {
     create: "/worktrees/create",
+    cacheCleanup: "/worktrees/cache-cleanup",
     remove: "/worktrees/remove",
     graveyard: "/worktrees/graveyard",
   },
@@ -309,6 +310,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
       return [...PROJECT_API_VIEW_INVALIDATIONS.serviceLifecycle];
 
     case PROJECT_API_ROUTES.worktreeActions.create:
+    case PROJECT_API_ROUTES.worktreeActions.cacheCleanup:
     case PROJECT_API_ROUTES.worktreeActions.remove:
     case PROJECT_API_ROUTES.worktreeActions.graveyard:
     case PROJECT_API_ROUTES.graveyardActions.resurrectWorktree:
@@ -950,6 +952,7 @@ export type ProjectLifecycleTransitionOperation =
   | "service.resume"
   | "service.remove"
   | "worktree.create"
+  | "worktree.cacheCleanup"
   | "worktree.remove"
   | "worktree.graveyard"
   | "graveyard.agent.resurrect"

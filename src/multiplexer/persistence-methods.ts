@@ -24,6 +24,11 @@ import {
   type GraveyardCleanupRunResult,
 } from "../graveyard-cleanup.js";
 import { buildInboxCleanupPlan, runInboxCleanup, type InboxCleanupRunResult } from "../inbox-cleanup.js";
+import {
+  runWorktreeCacheCleanup,
+  type WorktreeCacheCleanupProtectedWorktree,
+  type WorktreeCacheCleanupRunResult,
+} from "../worktree-cache-cleanup.js";
 import { buildCoordinationModel } from "../coordination-model.js";
 import { listNotifications } from "../notifications.js";
 import { loadMetadataState } from "../metadata-store.js";
@@ -67,6 +72,64 @@ const MIN_GRAVEYARD_CLEANUP_INTERVAL_MS = 60_000;
 
 function projectRootFor(host: any): string {
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
+}
+
+function asArray(value: unknown): any[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function addProtectedRuntime(
+  protectedByPath: Map<string, { sessions: Set<string>; services: Set<string> }>,
+  worktreePath: string | undefined,
+  kind: "sessions" | "services",
+  id: string | undefined,
+): void {
+  if (!worktreePath || !id) return;
+  const entry = protectedByPath.get(worktreePath) ?? { sessions: new Set<string>(), services: new Set<string>() };
+  entry[kind].add(id);
+  protectedByPath.set(worktreePath, entry);
+}
+
+function isHostSessionLive(host: any, session: any): boolean {
+  if (!session) return false;
+  if (host.isSessionRuntimeLive?.(session) === true) return true;
+  if (session.tmuxWindowId || session.tmuxTarget || session.pid) return true;
+  return session.status === "starting" || session.status === "running" || session.status === "idle";
+}
+
+function isHostServiceLive(service: any): boolean {
+  if (!service) return false;
+  if (service.tmuxWindowId || service.tmuxTarget || service.pid) return true;
+  if (service.pendingAction === "starting" || service.pendingAction === "resuming") return true;
+  return service.status === "starting" || service.status === "running";
+}
+
+function protectedWorktreesFromHost(host: any): WorktreeCacheCleanupProtectedWorktree[] {
+  const protectedByPath = new Map<string, { sessions: Set<string>; services: Set<string> }>();
+  for (const session of [...asArray(host.sessions), ...asArray(host.getDashboardSessions?.())]) {
+    if (!isHostSessionLive(host, session)) continue;
+    addProtectedRuntime(
+      protectedByPath,
+      host.sessionWorktreePaths?.get?.(session.id) ?? session.worktreePath,
+      "sessions",
+      session.id,
+    );
+  }
+  const serviceSources = [
+    host.services,
+    host.dashboardServicesCache,
+    host.dashboardRawServicesCache,
+    host.getDashboardServices?.(),
+  ];
+  for (const service of serviceSources.flatMap(asArray)) {
+    if (!isHostServiceLive(service)) continue;
+    addProtectedRuntime(protectedByPath, service.worktreePath, "services", service.id);
+  }
+  return [...protectedByPath.entries()].map(([worktreePath, entry]) => ({
+    worktreePath,
+    sessions: [...entry.sessions],
+    services: [...entry.services],
+  }));
 }
 
 function normalizeGraveyardCleanupIntervalMs(value: unknown): number {
@@ -698,6 +761,20 @@ export const persistenceMethods = {
     operationFailure?: DashboardOperationFailure;
   }> {
     return this.dashboardPendingActions.applyToWorktrees(this.listDesktopWorktrees() as any);
+  },
+
+  cleanupWorktreeCaches(
+    this: any,
+    input?: { dryRun?: boolean; includeActive?: boolean },
+  ): WorktreeCacheCleanupRunResult {
+    return runWorktreeCacheCleanup({
+      projectRoot: projectRootFor(this),
+      dryRun: input?.dryRun !== false,
+      includeActive: input?.includeActive === true,
+      cacheDirNames: loadConfig().worktrees.cacheCleanupDirs,
+      protectedWorktrees: protectedWorktreesFromHost(this),
+      worktrees: this.listDesktopWorktrees?.() ?? listAllWorktrees(projectRootFor(this)),
+    });
   },
 
   listWorktreeGraveyardEntries(this: any): any[] {

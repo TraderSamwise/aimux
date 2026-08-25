@@ -85,6 +85,7 @@ export const CORE_API_ROUTES = {
   threadStatusText: "/core/thread/status-text",
   threadsListText: "/core/threads/list-text",
   worktreeCreateText: "/core/worktree/create-text",
+  worktreeCacheCleanupText: "/core/worktree/cache-cleanup-text",
   worktreeDeleteGraveyardText: "/core/worktree/delete-graveyard-text",
   worktreeGraveyardText: "/core/worktree/graveyard-text",
   worktreeListText: "/core/worktree/list-text",

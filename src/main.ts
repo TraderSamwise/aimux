@@ -21,6 +21,7 @@ import { PROJECT_API_ROUTES, type AgentLoopInput, type TeamConfig } from "./proj
 import { assertPublishableSource } from "./attachment-store.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
+import type { WorktreeCacheCleanupRunResult } from "./worktree-cache-cleanup.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
   buildTmuxDoctorReport,
@@ -2157,6 +2158,34 @@ function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
   }
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const decimals = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(decimals)}${units[unitIndex]}`;
+}
+
+function printWorktreeCacheCleanup(result: WorktreeCacheCleanupRunResult): void {
+  const action = result.dryRun ? "would remove" : "removed";
+  const bytes = result.dryRun ? result.plan.reclaimableBytes : result.reclaimedBytes;
+  const failed = result.results.filter((item) => item.status === "failed").length;
+  console.log(
+    `Worktree cache cleanup ${action} ${result.plan.targets.length} item(s), ${formatBytes(bytes)}; ${failed} failed.`,
+  );
+  for (const target of result.plan.targets) {
+    console.log(`${formatBytes(target.sizeBytes).padStart(7)}  ${target.path}`);
+  }
+  if (result.plan.skipped.length > 0) {
+    console.log(`Skipped ${result.plan.skipped.length} worktree(s).`);
+  }
+}
+
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
 worktreeCmd.action(async () => {
@@ -3170,6 +3199,34 @@ worktreeCmd
         return;
       }
       console.log(`Created worktree "${name}" at ${createdPath}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("cleanup-caches")
+  .description("Remove generated cache directories from Aimux-managed worktrees")
+  .option("--project <path>", "Project path")
+  .option("--yes", "Delete cache directories instead of doing a dry run")
+  .option("--include-active", "Include worktrees with running agents or services")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; yes?: boolean; includeActive?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReady(projectRoot);
+      const result = (await postLiveProjectServiceJson(projectRoot, PROJECT_API_ROUTES.worktreeActions.cacheCleanup, {
+        dryRun: opts.yes !== true,
+        includeActive: opts.includeActive === true,
+      })) as { result?: WorktreeCacheCleanupRunResult } & WorktreeCacheCleanupRunResult;
+      const cleanupResult = result.result ?? result;
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, projectRoot, ...cleanupResult }, null, 2));
+        return;
+      }
+      printWorktreeCacheCleanup(cleanupResult);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

@@ -112,6 +112,7 @@ import {
   renderCoreGraveyardCleanupLines,
   renderCoreGraveyardLines,
   renderCoreWorktreeCreateLines,
+  renderCoreWorktreeCacheCleanupLines,
   renderCoreWorktreeDeleteGraveyardLines,
   renderCoreWorktreeGraveyardLines,
   renderCoreWorktreeListLines,
@@ -156,6 +157,7 @@ import {
   type CoreThreadShowTextPayload,
   type CoreThreadStatusTextPayload,
   type CoreWorktreeCreateTextPayload,
+  type CoreWorktreeCacheCleanupTextPayload,
   type CoreWorktreePathTextPayload,
   type CoreWorktreeSummaryTextPayload,
   type CoreWhoamiTextPayload,
@@ -327,6 +329,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.threadStatusText,
   CORE_API_ROUTES.threadsListText,
   CORE_API_ROUTES.worktreeCreateText,
+  CORE_API_ROUTES.worktreeCacheCleanupText,
   CORE_API_ROUTES.worktreeDeleteGraveyardText,
   CORE_API_ROUTES.worktreeGraveyardText,
   CORE_API_ROUTES.worktreeListText,
@@ -1693,6 +1696,57 @@ export class AimuxDaemon {
       projectRoot: result.projectRoot,
     };
     return this.textOrJsonLines(routeUrl, payload, renderCoreWorktreeCreateLines(payload));
+  }
+
+  private async worktreeCacheCleanupTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const dryRun = this.booleanParam(routeUrl, body, "dryRun", true);
+    const includeActive = this.booleanParam(routeUrl, body, "includeActive", false);
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.worktreeActions.cacheCleanup,
+      { dryRun, includeActive },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const cleanupResult = result.json.result ?? result.json;
+    if (!cleanupResult || typeof cleanupResult !== "object") {
+      return this.textError(
+        502,
+        "Error: project service returned invalid worktree cache cleanup response: result is required",
+      );
+    }
+    const plan = (cleanupResult as { plan?: unknown }).plan;
+    const payload: CoreWorktreeCacheCleanupTextPayload = {
+      ok: true,
+      dryRun: (cleanupResult as { dryRun?: unknown }).dryRun !== false,
+      reclaimableBytes:
+        plan &&
+        typeof plan === "object" &&
+        typeof (plan as { reclaimableBytes?: unknown }).reclaimableBytes === "number"
+          ? (plan as { reclaimableBytes: number }).reclaimableBytes
+          : 0,
+      reclaimedBytes:
+        typeof (cleanupResult as { reclaimedBytes?: unknown }).reclaimedBytes === "number"
+          ? (cleanupResult as { reclaimedBytes: number }).reclaimedBytes
+          : 0,
+      targets:
+        plan && typeof plan === "object" && Array.isArray((plan as { targets?: unknown }).targets)
+          ? ((plan as { targets: CoreWorktreeCacheCleanupTextPayload["targets"] }).targets ?? [])
+          : [],
+      skipped:
+        plan && typeof plan === "object" && Array.isArray((plan as { skipped?: unknown }).skipped)
+          ? ((plan as { skipped: unknown[] }).skipped ?? [])
+          : [],
+      results: Array.isArray((cleanupResult as { results?: unknown }).results)
+        ? ((cleanupResult as { results: unknown[] }).results ?? [])
+        : [],
+    };
+    if (routeUrl.searchParams.get("json") === "1") {
+      return this.textOrJsonLines(routeUrl, { ok: true, projectRoot: result.projectRoot, ...cleanupResult }, []);
+    }
+    return this.textOrJsonLines(routeUrl, payload, renderCoreWorktreeCacheCleanupLines(payload));
   }
 
   private async worktreePathTextRoute(
@@ -3520,6 +3574,10 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleForkText) {
       return this.lifecycleForkTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.worktreeCacheCleanupText) {
+      return this.worktreeCacheCleanupTextRoute(routeUrl, body);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.agentInputText) {

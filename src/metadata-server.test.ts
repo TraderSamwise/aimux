@@ -4277,6 +4277,47 @@ describe("MetadataServer threads API", () => {
     expect(cleanupGraveyard).toHaveBeenCalledWith({ dryRun: true });
   });
 
+  it("passes worktree cache cleanup over HTTP", async () => {
+    server?.stop();
+    const cleanupWorktreeCaches = vi.fn(({ dryRun, includeActive }) => ({
+      dryRun,
+      reclaimedBytes: 0,
+      plan: {
+        dryRun,
+        includeActive,
+        targets: [{ path: "/repo/.aimux/worktrees/perf/apps/web/.next", sizeBytes: 1024 }],
+        skipped: [{ worktreePath: "/repo/.aimux/worktrees/live", reason: "active-runtime" }],
+        reclaimableBytes: 1024,
+      },
+      results: [{ path: "/repo/.aimux/worktrees/perf/apps/web/.next", status: "dry-run", sizeBytes: 1024 }],
+    }));
+    server = new MetadataServer({
+      desktop: { cleanupWorktreeCaches },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/worktrees/cache-cleanup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dryRun: true, includeActive: false }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      result: {
+        dryRun: true,
+        plan: {
+          reclaimableBytes: 1024,
+        },
+      },
+    });
+    expect(cleanupWorktreeCaches).toHaveBeenCalledWith({ dryRun: true, includeActive: false });
+  });
+
   it("passes reused teammate creation responses over HTTP", async () => {
     server?.stop();
     const calls: unknown[] = [];

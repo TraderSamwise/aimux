@@ -544,6 +544,7 @@ export interface MetadataServerOptions {
       path: string;
     }) => Promise<{ path: string; status: "removed" }> | { path: string; status: "removed" };
     cleanupGraveyard?: (input: { dryRun?: boolean }) => Promise<unknown> | unknown;
+    cleanupWorktreeCaches?: (input: { dryRun?: boolean; includeActive?: boolean }) => Promise<unknown> | unknown;
     createService?: (input: {
       command?: string;
       worktreePath?: string;
@@ -6724,6 +6725,31 @@ export class MetadataServer {
           pending: { path: body.path, status: "graveyarding" },
           actionName: "worktree graveyard",
         });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.worktreeActions.cacheCleanup) {
+        const body = (await readJson(req).catch(() => ({}))) as { dryRun?: boolean; includeActive?: boolean };
+        if (!this.options.desktop?.cleanupWorktreeCaches) {
+          send(res, 501, { ok: false, error: "worktree cache cleanup not supported by this service" });
+          return;
+        }
+        const transitionInput: LifecycleTransitionInput = {
+          operation: "worktree.cacheCleanup",
+          targetKind: "worktree",
+        };
+        const result = await this.enqueueLifecycleMutation(
+          () =>
+            runLifecycle(transitionInput, () =>
+              this.options.desktop!.cleanupWorktreeCaches!({
+                dryRun: body.dryRun !== false,
+                includeActive: body.includeActive === true,
+              }),
+            ),
+          transitionInput,
+        );
+        notifyCurrentRouteChange();
+        send(res, 200, { ok: true, result });
         return;
       }
 

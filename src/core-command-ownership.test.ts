@@ -38,6 +38,7 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "worktree", shimNeedle: "/core/worktree/list-text" },
   { command: "worktree list", shimNeedle: "/core/worktree/list-text" },
   { command: "worktree create <name>", shimNeedle: "/core/worktree/create-text" },
+  { command: "worktree cleanup-caches", shimNeedle: "/core/worktree/cache-cleanup-text" },
   { command: "worktree remove <path>", shimNeedle: "/core/worktree/remove-text" },
   { command: "worktree graveyard <path>", shimNeedle: "/core/worktree/graveyard-text" },
   { command: "worktree resurrect <path>", shimNeedle: "/core/worktree/resurrect-text" },

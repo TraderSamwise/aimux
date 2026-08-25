@@ -1172,6 +1172,77 @@ describe("persistenceMethods", () => {
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
   });
 
+  it("cleans generated cache directories from inactive Aimux worktrees", () => {
+    const worktreeBase = join(pathsRoot, ".aimux", "worktrees");
+    getWorktreeBaseDirMock.mockReturnValue(worktreeBase);
+    const worktreePath = join(worktreeBase, "cache");
+    const cachePath = join(worktreePath, "apps", "web", ".next");
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(join(cachePath, "build.txt"), "cache\n");
+    listWorktreesMock.mockReturnValue([{ name: "cache", branch: "cache", path: worktreePath, isBare: false }]);
+    const host = {
+      projectRoot: pathsRoot,
+      dashboardPendingActions: new DashboardPendingActions(),
+    };
+
+    const dryRun = persistenceMethods.cleanupWorktreeCaches.call(host);
+
+    expect(dryRun.dryRun).toBe(true);
+    expect(dryRun.plan.targets).toMatchObject([{ path: expect.stringContaining("/cache/apps/web/.next") }]);
+    expect(existsSync(cachePath)).toBe(true);
+
+    const deleted = persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
+
+    expect(deleted.results).toMatchObject([
+      { path: expect.stringContaining("/cache/apps/web/.next"), status: "removed" },
+    ]);
+    expect(existsSync(cachePath)).toBe(false);
+  });
+
+  it("skips cache cleanup for worktrees with active runtime", () => {
+    const worktreeBase = join(pathsRoot, ".aimux", "worktrees");
+    getWorktreeBaseDirMock.mockReturnValue(worktreeBase);
+    const worktreePath = join(worktreeBase, "live");
+    const cachePath = join(worktreePath, "node_modules");
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(join(cachePath, "dep.txt"), "cache\n");
+    listWorktreesMock.mockReturnValue([{ name: "live", branch: "live", path: worktreePath, isBare: false }]);
+    upsertTopologySession({ id: "codex-live", tool: "codex", command: "codex", args: [], worktreePath }, "running");
+    const host = {
+      projectRoot: pathsRoot,
+      dashboardPendingActions: new DashboardPendingActions(),
+    };
+
+    const result = persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
+
+    expect(result.plan.targets).toEqual([]);
+    expect(result.plan.skipped).toMatchObject([{ reason: "active-runtime" }]);
+    expect(existsSync(cachePath)).toBe(true);
+  });
+
+  it("skips cache cleanup when host-local live sessions have not reached topology yet", () => {
+    const worktreeBase = join(pathsRoot, ".aimux", "worktrees");
+    getWorktreeBaseDirMock.mockReturnValue(worktreeBase);
+    const worktreePath = join(worktreeBase, "host-live");
+    const cachePath = join(worktreePath, ".next");
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(join(cachePath, "build.txt"), "cache\n");
+    listWorktreesMock.mockReturnValue([{ name: "host-live", branch: "host-live", path: worktreePath, isBare: false }]);
+    const host = {
+      projectRoot: pathsRoot,
+      dashboardPendingActions: new DashboardPendingActions(),
+      sessions: [{ id: "codex-host-live", command: "codex" }],
+      sessionWorktreePaths: new Map([["codex-host-live", worktreePath]]),
+      isSessionRuntimeLive: vi.fn(() => true),
+    };
+
+    const result = persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
+
+    expect(result.plan.targets).toEqual([]);
+    expect(result.plan.skipped).toMatchObject([{ reason: "active-runtime", sessions: ["codex-host-live"] }]);
+    expect(existsSync(cachePath)).toBe(true);
+  });
+
   it("does not resurrect graveyarded worktrees when the checkout is missing", async () => {
     const worktreePath = join(pathsRoot, "worktrees", "missing");
     upsertTopologyWorktree({ path: worktreePath, name: "missing", branch: "missing" }, "active");

@@ -140,7 +140,9 @@ aimux_workflow_missing_required_arg() {
   case "$command_name $subcommand" in
     "message send" | "handoff send" | "handoff accept" | "handoff complete" | \
     "task show" | "task assign" | "task accept" | "task block" | "task complete" | "task reopen" | \
-    "review approve" | "review request-changes")
+    "review approve" | "review request-changes" | \
+    "worktree create" | "worktree remove" | "worktree graveyard" | "worktree resurrect" | \
+    "worktree delete-graveyard" | "graveyard send" | "graveyard resurrect")
       [ "$#" -le 2 ] && return 0
       case "${3:-}" in -*) return 0 ;; esac
       ;;
@@ -1661,7 +1663,11 @@ aimux_parse_project_json_args() {
   project_root="$(pwd -P 2>/dev/null)" || return 1
   json=0
   dry_run=0
+  yes=0
+  include_active=0
   allow_dry_run="${AIMUX_PARSE_ALLOW_DRY_RUN:-0}"
+  allow_yes="${AIMUX_PARSE_ALLOW_YES:-0}"
+  allow_include_active="${AIMUX_PARSE_ALLOW_INCLUDE_ACTIVE:-0}"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --project)
@@ -1681,6 +1687,14 @@ aimux_parse_project_json_args() {
         [ "$allow_dry_run" -eq 1 ] || return 1
         dry_run=1
         ;;
+      --yes)
+        [ "$allow_yes" -eq 1 ] || return 1
+        yes=1
+        ;;
+      --include-active)
+        [ "$allow_include_active" -eq 1 ] || return 1
+        include_active=1
+        ;;
       *)
         return 1
         ;;
@@ -1691,6 +1705,8 @@ aimux_parse_project_json_args() {
   AIMUX_PARSED_PROJECT="$project_root"
   AIMUX_PARSED_JSON="$json"
   AIMUX_PARSED_DRY_RUN="$dry_run"
+  AIMUX_PARSED_YES="$yes"
+  AIMUX_PARSED_INCLUDE_ACTIVE="$include_active"
 }
 
 aimux_try_worktree() {
@@ -1717,6 +1733,26 @@ aimux_try_worktree() {
       [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/worktree/create-text?json=1"
       aimux_post_query_text_route "$path" 120 \
         --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "name=$name"
+      ;;
+    cleanup-caches)
+      shift
+      AIMUX_PARSE_ALLOW_YES=1
+      AIMUX_PARSE_ALLOW_INCLUDE_ACTIVE=1
+      aimux_parse_project_json_args "$@" || {
+        AIMUX_PARSE_ALLOW_YES=0
+        AIMUX_PARSE_ALLOW_INCLUDE_ACTIVE=0
+        return 1
+      }
+      AIMUX_PARSE_ALLOW_YES=0
+      AIMUX_PARSE_ALLOW_INCLUDE_ACTIVE=0
+      dry_run=1
+      [ "$AIMUX_PARSED_YES" -eq 1 ] && dry_run=0
+      path="/core/worktree/cache-cleanup-text"
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/worktree/cache-cleanup-text?json=1"
+      aimux_post_query_text_route "$path" 120 \
+        --data-urlencode "project=$AIMUX_PARSED_PROJECT" \
+        --data-urlencode "dryRun=$dry_run" \
+        --data-urlencode "includeActive=$AIMUX_PARSED_INCLUDE_ACTIVE"
       ;;
     remove|graveyard|resurrect|delete-graveyard)
       action="$subcommand"
@@ -2622,14 +2658,18 @@ case "${1:-}" in
     fi
     ;;
   worktree)
-    if aimux_try_worktree "$@"; then
+    if aimux_args_include_help "$@" || aimux_workflow_missing_required_arg "$@"; then
+      :
+    elif aimux_try_worktree "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   graveyard)
-    if aimux_try_graveyard "$@"; then
+    if aimux_workflow_help_requested "$@" || aimux_workflow_missing_required_arg "$@"; then
+      :
+    elif aimux_try_graveyard "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"

@@ -187,6 +187,21 @@ export interface CoreWorktreePathTextPayload {
   status: string;
 }
 
+export interface CoreWorktreeCacheCleanupTargetTextPayload {
+  path: string;
+  sizeBytes: number;
+}
+
+export interface CoreWorktreeCacheCleanupTextPayload {
+  ok: true;
+  dryRun: boolean;
+  reclaimableBytes: number;
+  reclaimedBytes: number;
+  targets: CoreWorktreeCacheCleanupTargetTextPayload[];
+  skipped: unknown[];
+  results: unknown[];
+}
+
 export interface CoreGraveyardTextPayload {
   entries: unknown[];
   worktrees: unknown[];
@@ -588,6 +603,37 @@ export function renderCoreWorktreeResurrectLines(payload: CoreWorktreePathTextPa
 
 export function renderCoreWorktreeDeleteGraveyardLines(payload: CoreWorktreePathTextPayload): string[] {
   return [`deleted ${payload.path}`];
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const decimals = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(decimals)}${units[unitIndex]}`;
+}
+
+export function renderCoreWorktreeCacheCleanupLines(payload: CoreWorktreeCacheCleanupTextPayload): string[] {
+  const action = payload.dryRun ? "would remove" : "removed";
+  const bytes = payload.dryRun ? payload.reclaimableBytes : payload.reclaimedBytes;
+  const failed = payload.results.filter((item) => {
+    return Boolean(item && typeof item === "object" && (item as { status?: unknown }).status === "failed");
+  }).length;
+  const lines = [
+    `Worktree cache cleanup ${action} ${payload.targets.length} item(s), ${formatBytes(bytes)}; ${failed} failed.`,
+  ];
+  for (const target of payload.targets) {
+    lines.push(`${formatBytes(target.sizeBytes).padStart(7)}  ${target.path}`);
+  }
+  if (payload.skipped.length > 0) {
+    lines.push(`Skipped ${payload.skipped.length} worktree(s).`);
+  }
+  return lines;
 }
 
 export function renderCoreGraveyardLines(payload: CoreGraveyardTextPayload): string[] {

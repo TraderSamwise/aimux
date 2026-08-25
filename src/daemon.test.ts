@@ -2783,6 +2783,32 @@ describe("daemon supervision", () => {
           expect(opts.timeoutMs).toBe(120_000);
           return { status: 200, json: { ok: true, path: `${projectRoot}/relative`, status: "removed" } };
         }
+        if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.cacheCleanup)) {
+          expect(opts.body).toEqual({ dryRun: true, includeActive: false });
+          expect(opts.timeoutMs).toBe(120_000);
+          return {
+            status: 200,
+            json: {
+              ok: true,
+              result: {
+                dryRun: true,
+                reclaimedBytes: 0,
+                plan: {
+                  reclaimableBytes: 1024,
+                  targets: [{ path: `${projectRoot}/.aimux/worktrees/perf/apps/web/.next`, sizeBytes: 1024 }],
+                  skipped: [],
+                },
+                results: [
+                  {
+                    path: `${projectRoot}/.aimux/worktrees/perf/apps/web/.next`,
+                    status: "dry-run",
+                    sizeBytes: 1024,
+                  },
+                ],
+              },
+            },
+          };
+        }
         return { status: 200, json: projectServiceHealth(process.pid) };
       },
     );
@@ -2803,11 +2829,16 @@ describe("daemon supervision", () => {
       project: projectRoot,
       path: "relative",
     });
+    const cleanup = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.worktreeCacheCleanupText}?project=${encodeURIComponent(projectRoot)}`,
+    );
 
     expect(listed.body).toContain("main");
     expect(JSON.parse(String(listedJson.body))).toEqual([{ name: "main", branch: "master", path: projectRoot }]);
     expect(created.body).toBe(`Created worktree "feature" at ${projectRoot}/.aimux/worktrees/feature\n`);
     expect(removed.body).toBe(`removed ${projectRoot}/relative\n`);
+    expect(cleanup.body).toContain("Worktree cache cleanup would remove 1 item(s), 1.0KB; 0 failed.");
   });
 
   it("serves graveyard text routes through the project service", async () => {
