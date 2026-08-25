@@ -77,6 +77,16 @@ export function selectOrphanedDashboards(
   currentPid = process.pid,
   livePanePids: ReadonlySet<number> = new Set(),
 ): DashboardProcess[] {
+  const hasLivePaneAncestor = (pid: number): boolean => {
+    const seen = new Set<number>();
+    let current: number | undefined = pid;
+    while (current !== undefined && current > 1 && !seen.has(current)) {
+      if (livePanePids.has(current)) return true;
+      seen.add(current);
+      current = parents.get(current);
+    }
+    return false;
+  };
   return processes.filter((entry) => {
     if (entry.pid === currentPid) return false;
     if (!isDashboardProcessArgs(entry.args)) return false;
@@ -85,6 +95,6 @@ export function selectOrphanedDashboards(
     if (shell === undefined) return false;
     const grandparent = parents.get(shell);
     if (grandparent === 1) return true;
-    return livePanePids.size > 0 && !livePanePids.has(shell);
+    return livePanePids.size > 0 && !hasLivePaneAncestor(entry.pid);
   });
 }
