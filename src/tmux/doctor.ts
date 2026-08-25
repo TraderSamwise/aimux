@@ -172,6 +172,10 @@ export function buildTmuxDoctorReport(
       MANAGED_TMUX_SESSION_OPTIONS.windowSize,
       sessionExists ? tmux.getSessionOption(resolvedSessionName, "window-size") : null,
     ),
+    "history-limit": buildCheck(
+      MANAGED_TMUX_SESSION_OPTIONS.historyLimit,
+      sessionExists ? tmux.getSessionOption(resolvedSessionName, "history-limit") : null,
+    ),
     "extended-keys": buildCheck(
       MANAGED_TMUX_SESSION_OPTIONS.extendedKeys,
       sessionExists ? tmux.getSessionOption(resolvedSessionName, "extended-keys") : null,

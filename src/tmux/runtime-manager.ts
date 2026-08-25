@@ -147,6 +147,7 @@ export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
   prefix2: "C-b",
   mouse: "on",
   windowSize: "latest",
+  historyLimit: "20000",
   extendedKeys: "always",
   extendedKeysFormat: "csi-u",
   focusEvents: "off",
@@ -1506,6 +1507,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
     this.exec(["set-option", "-t", sessionName, "window-size", MANAGED_TMUX_SESSION_OPTIONS.windowSize]);
+    this.exec(["set-option", "-t", sessionName, "history-limit", MANAGED_TMUX_SESSION_OPTIONS.historyLimit]);
     this.exec(["set-option", "-t", sessionName, "set-clipboard", "external"]);
     this.exec(["set-option", "-t", sessionName, "copy-command", "pbcopy"]);
     this.exec(["set-option", "-t", sessionName, "repeat-time", "300"]);

@@ -1238,11 +1238,27 @@ describe("MetadataServer threads API", () => {
     const attach = (await attachRes.json()) as {
       ok: boolean;
       sessionId: string;
-      stream: { route: string; sessionId: string; startLine: number };
+      stream: {
+        route: string;
+        sessionId: string;
+        startLine: number;
+        requestedStartLine?: number;
+        captureLineLimit?: number;
+        outputTailOnly?: boolean;
+        outputStartLineClamped?: boolean;
+      };
       resize?: { cols: number; rows: number };
     };
     expect(attachRes.ok).toBe(true);
-    expect(attach.stream).toEqual({ route: "/events", sessionId: "codex-1", startLine: -90 });
+    expect(attach.stream).toEqual({
+      route: "/events",
+      sessionId: "codex-1",
+      startLine: -90,
+      requestedStartLine: -90,
+      captureLineLimit: 2000,
+      outputTailOnly: true,
+      outputStartLineClamped: false,
+    });
     expect(attach.resize).toEqual({ cols: 100, rows: 32 });
 
     const inputRes = await fetch(`${base}/live-pane/input`, {
@@ -7445,6 +7461,37 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain(
       '"parsed":{"blocks":[{"type":"response","text":"updated output"}],"parser":{"tool":"codex","version":1,"confidence":"heuristic"}}',
     );
+  });
+
+  it("marks clamped agent output stream windows", async () => {
+    server?.stop();
+    const readAgentOutput = vi.fn(({ sessionId }) => ({
+      sessionId,
+      output: "bounded tail",
+      parsed: { blocks: [{ type: "response", text: "bounded tail" }] },
+    }));
+    server = new MetadataServer({ lifecycle: { readAgentOutput } });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const res = await fetch(`${base}/agents/output/stream?sessionId=codex-1&startLine=-999999&intervalMs=100`, {
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+
+    const text = await readSseUntil(res.body!, (value) => value.includes('"output":"bounded tail"'));
+    controller.abort();
+
+    expect(readAgentOutput).toHaveBeenCalledWith({ sessionId: "codex-1", startLine: -999999 });
+    expect(text).toContain('"requestedStartLine":-999999');
+    expect(text).toContain('"startLine":-2000');
+    expect(text).toContain('"captureLineLimit":2000');
+    expect(text).toContain('"outputTailOnly":true');
+    expect(text).toContain('"outputStartLineClamped":true');
   });
 
   it("streams an activity change even though the pane has not moved", async () => {

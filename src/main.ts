@@ -128,6 +128,7 @@ import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
 import { isRuntimeRestartInProgress } from "./runtime-restart.js";
 import { isAimuxBuildDriftError } from "./runtime-drift.js";
 import { registerExposeCommand } from "./popup-expose.js";
+import { MAX_AGENT_OUTPUT_CAPTURE_LINES } from "./agent-output-bounds.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -1299,7 +1300,7 @@ hostCmd
   .description("Stream live captured output from a running agent session over SSE")
   .argument("<sessionId>", "Agent session ID")
   .option("--project <path>", "Project path")
-  .option("--start-line <number>", "tmux capture-pane start line", "-120")
+  .option("--start-line <number>", "tmux capture-pane start line", String(-MAX_AGENT_OUTPUT_CAPTURE_LINES))
   .option("--lines <number>", "Number of tail lines to stream")
   .option("--interval-ms <number>", "Polling interval in milliseconds", "500")
   .action(

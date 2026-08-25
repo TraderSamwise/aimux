@@ -34,6 +34,11 @@ export interface ReadyEvent {
   ts: string;
   sessionId: string | null;
   startLine: number;
+  requestedStartLine?: number;
+  endLine?: number;
+  captureLineLimit?: number;
+  outputTailOnly?: boolean;
+  outputStartLineClamped?: boolean;
   intervalMs: number;
 }
 
@@ -72,6 +77,11 @@ export interface AgentOutputEvent {
   /** The pane with tmux's colours still attached; absent from older services. */
   outputAnsi?: string;
   startLine: number;
+  requestedStartLine?: number;
+  endLine?: number;
+  captureLineLimit?: number;
+  outputTailOnly?: boolean;
+  outputStartLineClamped?: boolean;
   parsed?: ParsedAgentOutput;
   messages?: AgentTranscriptMessage[];
   /**

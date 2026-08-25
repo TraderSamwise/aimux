@@ -401,6 +401,11 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
    */
   outputAnsi?: string;
   startLine?: number;
+  requestedStartLine?: number;
+  endLine?: number;
+  captureLineLimit?: number;
+  outputTailOnly?: boolean;
+  outputStartLineClamped?: boolean;
   parsed?: unknown;
   /**
    * The pane as a conversation, projected server-side.
@@ -446,6 +451,11 @@ export type AgentOutputStreamEventName = "ready" | "output" | "error";
 export interface AgentOutputStreamReadyData {
   sessionId: string;
   startLine: number;
+  requestedStartLine?: number;
+  endLine?: number;
+  captureLineLimit?: number;
+  outputTailOnly?: boolean;
+  outputStartLineClamped?: boolean;
   intervalMs: number;
 }
 
@@ -453,6 +463,11 @@ export interface AgentOutputStreamOutputData {
   sessionId: string;
   output: string;
   startLine: number;
+  requestedStartLine?: number;
+  endLine?: number;
+  captureLineLimit?: number;
+  outputTailOnly?: boolean;
+  outputStartLineClamped?: boolean;
   parsed?: unknown;
 }
 
@@ -529,6 +544,11 @@ export interface LivePaneAttachResponse extends LivePaneOutputResponse {
     route: typeof PROJECT_API_ROUTES.events;
     sessionId: string;
     startLine: number;
+    requestedStartLine?: number;
+    endLine?: number;
+    captureLineLimit?: number;
+    outputTailOnly?: boolean;
+    outputStartLineClamped?: boolean;
   };
   resize?: {
     cols: number;

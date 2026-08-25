@@ -8,6 +8,15 @@ export function createAgentOutputSseTextHandler(
 ): AgentOutputSseTextHandler {
   let buffer = "";
   let lastOutput = "";
+  let wroteTailNotice = false;
+
+  const overlapSuffixPrefixLength = (previous: string, next: string): number => {
+    const max = Math.min(previous.length, next.length);
+    for (let length = max; length > 0; length -= 1) {
+      if (previous.endsWith(next.slice(0, length))) return length;
+    }
+    return 0;
+  };
 
   const flushEventBlock = (block: string) => {
     const lines = block.split("\n");
@@ -28,12 +37,26 @@ export function createAgentOutputSseTextHandler(
       throw new Error(payload?.error || `stream error for ${sessionId}`);
     }
     if (eventName !== "output" || dataLines.length === 0) return;
-    const payload = JSON.parse(dataLines.join("\n")) as { output?: string };
+    const payload = JSON.parse(dataLines.join("\n")) as {
+      output?: string;
+      captureLineLimit?: number;
+      outputTailOnly?: boolean;
+      outputStartLineClamped?: boolean;
+    };
     if (typeof payload.output !== "string") return;
     const nextOutput = payload.output;
+    if ((payload.outputTailOnly || payload.outputStartLineClamped) && !wroteTailNotice) {
+      const limit = payload.captureLineLimit && payload.captureLineLimit > 0 ? payload.captureLineLimit : "bounded";
+      writeText(`[aimux showing last ${limit} lines]\n`);
+      wroteTailNotice = true;
+    }
+    const overlap =
+      lastOutput && !nextOutput.startsWith(lastOutput) ? overlapSuffixPrefixLength(lastOutput, nextOutput) : 0;
     const renderText = nextOutput.startsWith(lastOutput)
       ? nextOutput.slice(lastOutput.length)
-      : `${lastOutput ? "\n[aimux stream resync]\n" : ""}${nextOutput}`;
+      : overlap > 0
+        ? nextOutput.slice(overlap)
+        : `${lastOutput ? "\n[aimux stream resync]\n" : ""}${nextOutput}`;
     lastOutput = nextOutput;
     if (!renderText) return;
     writeText(renderText);

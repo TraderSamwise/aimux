@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentOutputCaptureWindow,
   boundedAgentOutputEndLine,
   boundedAgentOutputStartLine,
   DEFAULT_AGENT_OUTPUT_START_LINE,
@@ -25,5 +26,24 @@ describe("agent output bounds", () => {
     expect(boundedAgentOutputEndLine(-80)).toBeUndefined();
     expect(boundedAgentOutputEndLine(0)).toBe(MAX_AGENT_OUTPUT_CAPTURE_LINES - 1);
     expect(boundedAgentOutputEndLine(25)).toBe(25 + MAX_AGENT_OUTPUT_CAPTURE_LINES - 1);
+  });
+
+  it("describes bounded capture windows for clients", () => {
+    expect(agentOutputCaptureWindow(-999_999)).toEqual({
+      requestedStartLine: -999_999,
+      startLine: -MAX_AGENT_OUTPUT_CAPTURE_LINES,
+      endLine: undefined,
+      maxLines: MAX_AGENT_OUTPUT_CAPTURE_LINES,
+      tailOnly: true,
+      clamped: true,
+    });
+    expect(agentOutputCaptureWindow(25)).toEqual({
+      requestedStartLine: 25,
+      startLine: 25,
+      endLine: 25 + MAX_AGENT_OUTPUT_CAPTURE_LINES - 1,
+      maxLines: MAX_AGENT_OUTPUT_CAPTURE_LINES,
+      tailOnly: false,
+      clamped: false,
+    });
   });
 });

@@ -17,6 +17,7 @@ function createDoctorExec(): TmuxExec {
     if (joined === "show-options -v -t aimux-mobile-abc prefix2") return "C-b";
     if (joined === "show-options -v -t aimux-mobile-abc mouse") return "on";
     if (joined === "show-options -v -t aimux-mobile-abc window-size") return "latest";
+    if (joined === "show-options -v -t aimux-mobile-abc history-limit") return "20000";
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys") return "always";
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys-format") return "csi-u";
     if (joined === "show-options -v -t aimux-mobile-abc terminal-features") {
@@ -59,6 +60,7 @@ describe("tmux doctor", () => {
     expect(report.managedSession.exists).toBe(true);
     expect(report.managedSession.options.mouse.ok).toBe(true);
     expect(report.managedSession.options["window-size"]?.ok).toBe(true);
+    expect(report.managedSession.options["history-limit"]?.ok).toBe(true);
     expect(report.managedSession.terminalFeatures["xterm*:hyperlinks"]?.ok).toBe(true);
     expect(report.activeWindow?.tool).toBe("codex");
     expect(report.activeWindow?.options["allow-passthrough"]?.ok).toBe(true);
@@ -121,6 +123,7 @@ describe("tmux doctor", () => {
         if (joined === `show-options -v -t ${expectedSession} prefix2`) return "C-b";
         if (joined === `show-options -v -t ${expectedSession} mouse`) return "on";
         if (joined === `show-options -v -t ${expectedSession} window-size`) return "latest";
+        if (joined === `show-options -v -t ${expectedSession} history-limit`) return "20000";
         if (joined === `show-options -v -t ${expectedSession} extended-keys`) return "always";
         if (joined === `show-options -v -t ${expectedSession} extended-keys-format`) return "csi-u";
         if (joined === `show-options -v -t ${expectedSession} terminal-features`) {

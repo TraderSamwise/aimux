@@ -571,6 +571,11 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
     expect(
       exec.calls.some(
+        (call) => call.args[0] === "set-option" && call.args[3] === "history-limit" && call.args[4] === "20000",
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
         (call) =>
           call.args[0] === "bind-key" &&
           call.args[2] === "prefix" &&

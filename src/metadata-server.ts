@@ -126,7 +126,7 @@ import {
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
-import { boundedAgentOutputStartLine } from "./agent-output-bounds.js";
+import { agentOutputCaptureWindow } from "./agent-output-bounds.js";
 import type { AgentTranscriptMessage } from "./agent-transcript.js";
 import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
@@ -763,6 +763,11 @@ export interface MetadataServerOptions {
           output: string;
           outputAnsi?: string;
           startLine?: number;
+          requestedStartLine?: number;
+          endLine?: number;
+          captureLineLimit?: number;
+          outputTailOnly?: boolean;
+          outputStartLineClamped?: boolean;
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
           activity?: AgentActivityState;
@@ -774,6 +779,11 @@ export interface MetadataServerOptions {
           output: string;
           outputAnsi?: string;
           startLine?: number;
+          requestedStartLine?: number;
+          endLine?: number;
+          captureLineLimit?: number;
+          outputTailOnly?: boolean;
+          outputStartLineClamped?: boolean;
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
           activity?: AgentActivityState;
@@ -3309,7 +3319,8 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
-      const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
+      const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
+      const startLine = captureWindow.startLine;
       const parsedIntervalMs =
         intervalMsRaw === null || intervalMsRaw.trim() === ""
           ? ({ ok: true, value: 500 } as const)
@@ -3363,7 +3374,10 @@ export class MetadataServer {
         if (outputPollInFlight) return;
         outputPollInFlight = true;
         try {
-          const result = await this.options.lifecycle.readAgentOutput({ sessionId: sessionFilter, startLine });
+          const result = await this.options.lifecycle.readAgentOutput({
+            sessionId: sessionFilter,
+            startLine: parsedStartLine.value,
+          });
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
           if (result.output !== lastOutput || liveness !== lastLiveness) {
@@ -3374,6 +3388,11 @@ export class MetadataServer {
               output: result.output,
               outputAnsi: result.outputAnsi,
               startLine: result.startLine ?? startLine,
+              requestedStartLine: result.requestedStartLine ?? captureWindow.requestedStartLine,
+              endLine: result.endLine ?? captureWindow.endLine,
+              captureLineLimit: result.captureLineLimit ?? captureWindow.maxLines,
+              outputTailOnly: result.outputTailOnly ?? captureWindow.tailOnly,
+              outputStartLineClamped: result.outputStartLineClamped ?? captureWindow.clamped,
               parsed: result.parsed,
               // Forwarded explicitly: this payload is hand-picked, so a field
               // added to readAgentOutput does not reach a stream by itself.
@@ -3399,6 +3418,11 @@ export class MetadataServer {
         ts: new Date().toISOString(),
         sessionId: sessionFilter,
         startLine,
+        requestedStartLine: captureWindow.requestedStartLine,
+        endLine: captureWindow.endLine,
+        captureLineLimit: captureWindow.maxLines,
+        outputTailOnly: captureWindow.tailOnly,
+        outputStartLineClamped: captureWindow.clamped,
         intervalMs,
       });
       if (sessionFilter && this.options.lifecycle?.readAgentOutput) {
@@ -3810,7 +3834,8 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
-      const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
+      const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
+      const startLine = captureWindow.startLine;
 
       const parsedIntervalMs =
         intervalMsRaw === null || intervalMsRaw.trim() === ""
@@ -3856,7 +3881,10 @@ export class MetadataServer {
         if (pollInFlight) return;
         pollInFlight = true;
         try {
-          const result = await this.options.lifecycle!.readAgentOutput!({ sessionId, startLine });
+          const result = await this.options.lifecycle!.readAgentOutput!({
+            sessionId,
+            startLine: parsedStartLine.value,
+          });
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
           if (result.output !== lastOutput || liveness !== lastLiveness) {
@@ -3867,6 +3895,11 @@ export class MetadataServer {
               output: result.output,
               outputAnsi: result.outputAnsi,
               startLine: result.startLine ?? startLine,
+              requestedStartLine: result.requestedStartLine ?? captureWindow.requestedStartLine,
+              endLine: result.endLine ?? captureWindow.endLine,
+              captureLineLimit: result.captureLineLimit ?? captureWindow.maxLines,
+              outputTailOnly: result.outputTailOnly ?? captureWindow.tailOnly,
+              outputStartLineClamped: result.outputStartLineClamped ?? captureWindow.clamped,
               parsed: result.parsed,
               // Forwarded explicitly: this payload is hand-picked, so a field
               // added to readAgentOutput does not reach a stream by itself.
@@ -3889,7 +3922,16 @@ export class MetadataServer {
         }
       };
 
-      sendSseEvent(res, "ready", { sessionId, startLine, intervalMs });
+      sendSseEvent(res, "ready", {
+        sessionId,
+        startLine,
+        requestedStartLine: captureWindow.requestedStartLine,
+        endLine: captureWindow.endLine,
+        captureLineLimit: captureWindow.maxLines,
+        outputTailOnly: captureWindow.tailOnly,
+        outputStartLineClamped: captureWindow.clamped,
+        intervalMs,
+      });
       await poll();
       pollTimer = setInterval(() => {
         void poll();
@@ -6832,9 +6874,19 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: parsedStartLine.error });
           return;
         }
-        const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
-        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
-        send(res, 200, { ok: true, ...result });
+        const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
+        const startLine = captureWindow.startLine;
+        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine: parsedStartLine.value });
+        send(res, 200, {
+          ok: true,
+          ...result,
+          startLine: result.startLine ?? startLine,
+          requestedStartLine: result.requestedStartLine ?? captureWindow.requestedStartLine,
+          endLine: result.endLine ?? captureWindow.endLine,
+          captureLineLimit: result.captureLineLimit ?? captureWindow.maxLines,
+          outputTailOnly: result.outputTailOnly ?? captureWindow.tailOnly,
+          outputStartLineClamped: result.outputStartLineClamped ?? captureWindow.clamped,
+        });
         return;
       }
 
@@ -6863,7 +6915,8 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: parsedStartLine.error });
           return;
         }
-        const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
+        const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
+        const startLine = captureWindow.startLine;
 
         let resize: { cols: number; rows: number } | undefined;
         if (body.cols !== undefined || body.rows !== undefined) {
@@ -6889,7 +6942,7 @@ export class MetadataServer {
           resize = { cols: result.cols, rows: result.rows };
         }
 
-        const output = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
+        const output = await this.options.lifecycle.readAgentOutput({ sessionId, startLine: parsedStartLine.value });
         send(res, 200, {
           ok: true,
           ...output,
@@ -6897,6 +6950,11 @@ export class MetadataServer {
             route: PROJECT_API_ROUTES.events,
             sessionId,
             startLine: output.startLine ?? startLine,
+            requestedStartLine: output.requestedStartLine ?? captureWindow.requestedStartLine,
+            endLine: output.endLine ?? captureWindow.endLine,
+            captureLineLimit: output.captureLineLimit ?? captureWindow.maxLines,
+            outputTailOnly: output.outputTailOnly ?? captureWindow.tailOnly,
+            outputStartLineClamped: output.outputStartLineClamped ?? captureWindow.clamped,
           },
           ...(resize ? { resize } : {}),
         });

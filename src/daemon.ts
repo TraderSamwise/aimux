@@ -210,6 +210,7 @@ import {
   type ProjectServiceState,
 } from "./daemon-state.js";
 import { createAgentOutputSseTextHandler } from "./agent-output-stream.js";
+import { MAX_AGENT_OUTPUT_CAPTURE_LINES } from "./agent-output-bounds.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { parseRuntimeMetadataCliArgs } from "./metadata-cli-routing.js";
 import { getEventLoopDelay, startEventLoopMonitor } from "./event-loop-metrics.js";
@@ -1622,7 +1623,13 @@ export class AimuxDaemon {
     if (typeof project !== "string") return { ok: false, response: project };
     const sessionId = this.requiredParam(routeUrl, undefined, "sessionId");
     if (typeof sessionId !== "string") return { ok: false, response: sessionId };
-    const startLine = this.integerParam(routeUrl, undefined, "startLine", -120, "start-line");
+    const startLine = this.integerParam(
+      routeUrl,
+      undefined,
+      "startLine",
+      -MAX_AGENT_OUTPUT_CAPTURE_LINES,
+      "start-line",
+    );
     if (typeof startLine !== "number") return { ok: false, response: startLine };
     const intervalMs = this.integerParam(routeUrl, undefined, "intervalMs", 500, "interval-ms");
     if (typeof intervalMs !== "number") return { ok: false, response: intervalMs };
