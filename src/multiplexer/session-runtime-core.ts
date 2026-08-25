@@ -73,6 +73,8 @@ function readRecordingTail(path: string): string {
 
 type SessionRuntimeHost = any;
 const RESTORE_EXIT_BLOCK_MS = 30_000;
+const ACTIVE_PROMPT_INPUT_POLL_MS = 1_000;
+const ACTIVE_PROMPT_INPUT_STABLE_MS = 8_000;
 const ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS = 10_000;
 
 function projectRootFor(host: SessionRuntimeHost): string {
@@ -334,6 +336,8 @@ export async function sendAgentInput(
         tmuxRuntimeManager: host.tmuxRuntimeManager,
         target,
         isTargetCurrent: () => resolveLiveSessionTmuxTarget(host, sessionId, target)?.windowId === target.windowId,
+        pollMs: ACTIVE_PROMPT_INPUT_POLL_MS,
+        stablePolls: Math.ceil(ACTIVE_PROMPT_INPUT_STABLE_MS / ACTIVE_PROMPT_INPUT_POLL_MS),
         maxWaitMs: ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS,
         onEvent: (event) => logActivePromptInputBuffer(host, sessionId, event),
       });

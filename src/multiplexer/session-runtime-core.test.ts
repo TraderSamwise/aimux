@@ -232,15 +232,19 @@ describe("session runtime prompt submission", () => {
     }
   });
 
-  it("waits for active prompt input to go idle before writing guarded tmux input", async () => {
+  it("waits for active prompt input to stay idle before writing guarded tmux input", async () => {
     vi.useFakeTimers();
     const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
     const captures = [
-      "› human draft one\n  gpt-5.5 high",
-      "› human draft two\n  gpt-5.5 high",
-      "› human draft two\n  gpt-5.5 high",
-      "› human draft two\n  gpt-5.5 high",
-      "› human draft two\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
       "› aimux delivery",
       "› aimux delivery",
       "",
@@ -277,6 +281,46 @@ describe("session runtime prompt submission", () => {
 
       await vi.advanceTimersByTimeAsync(1_000);
       expect(tmuxRuntimeManager.sendText).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(tmuxRuntimeManager.sendText).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(sent).resolves.toEqual({ sessionId: "codex-1", accepted: true });
+      expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "aimux delivery");
+    } finally {
+      transport.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it("writes guarded tmux input after visible prompt input clears", async () => {
+    vi.useFakeTimers();
+    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
+    const captures = ["› human draft\n  gpt-5.5 high", "", "› aimux delivery", "› aimux delivery", ""];
+    const tmuxRuntimeManager = {
+      sendText: vi.fn(),
+      sendKey: vi.fn(),
+      sendEnter: vi.fn(),
+      sendCarriageReturn: vi.fn(),
+      getTargetByWindowId: vi.fn(() => target),
+      getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-1" })),
+      captureTarget: vi.fn(() => captures.shift() ?? ""),
+      isWindowAlive: vi.fn(() => true),
+    };
+    const transport = new TmuxSessionTransport("codex-1", "codex", target, tmuxRuntimeManager as any, 80, 24);
+    const host: any = {
+      sessions: [{ id: "codex-1", command: "codex", transport }],
+      sessionTmuxTargets: new Map([["codex-1", target]]),
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      tmuxRuntimeManager,
+    };
+
+    try {
+      const sent = sendAgentInput(host, "codex-1", "aimux delivery", {
+        waitForSubmit: false,
+        waitForActiveDraftIdle: true,
+      });
 
       await vi.advanceTimersByTimeAsync(1_000);
       await expect(sent).resolves.toEqual({ sessionId: "codex-1", accepted: true });
