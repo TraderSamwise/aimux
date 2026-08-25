@@ -15,6 +15,7 @@ import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { activityTextFromParsedAgentOutput, parseAgentOutput } from "../agent-output-parser.js";
+import { boundedAgentOutputEndLine, boundedAgentOutputStartLine } from "../agent-output-bounds.js";
 import {
   mergePublishedAttachments,
   messagesFromParsedAgentOutput,
@@ -404,7 +405,7 @@ export function reconcileAgentActivity(
 function captureSessionPane(
   host: SessionRuntimeHost,
   sessionId: string,
-  options: { startLine: number; includeEscapes: boolean },
+  options: { startLine: number; endLine?: number; includeEscapes: boolean },
 ): string {
   const target = resolveLiveSessionTmuxTarget(host, sessionId);
   if (!target) {
@@ -431,8 +432,10 @@ export async function readAgentOutput(
   attention?: AgentAttentionState;
 }> {
   const runtime = resolveRunningSession(host, sessionId);
+  const boundedStartLine = boundedAgentOutputStartLine(startLine);
   const outputAnsi = captureSessionPane(host, sessionId, {
-    startLine: startLine ?? -120,
+    startLine: boundedStartLine,
+    endLine: boundedAgentOutputEndLine(boundedStartLine),
     includeEscapes: true,
   });
   const output = stripSgr(outputAnsi);
@@ -454,7 +457,7 @@ export async function readAgentOutput(
   // text the cache is keyed on, so a fresh publish has to invalidate it too.
   const published = listSessionAttachments(sessionId, { limit: PUBLISHED_ATTACHMENT_LIMIT });
   const publishedKey = published.map((entry) => `${entry.record.id}@${entry.anchorMessageId ?? ""}`).join(",");
-  const cacheKey = `${sessionId}:${startLine ?? -120}`;
+  const cacheKey = `${sessionId}:${boundedStartLine}`;
   const cached = transcriptCache.get(cacheKey);
   if (cached && cached.output === output && cached.outputAnsi === outputAnsi && cached.publishedKey === publishedKey) {
     const activityText = paneState.interruptedVisible ? "" : cached.activityText;
@@ -462,7 +465,7 @@ export async function readAgentOutput(
       sessionId,
       output,
       outputAnsi,
-      startLine: startLine ?? -120,
+      startLine: boundedStartLine,
       parsed: cached.parsed,
       messages: cached.messages,
       activityText,
@@ -519,7 +522,7 @@ export async function readAgentOutput(
     sessionId,
     output,
     outputAnsi,
-    startLine: startLine ?? -120,
+    startLine: boundedStartLine,
     parsed,
     messages,
     activityText,

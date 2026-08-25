@@ -76,6 +76,7 @@ import {
   type RemoveServiceResponse,
   type RemoveWorktreeResponse,
   type ResumeAgentResponse,
+  type RestorePreviousAgentsResponse,
   type ResumeServiceResponse,
   type ResurrectAgentResponse,
   type ResurrectWorktreeResponse,
@@ -633,6 +634,26 @@ export async function resumeAgent(
 ): Promise<ResumeAgentResponse> {
   const input: AgentSessionInput = { sessionId };
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.resume, opts, input);
+}
+
+export async function restorePreviousAgents(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<RestorePreviousAgentsResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.restorePrevious, opts, {});
+}
+
+export async function dismissRestorePreviousAgents(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<{ ok: true }> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.agents.dismissRestorePrevious,
+    opts,
+    {},
+  );
 }
 
 export async function killAgent(

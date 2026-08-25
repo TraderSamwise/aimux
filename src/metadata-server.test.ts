@@ -4630,18 +4630,29 @@ describe("MetadataServer threads API", () => {
     const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
     const body = (await res.json()) as {
       ok: boolean;
+      accepted: boolean;
+      total: number;
       restored: Array<{ sessionId: string; status: string }>;
       failed: Array<{ sessionId: string; error: string }>;
+      transitions: Array<{ targetId?: string; phase: string }>;
       offer: { sessionIds: string[] } | null;
     };
 
     expect(res.status).toBe(200);
-    expect(body.ok).toBe(false);
-    expect(body.restored).toEqual([{ sessionId: "codex-ok", status: "running" }]);
-    expect(body.failed).toEqual([{ sessionId: "claude-fail", error: "resume unavailable" }]);
-    expect(body.offer?.sessionIds).toEqual(["claude-fail"]);
-    expect(readAgentRestoreOffer(repoRoot)?.sessionIds).toEqual(["claude-fail"]);
+    expect(body.ok).toBe(true);
+    expect(body.accepted).toBe(true);
+    expect(body.total).toBe(2);
+    expect(body.restored).toEqual([]);
+    expect(body.failed).toEqual([]);
+    expect(body.transitions.map((transition) => [transition.targetId, transition.phase])).toEqual([
+      ["codex-ok", "queued"],
+      ["claude-fail", "queued"],
+    ]);
+    expect(body.offer?.sessionIds).toEqual(["codex-ok", "claude-fail"]);
+    await waitForCondition(() => resumeAgent.mock.calls.length === 2);
+    await waitForCondition(() => readAgentRestoreOffer(repoRoot)?.sessionIds.length === 1);
     expect(resumeAgent).toHaveBeenCalledTimes(2);
+    expect(readAgentRestoreOffer(repoRoot)?.sessionIds).toEqual(["claude-fail"]);
   });
 
   it("uses exact single-agent restores for previous-restore batches when available", async () => {
@@ -4673,21 +4684,24 @@ describe("MetadataServer threads API", () => {
     const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
     const body = (await res.json()) as {
       ok: boolean;
+      accepted: boolean;
+      total: number;
       restored: Array<{ sessionId: string; status: string }>;
       failed: Array<{ sessionId: string; error: string }>;
     };
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.restored).toEqual([
-      { sessionId: "claude-parent", status: "running" },
-      { sessionId: "claude-teammate", status: "running" },
-    ]);
+    expect(body.accepted).toBe(true);
+    expect(body.total).toBe(2);
+    expect(body.restored).toEqual([]);
     expect(body.failed).toEqual([]);
+    await waitForCondition(() => restoreAgent.mock.calls.length === 2);
     expect(restoreAgent).toHaveBeenCalledTimes(2);
     expect(restoreAgent).toHaveBeenNthCalledWith(1, { sessionId: "claude-parent" });
     expect(restoreAgent).toHaveBeenNthCalledWith(2, { sessionId: "claude-teammate" });
     expect(resumeAgent).not.toHaveBeenCalled();
+    await waitForCondition(() => readAgentRestoreOffer(repoRoot) === null);
   });
 
   it("restores nine previous agents without tripping the lifecycle queue limit", async () => {
@@ -4716,6 +4730,8 @@ describe("MetadataServer threads API", () => {
     const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
     const body = (await res.json()) as {
       ok: boolean;
+      accepted: boolean;
+      total: number;
       restored: Array<{ sessionId: string; status: string }>;
       failed: Array<{ sessionId: string; error: string }>;
       offer: { sessionIds: string[] } | null;
@@ -4723,15 +4739,14 @@ describe("MetadataServer threads API", () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.restored).toEqual(
-      sessions.map((session) => ({
-        sessionId: session.id,
-        status: "running",
-      })),
-    );
+    expect(body.accepted).toBe(true);
+    expect(body.total).toBe(9);
+    expect(body.restored).toEqual([]);
     expect(body.failed).toEqual([]);
-    expect(body.offer).toBeNull();
+    expect(body.offer?.sessionIds).toEqual(sessions.map((session) => session.id));
+    await waitForCondition(() => restoreAgent.mock.calls.length === 9);
     expect(restoreAgent).toHaveBeenCalledTimes(9);
+    await waitForCondition(() => readAgentRestoreOffer(repoRoot) === null);
   });
 
   it("serializes restore-previous agent resumes through the lifecycle queue", async () => {
@@ -4762,7 +4777,19 @@ describe("MetadataServer threads API", () => {
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
-    const restorePromise = fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const restoreResponse = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const acceptedBody = (await restoreResponse.json()) as {
+      ok: boolean;
+      accepted: boolean;
+      total: number;
+      transitions: Array<{ targetId?: string; phase: string }>;
+    };
+    expect(acceptedBody).toMatchObject({ ok: true, accepted: true, total: 2 });
+    expect(acceptedBody.transitions.map((transition) => [transition.targetId, transition.phase])).toEqual([
+      ["codex-a", "queued"],
+      ["codex-b", "queued"],
+    ]);
+    expect(readAgentRestoreOffer(repoRoot)).toBeNull();
     await waitForCondition(() => started.includes("codex-a"));
     await new Promise((resolve) => setTimeout(resolve, 75));
 
@@ -4772,18 +4799,7 @@ describe("MetadataServer threads API", () => {
     await waitForCondition(() => started.includes("codex-b"));
     resolvers.get("codex-b")?.();
 
-    const body = (await (await restorePromise).json()) as {
-      ok: boolean;
-      restored: Array<{ sessionId: string; status: string }>;
-      failed: Array<{ sessionId: string; error: string }>;
-    };
-
-    expect(body.ok).toBe(true);
-    expect(body.restored).toEqual([
-      { sessionId: "codex-a", status: "running" },
-      { sessionId: "codex-b", status: "running" },
-    ]);
-    expect(body.failed).toEqual([]);
+    await waitForCondition(() => readAgentRestoreOffer(repoRoot) === null);
     expect(started).toEqual(["codex-a", "codex-b"]);
   });
 

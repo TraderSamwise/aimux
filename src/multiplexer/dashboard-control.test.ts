@@ -2570,10 +2570,15 @@ describe("agent restore confirm overlay", () => {
       dashboardModelServiceRefreshError: null,
       postToProjectService: vi.fn(async (path: string) => {
         if (path === "/agents/restore-previous") {
-          return { ok: true, restored: [{ id: "claude-1" }], failed: [] };
+          return { ok: true, accepted: true, total: 2, restored: [], failed: [], transitions: [] };
         }
         return { ok: true };
       }),
+      getDashboardSessions: vi.fn(() => [
+        { id: "claude-1", status: "offline" },
+        { id: "codex-1", status: "offline" },
+      ]),
+      setPendingDashboardSessionAction: vi.fn(),
     };
     return host;
   }
@@ -2596,10 +2601,27 @@ describe("agent restore confirm overlay", () => {
     expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(true);
 
     await vi.waitFor(() => {
-      expect(host.postToProjectService).toHaveBeenCalledWith("/agents/restore-previous", {}, { timeoutMs: 120_000 });
+      expect(host.postToProjectService).toHaveBeenCalledWith("/agents/restore-previous", {}, { timeoutMs: 10_000 });
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, expect.anything());
     });
+    expect(host.setPendingDashboardSessionAction).toHaveBeenCalledWith("claude-1", "starting");
+    expect(host.setPendingDashboardSessionAction).toHaveBeenCalledWith("codex-1", "starting");
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+  });
+
+  it("does not count optimistic restore rows as completed progress", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = restoreOverlayHost();
+    host.getDashboardSessions = vi.fn(() => [
+      { id: "claude-1", status: "waiting", pendingAction: "starting", optimistic: true },
+      { id: "codex-1", status: "waiting", pendingAction: "starting", optimistic: true },
+    ]);
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(host.footerFlash).toBe("Restoring agents 0/2");
+    });
   });
 
   it("clears restore progress feedback when restore fails", async () => {
@@ -2642,7 +2664,7 @@ describe("agent restore confirm overlay", () => {
     expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(true);
 
     await vi.waitFor(() => {
-      expect(host.postToProjectService).toHaveBeenCalledWith("/agents/restore-previous", {}, { timeoutMs: 120_000 });
+      expect(host.postToProjectService).toHaveBeenCalledWith("/agents/restore-previous", {}, { timeoutMs: 10_000 });
     });
   });
 

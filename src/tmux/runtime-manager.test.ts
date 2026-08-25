@@ -1715,6 +1715,21 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("passes an end line when capture output is bounded above", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux-repo",
+      windowId: "@3",
+      windowIndex: 1,
+      windowName: "codex",
+    };
+
+    manager.captureTarget(target, { startLine: 0, endLine: 1999, includeEscapes: true });
+
+    expect(exec.calls.at(-1)?.args).toEqual(["capture-pane", "-p", "-J", "-e", "-t", "@3", "-S", "0", "-E", "1999"]);
+  });
+
   it("starts and stops pane pipes with a quoted file sink", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);

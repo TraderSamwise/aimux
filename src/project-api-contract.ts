@@ -1101,6 +1101,15 @@ export interface ResumeAgentResponse extends ProjectLifecycleTransitionResponse 
   teammateFailures?: Array<{ sessionId?: string; error?: string; message?: string }>;
 }
 
+export interface RestorePreviousAgentsResponse extends ProjectApiOk {
+  accepted: boolean;
+  total: number;
+  restored: Array<{ sessionId: string; status: string }>;
+  failed: Array<{ sessionId: string; error: string }>;
+  transitions: ProjectLifecycleTransition[];
+  offer: unknown | null;
+}
+
 export interface KillAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "graveyard";

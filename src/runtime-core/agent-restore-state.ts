@@ -364,6 +364,27 @@ export function acknowledgeAgentRestoreOffer(projectRoot?: string): void {
   return projectRoot ? withProjectPaths(projectRoot, acknowledge) : acknowledge();
 }
 
+export function writeAgentRestoreRetryOffer(
+  baseOffer: AgentRestoreOffer,
+  failedSessionIds: Iterable<string>,
+  projectRoot?: string,
+): AgentRestoreOffer | null {
+  const write = () => {
+    const failed = new Set(failedSessionIds);
+    const sessions = baseOffer.sessions.filter((session) => failed.has(session.id));
+    if (sessions.length === 0) return null;
+    const retryOffer: AgentRestoreOffer = {
+      ...baseOffer,
+      updatedAt: new Date().toISOString(),
+      sessionIds: sessions.map((session) => session.id),
+      sessions,
+    };
+    writeJsonAtomic(offerPath(), retryOffer);
+    return retryOffer;
+  };
+  return projectRoot ? withProjectPaths(projectRoot, write) : write();
+}
+
 export function removeAgentRestoreOfferSessions(
   sessionIds: Iterable<string>,
   projectRoot?: string,

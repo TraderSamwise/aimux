@@ -120,11 +120,12 @@ import { getWorktreeCreatePath } from "./worktree.js";
 import {
   acknowledgeAgentRestoreOffer,
   readAgentRestoreOffer,
-  removeAgentRestoreOfferSessions,
+  writeAgentRestoreRetryOffer,
 } from "./runtime-core/agent-restore-state.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
+import { boundedAgentOutputStartLine } from "./agent-output-bounds.js";
 import type { AgentTranscriptMessage } from "./agent-transcript.js";
 import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
@@ -1748,7 +1749,7 @@ export class MetadataServer {
     if (targetKey && transition && this.lifecycleMutationTargets.has(targetKey)) {
       throw new LifecycleMutationConflictError(transition, this.lifecycleMutationTargets.get(targetKey)!);
     }
-    const queueLimit = this.options.lifecycleMutationQueueLimit ?? 8;
+    const queueLimit = this.options.lifecycleMutationQueueLimit ?? 32;
     if (transition && this.lifecycleMutationQueuedCount >= queueLimit) {
       throw new LifecycleMutationQueueFullError(transition, this.lifecycleMutationQueuedCount, queueLimit);
     }
@@ -3291,7 +3292,7 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
-      const startLine = parsedStartLine.value;
+      const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
       const parsedIntervalMs =
         intervalMsRaw === null || intervalMsRaw.trim() === ""
           ? ({ ok: true, value: 500 } as const)
@@ -3317,6 +3318,7 @@ export class MetadataServer {
       // leaves the last frame on screen — so a text-only gate would hold a
       // stream at "running" indefinitely.
       let lastLiveness: string | undefined;
+      let outputPollInFlight = false;
       const unsubscribe = this.eventBus.subscribe((event) => {
         if (closed) return;
         if (sessionFilter && event.sessionId && event.sessionId !== sessionFilter) return;
@@ -3341,6 +3343,8 @@ export class MetadataServer {
 
       const pollSessionOutput = async () => {
         if (closed || !sessionFilter || !this.options.lifecycle?.readAgentOutput) return;
+        if (outputPollInFlight) return;
+        outputPollInFlight = true;
         try {
           const result = await this.options.lifecycle.readAgentOutput({ sessionId: sessionFilter, startLine });
           if (closed) return;
@@ -3352,7 +3356,7 @@ export class MetadataServer {
               sessionId: result.sessionId,
               output: result.output,
               outputAnsi: result.outputAnsi,
-              startLine: result.startLine ?? startLine ?? -120,
+              startLine: result.startLine ?? startLine,
               parsed: result.parsed,
               // Forwarded explicitly: this payload is hand-picked, so a field
               // added to readAgentOutput does not reach a stream by itself.
@@ -3368,6 +3372,8 @@ export class MetadataServer {
             error: error instanceof Error ? error.message : String(error),
           });
           cleanup();
+        } finally {
+          outputPollInFlight = false;
         }
       };
 
@@ -3375,7 +3381,7 @@ export class MetadataServer {
         projectId: getProjectId(),
         ts: new Date().toISOString(),
         sessionId: sessionFilter,
-        startLine: startLine ?? -120,
+        startLine,
         intervalMs,
       });
       if (sessionFilter && this.options.lifecycle?.readAgentOutput) {
@@ -3743,7 +3749,7 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
-      const startLine = parsedStartLine.value;
+      const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
 
       const parsedIntervalMs =
         intervalMsRaw === null || intervalMsRaw.trim() === ""
@@ -3770,6 +3776,7 @@ export class MetadataServer {
       // stream at "running" indefinitely.
       let lastLiveness: string | undefined;
       let pollTimer: ReturnType<typeof setInterval> | null = null;
+      let pollInFlight = false;
 
       const cleanup = () => {
         if (closed) return;
@@ -3785,6 +3792,8 @@ export class MetadataServer {
 
       const poll = async () => {
         if (closed) return;
+        if (pollInFlight) return;
+        pollInFlight = true;
         try {
           const result = await this.options.lifecycle!.readAgentOutput!({ sessionId, startLine });
           if (closed) return;
@@ -3796,7 +3805,7 @@ export class MetadataServer {
               sessionId: result.sessionId,
               output: result.output,
               outputAnsi: result.outputAnsi,
-              startLine: result.startLine ?? startLine ?? -120,
+              startLine: result.startLine ?? startLine,
               parsed: result.parsed,
               // Forwarded explicitly: this payload is hand-picked, so a field
               // added to readAgentOutput does not reach a stream by itself.
@@ -3814,10 +3823,12 @@ export class MetadataServer {
             error: error instanceof Error ? error.message : String(error),
           });
           cleanup();
+        } finally {
+          pollInFlight = false;
         }
       };
 
-      sendSseEvent(res, "ready", { sessionId, startLine: startLine ?? -120, intervalMs });
+      sendSseEvent(res, "ready", { sessionId, startLine, intervalMs });
       await poll();
       pollTimer = setInterval(() => {
         void poll();
@@ -6098,48 +6109,79 @@ export class MetadataServer {
         }
         const offer = readAgentRestoreOffer(this.currentProjectRoot());
         if (!offer) {
-          send(res, 200, { ok: true, restored: [], failed: [], offer: null });
+          send(res, 200, {
+            ok: true,
+            accepted: false,
+            total: 0,
+            restored: [],
+            failed: [],
+            transitions: [],
+            offer: null,
+          });
           return;
         }
+        acknowledgeAgentRestoreOffer(this.currentProjectRoot());
         type RestoreAttempt =
           | { sessionId: string; status: string; error?: never }
           | { sessionId: string; error: string; status?: never };
         const attempts: RestoreAttempt[] = [];
-        for (const sessionId of offer.sessionIds) {
-          const transitionInput: LifecycleTransitionInput = {
+        const transitions = offer.sessionIds.map((sessionId) =>
+          buildLifecycleTransition({
             operation: "agent.restore",
             targetKind: "agent",
             targetId: sessionId,
-          };
-          try {
-            const result = await this.enqueueLifecycleMutation(
-              () => runLifecycle(transitionInput, () => restoreAgent({ sessionId })),
-              transitionInput,
-            );
-            attempts.push({ sessionId, status: result.status });
-          } catch (error) {
-            attempts.push({ sessionId, error: userFacingErrorMessage(error) });
+            phase: "queued",
+          }),
+        );
+        void (async () => {
+          for (const sessionId of offer.sessionIds) {
+            const transitionInput: LifecycleTransitionInput = {
+              operation: "agent.restore",
+              targetKind: "agent",
+              targetId: sessionId,
+            };
+            try {
+              const result = await this.enqueueLifecycleMutation(
+                () => runLifecycle(transitionInput, () => restoreAgent({ sessionId })),
+                transitionInput,
+              );
+              attempts.push({ sessionId, status: result.status });
+            } catch (error) {
+              attempts.push({ sessionId, error: userFacingErrorMessage(error) });
+            }
+            notifyCurrentRouteChange();
           }
-        }
-        const restored = attempts.filter((result): result is Extract<RestoreAttempt, { status: string }> => {
-          return "status" in result;
+          const restored = attempts.filter((result): result is Extract<RestoreAttempt, { status: string }> => {
+            return "status" in result;
+          });
+          const failed = attempts.filter((result): result is Extract<RestoreAttempt, { error: string }> => {
+            return "error" in result;
+          });
+          log.info("agent restore previous completed", "api", {
+            total: offer.sessionIds.length,
+            restored: restored.length,
+            failed: failed.length,
+          });
+          writeAgentRestoreRetryOffer(
+            offer,
+            failed.map((result) => result.sessionId),
+            this.currentProjectRoot(),
+          );
+          notifyCurrentRouteChange();
+        })().catch((error: unknown) => {
+          log.warn("agent restore previous failed", "api", { error: userFacingErrorMessage(error) });
+          writeAgentRestoreRetryOffer(offer, offer.sessionIds, this.currentProjectRoot());
+          notifyCurrentRouteChange();
         });
-        const failed = attempts.filter((result): result is Extract<RestoreAttempt, { error: string }> => {
-          return "error" in result;
-        });
-        const updatedOffer =
-          restored.length > 0
-            ? removeAgentRestoreOfferSessions(
-                restored.map((result) => result.sessionId),
-                this.currentProjectRoot(),
-              )
-            : readAgentRestoreOffer(this.currentProjectRoot());
         notifyCurrentRouteChange();
         send(res, 200, {
-          ok: failed.length === 0,
-          restored,
-          failed,
-          offer: updatedOffer,
+          ok: true,
+          accepted: true,
+          total: offer.sessionIds.length,
+          restored: [],
+          failed: [],
+          transitions,
+          offer,
         });
         return;
       }
@@ -6696,7 +6738,7 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: parsedStartLine.error });
           return;
         }
-        const startLine = parsedStartLine.value;
+        const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
         const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
         send(res, 200, { ok: true, ...result });
         return;
@@ -6727,7 +6769,7 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: parsedStartLine.error });
           return;
         }
-        const startLine = parsedStartLine.value;
+        const startLine = boundedAgentOutputStartLine(parsedStartLine.value);
 
         let resize: { cols: number; rows: number } | undefined;
         if (body.cols !== undefined || body.rows !== undefined) {

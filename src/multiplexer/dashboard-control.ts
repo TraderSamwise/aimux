@@ -311,6 +311,10 @@ function isLiveDashboardSession(session: DashboardSession | undefined): boolean 
   return Boolean(session && session.status !== "offline" && session.status !== "exited");
 }
 
+function isRestoredDashboardSession(session: DashboardSession | undefined): boolean {
+  return Boolean(session && isLiveDashboardSession(session) && !session.pendingAction && session.optimistic !== true);
+}
+
 function shouldAutoRepairRuntimeGuard(state: RuntimeGuardState): boolean {
   return state.kind === "stale" || state.kind === "runtime-rebuild-required";
 }
@@ -953,21 +957,78 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
   }
 }
 
+function dashboardRestoreProgress(
+  host: DashboardControlHost,
+  sessionIds: string[],
+): { restored: number; pending: number } {
+  const sessions: DashboardSession[] =
+    typeof host.getDashboardSessions === "function" ? host.getDashboardSessions() : [];
+  let restored = 0;
+  for (const sessionId of sessionIds) {
+    if (isRestoredDashboardSession(sessions.find((session) => session.id === sessionId))) restored += 1;
+  }
+  return { restored, pending: Math.max(0, sessionIds.length - restored) };
+}
+
+function trackAgentRestoreProgress(
+  host: DashboardControlHost,
+  lifecycle: DashboardLifecycleToken,
+  sessionIds: string[],
+): void {
+  const startedAt = Date.now();
+  const tick = async () => {
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    const progress = dashboardRestoreProgress(host, sessionIds);
+    if (progress.pending === 0 || Date.now() - startedAt >= 120_000) {
+      host.footerFlash =
+        progress.pending === 0
+          ? `Restored ${progress.restored}/${sessionIds.length}`
+          : `Restore still running ${progress.restored}/${sessionIds.length}`;
+      host.footerFlashTicks = 4;
+      host.renderDashboard();
+      return;
+    }
+    host.footerFlash = `Restoring agents ${progress.restored}/${sessionIds.length}`;
+    host.footerFlashTicks = Number.MAX_SAFE_INTEGER;
+    host.renderDashboard();
+    const timer = setTimeout(tick, 1_000);
+    timer.unref?.();
+  };
+  const timer = setTimeout(tick, 250);
+  timer.unref?.();
+}
+
 function restoreAgentRestoreOffer(host: DashboardControlHost): void {
   const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const sessionIds = Array.isArray(host.dashboardAgentRestoreOfferCache?.sessionIds)
+    ? host.dashboardAgentRestoreOfferCache.sessionIds.filter((id: unknown): id is string => typeof id === "string")
+    : [];
   host.clearDashboardOverlay();
   host.agentRestoreConfirmSelection = "restore";
-  const count = host.dashboardAgentRestoreOfferCache?.sessionIds?.length;
+  const count = sessionIds.length;
   host.footerFlash =
     typeof count === "number" && count > 0
       ? `Restoring ${count} previously running agent${count === 1 ? "" : "s"}`
       : "Restoring previously running agents";
   host.footerFlashTicks = Number.MAX_SAFE_INTEGER;
+  for (const sessionId of sessionIds) {
+    host.setPendingDashboardSessionAction?.(sessionId, "starting");
+  }
   host.renderDashboard();
-  void mutateDashboardApi(host, PROJECT_API_ROUTES.agents.restorePrevious, {}, { timeoutMs: 120_000 })
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.agents.restorePrevious, {}, { timeoutMs: 10_000 })
     .then(async (result: any) => {
       await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
       if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      if (result?.accepted === true && sessionIds.length > 0) {
+        const progress = dashboardRestoreProgress(host, sessionIds);
+        host.footerFlash = `Restoring agents ${progress.restored}/${sessionIds.length}`;
+        host.footerFlashTicks = Number.MAX_SAFE_INTEGER;
+        host.renderDashboard();
+        trackAgentRestoreProgress(host, lifecycle, sessionIds);
+        return;
+      }
       const restored = Array.isArray(result?.restored) ? result.restored.length : 0;
       const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
       host.footerFlash = failed > 0 ? `Restored ${restored}; ${failed} failed` : `Restored ${restored}`;
