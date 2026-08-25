@@ -51,7 +51,12 @@ import { reconcileOrphanedTopologySessions } from "./runtime-state.js";
 import { listDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { initPaths } from "../paths.js";
-import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
+import {
+  listTopologySessionStates,
+  moveTopologySessionToGraveyard,
+  removeTopologySession,
+  upsertTopologySession,
+} from "../runtime-core/topology-sessions.js";
 import { upsertTopologyWorktree } from "../runtime-core/topology-worktrees.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 
@@ -494,6 +499,71 @@ describe("dashboard lifecycle adapter", () => {
     });
   });
 
+  it("honors graveyard intent when tmux dies during startup verification", async () => {
+    vi.useFakeTimers();
+    const target = { sessionName: "aimux-test", windowId: "@10", windowIndex: 10, windowName: "codex" };
+    let alive = true;
+    const tmuxRuntimeManager = {
+      getTargetByWindowId: vi.fn(() => target),
+      isWindowAlive: vi.fn(() => alive),
+      killWindowAsync: vi.fn(async () => {
+        alive = false;
+      }),
+    };
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      sessionToolKeys: new Map(),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      sessionStartTimes: new Map(),
+      sessionRoles: new Map(),
+      sessionTeams: new Map(),
+      tmuxRuntimeManager,
+      generateDashboardSessionId: vi.fn(() => "codex-verify-graveyard"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      publishAlert: vi.fn(),
+      debug: vi.fn(),
+    };
+    createSessionAsyncMock.mockImplementationOnce(async (...args: any[]) => {
+      const sessionId = typeof args[9] === "string" ? args[9] : "planned";
+      const transport = new TmuxSessionTransport(sessionId, "codex", target, tmuxRuntimeManager as any, 80, 24);
+      host.sessions.push({ id: sessionId, command: "codex", transport });
+      host.sessionTmuxTargets.set(sessionId, target);
+      return transport;
+    });
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-verify-graveyard" });
+    await vi.advanceTimersByTimeAsync(60);
+
+    await expect(dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-verify-graveyard")).resolves.toEqual({
+      sessionId: "codex-verify-graveyard",
+      status: "graveyard",
+      previousStatus: "running",
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(listTopologySessionStates({ statuses: ["offline", "starting"] })).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
+      "codex-verify-graveyard",
+    ]);
+    expect(listDashboardOperationFailures()).toEqual([]);
+  });
+
   it("cancels queued agent creation when the user stops before tmux creation runs", async () => {
     vi.useFakeTimers();
     const host: any = {
@@ -651,6 +721,61 @@ describe("dashboard lifecycle adapter", () => {
     expect(host.graveyardAfterStopSessionIds.has("codex-graveyarding")).toBe(false);
     expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
       "codex-graveyarding",
+    ]);
+    transport?.destroy();
+  });
+
+  it("honors graveyard topology when a create finishes after the kill mutation", async () => {
+    vi.useFakeTimers();
+    const started = deferred();
+    const release = deferred<TmuxSessionTransport>();
+    const target = { sessionName: "aimux-test", windowId: "@15", windowIndex: 15, windowName: "codex" };
+    let transport: TmuxSessionTransport | undefined;
+    const tmuxRuntimeManager = {
+      killWindowAsync: vi.fn(async () => undefined),
+      killWindow: vi.fn(),
+      isWindowAlive: vi.fn(() => true),
+      getTargetByWindowId: vi.fn(() => target),
+    };
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager,
+      generateDashboardSessionId: vi.fn(() => "codex-topology-graveyard"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+    createSessionAsyncMock.mockImplementation(async (...args: any[]) => {
+      started.resolve();
+      transport = new TmuxSessionTransport(args[9], "codex", target, tmuxRuntimeManager as any, 80, 24);
+      return release.promise;
+    });
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-topology-graveyard" });
+    await vi.advanceTimersByTimeAsync(60);
+    await started.promise;
+    moveTopologySessionToGraveyard("codex-topology-graveyard", { projectRoot: repoRoot });
+
+    release.resolve(transport!);
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(listTopologySessionStates({ statuses: ["running", "starting"] }).map((session) => session.id)).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
+      "codex-topology-graveyard",
     ]);
     transport?.destroy();
   });
@@ -1154,6 +1279,186 @@ describe("dashboard lifecycle adapter", () => {
     ]);
     expect(host.stoppingSessionIds.has("codex-planned")).toBe(false);
     expect(host.graveyardAfterStopSessionIds.has("codex-planned")).toBe(false);
+  });
+
+  it("graveyards queued agent creation even when topology no longer lists the starting session", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      generateDashboardSessionId: vi.fn(() => "codex-queued-missing-topology"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-queued-missing-topology" });
+    removeTopologySession("codex-queued-missing-topology", { projectRoot: repoRoot });
+
+    await expect(
+      dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-queued-missing-topology"),
+    ).resolves.toEqual({
+      sessionId: "codex-queued-missing-topology",
+      status: "graveyard",
+      previousStatus: "offline",
+    });
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(createSessionAsyncMock).not.toHaveBeenCalled();
+    expect(listTopologySessionStates({ statuses: ["running", "starting"] })).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
+      "codex-queued-missing-topology",
+    ]);
+  });
+
+  it("graveyards running agent creation even when topology no longer lists the starting session", async () => {
+    vi.useFakeTimers();
+    const started = deferred();
+    const release = deferred<TmuxSessionTransport>();
+    const target = { sessionName: "aimux-test", windowId: "@16", windowIndex: 16, windowName: "codex" };
+    let transport: TmuxSessionTransport | undefined;
+    const tmuxRuntimeManager = {
+      killWindowAsync: vi.fn(async () => undefined),
+      killWindow: vi.fn(),
+      isWindowAlive: vi.fn(() => true),
+      getTargetByWindowId: vi.fn(() => target),
+    };
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager,
+      generateDashboardSessionId: vi.fn(() => "codex-running-missing-topology"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+    createSessionAsyncMock.mockImplementation(async (...args: any[]) => {
+      started.resolve();
+      transport = new TmuxSessionTransport(args[9], "codex", target, tmuxRuntimeManager as any, 80, 24);
+      return release.promise;
+    });
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-running-missing-topology" });
+    await vi.advanceTimersByTimeAsync(60);
+    await started.promise;
+    removeTopologySession("codex-running-missing-topology", { projectRoot: repoRoot });
+
+    await expect(
+      dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-running-missing-topology"),
+    ).resolves.toEqual({
+      sessionId: "codex-running-missing-topology",
+      status: "graveyard",
+      previousStatus: "running",
+    });
+
+    release.resolve(transport!);
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(listTopologySessionStates({ statuses: ["running", "starting"] })).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
+      "codex-running-missing-topology",
+    ]);
+    transport?.destroy();
+  });
+
+  it("graveyards running agent creation even when topology currently says offline", async () => {
+    vi.useFakeTimers();
+    const started = deferred();
+    const release = deferred<TmuxSessionTransport>();
+    const target = { sessionName: "aimux-test", windowId: "@17", windowIndex: 17, windowName: "codex" };
+    let transport: TmuxSessionTransport | undefined;
+    const tmuxRuntimeManager = {
+      killWindowAsync: vi.fn(async () => undefined),
+      killWindow: vi.fn(),
+      isWindowAlive: vi.fn(() => true),
+      getTargetByWindowId: vi.fn(() => target),
+    };
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager,
+      generateDashboardSessionId: vi.fn(() => "codex-running-offline-topology"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+    createSessionAsyncMock.mockImplementation(async (...args: any[]) => {
+      started.resolve();
+      transport = new TmuxSessionTransport(args[9], "codex", target, tmuxRuntimeManager as any, 80, 24);
+      return release.promise;
+    });
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-running-offline-topology" });
+    await vi.advanceTimersByTimeAsync(60);
+    await started.promise;
+    upsertTopologySession(
+      {
+        id: "codex-running-offline-topology",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        status: "offline",
+        worktreePath: repoRoot,
+      },
+      "offline",
+      { projectRoot: repoRoot },
+    );
+
+    await expect(
+      dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-running-offline-topology"),
+    ).resolves.toEqual({
+      sessionId: "codex-running-offline-topology",
+      status: "graveyard",
+      previousStatus: "running",
+    });
+
+    release.resolve(transport!);
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(listTopologySessionStates({ statuses: ["running", "starting", "offline"] })).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
+      "codex-running-offline-topology",
+    ]);
+    transport?.destroy();
   });
 
   it("marks stale live topology agents offline when no runtime owns them", async () => {
