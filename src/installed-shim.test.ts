@@ -37,6 +37,7 @@ set -eu
 url=""
 output_file=""
 write_status=""
+max_time=""
 pending_data=0
 fail_on_http=0
 while [ "$#" -gt 0 ]; do
@@ -61,6 +62,10 @@ while [ "$#" -gt 0 ]; do
     -X|--request)
       shift
       ;;
+    --max-time)
+      shift
+      max_time="$1"
+      ;;
     --data-urlencode)
       pending_data=1
       ;;
@@ -71,6 +76,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 printf 'URL=%s\n' "$url" >> "$CURL_LOG"
+[ -n "$max_time" ] && printf 'MAX_TIME=%s\n' "$max_time" >> "$CURL_LOG"
   case "$url" in
   */core/login-start-text*|*/core/security-unlock-start-text*)
     [ -f "$AUTH_START_FILE" ] || exit 22
@@ -373,6 +379,7 @@ describe("installed aimux shim", () => {
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     expect(fixture.run(["doctor", "versions", "--json"]).stdout).toBe("doctor ok\n");
+    expect(fixture.run(["doctor", "disk"]).stdout).toBe("doctor ok\n");
     expect(fixture.run(["doctor", "disk", "--project", "/repo", "--json"]).stdout).toBe("doctor ok\n");
     expect(
       fixture.run(["doctor", "tmux", "--project-root=/repo", "--session", "aimux-repo", "--window-id=@1"]).stdout,
@@ -381,6 +388,7 @@ describe("installed aimux shim", () => {
 
     const curlLog = readFileSync(fixture.curlLog, "utf8");
     expect(curlLog).toContain("/core/doctor/versions-text?json=1");
+    expect(curlLog).toContain("/core/doctor/disk-text\nMAX_TIME=120\n");
     expect(curlLog).toContain("/core/doctor/disk-text?json=1");
     expect(curlLog).toContain("/core/doctor/tmux-text");
     expect(curlLog).toContain("/core/repair-text?json=1");

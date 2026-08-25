@@ -696,7 +696,7 @@ aimux_try_doctor() {
         project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
         aimux_get_query_text_route "$path" 120 --data-urlencode "project=$project_root"
       else
-        aimux_curl_text_route "$path"
+        aimux_get_query_text_route "$path" 120
       fi
       ;;
     tmux)

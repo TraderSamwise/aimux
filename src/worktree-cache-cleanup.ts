@@ -73,8 +73,12 @@ export interface WorktreeCacheCleanupOptions {
   protectedWorktrees?: WorktreeCacheCleanupProtectedWorktree[];
   worktrees?: WorktreeInfo[];
   measureSize?: (path: string) => number;
-  removeDir?: (path: string) => void | Promise<void>;
+  removeDir?: (path: string) => void;
 }
+
+export type WorktreeCacheCleanupAsyncOptions = Omit<WorktreeCacheCleanupOptions, "removeDir"> & {
+  removeDir?: (path: string) => void | Promise<void>;
+};
 
 export function formatWorktreeCacheBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
@@ -366,7 +370,7 @@ export function runWorktreeCacheCleanup(options: WorktreeCacheCleanupOptions): W
 }
 
 export async function runWorktreeCacheCleanupAsync(
-  options: WorktreeCacheCleanupOptions,
+  options: WorktreeCacheCleanupAsyncOptions,
 ): Promise<WorktreeCacheCleanupRunResult> {
   const plan = buildWorktreeCacheCleanupPlan(options);
   const dryRun = plan.dryRun;
