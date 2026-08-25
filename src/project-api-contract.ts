@@ -943,6 +943,7 @@ export type ProjectLifecycleTransitionOperation =
   | "agent.switchTool"
   | "agent.stop"
   | "agent.resume"
+  | "agent.restore"
   | "agent.kill"
   | "agent.rename"
   | "agent.migrate"

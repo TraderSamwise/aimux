@@ -4644,6 +4644,96 @@ describe("MetadataServer threads API", () => {
     expect(resumeAgent).toHaveBeenCalledTimes(2);
   });
 
+  it("uses exact single-agent restores for previous-restore batches when available", async () => {
+    server?.stop();
+    deriveAgentRestoreOfferFromRestorableInventory(
+      [],
+      [
+        { id: "claude-parent", command: "claude" },
+        { id: "claude-teammate", command: "claude" },
+      ],
+      { projectRoot: repoRoot, now: "2026-08-24T16:05:00.000Z" },
+    );
+    const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => {
+      return { sessionId: `${sessionId}-with-team`, status: "running" as const };
+    });
+    const restoreAgent = vi.fn(({ sessionId }: { sessionId: string }) => {
+      return { sessionId, status: "running" as const };
+    });
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: { resumeAgent, restoreAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      restored: Array<{ sessionId: string; status: string }>;
+      failed: Array<{ sessionId: string; error: string }>;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.restored).toEqual([
+      { sessionId: "claude-parent", status: "running" },
+      { sessionId: "claude-teammate", status: "running" },
+    ]);
+    expect(body.failed).toEqual([]);
+    expect(restoreAgent).toHaveBeenCalledTimes(2);
+    expect(restoreAgent).toHaveBeenNthCalledWith(1, { sessionId: "claude-parent" });
+    expect(restoreAgent).toHaveBeenNthCalledWith(2, { sessionId: "claude-teammate" });
+    expect(resumeAgent).not.toHaveBeenCalled();
+  });
+
+  it("restores nine previous agents without tripping the lifecycle queue limit", async () => {
+    server?.stop();
+    const sessions = Array.from({ length: 9 }, (_, index) => ({
+      id: `codex-${index + 1}`,
+      command: "codex",
+    }));
+    deriveAgentRestoreOfferFromRestorableInventory([], sessions, {
+      projectRoot: repoRoot,
+      now: "2026-08-24T16:10:00.000Z",
+    });
+    const restoreAgent = vi.fn(({ sessionId }: { sessionId: string }) => {
+      return { sessionId, status: "running" as const };
+    });
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: { restoreAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      restored: Array<{ sessionId: string; status: string }>;
+      failed: Array<{ sessionId: string; error: string }>;
+      offer: { sessionIds: string[] } | null;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.restored).toEqual(
+      sessions.map((session) => ({
+        sessionId: session.id,
+        status: "running",
+      })),
+    );
+    expect(body.failed).toEqual([]);
+    expect(body.offer).toBeNull();
+    expect(restoreAgent).toHaveBeenCalledTimes(9);
+  });
+
   it("serializes restore-previous agent resumes through the lifecycle queue", async () => {
     server?.stop();
     deriveAgentRestoreOfferFromRestorableInventory(

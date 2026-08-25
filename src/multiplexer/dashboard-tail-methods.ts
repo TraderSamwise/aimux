@@ -68,6 +68,7 @@ import { setSessionOverseer } from "../metadata-store.js";
 import { createSessionAsync } from "./session-launch.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { addDashboardOperationFailure, clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
+import { log } from "../debug.js";
 import {
   listTopologySessionStates,
   moveTopologySessionToGraveyard,
@@ -154,6 +155,11 @@ function notifyLifecycleChange(host: Multiplexer): void {
 }
 
 function clearTerminatingSessionTracking(host: Multiplexer, sessionId: string): void {
+  log.info("agent lifecycle terminating markers cleared", "session", {
+    sessionId,
+    stoppingBefore: Boolean((host as any).stoppingSessionIds?.has?.(sessionId)),
+    graveyardAfterStopBefore: Boolean((host as any).graveyardAfterStopSessionIds?.has?.(sessionId)),
+  });
   (host as any).stoppingSessionIds?.delete?.(sessionId);
   (host as any).graveyardAfterStopSessionIds?.delete?.(sessionId);
   notifyLifecycleChange(host);
@@ -165,6 +171,7 @@ function lifecycleFailureMessage(error: unknown): string {
 }
 
 function scheduleRuntimeKill(host: Multiplexer, runtime: SessionRuntime, sessionId: string): void {
+  const projectRoot = projectRootFor(host);
   const timer = setTimeout(() => {
     void (async () => {
       try {
@@ -175,6 +182,11 @@ function scheduleRuntimeKill(host: Multiplexer, runtime: SessionRuntime, session
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        log.warn("agent lifecycle runtime kill failed", "session", {
+          sessionId,
+          projectRoot,
+          error: message,
+        });
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
       } finally {
         clearTerminatingSessionTracking(host, sessionId);
@@ -185,6 +197,7 @@ function scheduleRuntimeKill(host: Multiplexer, runtime: SessionRuntime, session
 }
 
 function scheduleTmuxTargetKill(host: Multiplexer, target: any, sessionId: string): void {
+  const projectRoot = projectRootFor(host);
   const timer = setTimeout(() => {
     void (async () => {
       try {
@@ -196,6 +209,12 @@ function scheduleTmuxTargetKill(host: Multiplexer, target: any, sessionId: strin
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        log.warn("agent lifecycle tmux target kill failed", "session", {
+          sessionId,
+          projectRoot,
+          target,
+          error: message,
+        });
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
       } finally {
         clearTerminatingSessionTracking(host, sessionId);
@@ -431,6 +450,12 @@ function cancelQueuedSessionCreate(host: Multiplexer, sessionId: string): Schedu
   if (index !== -1) {
     const input = sessionCreateQueue.splice(index, 1)[0]?.input;
     if (input) clearQueuedSessionStartingAction(host, input);
+    log.info("agent lifecycle canceled queued create", "session", {
+      sessionId,
+      projectRoot,
+      source: "queue",
+      queueDepth: sessionCreateQueue.length,
+    });
     return input;
   }
   const key = sessionCreateKey(projectRoot, sessionId);
@@ -439,6 +464,12 @@ function cancelQueuedSessionCreate(host: Multiplexer, sessionId: string): Schedu
   clearTimeout(deferred.timer);
   deferredSessionCreates.delete(key);
   clearQueuedSessionStartingAction(host, deferred.input);
+  log.info("agent lifecycle canceled queued create", "session", {
+    sessionId,
+    projectRoot,
+    source: "deferred",
+    queueDepth: sessionCreateQueue.length,
+  });
   return deferred.input;
 }
 
@@ -535,10 +566,24 @@ function recordSessionCreateFailure(host: Multiplexer, input: ScheduledSessionCr
 }
 
 async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): Promise<void> {
+  const startedAt = Date.now();
   let deferred = false;
   try {
+    log.info("agent lifecycle create started", "session", {
+      sessionId: input.sessionId,
+      toolConfigKey: input.toolConfigKey,
+      projectRoot: projectRootFor(host),
+      queueDepth: sessionCreateQueue.length,
+      stopping: Boolean((host as any).stoppingSessionIds?.has?.(input.sessionId)),
+      graveyardAfterStop: Boolean((host as any).graveyardAfterStopSessionIds?.has?.(input.sessionId)),
+    });
     if (shouldDeferForTargetWorktree(host, input)) {
       deferred = true;
+      log.info("agent lifecycle create deferred for worktree", "session", {
+        sessionId: input.sessionId,
+        projectRoot: projectRootFor(host),
+        targetWorktreePath: input.targetWorktreePath,
+      });
       deferSessionCreate(host, input);
       return;
     }
@@ -560,14 +605,32 @@ async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSess
     );
     await verifyCreatedTmuxWindow(host, input, transport);
     const runtime = findRuntime(host, input.sessionId);
+    log.info("agent lifecycle create produced runtime", "session", {
+      sessionId: input.sessionId,
+      projectRoot: projectRootFor(host),
+      durationMs: Date.now() - startedAt,
+      runtimeFound: Boolean(runtime),
+      transportKind: transport instanceof TmuxSessionTransport ? "tmux" : typeof transport,
+      stopping: Boolean((host as any).stoppingSessionIds?.has?.(input.sessionId)),
+      graveyardAfterStop: Boolean((host as any).graveyardAfterStopSessionIds?.has?.(input.sessionId)),
+    });
     if ((host as any).graveyardAfterStopSessionIds?.has?.(input.sessionId)) {
       const moved = moveTopologySessionToGraveyard(input.sessionId, { projectRoot: projectRootFor(host) });
       removeOfflineSessionCache(host, input.sessionId);
+      const killTarget = runtime ? null : tmuxTargetForTransport(transport);
+      log.info("agent lifecycle create honored graveyard marker", "session", {
+        sessionId: input.sessionId,
+        projectRoot: projectRootFor(host),
+        durationMs: Date.now() - startedAt,
+        moved,
+        runtimeFound: Boolean(runtime),
+        killTargetFound: Boolean(runtime || killTarget),
+      });
       if (runtime) {
         forgetRuntimeSession(host, input.sessionId);
         scheduleRuntimeKill(host, runtime, input.sessionId);
-      } else if (transport instanceof TmuxSessionTransport) {
-        scheduleTmuxTargetKill(host, transport.tmuxTarget, input.sessionId);
+      } else if (killTarget) {
+        scheduleTmuxTargetKill(host, killTarget, input.sessionId);
       }
       if (!moved) recordSessionCreateFailure(host, input, new Error("graveyard request lost during startup"));
       else notifyLifecycleChange(host);
@@ -576,11 +639,19 @@ async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSess
     if ((host as any).stoppingSessionIds?.has?.(input.sessionId)) {
       const existing = findTopologySession(host, input.sessionId);
       if (existing) markTopologySessionOffline(host, existing);
+      const killTarget = runtime ? null : tmuxTargetForTransport(transport);
+      log.info("agent lifecycle create honored stop marker", "session", {
+        sessionId: input.sessionId,
+        projectRoot: projectRootFor(host),
+        durationMs: Date.now() - startedAt,
+        runtimeFound: Boolean(runtime),
+        killTargetFound: Boolean(runtime || killTarget),
+      });
       if (runtime) {
         forgetRuntimeSession(host, input.sessionId);
         scheduleRuntimeKill(host, runtime, input.sessionId);
-      } else if (transport instanceof TmuxSessionTransport) {
-        scheduleTmuxTargetKill(host, transport.tmuxTarget, input.sessionId);
+      } else if (killTarget) {
+        scheduleTmuxTargetKill(host, killTarget, input.sessionId);
       }
       notifyLifecycleChange(host);
       return;
@@ -602,6 +673,11 @@ async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSess
       targetKind: "agent",
       operation: "create",
       worktreePath: input.targetWorktreePath?.trim() || null,
+    });
+    log.info("agent lifecycle create settled running", "session", {
+      sessionId: input.sessionId,
+      projectRoot: projectRootFor(host),
+      durationMs: Date.now() - startedAt,
     });
     notifyLifecycleChange(host);
   } catch (error) {
@@ -633,6 +709,13 @@ function scheduleNextSessionCreate(): void {
 function scheduleSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): void {
   setQueuedSessionStartingAction(host, input);
   sessionCreateQueue.push({ host, input });
+  log.info("agent lifecycle create enqueued", "session", {
+    sessionId: input.sessionId,
+    toolConfigKey: input.toolConfigKey,
+    projectRoot: projectRootFor(host),
+    queueDepth: sessionCreateQueue.length,
+    queueRunning: sessionCreateQueueRunning,
+  });
   if (sessionCreateQueueRunning) return;
   sessionCreateQueueRunning = true;
   scheduleNextSessionCreate();
@@ -933,10 +1016,30 @@ export const dashboardTailMethods: DashboardTailMethods = {
       if (tmuxTarget) {
         (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
         (this as any).stoppingSessionIds?.add?.(sessionId);
+        log.info("agent lifecycle graveyard marker set", "session", {
+          sessionId,
+          projectRoot,
+          source: "live-topology-target",
+          existingStatus: existing.status,
+          canceled: false,
+        });
         scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
       } else if (!canceled && existing.status === "starting") {
         (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
         (this as any).stoppingSessionIds?.add?.(sessionId);
+        log.info("agent lifecycle graveyard marker set", "session", {
+          sessionId,
+          projectRoot,
+          source: "starting-no-target",
+          existingStatus: existing.status,
+          canceled: false,
+        });
+      } else if (canceled) {
+        log.info("agent lifecycle graveyard canceled queued create", "session", {
+          sessionId,
+          projectRoot,
+          existingStatus: existing.status,
+        });
       }
       notifyLifecycleChange(this);
       (this as any).debug?.(
@@ -960,6 +1063,12 @@ export const dashboardTailMethods: DashboardTailMethods = {
     if (runtime) {
       (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
       (this as any).stoppingSessionIds?.add?.(sessionId);
+      log.info("agent lifecycle graveyard marker set", "session", {
+        sessionId,
+        projectRoot,
+        source: "runtime",
+        existingStatus: existing?.status,
+      });
       forgetRuntimeSession(this, sessionId);
       scheduleRuntimeKill(this, runtime, sessionId);
     }

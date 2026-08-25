@@ -528,6 +528,7 @@ function lifecycleFailureMessage(action: string, failures: Array<{ sessionId: st
 async function resumeOfflineAgentWithPending(
   host: DashboardModelHost,
   sessionId: string,
+  options: { awaitSettle?: boolean } = { awaitSettle: true },
 ): Promise<{ sessionId: string; status: "running" }> {
   return withMetadataSessionPending(
     host,
@@ -563,7 +564,7 @@ async function resumeOfflineAgentWithPending(
     },
     findDashboardSessionSeed(host, sessionId),
     () => waitForMetadataSessionReadyForInput(host, sessionId),
-    { awaitSettle: true },
+    { awaitSettle: options.awaitSettle ?? true },
   );
 }
 
@@ -1477,6 +1478,10 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       removeService: ({ serviceId }: any) => host.removeOfflineService(serviceId),
       resumeAgent: ({ sessionId }: any) =>
         enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId)),
+      restoreAgent: ({ sessionId }: any) =>
+        enqueueProjectServiceAgentResume(host, () =>
+          resumeOfflineAgentWithPending(host, sessionId, { awaitSettle: false }),
+        ),
       listGraveyard: () => host.listGraveyardEntries(),
       resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
       cleanupGraveyard: (input: any) => host.cleanupGraveyard(input),

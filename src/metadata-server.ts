@@ -565,6 +565,12 @@ export interface MetadataServerOptions {
     }) =>
       | Promise<{ sessionId: string; status: "running" | "offline" }>
       | { sessionId: string; status: "running" | "offline" };
+    restoreAgent?: (input: {
+      sessionId: string;
+      session?: Record<string, unknown>;
+    }) =>
+      | Promise<{ sessionId: string; status: "running" | "offline" }>
+      | { sessionId: string; status: "running" | "offline" };
     listGraveyard?: () => unknown[];
     resurrectGraveyard?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
@@ -1747,12 +1753,80 @@ export class MetadataServer {
       throw new LifecycleMutationQueueFullError(transition, this.lifecycleMutationQueuedCount, queueLimit);
     }
     if (targetKey && transition) this.lifecycleMutationTargets.set(targetKey, transition);
+    const queueDepthAtEnqueue = this.lifecycleMutationQueuedCount;
+    const operationId = transition
+      ? `${transition.operation}:${transition.targetId ?? transition.targetPath ?? "unknown"}:${randomUUID()}`
+      : undefined;
+    if (transition) {
+      log.info("lifecycle mutation enqueued", "api", {
+        operationId,
+        operation: transition.operation,
+        targetKind: transition.targetKind,
+        targetId: transition.targetId,
+        targetPath: transition.targetPath,
+        queueDepth: queueDepthAtEnqueue,
+        queueLimit,
+      });
+    }
     this.lifecycleMutationQueuedCount += 1;
-    const queued = this.lifecycleMutationQueue.catch(() => undefined).then(action);
+    const queuedAt = Date.now();
+    const queued = this.lifecycleMutationQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (transition) {
+          log.info("lifecycle mutation started", "api", {
+            operationId,
+            operation: transition.operation,
+            targetKind: transition.targetKind,
+            targetId: transition.targetId,
+            targetPath: transition.targetPath,
+            queuedMs: Date.now() - queuedAt,
+            queueDepthAtStart: this.lifecycleMutationQueuedCount,
+          });
+        }
+        const startedAt = Date.now();
+        try {
+          const result = await action();
+          if (transition) {
+            log.info("lifecycle mutation succeeded", "api", {
+              operationId,
+              operation: transition.operation,
+              targetKind: transition.targetKind,
+              targetId: transition.targetId,
+              targetPath: transition.targetPath,
+              durationMs: Date.now() - startedAt,
+            });
+          }
+          return result;
+        } catch (error) {
+          if (transition) {
+            log.warn("lifecycle mutation failed", "api", {
+              operationId,
+              operation: transition.operation,
+              targetKind: transition.targetKind,
+              targetId: transition.targetId,
+              targetPath: transition.targetPath,
+              durationMs: Date.now() - startedAt,
+              error: userFacingErrorMessage(error),
+            });
+          }
+          throw error;
+        }
+      });
     const tracked = queued.finally(() => {
       this.lifecycleMutationQueuedCount = Math.max(0, this.lifecycleMutationQueuedCount - 1);
       if (targetKey && this.lifecycleMutationTargets.get(targetKey) === transition) {
         this.lifecycleMutationTargets.delete(targetKey);
+      }
+      if (transition) {
+        log.info("lifecycle mutation released", "api", {
+          operationId,
+          operation: transition.operation,
+          targetKind: transition.targetKind,
+          targetId: transition.targetId,
+          targetPath: transition.targetPath,
+          queueDepth: this.lifecycleMutationQueuedCount,
+        });
       }
     });
     this.lifecycleMutationQueue = tracked.then(
@@ -6014,7 +6088,8 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.restorePrevious) {
-        if (!this.options.desktop?.resumeAgent) {
+        const restoreAgent = this.options.desktop?.restoreAgent ?? this.options.desktop?.resumeAgent;
+        if (!restoreAgent) {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
@@ -6026,24 +6101,23 @@ export class MetadataServer {
         type RestoreAttempt =
           | { sessionId: string; status: string; error?: never }
           | { sessionId: string; error: string; status?: never };
-        const attempts: RestoreAttempt[] = await Promise.all(
-          offer.sessionIds.map(async (sessionId) => {
-            const transitionInput: LifecycleTransitionInput = {
-              operation: "agent.resume",
-              targetKind: "agent",
-              targetId: sessionId,
-            };
-            try {
-              const result = await this.enqueueLifecycleMutation(
-                () => runLifecycle(transitionInput, () => this.options.desktop!.resumeAgent!({ sessionId })),
-                transitionInput,
-              );
-              return { sessionId, status: result.status };
-            } catch (error) {
-              return { sessionId, error: userFacingErrorMessage(error) };
-            }
-          }),
-        );
+        const attempts: RestoreAttempt[] = [];
+        for (const sessionId of offer.sessionIds) {
+          const transitionInput: LifecycleTransitionInput = {
+            operation: "agent.restore",
+            targetKind: "agent",
+            targetId: sessionId,
+          };
+          try {
+            const result = await this.enqueueLifecycleMutation(
+              () => runLifecycle(transitionInput, () => restoreAgent({ sessionId })),
+              transitionInput,
+            );
+            attempts.push({ sessionId, status: result.status });
+          } catch (error) {
+            attempts.push({ sessionId, error: userFacingErrorMessage(error) });
+          }
+        }
         const restored = attempts.filter((result): result is Extract<RestoreAttempt, { status: string }> => {
           return "status" in result;
         });
