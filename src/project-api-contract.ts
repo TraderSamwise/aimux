@@ -1287,6 +1287,9 @@ export interface SwitchableAgentsInput {
   includeOverseer?: "1";
   expose?: "1";
   labelFormat?: "raw";
+  clientKind?: "tui" | "web" | "mobile" | "expose" | "api";
+  clientId?: string;
+  clientTtlMs?: string;
 }
 
 export type ExposePreviewSnapshotSource = "capture" | "tap";

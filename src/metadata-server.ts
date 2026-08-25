@@ -186,6 +186,7 @@ import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { ExposePreviewCache, type ExposePreviewCacheLike } from "./expose-preview-cache.js";
 import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
+import { VisualClientLeaseRegistry, parseVisualClientKind } from "./visual-client-leases.js";
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
 import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
 import { runTmuxExpose } from "./tmux/expose.js";
@@ -1699,6 +1700,7 @@ export class MetadataServer {
   private exposeSocketPath: string | null = null;
   private readonly exposePreviewCache: ExposePreviewCacheLike | null;
   private readonly exposePaneOutputTap: ExposePaneOutputTapLike | null;
+  private readonly visualClientLeases = new VisualClientLeaseRegistry();
   private readonly exposeHotSnapshotsEnabled: boolean;
   private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeHotSnapshotRefreshing = false;
@@ -1940,17 +1942,42 @@ export class MetadataServer {
     return this.projectRoot ?? process.cwd();
   }
 
+  private touchVisualClientLease(
+    req: IncomingMessage,
+    url: URL,
+    input: {
+      surface: string;
+      requestedPreview: boolean;
+      requestedChatPreview?: boolean;
+      defaultKind?: string;
+    },
+  ): boolean {
+    if (!input.requestedPreview && !input.requestedChatPreview) return false;
+    const kind = parseVisualClientKind(url.searchParams.get("clientKind") ?? input.defaultKind);
+    const remote = req.socket.remoteAddress?.replace(/^::ffff:/, "") || "local";
+    this.visualClientLeases.touch({
+      id: url.searchParams.get("clientId") || `${kind}:${remote}`,
+      kind,
+      surface: input.surface,
+      requestedPreview: input.requestedPreview,
+      requestedChatPreview: input.requestedChatPreview === true,
+      ttlMs: url.searchParams.get("clientTtlMs"),
+    });
+    return this.visualClientLeases.hasActivePreviewClients();
+  }
+
   private attachExposePreviewSnapshots(
     rawItems: FastControlItem[],
-    options: { trackPaneOutput?: boolean; maxOutputChars?: number } = {},
+    options: { trackPaneOutput?: boolean; trackPreview?: boolean; maxOutputChars?: number } = {},
   ): FastControlItem[] {
     const captureSnapshots = new Map<string, ReturnType<ExposePreviewCacheLike["get"]>>();
     const tapSnapshots = new Map<string, ReturnType<ExposePaneOutputTapLike["read"]>>();
-    if (options.trackPaneOutput !== false) this.exposePaneOutputTap?.trackItems(rawItems);
+    const trackPreview = options.trackPreview !== false;
+    if (trackPreview && options.trackPaneOutput !== false) this.exposePaneOutputTap?.trackItems(rawItems);
     for (const item of rawItems) {
       tapSnapshots.set(item.target.windowId, this.exposePaneOutputTap?.read(item.target.windowId));
     }
-    this.exposePreviewCache?.trackItems(rawItems);
+    if (trackPreview) this.exposePreviewCache?.trackItems(rawItems);
     for (const item of rawItems) {
       captureSnapshots.set(item.target.windowId, this.exposePreviewCache?.get(item.target.windowId));
     }
@@ -2009,7 +2036,7 @@ export class MetadataServer {
 
   private async attachDesktopStatePreviews(
     state: Record<string, unknown>,
-    options: { includeChatPreview?: boolean } = {},
+    options: { includeChatPreview?: boolean; trackPreview?: boolean } = {},
   ): Promise<Record<string, unknown>> {
     const sessions = Array.isArray((state as any).sessions) ? (state as any).sessions : [];
     const previewItems: FastControlItem[] = sessions
@@ -2040,7 +2067,10 @@ export class MetadataServer {
     const snapshotsBySessionId =
       previewItems.length > 0
         ? new Map(
-            this.attachExposePreviewSnapshots(previewItems, { maxOutputChars: DESKTOP_STATE_PREVIEW_MAX_CHARS })
+            this.attachExposePreviewSnapshots(previewItems, {
+              maxOutputChars: DESKTOP_STATE_PREVIEW_MAX_CHARS,
+              trackPreview: options.trackPreview,
+            })
               .filter((item) => item.previewSnapshot)
               .map((item) => [item.id, item.previewSnapshot] as const),
           )
@@ -3351,6 +3381,11 @@ export class MetadataServer {
         resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
         recentSlowRequests: this.recentSlowRequests.slice(-10),
         plugins: this.options.diagnostics?.pluginStatuses?.() ?? [],
+        previews: {
+          clients: this.visualClientLeases.snapshot(),
+          cache: this.exposePreviewCache?.stats?.() ?? null,
+          taps: this.exposePaneOutputTap?.stats?.() ?? null,
+        },
       });
       return;
     }
@@ -3368,12 +3403,19 @@ export class MetadataServer {
         url.searchParams.get("includePreview") === "1" || url.searchParams.get("includePreview") === "true";
       const includeChatPreview =
         url.searchParams.get("includeChatPreview") === "1" || url.searchParams.get("includeChatPreview") === "true";
+      const trackPreview = this.touchVisualClientLease(req, url, {
+        surface: "desktop-state",
+        requestedPreview: includePreview,
+        requestedChatPreview: includeChatPreview,
+      });
       const state = this.getDesktopStateSnapshot(force);
       send(res, 200, {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
-        ...(includePreview ? await this.attachDesktopStatePreviews(state, { includeChatPreview }) : state),
+        ...(includePreview
+          ? await this.attachDesktopStatePreviews(state, { includeChatPreview, trackPreview })
+          : state),
         agentRestoreOffer: readAgentRestoreOffer(this.currentProjectRoot()),
       });
       return;
@@ -3555,6 +3597,12 @@ export class MetadataServer {
       const includeChatPreview = url.searchParams.get("includeChatPreview") === "1";
       const includeOverseer = url.searchParams.get("includeOverseer") === "1";
       const expose = url.searchParams.get("expose") === "1";
+      const trackPreview = this.touchVisualClientLease(req, url, {
+        surface: expose ? "expose" : "switchable-agents",
+        requestedPreview: includePreview,
+        requestedChatPreview: includeChatPreview,
+        defaultKind: expose ? "expose" : undefined,
+      });
       const rawItems = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
@@ -3566,7 +3614,7 @@ export class MetadataServer {
         new TmuxRuntimeManager(),
         { scope, includeOverseer },
       );
-      let itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems) : rawItems;
+      let itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems, { trackPreview }) : rawItems;
       if (includeChatPreview) itemsWithPreview = await this.attachExposeChatPreviews(itemsWithPreview);
       const sublabel = scope === "all" ? "worktree" : "none";
       const exposeItems = expose

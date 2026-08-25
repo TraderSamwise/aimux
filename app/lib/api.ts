@@ -348,11 +348,17 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
 }
 
 export async function listGlobalExposeItems(
-  opts?: ApiOpts & { includeChatPreview?: boolean },
+  opts?: ApiOpts & {
+    includeChatPreview?: boolean;
+    clientKind?: "web" | "mobile" | "expose";
+    clientId?: string;
+  },
 ): Promise<{ ok: boolean; items: unknown[] }> {
-  const { includeChatPreview, ...apiOpts } = opts ?? {};
+  const { includeChatPreview, clientKind, clientId, ...apiOpts } = opts ?? {};
   const params = new URLSearchParams({ includePreview: "1" });
   if (includeChatPreview) params.set("includeChatPreview", "1");
+  if (clientKind) params.set("clientKind", clientKind);
+  if (clientId) params.set("clientId", clientId);
   const path = `${CORE_API_ROUTES.exposeItems}?${params.toString()}`;
   if (shouldRouteViaRelay())
     return callDaemonViaRelay<{ ok: boolean; items: unknown[] }>("GET", path);

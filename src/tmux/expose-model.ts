@@ -14,6 +14,7 @@ import { isDashboardWindowName } from "./runtime-manager.js";
 export type ExposeScope = "worktree" | "project" | "global";
 
 const SCOPE_LADDER: ExposeScope[] = ["worktree", "project", "global"];
+const EXPOSE_CLIENT_ID = `tmux-expose:${process.pid}`;
 
 /** A tile's agent item; global-scope items also carry their project. */
 export type ExposeScopeItem = FastControlItem & { projectId?: string; projectRoot?: string; projectName?: string };
@@ -97,6 +98,9 @@ export async function loadExposeScopeItems(
     const endpoint = deps.daemonEndpoint ?? getDaemonBaseUrl();
     const url = new URL(CORE_API_ROUTES.exposeItems, endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
     url.searchParams.set("includePreview", "1");
+    url.searchParams.set("clientKind", "expose");
+    url.searchParams.set("clientId", EXPOSE_CLIENT_ID);
+    url.searchParams.set("clientTtlMs", "10000");
     const items = await requestExposeItems(url, deps);
     return {
       scope,
@@ -111,6 +115,9 @@ export async function loadExposeScopeItems(
   url.searchParams.set("scope", scope === "worktree" ? "worktree" : "all");
   url.searchParams.set("labelFormat", "raw");
   url.searchParams.set("includePreview", "1");
+  url.searchParams.set("clientKind", "expose");
+  url.searchParams.set("clientId", EXPOSE_CLIENT_ID);
+  url.searchParams.set("clientTtlMs", "10000");
   appendFocusContext(url, context);
   const items = await requestExposeItems(url, deps);
   return {
@@ -131,6 +138,9 @@ export async function loadOverseerExposeItem(
   url.searchParams.set("scope", "all");
   url.searchParams.set("labelFormat", "raw");
   url.searchParams.set("includePreview", "1");
+  url.searchParams.set("clientKind", "expose");
+  url.searchParams.set("clientId", EXPOSE_CLIENT_ID);
+  url.searchParams.set("clientTtlMs", "10000");
   url.searchParams.set("includeOverseer", "1");
   appendFocusContext(url, context);
   const items = await requestExposeItems(url, deps);

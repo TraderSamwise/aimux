@@ -42,11 +42,19 @@ export interface ExposePaneOutputTapSnapshot {
   byteCount: number;
 }
 
+export interface ExposePaneOutputTapStats {
+  running: boolean;
+  trackedTargets: number;
+  pendingStarts: number;
+  foreignLiveTokens: number;
+}
+
 export interface ExposePaneOutputTapLike {
   start(): void;
   stop(): void;
   trackItems(items: ExposePaneOutputTapTarget[]): void;
   read(windowId: string, maxBytes?: number): ExposePaneOutputTapSnapshot | undefined;
+  stats?(): ExposePaneOutputTapStats;
 }
 
 export interface ExposePaneOutputTapOptions {
@@ -184,6 +192,18 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
       source: "tap",
       windowId,
       byteCount: tail.buffer.length,
+    };
+  }
+
+  stats(): ExposePaneOutputTapStats {
+    const now = this.now().getTime();
+    this.reconcilePendingStarts(now);
+    this.pruneExpired(now);
+    return {
+      running: this.running,
+      trackedTargets: this.trackedTargets.size,
+      pendingStarts: this.pendingStarts.size,
+      foreignLiveTokens: this.foreignLiveTokens.size,
     };
   }
 

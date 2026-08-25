@@ -57,6 +57,7 @@ type DashboardModelHost = any;
 export interface DashboardModelRefreshOptions {
   lifecycle?: DashboardLifecycleToken;
   allowInactive?: boolean;
+  includePreview?: boolean;
 }
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
 interface DashboardStateSnapshotOptions {
@@ -1337,9 +1338,17 @@ export async function refreshDashboardModelFromService(
       if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
       return failDashboardServiceRefresh(host, force);
     }
-    const desktopStateParams = new URLSearchParams({ includePreview: "1" });
+    const includePreview = options.includePreview ?? !options.allowInactive;
+    const desktopStateParams = new URLSearchParams();
+    if (includePreview) {
+      desktopStateParams.set("includePreview", "1");
+      desktopStateParams.set("clientKind", "tui");
+      desktopStateParams.set("clientId", `dashboard:${process.pid}`);
+      desktopStateParams.set("clientTtlMs", "5000");
+    }
     if (force) desktopStateParams.set("force", "1");
-    const desktopStatePath = `${PROJECT_API_ROUTES.desktopState}?${desktopStateParams.toString()}`;
+    const desktopStateQuery = desktopStateParams.toString();
+    const desktopStatePath = `${PROJECT_API_ROUTES.desktopState}${desktopStateQuery ? `?${desktopStateQuery}` : ""}`;
     const result = await getOrCreateTuiApiRuntime(host).refreshJson(
       "desktop-state",
       desktopStatePath,

@@ -18,6 +18,7 @@ import { requestBinary, requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { listAllProjectsExposeItems, type GlobalExposeItem } from "./expose-control.js";
 import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
+import { VisualClientLeaseRegistry, parseVisualClientKind } from "./visual-client-leases.js";
 import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from "./tmux/expose-ordering.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
@@ -509,6 +510,7 @@ export class AimuxDaemon {
   private installCleanupRunning = false;
   private globalExposeHotSnapshotRefreshing = false;
   private globalExposeHotSnapshotWorker: Worker | null = null;
+  private readonly visualClientLeases = new VisualClientLeaseRegistry();
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -1063,7 +1065,8 @@ export class AimuxDaemon {
   private exposeItemsRoute(routeUrl: URL): DaemonRouteResponse {
     const includePreview = routeUrl.searchParams.get("includePreview") === "1";
     const rawItems = listAllProjectsExposeItems();
-    if (includePreview) {
+    const trackPreview = includePreview ? this.touchVisualClientLease(routeUrl, "global-expose") : false;
+    if (trackPreview) {
       const itemsByProjectRoot = new Map<string, typeof rawItems>();
       for (const item of rawItems) {
         const projectItems = itemsByProjectRoot.get(item.projectRoot) ?? [];
@@ -1100,6 +1103,19 @@ export class AimuxDaemon {
       };
     });
     return { status: 200, body: { ok: true, items } };
+  }
+
+  private touchVisualClientLease(routeUrl: URL, surface: string): boolean {
+    const kind = parseVisualClientKind(routeUrl.searchParams.get("clientKind") ?? "expose");
+    this.visualClientLeases.touch({
+      id: routeUrl.searchParams.get("clientId") || `${kind}:global`,
+      kind,
+      surface,
+      requestedPreview: routeUrl.searchParams.get("includePreview") === "1",
+      requestedChatPreview: routeUrl.searchParams.get("includeChatPreview") === "1",
+      ttlMs: routeUrl.searchParams.get("clientTtlMs"),
+    });
+    return this.visualClientLeases.hasActivePreviewClients();
   }
 
   private exposeFocusRoute(body: unknown): DaemonRouteResponse {
@@ -4093,6 +4109,9 @@ export class AimuxDaemon {
           uptimeMs,
           eventLoop,
           tmuxExec,
+          previews: {
+            clients: this.visualClientLeases.snapshot(),
+          },
           // The verdict, not just the numbers: a reader (or a smoke check) should
           // not have to re-derive the thresholds to know whether this is healthy.
           budget: assessLoopBudget({ windowMs: uptimeMs, eventLoop, tmuxExec }),

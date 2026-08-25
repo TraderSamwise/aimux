@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ScrollView, Text as RNText, View, useWindowDimensions } from "react-native";
+import { Platform, ScrollView, Text as RNText, View, useWindowDimensions } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { CheckCircle2, RefreshCw } from "lucide-react-native";
@@ -56,6 +56,8 @@ const PREVIEW_MODE_OPTIONS: Array<{ value: ExposePreviewMode; label: string }> =
   { value: "chat", label: "Chat" },
   { value: "terminal", label: "Terminal" },
 ];
+
+const EXPOSE_CLIENT_ID = `app-expose-${Math.random().toString(36).slice(2)}`;
 
 interface ExposeSurfaceProps {
   width: number;
@@ -133,6 +135,8 @@ async function loadExposeData({
     const response = await listGlobalExposeItems({
       token,
       includeChatPreview,
+      clientKind: Platform.OS === "web" ? "web" : "mobile",
+      clientId: EXPOSE_CLIENT_ID,
       signal,
       timeoutMs: 5000,
     });
@@ -158,6 +162,9 @@ async function loadExposeData({
     labelFormat: "raw",
     includePreview: "1",
     expose: "1",
+    clientKind: Platform.OS === "web" ? "web" : "mobile",
+    clientId: EXPOSE_CLIENT_ID,
+    clientTtlMs: "15000",
   } as const;
   const response = await listSwitchableAgents(
     endpoint,

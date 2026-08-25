@@ -146,6 +146,68 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("reports visual preview clients in diagnostics", async () => {
+    server?.stop();
+    const exposePreviewCache = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      get: vi.fn(() => undefined),
+      stats: vi.fn(() => ({
+        running: true,
+        trackedTargets: 1,
+        snapshots: 0,
+        failureCounts: 0,
+        refreshing: false,
+        refreshPending: false,
+      })),
+    };
+    const exposePaneOutputTap = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      read: vi.fn(() => undefined),
+      stats: vi.fn(() => ({ running: true, trackedTargets: 1, pendingStarts: 0, foreignLiveTokens: 0 })),
+    };
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "codex-1", tmuxWindowId: "@1", command: "codex", label: "codex" }],
+          teammates: [],
+          services: [],
+          worktrees: [],
+          worktreeGroups: [],
+          mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        }),
+      },
+      exposePreviewCache,
+      exposePaneOutputTap,
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://127.0.0.1:${endpoint!.port}`;
+
+    await fetch(`${base}/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard:test&clientTtlMs=10000`);
+    const diagnostics = await fetch(`${base}/diagnostics`);
+    const json = await diagnostics.json();
+
+    expect(json.previews).toMatchObject({
+      clients: {
+        counts: { tui: 1, web: 0, mobile: 0, expose: 0, api: 0 },
+        activePreviewClients: 1,
+      },
+      cache: { trackedTargets: 1 },
+      taps: { trackedTargets: 1 },
+    });
+    expect(json.previews.clients.active[0]).toMatchObject({
+      id: "dashboard:test",
+      kind: "tui",
+      surface: "desktop-state",
+      requestedPreview: true,
+    });
+  });
+
   it("allows private-network browser preflight requests", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

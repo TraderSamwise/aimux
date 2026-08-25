@@ -748,11 +748,24 @@ describe("daemon supervision", () => {
     tmuxRuntimeMock.listWindows.mockReturnValue([{ id: "@1", index: 1, name: "codex", active: true, activity: 1 }]);
 
     const daemon = new AimuxDaemon();
-    const response = await daemon.routeRequest("GET", `${CORE_API_ROUTES.exposeItems}?includePreview=1`);
+    const response = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.exposeItems}?includePreview=1&clientKind=expose&clientId=tmux-expose:test&clientTtlMs=10000`,
+    );
     const body = response.body as { items: Array<{ previewSnapshot?: { output: string } }> };
 
     expect(response.status).toBe(200);
     expect(body.items[0]?.previewSnapshot?.output).toBe("persisted global preview\n");
+
+    const diagnostics = await daemon.routeRequest("GET", "/diagnostics/loop");
+    expect(diagnostics.body).toMatchObject({
+      previews: {
+        clients: {
+          counts: { tui: 0, web: 0, mobile: 0, expose: 1, api: 0 },
+          activePreviewClients: 1,
+        },
+      },
+    });
   });
 
   it("mirrors project hot snapshots into a global expose hot snapshot", async () => {

@@ -12,11 +12,21 @@ const EXPOSE_PREVIEW_MAX_CAPTURE_FAILURES = 3;
 type ExposePreviewTarget = Pick<FastControlItem, "id" | "target">;
 type TrackedExposePreviewTarget = ExposePreviewTarget & { expiresAt: number; generation: number };
 
+export interface ExposePreviewCacheStats {
+  running: boolean;
+  trackedTargets: number;
+  snapshots: number;
+  failureCounts: number;
+  refreshing: boolean;
+  refreshPending: boolean;
+}
+
 export interface ExposePreviewCacheLike {
   start(): void;
   stop(): void;
   trackItems(items: ExposePreviewTarget[]): void;
   get(windowId: string): ExposePreviewSnapshot | undefined;
+  stats?(): ExposePreviewCacheStats;
 }
 
 export interface ExposePreviewCacheOptions {
@@ -114,6 +124,18 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
   get(windowId: string): ExposePreviewSnapshot | undefined {
     this.pruneExpired(this.now().getTime());
     return this.snapshots.get(windowId);
+  }
+
+  stats(): ExposePreviewCacheStats {
+    this.pruneExpired(this.now().getTime());
+    return {
+      running: this.running,
+      trackedTargets: this.trackedTargets.size,
+      snapshots: this.snapshots.size,
+      failureCounts: this.failureCounts.size,
+      refreshing: this.refreshing,
+      refreshPending: this.refreshPending,
+    };
   }
 
   async refreshNow(): Promise<void> {
