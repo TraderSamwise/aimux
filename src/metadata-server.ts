@@ -6960,7 +6960,7 @@ export class MetadataServer {
         }
         const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
         const startLine = captureWindow.startLine;
-        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine: parsedStartLine.value });
+        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
         send(res, 200, {
           ok: true,
           ...result,
@@ -7026,7 +7026,7 @@ export class MetadataServer {
           resize = { cols: result.cols, rows: result.rows };
         }
 
-        const output = await this.options.lifecycle.readAgentOutput({ sessionId, startLine: parsedStartLine.value });
+        const output = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
         send(res, 200, {
           ok: true,
           ...output,

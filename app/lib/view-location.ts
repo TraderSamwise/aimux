@@ -58,6 +58,11 @@ export function buildViewPath(pathname: string, params: AimuxViewParams = {}): H
   return `${pathname}${search ? `?${search}` : ""}` as Href;
 }
 
+export function replaceBrowserViewPath(path: string): void {
+  if (typeof window === "undefined") return;
+  window.history.replaceState(window.history.state, "", path);
+}
+
 export function mergeViewParams(
   current: Record<string, SearchValue>,
   next: AimuxViewParams,

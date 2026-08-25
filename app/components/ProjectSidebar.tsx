@@ -33,6 +33,7 @@ import {
   detailHrefForPath,
   parentViewHrefForPath,
   projectPathFromSearchOrLocation,
+  replaceBrowserViewPath,
   type SearchValue,
 } from "@/lib/view-location";
 import { cn } from "@/lib/utils";
@@ -549,10 +550,12 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   function handlePickProject(path: string) {
     blurWebActiveElement();
+    const href = buildViewHref("/project", { project: path });
+    if (Platform.OS === "web" && typeof href === "string") replaceBrowserViewPath(href);
     selectProject(path);
     setShowPicker(false);
     // Selecting a project always lands on the Project screen's Dashboard section.
-    router.replace(buildViewHref("/project", { project: path }));
+    router.replace(href);
   }
 
   function handlePickSession(sessionId: string, sessionProjectPath = routeProjectPath) {

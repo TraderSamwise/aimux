@@ -67,6 +67,28 @@ export async function attachmentsFromFiles(files: Iterable<File>): Promise<Picke
   return Promise.all(Array.from(files).filter(isAcceptedAttachmentFile).map(attachmentFromFile));
 }
 
+export type ClipboardFileSource = {
+  files?: ArrayLike<File> | Iterable<File> | null;
+  items?:
+    | ArrayLike<{ kind?: string; getAsFile?: () => File | null }>
+    | Iterable<{ kind?: string; getAsFile?: () => File | null }>
+    | null;
+};
+
+export async function attachmentsFromClipboardData(
+  clipboardData: ClipboardFileSource | null | undefined,
+): Promise<PickedAttachment[]> {
+  if (!clipboardData) return [];
+  const files = Array.from(clipboardData.files ?? []);
+  if (files.length > 0) return attachmentsFromFiles(files);
+
+  const itemFiles = Array.from(clipboardData.items ?? [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile?.() ?? null)
+    .filter((file): file is File => file !== null);
+  return attachmentsFromFiles(itemFiles);
+}
+
 export async function imageAttachmentsFromFiles(
   files: Iterable<File>,
 ): Promise<PickedImageAttachment[]> {
@@ -74,23 +96,21 @@ export async function imageAttachmentsFromFiles(
 }
 
 async function attachmentFromFile(file: File): Promise<PickedAttachment> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read file."));
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(file);
-  });
-  const comma = dataUrl.indexOf(",");
-  if (comma === -1) throw new Error("Could not read file data.");
-  const mimeType = file.type || dataUrl.slice(5, comma).split(";")[0] || "application/octet-stream";
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.slice(index, index + 0x8000));
+  }
+  const mimeType = file.type || "application/octet-stream";
+  const dataBase64 = btoa(binary);
 
   return {
     id: localId(),
     kind: kindFromMimeType(mimeType),
     filename: file.name || "attachment",
     mimeType,
-    dataBase64: dataUrl.slice(comma + 1),
-    previewUri: dataUrl,
+    dataBase64,
+    previewUri: `data:${mimeType};base64,${dataBase64}`,
     sizeBytes: file.size,
   };
 }

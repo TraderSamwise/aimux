@@ -370,8 +370,50 @@ export function parseAgentOutput(
       looksLikeTerminalTailChromeStatusText(trimmed)
     );
   };
+
+  const trailingComposerBlockStart = () => {
+    if (tool !== "claude") return null;
+    let end = lines.length - 1;
+    while (end >= 0 && !(lines[end] ?? "").trim()) end -= 1;
+    if (end <= 0) return null;
+
+    const tailText = (lines[end] ?? "").trim();
+    if (!tailText || tailText.length > 220) return null;
+    if (isPromptLine(lines[end] ?? "") || /^⏺|^●|^•/.test(tailText)) return null;
+    if (isBottomChrome(lines[end] ?? "")) return null;
+
+    let cursor = end - 1;
+    let ruleCount = 0;
+    let sawPromptMarker = false;
+    while (cursor >= 0) {
+      const trimmed = (lines[cursor] ?? "").trim();
+      if (!trimmed) {
+        cursor -= 1;
+        continue;
+      }
+      if (isDivider(trimmed) || isTitledDivider(trimmed) || isWrappedDividerFragment(trimmed)) {
+        ruleCount += 1;
+        cursor -= 1;
+        continue;
+      }
+      if (/^[❯›>]$/.test(trimmed)) {
+        sawPromptMarker = true;
+        cursor -= 1;
+        continue;
+      }
+      break;
+    }
+
+    if (!sawPromptMarker) return null;
+    const hasPriorConversation = lines
+      .slice(0, cursor + 1)
+      .some((line) => isPromptLine(line) || /^⏺|^●|^•/.test(line.trimStart()));
+    return hasPriorConversation ? cursor + 1 : null;
+  };
+
   let bodyEnd = lines.length;
   while (bodyEnd > 0 && isBottomChrome(lines[bodyEnd - 1] ?? "")) bodyEnd -= 1;
+  bodyEnd = Math.min(bodyEnd, trailingComposerBlockStart() ?? bodyEnd);
 
   for (const [index, rawLine] of lines.entries()) {
     const trimmed = rawLine.trimEnd();

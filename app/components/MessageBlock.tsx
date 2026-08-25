@@ -48,6 +48,7 @@ const MESSAGE_TEXT_STYLE: TextStyle = {
 };
 
 export type TextSegment = { kind: "text" | "table"; text: string };
+type TextSegmentWithRange = TextSegment & { end: number; start: number };
 
 export function resolveImageUrl(
   part: HistoryImagePart | HistoryImageReferencePart | HistoryAttachmentReferencePart,
@@ -100,23 +101,46 @@ function spanText(spans: readonly HistoryTextSpan[]): string {
 }
 
 function isMarkdownTableRow(line: string): boolean {
-  const trimmed = line.trim();
-  return /^\|.*\|$/.test(trimmed) && trimmed.split("|").length >= 3;
+  const cells = markdownTableCells(line);
+  return cells.length >= 2 && cells.some((cell) => cell.length > 0);
 }
 
 function isMarkdownTableSeparator(line: string): boolean {
+  const cells = markdownTableCells(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function markdownTableCells(line: string): string[] {
   const trimmed = line.trim();
-  return /^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed);
+  if (!trimmed.includes("|")) return [];
+  return trimmed
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
 }
 
 export function splitMarkdownTableSegments(text: string): TextSegment[] {
+  return splitMarkdownTableSegmentsWithRanges(text).map(({ kind, text }) => ({ kind, text }));
+}
+
+function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRange[] {
   const lines = text.split("\n");
-  const segments: TextSegment[] = [];
-  const textLines: string[] = [];
+  const lineStarts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
+  const segments: TextSegmentWithRange[] = [];
+  let textStart = 0;
+  let textEnd = 0;
   const flushText = () => {
-    const value = textLines.join("\n").replace(/^\n+/, "").trimEnd();
-    textLines.length = 0;
-    if (value) segments.push({ kind: "text", text: value });
+    let start = textStart;
+    let end = textEnd;
+    while (start < end && text[start] === "\n") start += 1;
+    while (end > start && /\s/.test(text[end - 1] ?? "")) end -= 1;
+    if (start < end) segments.push({ kind: "text", text: text.slice(start, end), start, end });
   };
 
   for (let index = 0; index < lines.length; ) {
@@ -126,16 +150,27 @@ export function splitMarkdownTableSegments(text: string): TextSegment[] {
       isMarkdownTableSeparator(lines[index + 1] ?? "")
     ) {
       flushText();
+      const tableStart = lineStarts[index] ?? 0;
       const tableLines = [lines[index] ?? "", lines[index + 1] ?? ""];
       index += 2;
       while (index < lines.length && isMarkdownTableRow(lines[index] ?? "")) {
         tableLines.push(lines[index] ?? "");
         index += 1;
       }
-      segments.push({ kind: "table", text: tableLines.join("\n") });
+      const tableText = tableLines.join("\n");
+      segments.push({
+        kind: "table",
+        text: tableText,
+        start: tableStart,
+        end: tableStart + tableText.length,
+      });
+      textStart = lineStarts[index] ?? text.length;
+      textEnd = textStart;
       continue;
     }
-    textLines.push(lines[index] ?? "");
+    if (textStart === textEnd) textStart = lineStarts[index] ?? textEnd;
+    textEnd =
+      (lineStarts[index] ?? 0) + (lines[index] ?? "").length + (index < lines.length - 1 ? 1 : 0);
     index += 1;
   }
 
@@ -209,26 +244,6 @@ function RichText({
 }
 
 function MarkdownTableText({ className, text }: { className: string; text: string }) {
-  if (Platform.OS === "web") {
-    return (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="my-1 max-w-full">
-        {React.createElement(
-          "pre",
-          {
-            style: {
-              color: "inherit",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              fontSize: 14,
-              lineHeight: "20px",
-              margin: 0,
-              whiteSpace: "pre",
-            },
-          },
-          text,
-        )}
-      </ScrollView>
-    );
-  }
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} className="my-1 max-w-full">
       <Text
@@ -239,6 +254,67 @@ function MarkdownTableText({ className, text }: { className: string; text: strin
       </Text>
     </ScrollView>
   );
+}
+
+function RichTextPart({
+  className,
+  dividerWidth,
+  spans,
+  text,
+}: {
+  className: string;
+  dividerWidth?: number;
+  spans: readonly HistoryTextSpan[];
+  text: string;
+}) {
+  const segments = React.useMemo(() => splitMarkdownTableSegmentsWithRanges(text), [text]);
+  if (segments.length === 1 && segments[0]?.kind === "text") {
+    return (
+      <RichText
+        className={className}
+        dividerWidth={dividerWidth}
+        spans={spans}
+        textStyle={MESSAGE_TEXT_STYLE}
+      />
+    );
+  }
+
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.kind === "table" ? (
+          <MarkdownTableText key={index} className={className} text={segment.text} />
+        ) : (
+          <RichText
+            key={index}
+            className={className}
+            dividerWidth={dividerWidth}
+            spans={sliceRichTextSpans(spans, segment.start, segment.end)}
+            textStyle={MESSAGE_TEXT_STYLE}
+          />
+        ),
+      )}
+    </>
+  );
+}
+
+function sliceRichTextSpans(
+  spans: readonly HistoryTextSpan[],
+  start: number,
+  end: number,
+): HistoryTextSpan[] {
+  const sliced: HistoryTextSpan[] = [];
+  let cursor = 0;
+  for (const span of spans) {
+    const spanStart = cursor;
+    const spanEnd = cursor + span.text.length;
+    cursor = spanEnd;
+    if (spanEnd <= start || spanStart >= end) continue;
+    const from = Math.max(0, start - spanStart);
+    const to = Math.min(span.text.length, end - spanStart);
+    if (from < to) sliced.push({ ...span, text: span.text.slice(from, to) });
+  }
+  return sliced;
 }
 
 function PlainTextPart({
@@ -473,12 +549,12 @@ export const MessageBlock = React.memo(function MessageBlock({
             };
             if (shouldRenderRichTerminalText(richTextInput)) {
               return (
-                <RichText
+                <RichTextPart
                   key={idx}
-                  spans={richTextInput.spans}
                   className={className}
                   dividerWidth={dividerWidth}
-                  textStyle={MESSAGE_TEXT_STYLE}
+                  spans={richTextInput.spans}
+                  text={part.text}
                 />
               );
             }

@@ -212,4 +212,17 @@ describe("MessageBlock table text", () => {
       { kind: "text", text: "After" },
     ]);
   });
+
+  it("accepts markdown tables without outer pipes", () => {
+    expect(
+      splitMarkdownTableSegments(
+        ["Account | Count | Total", "--- | ---: | ---:", "A | 2 | 10"].join("\n"),
+      ),
+    ).toEqual([
+      {
+        kind: "table",
+        text: ["Account | Count | Total", "--- | ---: | ---:", "A | 2 | 10"].join("\n"),
+      },
+    ]);
+  });
 });

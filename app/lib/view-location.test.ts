@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildViewHref,
   buildViewPath,
@@ -7,9 +7,14 @@ import {
   mergeViewParams,
   parentViewHrefForPath,
   projectPathFromSearch,
+  replaceBrowserViewPath,
 } from "./view-location";
 
 describe("view location helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("reads the first project search value", () => {
     expect(projectPathFromSearch("/Users/sam/cs/aimux")).toBe("/Users/sam/cs/aimux");
     expect(projectPathFromSearch(["/a", "/b"])).toBe("/a");
@@ -74,5 +79,19 @@ describe("view location helpers", () => {
       "/topology?project=%2Fp",
     );
     expect(parentViewHrefForPath("/agent/claude-1/chat", "/p")).toBe("/?project=%2Fp");
+  });
+
+  it("can synchronously replace the browser URL before route params catch up", () => {
+    const replaceState = vi.fn();
+    vi.stubGlobal("window", {
+      history: {
+        state: { key: "route" },
+        replaceState,
+      },
+    });
+
+    replaceBrowserViewPath("/project?project=%2Fnew");
+
+    expect(replaceState).toHaveBeenCalledWith({ key: "route" }, "", "/project?project=%2Fnew");
   });
 });

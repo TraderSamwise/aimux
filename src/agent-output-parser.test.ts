@@ -854,4 +854,46 @@ describe("parseAgentOutput", () => {
     expect(messages[1]?.text).toContain("│ year │ payouts │ USDT");
     expect(messages[1]?.text).toContain("│ 2023 │ 239");
   });
+
+  it("keeps trailing Claude composer draft blocks out of chat messages", () => {
+    const raw = [
+      "❯ summarize work",
+      "",
+      "⏺ Sub-agent's queue snapshot to Sam. Not for me.",
+      "",
+      "────────────────────────────────────────────────────────────",
+      "────────────",
+      "❯",
+      "────────────────────────────────────────────────────────────",
+      "────────────",
+      "Fix price tiers and update event confirmation messaging",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+    const messages = messagesFromParsedAgentOutput(parsed);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]?.text).toContain("Sub-agent's queue snapshot");
+    expect(messages[1]?.text).not.toContain("Fix price tiers");
+    expect(messages[1]?.text).not.toContain("────");
+  });
+
+  it("keeps legitimate Claude response text after trailing dividers", () => {
+    const raw = [
+      "❯ summarize work",
+      "",
+      "⏺ First section.",
+      "",
+      "────────────────────────────────────────────────────────────",
+      "────────────────────────────────────────────────────────────",
+      "Short final note.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+    const messages = messagesFromParsedAgentOutput(parsed);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]?.text).toContain("First section");
+    expect(messages[1]?.text).toContain("Short final note");
+  });
 });

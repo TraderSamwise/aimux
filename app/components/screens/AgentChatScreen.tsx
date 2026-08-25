@@ -76,7 +76,12 @@ import {
   type ShareParticipant,
   type SharedSessionSummary,
 } from "@/lib/api";
-import { pickAttachment, type PickedAttachment } from "@/lib/image-picker";
+import {
+  attachmentsFromClipboardData,
+  pickAttachment,
+  type ClipboardFileSource,
+  type PickedAttachment,
+} from "@/lib/image-picker";
 import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
@@ -142,6 +147,7 @@ const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
+const CHAT_INITIAL_SNAPSHOT_TIMEOUT_MS = 12_000;
 const SCROLL_BOTTOM_EPSILON = 24;
 const SCROLL_BOTTOM_SETTLE_FRAMES = Platform.OS === "web" ? 3 : 1;
 const COMPOSER_INPUT_FONT_SIZE = 14;
@@ -232,6 +238,8 @@ type PendingComposerAck = {
   id: number;
 };
 
+type InitialTranscriptStatus = "idle" | "loading" | "timed-out";
+
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
 
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
@@ -272,6 +280,11 @@ type ChatListItem =
       key: string;
       text: string;
       type: "restore-blocked" | "error";
+    }
+  | {
+      key: string;
+      status: InitialTranscriptStatus;
+      type: "initial-transcript";
     };
 
 type UserScrollState = {
@@ -343,11 +356,13 @@ function buildChatListItems({
   messages,
   restoreBlockedReason,
   sendError,
+  initialTranscriptStatus,
   visibleLastError,
 }: {
   messages: ChatMessage[];
   restoreBlockedReason: string | null;
   sendError: string | null;
+  initialTranscriptStatus: InitialTranscriptStatus;
   visibleLastError: string | null;
 }): ChatListItem[] {
   const chronological: ChatListItem[] = messages.map((message, idx) => ({
@@ -356,6 +371,13 @@ function buildChatListItems({
     type: "message",
   }));
 
+  if (initialTranscriptStatus !== "idle") {
+    chronological.push({
+      key: "initial-transcript",
+      status: initialTranscriptStatus,
+      type: "initial-transcript",
+    });
+  }
   if (restoreBlockedReason) {
     chronological.push({
       key: "restore-blocked",
@@ -425,6 +447,10 @@ export default function ChatScreen() {
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
   const [shareSummaryCheckedKey, setShareSummaryCheckedKey] = useState<string | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
+  const [initialTranscriptState, setInitialTranscriptState] = useState<{
+    key: string;
+    status: InitialTranscriptStatus;
+  }>({ key: "", status: "idle" });
   const [draft, setDraft] = useState("");
   const [pendingComposerAck, setPendingComposerAck] = useState<PendingComposerAck | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -764,15 +790,33 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- no active route means no first transcript request is pending
+      setInitialTranscriptState({ key: "", status: "idle" });
       return;
     }
     let cancelled = false;
     let inFlight = false;
+    let firstSnapshotLoaded = false;
+    const snapshotKey = `${endpointHost}:${endpointPort}:${sessionId}`;
+
+    setInitialTranscriptState({ key: snapshotKey, status: "loading" });
+    const initialTimeout = setTimeout(() => {
+      if (cancelled || firstSnapshotLoaded) return;
+      setInitialTranscriptState((current) =>
+        current.key === snapshotKey ? { key: snapshotKey, status: "timed-out" } : current,
+      );
+    }, CHAT_INITIAL_SNAPSHOT_TIMEOUT_MS);
     const tick = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
       try {
         await refreshOutputSnapshot();
+        firstSnapshotLoaded = true;
+        if (!cancelled) {
+          setInitialTranscriptState((current) =>
+            current.key === snapshotKey ? { key: snapshotKey, status: "idle" } : current,
+          );
+        }
       } catch {
         // Relay/SSE connection state is surfaced elsewhere; snapshot polling is best-effort.
       } finally {
@@ -786,6 +830,7 @@ export default function ChatScreen() {
     }, CHAT_OUTPUT_SNAPSHOT_POLL_MS);
     return () => {
       cancelled = true;
+      clearTimeout(initialTimeout);
       clearInterval(timer);
     };
   }, [
@@ -981,7 +1026,21 @@ export default function ChatScreen() {
     session.restoreState === "blocked"
       ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
       : null;
+  const initialTranscriptStatus =
+    initialTranscriptState.key === `${endpointHost}:${endpointPort}:${sessionId}`
+      ? initialTranscriptState.status
+      : "idle";
+  const visibleInitialTranscriptStatus =
+    initialTranscriptStatus !== "idle" &&
+    allMessages.length === 0 &&
+    !output &&
+    !restoreBlockedReason &&
+    !sendError &&
+    !visibleLastError
+      ? initialTranscriptStatus
+      : "idle";
   const chatListItems = buildChatListItems({
+    initialTranscriptStatus: visibleInitialTranscriptStatus,
     messages: allMessages,
     restoreBlockedReason,
     sendError,
@@ -1416,6 +1475,31 @@ export default function ChatScreen() {
     appendPendingAttachments(attachments);
   }
 
+  async function handleComposerPaste(event: {
+    clipboardData?: ClipboardFileSource | null;
+    nativeEvent?: { clipboardData?: ClipboardFileSource | null };
+    preventDefault?: () => void;
+  }) {
+    if (Platform.OS !== "web" || sendBusy || sendBusyRef.current || composerAwaitingAck) return;
+    const clipboardData = event.clipboardData ?? event.nativeEvent?.clipboardData;
+    const hasFiles =
+      Array.from(clipboardData?.files ?? []).length > 0 ||
+      Array.from(clipboardData?.items ?? []).some((item) => item.kind === "file");
+    if (!hasFiles) return;
+    event.preventDefault?.();
+    setSendError(null);
+    try {
+      const attachments = await attachmentsFromClipboardData(clipboardData);
+      if (attachments.length === 0) {
+        setSendError("Pasted files are not supported.");
+        return;
+      }
+      appendPendingAttachments(attachments);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   function appendPendingAttachments(attachments: PickedAttachment[]) {
     if (attachments.length === 0) return;
     const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
@@ -1485,6 +1569,11 @@ export default function ChatScreen() {
     if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     if (sendError) setSendError(null);
   }
+
+  const composerPasteProps =
+    Platform.OS === "web"
+      ? ({ onPaste: handleComposerPaste } as Record<string, unknown>)
+      : undefined;
 
   useEffect(() => {
     if (!shouldLoadShareSummary) {
@@ -1730,6 +1819,7 @@ export default function ChatScreen() {
                   value={draft}
                   onChangeText={handleDraftChange}
                   onKeyPress={handleComposerKeyPress}
+                  {...composerPasteProps}
                   onContentSizeChange={handleComposerContentSizeChange}
                   placeholder="Ask the agent…"
                   placeholderTextColor="#71717a"
@@ -1900,6 +1990,7 @@ export default function ChatScreen() {
       >
         <TranscriptContent
           dividerWidth={chatDividerWidth}
+          initialTranscriptStatus={visibleInitialTranscriptStatus}
           messages={allMessages}
           restoreBlockedReason={restoreBlockedReason}
           sendError={sendError}
@@ -2611,6 +2702,9 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
           />
         );
       }
+      if (item.type === "initial-transcript") {
+        return <InitialTranscriptNotice status={item.status} />;
+      }
       if (item.type === "restore-blocked") {
         return (
           <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
@@ -2696,6 +2790,7 @@ const TerminalContent = React.memo(function TerminalContent({
 const TranscriptContent = React.memo(function TranscriptContent({
   messages,
   dividerWidth,
+  initialTranscriptStatus,
   restoreBlockedReason,
   sendError,
   serviceEndpoint,
@@ -2703,6 +2798,7 @@ const TranscriptContent = React.memo(function TranscriptContent({
 }: {
   messages: ChatMessage[];
   dividerWidth: number;
+  initialTranscriptStatus: InitialTranscriptStatus;
   restoreBlockedReason: string | null;
   sendError: string | null;
   serviceEndpoint: ServiceEndpoint;
@@ -2710,6 +2806,9 @@ const TranscriptContent = React.memo(function TranscriptContent({
 }) {
   return (
     <>
+      {initialTranscriptStatus !== "idle" ? (
+        <InitialTranscriptNotice status={initialTranscriptStatus} />
+      ) : null}
       {messages.map((message, idx) => (
         <MessageBlock
           key={message.id ?? message.clientMessageId ?? `idx-${idx}`}
@@ -2733,6 +2832,25 @@ const TranscriptContent = React.memo(function TranscriptContent({
     </>
   );
 });
+
+function InitialTranscriptNotice({ status }: { status: InitialTranscriptStatus }) {
+  if (status === "timed-out") {
+    return (
+      <View className="my-2 self-start rounded-lg border border-border bg-card px-3 py-2">
+        <Text className="text-sm text-muted-foreground">
+          Transcript history is still loading. New output will appear as it arrives.
+        </Text>
+      </View>
+    );
+  }
+  if (status !== "loading") return null;
+  return (
+    <View className="my-2 flex-row items-center gap-2 self-start rounded-lg border border-border bg-card px-3 py-2">
+      <ActivityIndicator size="small" color="#a1a1aa" />
+      <Text className="text-sm text-muted-foreground">Loading transcript history...</Text>
+    </View>
+  );
+}
 
 function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSession {
   const worktreeName = activeShare.projectRoot.split("/").filter(Boolean).pop() || "Shared project";

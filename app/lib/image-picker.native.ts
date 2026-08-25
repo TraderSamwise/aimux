@@ -15,6 +15,13 @@ export interface PickedAttachment {
 }
 
 export type PickedImageAttachment = PickedAttachment;
+export type ClipboardFileSource = {
+  files?: ArrayLike<File> | Iterable<File> | null;
+  items?:
+    | ArrayLike<{ kind?: string; getAsFile?: () => File | null }>
+    | Iterable<{ kind?: string; getAsFile?: () => File | null }>
+    | null;
+};
 
 function localId(): string {
   return `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
@@ -110,6 +117,12 @@ export async function pickImageAttachment(): Promise<PickedImageAttachment | nul
 }
 
 export async function attachmentsFromFiles(_files: Iterable<File>): Promise<PickedAttachment[]> {
+  return [];
+}
+
+export async function attachmentsFromClipboardData(
+  _clipboardData?: ClipboardFileSource | null,
+): Promise<PickedAttachment[]> {
   return [];
 }
 
