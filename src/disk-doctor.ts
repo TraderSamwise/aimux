@@ -6,6 +6,7 @@ export interface DiskDoctorProjectReport {
   inactiveTargetCount: number;
   protectedActiveBytes: number;
   protectedActiveTargetCount: number;
+  protectedActiveMeasured: boolean;
   skippedActiveWorktrees: number;
   error?: string;
 }
@@ -19,6 +20,8 @@ export interface DiskDoctorReport {
     inactiveTargetCount: number;
     protectedActiveBytes: number;
     protectedActiveTargetCount: number;
+    protectedActiveMeasuredProjects: number;
+    protectedActiveUnmeasuredProjects: number;
     skippedActiveWorktrees: number;
     failures: number;
   };
@@ -39,6 +42,11 @@ export function buildDiskDoctorReport(input: {
         inactiveTargetCount: totals.inactiveTargetCount + project.inactiveTargetCount,
         protectedActiveBytes: totals.protectedActiveBytes + project.protectedActiveBytes,
         protectedActiveTargetCount: totals.protectedActiveTargetCount + project.protectedActiveTargetCount,
+        protectedActiveMeasuredProjects:
+          totals.protectedActiveMeasuredProjects + (project.protectedActiveMeasured ? 1 : 0),
+        protectedActiveUnmeasuredProjects:
+          totals.protectedActiveUnmeasuredProjects +
+          (!project.protectedActiveMeasured && !project.error && project.skippedActiveWorktrees > 0 ? 1 : 0),
         skippedActiveWorktrees: totals.skippedActiveWorktrees + project.skippedActiveWorktrees,
         failures: totals.failures + (project.error ? 1 : 0),
       }),
@@ -47,6 +55,8 @@ export function buildDiskDoctorReport(input: {
         inactiveTargetCount: 0,
         protectedActiveBytes: 0,
         protectedActiveTargetCount: 0,
+        protectedActiveMeasuredProjects: 0,
+        protectedActiveUnmeasuredProjects: 0,
         skippedActiveWorktrees: 0,
         failures: 0,
       },
@@ -63,9 +73,11 @@ export function renderDiskDoctorReport(report: DiskDoctorReport): string {
     `  inactive generated caches: ${formatWorktreeCacheBytes(
       report.totals.inactiveReclaimableBytes,
     )} (${report.totals.inactiveTargetCount} item(s))`,
-    `  protected active caches: ${formatWorktreeCacheBytes(report.totals.protectedActiveBytes)} (${
-      report.totals.protectedActiveTargetCount
-    } item(s), ${report.totals.skippedActiveWorktrees} active worktree(s))`,
+    report.totals.protectedActiveUnmeasuredProjects > 0
+      ? `  protected active caches: not measured (${report.totals.skippedActiveWorktrees} active worktree(s)); pass --include-active to measure`
+      : `  protected active caches: ${formatWorktreeCacheBytes(report.totals.protectedActiveBytes)} (${
+          report.totals.protectedActiveTargetCount
+        } item(s), ${report.totals.skippedActiveWorktrees} active worktree(s))`,
     `  failures: ${report.totals.failures}`,
   ];
   if (skippedStaleProjectRoots.length > 0) {
@@ -90,15 +102,21 @@ export function renderDiskDoctorReport(report: DiskDoctorReport): string {
       `    inactive: ${formatWorktreeCacheBytes(project.inactiveReclaimableBytes)} (${
         project.inactiveTargetCount
       } item(s))`,
-      `    protected: ${formatWorktreeCacheBytes(project.protectedActiveBytes)} (${
-        project.protectedActiveTargetCount
-      } item(s), ${project.skippedActiveWorktrees} active worktree(s))`,
+      project.protectedActiveMeasured
+        ? `    protected: ${formatWorktreeCacheBytes(project.protectedActiveBytes)} (${
+            project.protectedActiveTargetCount
+          } item(s), ${project.skippedActiveWorktrees} active worktree(s))`
+        : `    protected: not measured (${project.skippedActiveWorktrees} active worktree(s)); pass --include-active to measure`,
     );
     if (project.error) lines.push(`    error: ${project.error}`);
   }
   if (
     sorted.every(
-      (project) => !project.error && project.inactiveReclaimableBytes === 0 && project.protectedActiveBytes === 0,
+      (project) =>
+        !project.error &&
+        project.inactiveReclaimableBytes === 0 &&
+        project.protectedActiveBytes === 0 &&
+        project.skippedActiveWorktrees === 0,
     )
   ) {
     lines.push("  no generated worktree caches found");

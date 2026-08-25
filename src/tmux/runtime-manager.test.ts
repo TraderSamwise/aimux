@@ -760,14 +760,14 @@ describe("TmuxRuntimeManager", () => {
     expect(binding?.args.join(" ")).toContain("tmux-control.sh' coordination");
   });
 
-  it("routes wheel-up to tmux copy-mode for managed agent windows", () => {
+  it("routes wheel-up into managed agent windows instead of tmux history", () => {
     const config = buildDefaultRootMouseBindingsConfig({
       openPaneLinkCommand: "open-pane-link",
       openStatusPrCommand: "open-status-pr",
     });
 
     expect(config).toContain(
-      'bind-key -T root WheelUpPane if-shell -F "#{||:#{@aimux-tool},#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}}" "copy-mode -e \\; send-keys -X -N 1 scroll-up" "send-keys -M"',
+      'bind-key -T root WheelUpPane if-shell -F "#{@aimux-tool}" { send-keys -M } { if-shell -F "#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}" "copy-mode -e \\; send-keys -X -N 1 scroll-up" "send-keys -M" }',
     );
   });
 

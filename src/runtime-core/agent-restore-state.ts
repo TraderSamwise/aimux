@@ -285,16 +285,37 @@ export function deriveAgentRestoreOfferFromRestorableInventory(
   input: { projectRoot?: string; now?: string } = {},
 ): AgentRestoreOffer | null {
   const derive = () => {
-    const existing = readAgentRestoreOffer();
-    if (existing) return existing;
-
     const ack = readJsonFile(ackPath(), normalizeAck);
     const dismissedInventoryIds =
       ack?.source === "restorable-inventory" ? new Set(ack.inventorySessionIds ?? []) : new Set<string>();
     const liveIds = new Set(liveSessionIds);
-    const sessions = normalizeSessions(candidateSessions).filter(
-      (session) => !liveIds.has(session.id) && !dismissedInventoryIds.has(session.id),
-    );
+    const candidates = normalizeSessions(candidateSessions);
+    const candidateIds = new Set(candidates.map((session) => session.id));
+    const sessions = candidates.filter((session) => !liveIds.has(session.id) && !dismissedInventoryIds.has(session.id));
+
+    const existing = readAgentRestoreOffer();
+    if (existing) {
+      const existingSessions = existing.sessions.filter((session) => {
+        if (liveIds.has(session.id)) return false;
+        if (existing.source === "restorable-inventory" && !candidateIds.has(session.id)) return false;
+        if (existing.source === "restorable-inventory" && dismissedInventoryIds.has(session.id)) return false;
+        return true;
+      });
+      if (existingSessions.length === 0) {
+        rmSync(offerPath(), { force: true });
+        return null;
+      }
+      if (sameSessions(existing.sessions, existingSessions)) return existing;
+      const updated: AgentRestoreOffer = {
+        ...existing,
+        updatedAt: input.now ?? new Date().toISOString(),
+        sessionIds: existingSessions.map((session) => session.id),
+        sessions: existingSessions,
+      };
+      writeJsonAtomic(offerPath(), updated);
+      return updated;
+    }
+
     if (sessions.length === 0) {
       rmSync(offerPath(), { force: true });
       return null;

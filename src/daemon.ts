@@ -3132,7 +3132,10 @@ export class AimuxDaemon {
     return result as WorktreeCacheCleanupRunResult;
   }
 
-  private async diskDoctorProjectReport(projectRoot: string): Promise<DiskDoctorProjectReport> {
+  private async diskDoctorProjectReport(
+    projectRoot: string,
+    options: { includeActiveMeasurement?: boolean } = {},
+  ): Promise<DiskDoctorProjectReport> {
     try {
       const inactiveResponse = await this.postProjectServiceJson(
         projectRoot,
@@ -3147,8 +3150,22 @@ export class AimuxDaemon {
           inactiveTargetCount: 0,
           protectedActiveBytes: 0,
           protectedActiveTargetCount: 0,
+          protectedActiveMeasured: options.includeActiveMeasurement === true,
           skippedActiveWorktrees: 0,
           error: String(inactiveResponse.response.body ?? "project service request failed").trim(),
+        };
+      }
+      const inactive = this.cleanupRunFromProjectResponse(inactiveResponse.json);
+      const skippedActiveWorktrees = inactive.plan.skipped.filter((entry) => entry.reason === "active-runtime").length;
+      if (options.includeActiveMeasurement !== true) {
+        return {
+          projectRoot,
+          inactiveReclaimableBytes: inactive.plan.reclaimableBytes,
+          inactiveTargetCount: inactive.plan.targets.length,
+          protectedActiveBytes: 0,
+          protectedActiveTargetCount: 0,
+          protectedActiveMeasured: false,
+          skippedActiveWorktrees,
         };
       }
       const allResponse = await this.postProjectServiceJson(
@@ -3164,11 +3181,11 @@ export class AimuxDaemon {
           inactiveTargetCount: 0,
           protectedActiveBytes: 0,
           protectedActiveTargetCount: 0,
+          protectedActiveMeasured: true,
           skippedActiveWorktrees: 0,
           error: String(allResponse.response.body ?? "project service request failed").trim(),
         };
       }
-      const inactive = this.cleanupRunFromProjectResponse(inactiveResponse.json);
       const all = this.cleanupRunFromProjectResponse(allResponse.json);
       return {
         projectRoot,
@@ -3176,7 +3193,8 @@ export class AimuxDaemon {
         inactiveTargetCount: inactive.plan.targets.length,
         protectedActiveBytes: Math.max(0, all.plan.reclaimableBytes - inactive.plan.reclaimableBytes),
         protectedActiveTargetCount: Math.max(0, all.plan.targets.length - inactive.plan.targets.length),
-        skippedActiveWorktrees: inactive.plan.skipped.filter((entry) => entry.reason === "active-runtime").length,
+        protectedActiveMeasured: true,
+        skippedActiveWorktrees,
       };
     } catch (error) {
       return {
@@ -3185,6 +3203,7 @@ export class AimuxDaemon {
         inactiveTargetCount: 0,
         protectedActiveBytes: 0,
         protectedActiveTargetCount: 0,
+        protectedActiveMeasured: options.includeActiveMeasurement === true,
         skippedActiveWorktrees: 0,
         error: error instanceof Error ? error.message : String(error),
       };
@@ -3197,6 +3216,7 @@ export class AimuxDaemon {
 
   private async doctorDiskTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
     const projectParam = routeUrl.searchParams.get("project");
+    const includeActiveMeasurement = routeUrl.searchParams.get("includeActive") === "1";
     const skippedStaleProjectRoots: string[] = [];
     const projectRoots = projectParam
       ? [this.resolveProjectRoot(pathResolve(projectParam))]
@@ -3208,7 +3228,7 @@ export class AimuxDaemon {
         });
     const projects: DiskDoctorProjectReport[] = [];
     for (const projectRoot of projectRoots) {
-      projects.push(await this.diskDoctorProjectReport(projectRoot));
+      projects.push(await this.diskDoctorProjectReport(projectRoot, { includeActiveMeasurement }));
     }
     const report = buildDiskDoctorReport({
       generatedAt: new Date().toISOString(),

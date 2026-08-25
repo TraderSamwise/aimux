@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { RuntimeTopologyStore, emptyRuntimeTopology } from "./runtime-core/topology-store.js";
@@ -26,6 +26,7 @@ vi.mock("./paths.js", () => ({
   getProjectIdFor: (cwd: string) => registryProjects.find((project) => project.repoRoot === cwd)?.id ?? "unknown",
   getProjectStateDirById: (id: string) => join(tmpHome, ".aimux", "projects", id),
   getReadOnlyProjectPathsFor: (cwd: string) => ({ localAimuxDir: join(cwd, ".aimux") }),
+  isGitProjectRoot: (cwd: string) => existsSync(join(cwd, ".git")),
   listProjects: () => registryProjects,
 }));
 
@@ -80,7 +81,9 @@ describe("project-scanner", () => {
       { id: "proj-b", name: "project-b", repoRoot: projectB, lastSeen: "2026-03-28T00:00:00.000Z" },
     ];
 
+    mkdirSync(join(projectA, ".git"), { recursive: true });
     mkdirSync(join(projectA, ".aimux"), { recursive: true });
+    mkdirSync(join(projectB, ".git"), { recursive: true });
     mkdirSync(join(projectB, ".aimux"), { recursive: true });
     mkdirSync(join(tmpHome, ".aimux", "projects", "proj-a", "status"), { recursive: true });
     mkdirSync(join(tmpHome, ".aimux", "projects", "proj-b", "status"), { recursive: true });
@@ -199,6 +202,7 @@ describe("project-scanner", () => {
 
   it("does not mint project sessions from instances-only data", async () => {
     const projectC = join(tmpHome, "work", "project-c");
+    mkdirSync(join(projectC, ".git"), { recursive: true });
     mkdirSync(join(projectC, ".aimux"), { recursive: true });
     registryProjects = [
       ...registryProjects,
@@ -294,6 +298,7 @@ describe("project-scanner", () => {
 
   it("hides missing and tmp aimux registry entries from the desktop list", async () => {
     const tempTestProject = makeTmpDir("aimux-agent-tracker-");
+    mkdirSync(join(tempTestProject, ".git"), { recursive: true });
     mkdirSync(join(tempTestProject, ".aimux"), { recursive: true });
     writeFileSync(
       join(tempTestProject, ".aimux", "instances.json"),
@@ -333,6 +338,7 @@ describe("project-scanner", () => {
     const tmpSiblingRoot = `${tmpDirOverride}-aimux-sibling`;
     const tmpSiblingProject = join(tmpSiblingRoot, "aimux-real-project");
     mkdirSync(tmpDirOverride, { recursive: true });
+    mkdirSync(join(tmpSiblingProject, ".git"), { recursive: true });
     mkdirSync(join(tmpSiblingProject, ".aimux"), { recursive: true });
     registryProjects = [
       {
@@ -349,6 +355,20 @@ describe("project-scanner", () => {
     expect(projects.map((project) => project.path)).toEqual([tmpSiblingProject]);
 
     rmSync(tmpParent, { recursive: true, force: true });
+  });
+
+  it("hides non-git registry entries from desktop project lists", async () => {
+    const nonGitProject = join(tmpHome, "work", "logs");
+    mkdirSync(join(nonGitProject, ".aimux"), { recursive: true });
+    registryProjects = [
+      ...registryProjects,
+      { id: "non-git", name: "logs", repoRoot: nonGitProject, lastSeen: "2026-03-28T00:00:00.000Z" },
+    ];
+
+    const { listDesktopProjects, listRegisteredDesktopProjects } = await import("./project-scanner.js");
+
+    expect(listDesktopProjects().map((project) => project.path)).not.toContain(nonGitProject);
+    expect(listRegisteredDesktopProjects().map((project) => project.path)).not.toContain(nonGitProject);
   });
 
   it("builds registered dashboard session names from each project's config", async () => {

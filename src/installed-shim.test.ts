@@ -380,16 +380,20 @@ describe("installed aimux shim", () => {
 
     expect(fixture.run(["doctor", "versions", "--json"]).stdout).toBe("doctor ok\n");
     expect(fixture.run(["doctor", "disk"]).stdout).toBe("doctor ok\n");
-    expect(fixture.run(["doctor", "disk", "--project", "/repo", "--json"]).stdout).toBe("doctor ok\n");
+    expect(fixture.run(["doctor", "disk", "--project", "/repo", "--include-active", "--json"]).stdout).toBe(
+      "doctor ok\n",
+    );
     expect(
       fixture.run(["doctor", "tmux", "--project-root=/repo", "--session", "aimux-repo", "--window-id=@1"]).stdout,
     ).toBe("doctor ok\n");
     expect(fixture.run(["repair", "--project-root=/repo", "--open", "--json"]).stdout).toBe("doctor ok\n");
 
     const curlLog = readFileSync(fixture.curlLog, "utf8");
-    expect(curlLog).toContain("/core/doctor/versions-text?json=1");
+    expect(curlLog).toContain("/core/doctor/versions-text?json=1\nMAX_TIME=120\n");
     expect(curlLog).toContain("/core/doctor/disk-text\nMAX_TIME=120\n");
     expect(curlLog).toContain("/core/doctor/disk-text?json=1");
+    expect(curlLog).toContain("includeActive=0\n");
+    expect(curlLog).toContain("includeActive=1\n");
     expect(curlLog).toContain("/core/doctor/tmux-text");
     expect(curlLog).toContain("/core/repair-text?json=1");
     expect(curlLog).toContain("project=/repo\n");

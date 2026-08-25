@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
+import { getAimuxDirFor, getProjectStateDirById, isGitProjectRoot, listProjects } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { RuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { topologySessionToSessionState } from "./runtime-core/topology-sessions.js";
@@ -42,6 +42,9 @@ function getHiddenProjectTmpDirs(): Set<string> {
 
 function shouldHideDesktopProject(projectPath: string, tmpDirs = getHiddenProjectTmpDirs()): boolean {
   if (!projectPath || !existsSync(projectPath)) {
+    return true;
+  }
+  if (!isGitProjectRoot(projectPath)) {
     return true;
   }
   const name = basename(projectPath);

@@ -458,6 +458,10 @@ function isEphemeralTempProjectRoot(repoRoot: string): boolean {
   return basename(resolved).startsWith("aimux-") && TEMP_DIRS.some((dir) => isPathInsideDir(resolved, dir));
 }
 
+export function isGitProjectRoot(repoRoot: string): boolean {
+  return existsSync(join(resolve(repoRoot), ".git"));
+}
+
 function assertRegistryWithinCap(projects: ProjectEntry[]): void {
   if (projects.length <= MAX_PROJECT_REGISTRY_ENTRIES) return;
   throw new Error(
@@ -469,7 +473,9 @@ function assertRegistryWithinCap(projects: ProjectEntry[]): void {
 function normalizeRegistry(registry: ProjectsRegistry): ProjectsRegistry {
   const projectsById = new Map<string, ProjectEntry>();
   for (const project of registry.projects) {
+    if (!project || typeof project.repoRoot !== "string" || !project.repoRoot.trim()) continue;
     if (isEphemeralTempProjectRoot(project.repoRoot)) continue;
+    if (!isGitProjectRoot(project.repoRoot)) continue;
     projectsById.set(project.id, project);
   }
   const projects = [...projectsById.values()];
@@ -501,6 +507,7 @@ function registerProject(): void {
   const repoRoot = getRepoRoot();
   const projectId = getProjectId();
   if (isEphemeralTempProjectRoot(repoRoot)) return;
+  if (!isGitProjectRoot(repoRoot)) return;
   const registry = loadRegistry();
   const idx = registry.projects.findIndex((p) => p.id === projectId);
   const entry: ProjectEntry = {

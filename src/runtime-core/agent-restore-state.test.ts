@@ -209,6 +209,50 @@ describe("agent restore state", () => {
     expect(readAgentRestoreOffer()).toBeNull();
   });
 
+  it("removes live sessions from an existing inventory offer", () => {
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [
+          { id: "codex-live", command: "codex", label: "codex(live)" },
+          { id: "codex-offline", command: "codex", label: "codex(offline)" },
+        ],
+        { now: "2026-08-22T01:08:00.000Z" },
+      )?.sessionIds,
+    ).toEqual(["codex-live", "codex-offline"]);
+
+    const offer = deriveAgentRestoreOfferFromRestorableInventory(
+      ["codex-live"],
+      [
+        { id: "codex-live", command: "codex", label: "codex(live)" },
+        { id: "codex-offline", command: "codex", label: "codex(offline)" },
+      ],
+      { now: "2026-08-22T01:09:00.000Z" },
+    );
+
+    expect(offer?.sessionIds).toEqual(["codex-offline"]);
+    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-offline"]);
+  });
+
+  it("clears an existing inventory offer when every offered session is live or no longer restorable", () => {
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [{ id: "codex-live", command: "codex", label: "codex(live)" }],
+        { now: "2026-08-22T01:08:00.000Z" },
+      )?.sessionIds,
+    ).toEqual(["codex-live"]);
+
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        ["codex-live"],
+        [{ id: "codex-live", command: "codex", label: "codex(live)" }],
+        { now: "2026-08-22T01:09:00.000Z" },
+      ),
+    ).toBeNull();
+    expect(readAgentRestoreOffer()).toBeNull();
+  });
+
   it("does not re-offer dismissed inventory sessions when the restorable set changes", () => {
     expect(
       deriveAgentRestoreOfferFromRestorableInventory(

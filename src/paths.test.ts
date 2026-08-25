@@ -93,6 +93,7 @@ describe("path project identity", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "real-project-"));
     try {
       process.env.AIMUX_HOME = aimuxHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
       const projects = Array.from({ length: 600 }, (_, index) => {
         const prefix = index % 2 === 0 ? "/tmp/claude-501" : "/private/tmp/claude-501";
         const root = `${prefix}/aimux-metadata-server-${index}`;
@@ -127,8 +128,10 @@ describe("path project identity", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "real-project-"));
     try {
       process.env.AIMUX_HOME = aimuxHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
       const projects = Array.from({ length: 500 }, (_, index) => {
-        const root = `/Users/example/project-${index}`;
+        const root = join(aimuxHome, "valid-projects", `project-${index}`);
+        mkdirSync(join(root, ".git"), { recursive: true });
         return {
           id: `${basename(root)}-${index}`,
           name: basename(root),
@@ -140,6 +143,27 @@ describe("path project identity", () => {
       writeFileSync(getProjectsRegistryPath(), JSON.stringify({ version: 1, projects }, null, 2));
 
       await expect(initPaths(repoRoot)).rejects.toThrow(/project registry has 501 entries; cap is 500/);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AIMUX_HOME;
+      } else {
+        process.env.AIMUX_HOME = previous;
+      }
+      rmSync(aimuxHome, { recursive: true, force: true });
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not register non-git roots as desktop projects", async () => {
+    const previous = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-home-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "plain-project-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+
+      await initPaths(repoRoot);
+
+      expect(listProjects()).toEqual([]);
     } finally {
       if (previous === undefined) {
         delete process.env.AIMUX_HOME;

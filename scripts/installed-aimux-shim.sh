@@ -664,12 +664,13 @@ aimux_try_doctor() {
       done
       path="/core/doctor/versions-text"
       [ "$json" -eq 1 ] && path="/core/doctor/versions-text?json=1"
-      aimux_curl_text_route "$path"
+      aimux_get_query_text_route "$path" 120
       ;;
     disk)
       shift
       project_root=""
       json=0
+      include_active=0
       while [ "$#" -gt 0 ]; do
         case "$1" in
           --project)
@@ -684,6 +685,9 @@ aimux_try_doctor() {
           --json)
             json=1
             ;;
+          --include-active)
+            include_active=1
+            ;;
           *)
             return 1
             ;;
@@ -694,9 +698,11 @@ aimux_try_doctor() {
       [ "$json" -eq 1 ] && path="/core/doctor/disk-text?json=1"
       if [ -n "$project_root" ]; then
         project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
-        aimux_get_query_text_route "$path" 120 --data-urlencode "project=$project_root"
+        aimux_get_query_text_route "$path" 120 \
+          --data-urlencode "project=$project_root" \
+          --data-urlencode "includeActive=$include_active"
       else
-        aimux_get_query_text_route "$path" 120
+        aimux_get_query_text_route "$path" 120 --data-urlencode "includeActive=$include_active"
       fi
       ;;
     tmux)

@@ -3794,11 +3794,15 @@ doctorCmd
   .command("disk")
   .description("Inspect Aimux-managed worktree cache disk usage")
   .option("--project <path>", "Project path")
+  .option("--include-active", "Measure cache directories in active worktrees")
   .option("--json", "Emit JSON")
-  .action(async (opts: { project?: string; json?: boolean }) => {
+  .action(async (opts: { project?: string; includeActive?: boolean; json?: boolean }) => {
     try {
       const project = opts.project ? resolveProjectRoot(pathResolve(opts.project)) : undefined;
-      const report = (await getDaemonTextJson(CORE_API_ROUTES.doctorDiskText, { project })) as DiskDoctorReport;
+      const report = (await getDaemonTextJson(CORE_API_ROUTES.doctorDiskText, {
+        project,
+        includeActive: opts.includeActive ? "1" : undefined,
+      })) as DiskDoctorReport;
       if (opts.json) {
         console.log(JSON.stringify(report, null, 2));
         return;

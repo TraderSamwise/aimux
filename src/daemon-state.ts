@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
-import { getDaemonInfoPath, getDaemonStatePath } from "./paths.js";
+import { getDaemonInfoPath, getDaemonStatePath, isGitProjectRoot } from "./paths.js";
 import { isPidAlive } from "./process-inspector.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
@@ -117,7 +117,14 @@ export function loadDaemonState(): DaemonState {
   });
   const projects: Record<string, ProjectServiceState> = {};
   for (const [projectId, entry] of Object.entries(raw.projects ?? {})) {
-    if (entry) projects[projectId] = entry;
+    if (
+      entry &&
+      typeof entry.projectRoot === "string" &&
+      entry.projectRoot.trim() &&
+      isGitProjectRoot(entry.projectRoot)
+    ) {
+      projects[projectId] = entry;
+    }
   }
   return {
     version: 1,
