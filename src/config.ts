@@ -304,7 +304,7 @@ function normalizeConfig(config: AimuxConfig): AimuxConfig {
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
   };
 
-  if (!config.worktrees || typeof config.worktrees !== "object") {
+  if (!config.worktrees || typeof config.worktrees !== "object" || Array.isArray(config.worktrees)) {
     config.worktrees = cloneJson(DEFAULT_CONFIG.worktrees);
   } else {
     if (!Array.isArray(config.worktrees.cacheCleanupDirs)) {

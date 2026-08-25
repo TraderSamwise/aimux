@@ -55,6 +55,9 @@ export function buildDiskDoctorReport(input: {
 }
 
 export function renderDiskDoctorReport(report: DiskDoctorReport): string {
+  const skippedStaleProjectRoots = Array.isArray(report.skippedStaleProjectRoots)
+    ? report.skippedStaleProjectRoots
+    : [];
   const lines = [
     "Aimux Disk",
     `  inactive generated caches: ${formatWorktreeCacheBytes(
@@ -65,8 +68,8 @@ export function renderDiskDoctorReport(report: DiskDoctorReport): string {
     } item(s), ${report.totals.skippedActiveWorktrees} active worktree(s))`,
     `  failures: ${report.totals.failures}`,
   ];
-  if (report.skippedStaleProjectRoots.length > 0) {
-    lines.push(`  skipped stale projects: ${report.skippedStaleProjectRoots.length}`);
+  if (skippedStaleProjectRoots.length > 0) {
+    lines.push(`  skipped stale projects: ${skippedStaleProjectRoots.length}`);
   }
   const sorted = [...report.projects].sort((left, right) => {
     const leftBytes = left.inactiveReclaimableBytes + left.protectedActiveBytes;

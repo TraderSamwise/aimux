@@ -319,6 +319,20 @@ describe("config", () => {
     });
   });
 
+  it("normalizes array worktree config to defaults", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(join(repoRoot, ".aimux/config.json"), JSON.stringify({ worktrees: [] }, null, 2) + "\n");
+
+    expect(loadConfig({ includeGlobal: false }).worktrees).toEqual({
+      baseDir: ".aimux/worktrees",
+      cacheCleanupDirs: ["node_modules", ".next"],
+      cacheCleanupEnabled: true,
+      cacheCleanupApply: false,
+      cacheCleanupIntervalMs: 86_400_000,
+      cacheCleanupInitialDelayMs: 300_000,
+    });
+  });
+
   it("defaults inbox cleanup to a 14 day retention window and a 10-item cap", () => {
     expect(loadConfig({ includeGlobal: false }).inbox).toEqual({
       cleanupEnabled: true,

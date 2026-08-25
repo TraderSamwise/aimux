@@ -2097,7 +2097,14 @@ export class MetadataServer {
       intervalMs = config.worktrees.cacheCleanupIntervalMs;
       if (!config.worktrees.cacheCleanupEnabled) return;
       const dryRun = !config.worktrees.cacheCleanupApply;
-      const result = await this.options.desktop.cleanupWorktreeCaches({ dryRun, includeActive: false });
+      const transitionInput: LifecycleTransitionInput = {
+        operation: "worktree.cacheCleanup",
+        targetKind: "worktree",
+      };
+      const result = await this.enqueueLifecycleMutation(
+        () => this.options.desktop!.cleanupWorktreeCaches!({ dryRun, includeActive: false }),
+        transitionInput,
+      );
       const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
       const plan = record.plan && typeof record.plan === "object" ? (record.plan as Record<string, unknown>) : {};
       const results = Array.isArray(record.results) ? record.results : [];
