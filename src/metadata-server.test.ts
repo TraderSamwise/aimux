@@ -2819,6 +2819,11 @@ describe("MetadataServer threads API", () => {
     expect(cachedResponse.status).toBe(200);
     expect(cachedBody.sessions[0]?.chatPreview).toEqual(body.sessions[0]?.chatPreview);
     expect(readAgentOutput).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    const expiredResponse = await fetch(`${base}?includePreview=1&includeChatPreview=1&force=1`);
+    expect(expiredResponse.status).toBe(200);
+    expect(readAgentOutput).toHaveBeenCalledTimes(2);
     expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
       expect.objectContaining({ id: "agent-1", target: expect.objectContaining({ windowId: "@7" }) }),
     ]);
@@ -7539,6 +7544,36 @@ describe("MetadataServer threads API", () => {
     const json = await diagnostics.json();
     expect(json.agentOutputReads.bySource["live-pane-output"]).toMatchObject({
       count: 2,
+      coalesced: 1,
+    });
+  });
+
+  it("counts coalesced concurrent agent output read failures", async () => {
+    server?.stop();
+    const readAgentOutput = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      throw new Error("tmux capture failed");
+    });
+    server = new MetadataServer({ lifecycle: { readAgentOutput } });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const firstPromise = fetch(`${base}${PROJECT_API_ROUTES.livePane.output}?sessionId=codex-1&startLine=-120`);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const secondPromise = fetch(`${base}${PROJECT_API_ROUTES.livePane.output}?sessionId=codex-1&startLine=-120`);
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    expect(first.ok).toBe(false);
+    expect(second.ok).toBe(false);
+    expect(readAgentOutput).toHaveBeenCalledTimes(1);
+
+    const diagnostics = await fetch(`${base}/diagnostics`);
+    const json = await diagnostics.json();
+    expect(json.agentOutputReads.bySource["live-pane-output"]).toMatchObject({
+      count: 2,
+      errors: 2,
       coalesced: 1,
     });
   });
