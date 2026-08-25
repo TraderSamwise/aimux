@@ -280,6 +280,45 @@ describe("config", () => {
     }
   });
 
+  it("defaults worktree cache cleanup to scheduled dry-run reports", () => {
+    expect(loadConfig({ includeGlobal: false }).worktrees).toEqual({
+      baseDir: ".aimux/worktrees",
+      cacheCleanupDirs: ["node_modules", ".next"],
+      cacheCleanupEnabled: true,
+      cacheCleanupApply: false,
+      cacheCleanupIntervalMs: 86_400_000,
+      cacheCleanupInitialDelayMs: 300_000,
+    });
+  });
+
+  it("normalizes invalid worktree cache cleanup config", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          worktrees: {
+            cacheCleanupDirs: "node_modules",
+            cacheCleanupEnabled: "yes",
+            cacheCleanupApply: "yes",
+            cacheCleanupIntervalMs: -1,
+            cacheCleanupInitialDelayMs: 0,
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).worktrees).toMatchObject({
+      cacheCleanupDirs: ["node_modules", ".next"],
+      cacheCleanupEnabled: true,
+      cacheCleanupApply: false,
+      cacheCleanupIntervalMs: 86_400_000,
+      cacheCleanupInitialDelayMs: 300_000,
+    });
+  });
+
   it("defaults inbox cleanup to a 14 day retention window and a 10-item cap", () => {
     expect(loadConfig({ includeGlobal: false }).inbox).toEqual({
       cleanupEnabled: true,

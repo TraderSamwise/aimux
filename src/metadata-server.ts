@@ -780,6 +780,7 @@ export interface MetadataServerOptions {
 const EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 1500;
 const EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS = 1500;
 const EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
+const WORKTREE_CACHE_CLEANUP_INITIAL_JITTER_MS = 300_000;
 type InteractionDisplay = {
   title: string;
   message: string;
@@ -1702,6 +1703,8 @@ export class MetadataServer {
   private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeHotSnapshotRefreshing = false;
   private exposeHotSnapshotWorker: Worker | null = null;
+  private worktreeCacheCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+  private worktreeCacheCleanupRunning = false;
   private readonly promptContexts = new PromptContextStore();
   private lifecycleMutationQueue: Promise<void> = Promise.resolve();
   private readonly lifecycleMutationTargets = new Map<string, LifecycleTransitionInput>();
@@ -1796,6 +1799,14 @@ export class MetadataServer {
     const initialDelay =
       EXPOSE_HOT_SNAPSHOT_INITIAL_MS + stableJitterMs(this.currentProjectRoot(), EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS);
     this.scheduleExposeHotSnapshotRefresh(initialDelay);
+    const config = loadConfig({ projectRoot: this.currentProjectRoot() });
+    const cacheCleanupDelay =
+      config.worktrees.cacheCleanupInitialDelayMs +
+      stableJitterMs(
+        this.currentProjectRoot(),
+        Math.min(config.worktrees.cacheCleanupInitialDelayMs, WORKTREE_CACHE_CLEANUP_INITIAL_JITTER_MS),
+      );
+    this.scheduleWorktreeCacheCleanup(cacheCleanupDelay);
   }
 
   private publishEndpoint(): void {
@@ -1826,6 +1837,9 @@ export class MetadataServer {
     if (this.exposeHotSnapshotTimer) clearTimeout(this.exposeHotSnapshotTimer);
     this.exposeHotSnapshotTimer = null;
     this.exposeHotSnapshotRefreshing = false;
+    if (this.worktreeCacheCleanupTimer) clearTimeout(this.worktreeCacheCleanupTimer);
+    this.worktreeCacheCleanupTimer = null;
+    this.worktreeCacheCleanupRunning = false;
     this.exposeHotSnapshotWorker?.terminate().catch(() => {});
     this.exposeHotSnapshotWorker = null;
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
@@ -2059,6 +2073,69 @@ export class MetadataServer {
       this.runInProjectContext(() => this.refreshExposeHotSnapshots());
     }, delayMs);
     this.exposeHotSnapshotTimer.unref?.();
+  }
+
+  private scheduleWorktreeCacheCleanup(delayMs?: number): void {
+    if (!this.server || !this.options.desktop?.cleanupWorktreeCaches) return;
+    if (this.worktreeCacheCleanupTimer) clearTimeout(this.worktreeCacheCleanupTimer);
+    const config = loadConfig({ projectRoot: this.currentProjectRoot() });
+    if (!config.worktrees.cacheCleanupEnabled) return;
+    const nextDelayMs = Math.max(1, delayMs ?? config.worktrees.cacheCleanupIntervalMs);
+    this.worktreeCacheCleanupTimer = setTimeout(() => {
+      this.worktreeCacheCleanupTimer = null;
+      void this.runInProjectContext(() => this.runScheduledWorktreeCacheCleanup());
+    }, nextDelayMs);
+    this.worktreeCacheCleanupTimer.unref?.();
+  }
+
+  private async runScheduledWorktreeCacheCleanup(): Promise<void> {
+    if (!this.server || this.worktreeCacheCleanupRunning || !this.options.desktop?.cleanupWorktreeCaches) return;
+    this.worktreeCacheCleanupRunning = true;
+    let intervalMs = 86_400_000;
+    try {
+      const config = loadConfig({ projectRoot: this.currentProjectRoot() });
+      intervalMs = config.worktrees.cacheCleanupIntervalMs;
+      if (!config.worktrees.cacheCleanupEnabled) return;
+      const dryRun = !config.worktrees.cacheCleanupApply;
+      const result = await this.options.desktop.cleanupWorktreeCaches({ dryRun, includeActive: false });
+      const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+      const plan = record.plan && typeof record.plan === "object" ? (record.plan as Record<string, unknown>) : {};
+      const results = Array.isArray(record.results) ? record.results : [];
+      const targets = Array.isArray(plan.targets) ? plan.targets : [];
+      const reclaimableBytes = typeof plan.reclaimableBytes === "number" ? plan.reclaimableBytes : 0;
+      const reclaimedBytes = typeof record.reclaimedBytes === "number" ? record.reclaimedBytes : 0;
+      const failed = results.filter((entry) => {
+        return entry && typeof entry === "object" && (entry as { status?: unknown }).status === "failed";
+      }).length;
+      if (dryRun) {
+        if (targets.length > 0 || reclaimableBytes > 0) {
+          log.info("worktree cache cleanup found inactive generated caches", "api", {
+            projectRoot: this.currentProjectRoot(),
+            reclaimableBytes,
+            targets: targets.length,
+          });
+        } else {
+          log.debug("worktree cache cleanup found no inactive generated caches", "api", {
+            projectRoot: this.currentProjectRoot(),
+          });
+        }
+      } else {
+        log.info("worktree cache cleanup removed inactive generated caches", "api", {
+          projectRoot: this.currentProjectRoot(),
+          reclaimedBytes,
+          targets: targets.length,
+          failed,
+        });
+      }
+    } catch (error) {
+      log.warn("worktree cache cleanup failed", "api", {
+        projectRoot: this.currentProjectRoot(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.worktreeCacheCleanupRunning = false;
+      this.scheduleWorktreeCacheCleanup(intervalMs);
+    }
   }
 
   private refreshExposeHotSnapshots(): void {

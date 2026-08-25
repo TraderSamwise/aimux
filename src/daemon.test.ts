@@ -21,6 +21,7 @@ let nextPid = 20_000;
 let nextActorPid = 30_000;
 let livePids = new Set<number>();
 let childrenByPid = new Map<number, EventEmitter>();
+let extraMockDesktopProjects: ReturnType<typeof listMockDesktopProjects> = [];
 const spawnMock = vi.fn();
 const execFileSyncMock = vi.fn();
 const STALE_SERVICE_TIMESTAMP = new Date(0).toISOString();
@@ -316,6 +317,7 @@ function listMockDesktopProjects() {
       dashboardSessionName: "aimux-test",
       sessions: [],
     },
+    ...extraMockDesktopProjects,
   ];
 }
 
@@ -473,6 +475,7 @@ describe("daemon supervision", () => {
     nextActorPid = 30_000;
     livePids = new Set<number>();
     childrenByPid = new Map<number, EventEmitter>();
+    extraMockDesktopProjects = [];
     resetLoggingForTests();
     spawnMock.mockReset();
     coreActorMock.starts.mockReset();
@@ -1130,6 +1133,7 @@ describe("daemon supervision", () => {
     expect(text.body).toContain("inactive generated caches: 1.0KB (1 item(s))");
     expect(text.body).toContain("protected active caches: 2.0KB (1 item(s), 1 active worktree(s))");
     expect(JSON.parse(json.body as string)).toMatchObject({
+      skippedStaleProjectRoots: [],
       projects: [
         {
           projectRoot,
@@ -1146,6 +1150,47 @@ describe("daemon supervision", () => {
         failures: 0,
       },
     });
+  });
+
+  it("skips stale non-git project records in the global disk doctor route", async () => {
+    mkdirSync(join(projectRoot, ".git"), { recursive: true });
+    const staleRoot = join(tmpRoot, "stale-project-record");
+    extraMockDesktopProjects = [
+      {
+        id: "proj-stale",
+        name: "stale",
+        path: staleRoot,
+        dashboardSessionName: "aimux-stale",
+        sessions: [],
+      },
+    ];
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    vi.mocked(requestJson).mockImplementation(
+      async (url: string, _opts: { body?: { includeActive?: boolean } } = {}) => {
+        if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.cacheCleanup)) {
+          return {
+            status: 200,
+            json: {
+              ok: true,
+              result: {
+                dryRun: true,
+                reclaimedBytes: 0,
+                plan: { reclaimableBytes: 0, targets: [], skipped: [] },
+                results: [],
+              },
+            },
+          };
+        }
+        return { status: 200, json: projectServiceHealth(readMetadataEndpointPid()) };
+      },
+    );
+
+    const response = await daemon.routeRequest("GET", `${CORE_API_ROUTES.doctorDiskText}?json=1`);
+    const body = JSON.parse(response.body as string);
+
+    expect(body.skippedStaleProjectRoots).toEqual([staleRoot]);
+    expect(body.totals.failures).toBe(0);
   });
 
   it("serves daemon-owned tmux doctor routes with explicit project context", async () => {

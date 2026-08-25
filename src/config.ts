@@ -32,6 +32,14 @@ export interface WorktreeConfig {
   baseDir: string;
   /** Regenerable directory names removed by worktree cache cleanup. */
   cacheCleanupDirs: string[];
+  /** Whether project services periodically inspect inactive generated worktree caches. */
+  cacheCleanupEnabled: boolean;
+  /** Apply scheduled cache cleanup instead of logging the dry-run report. */
+  cacheCleanupApply: boolean;
+  /** How often project services inspect generated worktree caches. */
+  cacheCleanupIntervalMs: number;
+  /** Initial delay before the first scheduled generated-cache inspection. */
+  cacheCleanupInitialDelayMs: number;
 }
 
 export interface TmuxRuntimeConfig {
@@ -219,6 +227,10 @@ const DEFAULT_CONFIG: AimuxConfig = {
   worktrees: {
     baseDir: ".aimux/worktrees",
     cacheCleanupDirs: ["node_modules", ".next"],
+    cacheCleanupEnabled: true,
+    cacheCleanupApply: false,
+    cacheCleanupIntervalMs: 86_400_000,
+    cacheCleanupInitialDelayMs: 300_000,
   },
   loop: {
     scanIntervalMs: 15000,
@@ -288,6 +300,32 @@ function stringArrayEquals(a: string[] | undefined, b: string[]): boolean {
 }
 
 function normalizeConfig(config: AimuxConfig): AimuxConfig {
+  const positiveInteger = (value: unknown, fallback: number): number => {
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+  };
+
+  if (!config.worktrees || typeof config.worktrees !== "object") {
+    config.worktrees = cloneJson(DEFAULT_CONFIG.worktrees);
+  } else {
+    if (!Array.isArray(config.worktrees.cacheCleanupDirs)) {
+      config.worktrees.cacheCleanupDirs = cloneJson(DEFAULT_CONFIG.worktrees.cacheCleanupDirs);
+    }
+    if (typeof config.worktrees.cacheCleanupEnabled !== "boolean") {
+      config.worktrees.cacheCleanupEnabled = DEFAULT_CONFIG.worktrees.cacheCleanupEnabled;
+    }
+    if (typeof config.worktrees.cacheCleanupApply !== "boolean") {
+      config.worktrees.cacheCleanupApply = DEFAULT_CONFIG.worktrees.cacheCleanupApply;
+    }
+    config.worktrees.cacheCleanupIntervalMs = positiveInteger(
+      config.worktrees.cacheCleanupIntervalMs,
+      DEFAULT_CONFIG.worktrees.cacheCleanupIntervalMs,
+    );
+    config.worktrees.cacheCleanupInitialDelayMs = positiveInteger(
+      config.worktrees.cacheCleanupInitialDelayMs,
+      DEFAULT_CONFIG.worktrees.cacheCleanupInitialDelayMs,
+    );
+  }
+
   if (!config.loop || typeof config.loop !== "object") {
     config.loop = cloneJson(DEFAULT_CONFIG.loop);
   } else if (

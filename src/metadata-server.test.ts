@@ -97,6 +97,36 @@ describe("MetadataServer threads API", () => {
     expect(json.plugins).toBeUndefined();
   });
 
+  it("runs scheduled worktree cache cleanup as a dry-run report by default", async () => {
+    server?.stop();
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux", "config.json"),
+      JSON.stringify(
+        {
+          worktrees: {
+            cacheCleanupInitialDelayMs: 1,
+            cacheCleanupIntervalMs: 60_000,
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const cleanupWorktreeCaches = vi.fn(async () => ({
+      dryRun: true,
+      plan: { reclaimableBytes: 1024, targets: [{ path: "node_modules" }], skipped: [] },
+      results: [],
+      reclaimedBytes: 0,
+    }));
+    server = new MetadataServer({ projectRoot: repoRoot, desktop: { cleanupWorktreeCaches } });
+    await server.start();
+
+    await waitForCondition(() => cleanupWorktreeCaches.mock.calls.length > 0, 250);
+
+    expect(cleanupWorktreeCaches).toHaveBeenCalledWith({ dryRun: true, includeActive: false });
+  });
+
   it("exposes project service resource diagnostics separately from health", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

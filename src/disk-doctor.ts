@@ -13,6 +13,7 @@ export interface DiskDoctorProjectReport {
 export interface DiskDoctorReport {
   generatedAt: string;
   projects: DiskDoctorProjectReport[];
+  skippedStaleProjectRoots: string[];
   totals: {
     inactiveReclaimableBytes: number;
     inactiveTargetCount: number;
@@ -26,10 +27,12 @@ export interface DiskDoctorReport {
 export function buildDiskDoctorReport(input: {
   generatedAt: string;
   projects: DiskDoctorProjectReport[];
+  skippedStaleProjectRoots?: string[];
 }): DiskDoctorReport {
   return {
     generatedAt: input.generatedAt,
     projects: input.projects,
+    skippedStaleProjectRoots: input.skippedStaleProjectRoots ?? [],
     totals: input.projects.reduce(
       (totals, project) => ({
         inactiveReclaimableBytes: totals.inactiveReclaimableBytes + project.inactiveReclaimableBytes,
@@ -62,6 +65,9 @@ export function renderDiskDoctorReport(report: DiskDoctorReport): string {
     } item(s), ${report.totals.skippedActiveWorktrees} active worktree(s))`,
     `  failures: ${report.totals.failures}`,
   ];
+  if (report.skippedStaleProjectRoots.length > 0) {
+    lines.push(`  skipped stale projects: ${report.skippedStaleProjectRoots.length}`);
+  }
   const sorted = [...report.projects].sort((left, right) => {
     const leftBytes = left.inactiveReclaimableBytes + left.protectedActiveBytes;
     const rightBytes = right.inactiveReclaimableBytes + right.protectedActiveBytes;

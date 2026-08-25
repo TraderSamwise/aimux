@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import type { Socket } from "node:net";
 import { join, resolve as pathResolve } from "node:path";
 import type { Worker } from "node:worker_threads";
@@ -3190,16 +3191,30 @@ export class AimuxDaemon {
     }
   }
 
+  private isGitProjectRoot(projectRoot: string): boolean {
+    return existsSync(join(projectRoot, ".git"));
+  }
+
   private async doctorDiskTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
     const projectParam = routeUrl.searchParams.get("project");
+    const skippedStaleProjectRoots: string[] = [];
     const projectRoots = projectParam
       ? [this.resolveProjectRoot(pathResolve(projectParam))]
-      : this.listProjectsForRoute().map((project) => project.path);
+      : this.listProjectsForRoute().flatMap((project) => {
+          const projectRoot = pathResolve(project.path);
+          if (this.isGitProjectRoot(projectRoot)) return [projectRoot];
+          skippedStaleProjectRoots.push(projectRoot);
+          return [];
+        });
     const projects: DiskDoctorProjectReport[] = [];
     for (const projectRoot of projectRoots) {
       projects.push(await this.diskDoctorProjectReport(projectRoot));
     }
-    const report = buildDiskDoctorReport({ generatedAt: new Date().toISOString(), projects });
+    const report = buildDiskDoctorReport({
+      generatedAt: new Date().toISOString(),
+      projects,
+      skippedStaleProjectRoots,
+    });
     return this.textOrJsonLines(routeUrl, report, renderDiskDoctorReport(report).split("\n"));
   }
 
