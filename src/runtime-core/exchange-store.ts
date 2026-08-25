@@ -2,12 +2,14 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { atomicWrite } from "../atomic-write.js";
+import { log } from "../debug.js";
 import { getRuntimeExchangePath } from "../paths.js";
 
 export const RUNTIME_EXCHANGE_VERSION = 1;
 const UPDATE_LOCK_TIMEOUT_MS = 5_000;
 const UPDATE_LOCK_RETRY_MS = 25;
 const UPDATE_LOCK_STALE_MS = UPDATE_LOCK_TIMEOUT_MS - 1_000;
+const SLOW_EXCHANGE_READ_MS = 250;
 
 export type RuntimeExchangeThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
 export type RuntimeExchangeThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
@@ -587,14 +589,26 @@ export function resetExchangeStoreStats(): void {
   parseCount = 0;
 }
 
+function recordSlowExchangeRead(fields: Record<string, unknown>): void {
+  log.warn("slow runtime exchange read", "runtime-exchange", fields);
+}
+
 export class RuntimeExchangeStore {
   constructor(readonly path = getRuntimeExchangePath()) {}
 
   read(): RuntimeExchange {
     readCount += 1;
+    const startedAt = Date.now();
+    let readDurationMs = 0;
+    let compareDurationMs = 0;
+    let parseDurationMs = 0;
+    let coerceDurationMs = 0;
+    let cloneDurationMs = 0;
     let text: string;
     try {
+      const readStartedAt = Date.now();
       text = readFileSync(this.path, "utf-8");
+      readDurationMs = Date.now() - readStartedAt;
     } catch (error) {
       // This replaced an `existsSync` guard, so the errnos for which `existsSync`
       // returned false must still degrade to an empty exchange rather than throw.
@@ -607,14 +621,36 @@ export class RuntimeExchangeStore {
       throw error;
     }
     const cached = rawCache.get(this.path);
-    if (cached && cached.text === text) {
+    const compareStartedAt = Date.now();
+    const cacheHit = Boolean(cached && cached.text === text);
+    compareDurationMs = Date.now() - compareStartedAt;
+    if (cacheHit && cached) {
       rawCache.delete(this.path);
       rawCache.set(this.path, cached);
-      return structuredClone(cached.normalized);
+      const cloneStartedAt = Date.now();
+      const exchange = structuredClone(cached.normalized);
+      cloneDurationMs = Date.now() - cloneStartedAt;
+      const durationMs = Date.now() - startedAt;
+      if (durationMs >= SLOW_EXCHANGE_READ_MS) {
+        recordSlowExchangeRead({
+          path: this.path,
+          cacheHit: true,
+          bytes: Buffer.byteLength(text),
+          durationMs,
+          readDurationMs,
+          compareDurationMs,
+          cloneDurationMs,
+        });
+      }
+      return exchange;
     }
     parseCount += 1;
+    const parseStartedAt = Date.now();
     const raw = parse(text);
+    parseDurationMs = Date.now() - parseStartedAt;
+    const coerceStartedAt = Date.now();
     const normalized = coerceRuntimeExchange(raw);
+    coerceDurationMs = Date.now() - coerceStartedAt;
     // Delete before set so re-inserting an existing path moves it to the tail; without
     // it, a path whose contents change often would drift toward eviction while hottest.
     rawCache.delete(this.path);
@@ -623,7 +659,24 @@ export class RuntimeExchangeStore {
       const oldest = rawCache.keys().next().value;
       if (oldest !== undefined) rawCache.delete(oldest);
     }
-    return structuredClone(normalized);
+    const cloneStartedAt = Date.now();
+    const exchange = structuredClone(normalized);
+    cloneDurationMs = Date.now() - cloneStartedAt;
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= SLOW_EXCHANGE_READ_MS) {
+      recordSlowExchangeRead({
+        path: this.path,
+        cacheHit: false,
+        bytes: Buffer.byteLength(text),
+        durationMs,
+        readDurationMs,
+        compareDurationMs,
+        parseDurationMs,
+        coerceDurationMs,
+        cloneDurationMs,
+      });
+    }
+    return exchange;
   }
 
   // Deliberately does not seed the cache: `normalized` is handed back to the caller, so
