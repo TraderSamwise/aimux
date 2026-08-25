@@ -169,13 +169,13 @@ function listCacheTargets(
 
 function activeRuntimeByWorktree(
   protectedWorktrees: WorktreeCacheCleanupProtectedWorktree[] | undefined,
-): Map<string, { sessions: string[]; services: string[] }> {
-  const active = new Map<string, { sessions: string[]; services: string[] }>();
+): Map<string, { sessions: Set<string>; services: Set<string> }> {
+  const active = new Map<string, { sessions: Set<string>; services: Set<string> }>();
   const add = (path: string | undefined, kind: "sessions" | "services", id: string): void => {
     if (!path) return;
     const key = canonical(path);
-    const entry = active.get(key) ?? { sessions: [], services: [] };
-    entry[kind].push(id);
+    const entry = active.get(key) ?? { sessions: new Set<string>(), services: new Set<string>() };
+    entry[kind].add(id);
     active.set(key, entry);
   };
   for (const session of listTopologySessionStates({ statuses: ["starting", "running", "idle"] })) {
@@ -224,8 +224,8 @@ export function buildWorktreeCacheCleanupPlan(options: WorktreeCacheCleanupOptio
       skipped.push({
         worktreePath,
         reason: "active-runtime",
-        sessions: activeEntry.sessions,
-        services: activeEntry.services,
+        sessions: [...activeEntry.sessions],
+        services: [...activeEntry.services],
       });
       continue;
     }
