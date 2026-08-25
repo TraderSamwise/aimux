@@ -1570,6 +1570,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "prefix", "e"]);
     this.exec(["unbind-key", "-T", "prefix", "g"]);
     this.exec(["unbind-key", "-T", "prefix", "m"]);
+    this.exec(["unbind-key", "-T", "prefix", "O"]);
     this.exec(["unbind-key", "-T", "prefix", "K"]);
     for (const digit of ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]) {
       this.exec(["unbind-key", "-T", "prefix", digit]);
@@ -1594,6 +1595,7 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-T", "prefix", "g", "run-shell", "-b", controlCommand("expose", controlPlaneArgs)]);
     this.exec(["bind-key", "-T", "prefix", "m", "run-shell", "-b", controlCommand("meta", controlPlaneArgs)]);
     this.exec(["bind-key", "-T", "prefix", "e", "run-shell", "-b", controlCommand("team")]);
+    this.exec(["bind-key", "-T", "prefix", "O", "run-shell", "-b", controlCommand("overseer")]);
     this.exec(["bind-key", "-T", "prefix", "d", "run-shell", "-b", controlCommand("dashboard")]);
     this.exec(["bind-key", "-T", "prefix", "i", "run-shell", "-b", controlCommand("coordination")]);
     this.exec(["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"]);

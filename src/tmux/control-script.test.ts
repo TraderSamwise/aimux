@@ -204,6 +204,14 @@ for arg in "$@"; do
       fi
       exit "\${TMUX_FAKE_CURL_EXIT:-0}"
       ;;
+    *"/control/open-dashboard"*)
+      if [ -n "$TMUX_FAKE_OPEN_DASHBOARD_RESPONSE" ]; then
+        printf '%s' "$TMUX_FAKE_OPEN_DASHBOARD_RESPONSE"
+      else
+        printf '{"ok":true,"target":{"sessionName":"aimux-proj-client-1234abcd","windowIndex":0,"windowId":"@dash","windowName":"dashboard-live"},"focused":true}'
+      fi
+      exit "\${TMUX_FAKE_CURL_EXIT:-0}"
+      ;;
   esac
 done
 exit "\${TMUX_FAKE_CURL_EXIT:-0}"
@@ -640,6 +648,242 @@ describe("tmux-control.sh", () => {
     const curlLog = readCurlLog(envRoot);
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(curlLog).toEqual([]);
+  });
+
+  it("focuses a live overseer through the project control API", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
+          "@aimux-dashboard-owner": "owner-current",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: "/repo/project",
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(
+      envRoot,
+      [
+        "overseer",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--project-root",
+        "/repo/project",
+        "--current-client-session",
+        "aimux-proj-client-1234abcd",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "shell",
+        "--current-window-id",
+        "@shell",
+        "--current-path",
+        "/repo/project/worktree",
+      ],
+      {
+        TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
+          {
+            label: "Overseer",
+            overseer: true,
+            target: { windowId: "@overseer", windowName: "codex" },
+            metadata: {
+              sessionId: "codex-overseer",
+              command: "codex",
+              worktreePath: "/repo/project",
+              overseer: true,
+            },
+          },
+        ]),
+      },
+    );
+
+    const log = readLog(envRoot);
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
+    expect(log).not.toContain("send-keys -t aimux-proj-client-1234abcd:0 O");
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog).toHaveLength(2);
+    expect(curlLog[0]).toContain("/control/switchable-agents");
+    expect(curlLog[0]).toContain("includeOverseer=1");
+    expect(curlLog[1]).toContain("/control/focus-window");
+    expect(curlLog[1]).toContain('"windowId": "@overseer"');
+    expect(curlLog[1]).toContain('"currentClientSession": "aimux-proj-client-1234abcd"');
+    expect(curlLog[1]).toContain('"clientTty": "/dev/live"');
+  });
+
+  it("opens the overseer flow through the local dashboard when no overseer is live", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
+          "@aimux-dashboard-owner": "owner-current",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: "/repo/project",
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "overseer",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--project-root",
+      "/repo/project",
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
+    expect(log).toContain("send-keys -t aimux-proj-client-1234abcd:0 -H 1b 5b 49");
+    expect(log).toContain("send-keys -t aimux-proj-client-1234abcd:0 O");
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog).toHaveLength(1);
+    expect(curlLog[0]).toContain("/control/switchable-agents");
+    expect(curlLog[0]).toContain("includeOverseer=1");
+  });
+
+  it("keeps the overseer intent when the dashboard must be reloaded", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-control-project-"));
+    tempRoots.push(projectRoot);
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": projectRoot,
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-project-root": projectRoot,
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-old",
+          "@aimux-dashboard-ready": "build-old",
+          "@aimux-dashboard-owner": "owner-current",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: projectRoot,
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), `${projectRoot}\n`);
+
+    runControl(envRoot, [
+      "overseer",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--project-root",
+      projectRoot,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      join(projectRoot, "worktree"),
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
+    expect(log).toContain("send-keys -t aimux-proj-client-1234abcd:0 -H 1b 5b 49");
+    expect(log).toContain("send-keys -t aimux-proj-client-1234abcd:0 O");
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog).toHaveLength(2);
+    expect(curlLog[0]).toContain("/control/switchable-agents");
+    expect(curlLog[1]).toContain("/control/open-dashboard");
+    expect(curlLog[1]).toContain('"forceReload": true');
+    expect(curlLog[1]).toContain('"currentClientSession": "aimux-proj-client-1234abcd"');
+    expect(curlLog[1]).toContain('"clientTty": "/dev/live"');
   });
 
   it("validates client dashboard project root from the host session", () => {

@@ -387,6 +387,7 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "u")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "d")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "e")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "O")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "K")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "0")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "1")).toBe(true);
@@ -469,6 +470,14 @@ describe("TmuxRuntimeManager", () => {
           call.args[0] === "bind-key" &&
           call.args[3] === "e" &&
           call.args.join(" ").includes("scripts/tmux-control.sh' team"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[3] === "O" &&
+          call.args.join(" ").includes("scripts/tmux-control.sh' overseer"),
       ),
     ).toBe(true);
     const dashboardBinding = exec.calls.find(

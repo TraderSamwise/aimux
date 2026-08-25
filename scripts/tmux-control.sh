@@ -18,7 +18,7 @@ daemon_port=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next|prev|attention|dashboard|coordination|menu|expose|meta|window|active|team)
+    next|prev|attention|dashboard|coordination|overseer|menu|expose|meta|window|active|team)
       action="$1"
       shift
       ;;
@@ -450,6 +450,168 @@ show_local_coordination() {
   switch_local_dashboard || { dashboard_candidate_needs_reload && reload_local_dashboard && return 0; }
 }
 
+resolve_live_overseer_window_id() {
+  [ -n "$project_state_dir" ] || return 1
+  python3 - "$project_state_dir" "$current_client_session" "$current_window" "$current_window_id" "$current_path" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import urllib.parse
+
+state_dir, current_client_session, current_window, current_window_id, current_path = sys.argv[1:6]
+
+try:
+    with open(os.path.join(state_dir, "metadata-api.txt"), "r", encoding="utf-8") as fh:
+        endpoint = fh.read().strip()
+except Exception:
+    raise SystemExit(1)
+
+if not endpoint:
+    raise SystemExit(1)
+
+params = {
+    "scope": "all",
+    "labelFormat": "raw",
+    "includePreview": "1",
+    "includeOverseer": "1",
+    "currentClientSession": current_client_session,
+    "currentWindow": current_window,
+    "currentWindowId": current_window_id,
+    "currentPath": current_path,
+}
+query = urllib.parse.urlencode({key: value for key, value in params.items() if value})
+url = endpoint.rstrip("/") + "/control/switchable-agents"
+if query:
+    url += "?" + query
+
+try:
+    raw = subprocess.check_output(["curl", "-fsS", "--max-time", "4", url], text=True, stderr=subprocess.DEVNULL)
+    payload = json.loads(raw)
+except Exception:
+    raise SystemExit(1)
+
+items = payload.get("items")
+if not payload.get("ok") or not isinstance(items, list):
+    raise SystemExit(1)
+
+for item in items:
+    if not isinstance(item, dict) or item.get("overseer") is not True:
+        continue
+    target = item.get("target")
+    if not isinstance(target, dict):
+        continue
+    window_id = target.get("windowId") or target.get("id")
+    if isinstance(window_id, str) and window_id:
+        print(window_id)
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+focus_project_window_via_api() {
+  target_window_id="$1"
+  [ -n "$target_window_id" ] || return 1
+  metadata_api=$(cat "$project_state_dir/metadata-api.txt" 2>/dev/null || true)
+  [ -n "$metadata_api" ] || return 1
+  focus_body=$(python3 - "$target_window_id" "$current_client_session" "$client_tty" <<'PY'
+import json
+import sys
+
+window_id, current_client_session, client_tty = sys.argv[1:4]
+body = {"windowId": window_id, "focus": True}
+if current_client_session:
+    body["currentClientSession"] = current_client_session
+if client_tty:
+    body["clientTty"] = client_tty
+print(json.dumps(body))
+PY
+)
+  curl -fsS --max-time 4 -H "content-type: application/json" --data-binary "$focus_body" "$metadata_api/control/focus-window" >/dev/null 2>&1
+}
+
+open_dashboard_via_api() {
+  [ -n "$project_root" ] || return 1
+  metadata_api=$(cat "$project_state_dir/metadata-api.txt" 2>/dev/null || true)
+  [ -n "$metadata_api" ] || return 1
+  open_client_tty="${live_client_tty-${client_tty-}}"
+  open_client_session="${live_client_session-${current_client_session-}}"
+  open_body=$(python3 - "$open_client_tty" "$open_client_session" "$current_window_id" <<'PY'
+import json
+import sys
+
+client_tty, current_client_session, current_window_id = sys.argv[1:4]
+body = {"focus": True, "forceReload": True}
+if client_tty:
+    body["clientTty"] = client_tty
+if current_client_session:
+    body["currentClientSession"] = current_client_session
+if current_window_id:
+    body["currentWindowId"] = current_window_id
+print(json.dumps(body))
+PY
+)
+  open_response=$(curl -fsS --max-time 8 -H "content-type: application/json" --data-binary "$open_body" "$metadata_api/control/open-dashboard") || return 1
+  dashboard_switch_target=$(python3 - "$open_response" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+
+target = payload.get("target") if isinstance(payload, dict) else None
+if not isinstance(target, dict):
+    raise SystemExit(1)
+
+session = target.get("sessionName")
+index = target.get("windowIndex")
+if not isinstance(session, str) or not session:
+    raise SystemExit(1)
+if isinstance(index, bool) or not isinstance(index, int):
+    raise SystemExit(1)
+
+print(f"{session}:{index}")
+PY
+  ) || return 1
+  [ -n "$dashboard_switch_target" ]
+}
+
+show_local_overseer() {
+  overseer_window_id=$(resolve_live_overseer_window_id 2>/dev/null || true)
+  if [ -n "$overseer_window_id" ] && focus_project_window_via_api "$overseer_window_id"; then
+    exit 0
+  fi
+
+  dashboard_opened_via_api=0
+  if ! focus_local_dashboard_target; then
+    open_dashboard_via_api || return 1
+    dashboard_opened_via_api=1
+  fi
+
+  if [ "$dashboard_opened_via_api" -ne 1 ]; then
+    if [ -n "${live_client_tty-}" ]; then
+      switch_client_to_target "$dashboard_switch_target" "$live_client_tty" || return 1
+    elif [ -n "$client_tty" ]; then
+      switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
+    else
+      switch_client_to_target "$dashboard_switch_target" "" || return 1
+    fi
+    if [ -n "${live_client_tty-}" ]; then
+      refresh_navigation_client "$live_client_tty"
+    elif [ -n "$client_tty" ]; then
+      refresh_navigation_client "$client_tty"
+    else
+      refresh_navigation_client ""
+    fi
+  fi
+  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  tmux send-keys -t "$dashboard_switch_target" O >/dev/null 2>&1 || true
+  exit 0
+}
+
 ensure_linked_window() {
   target_window_id="$1"
   target_session="${live_client_session-}"
@@ -508,6 +670,7 @@ report_control_failure() {
     attention) action_label="jump to attention" ;;
     dashboard) action_label="open dashboard" ;;
     coordination) action_label="open coordination" ;;
+    overseer) action_label="open overseer" ;;
     menu) action_label="open switcher" ;;
     expose) action_label="expose sessions" ;;
     meta) action_label="open meta" ;;
@@ -967,6 +1130,9 @@ fallback_local_control() {
     coordination)
       show_local_coordination
       ;;
+    overseer)
+      show_local_overseer
+      ;;
     menu)
       show_local_switcher
       ;;
@@ -1000,7 +1166,7 @@ fallback_local_control() {
 }
 
 case "$action" in
-  next|prev|attention|dashboard|coordination|menu|expose|meta|window|active|team)
+  next|prev|attention|dashboard|coordination|overseer|menu|expose|meta|window|active|team)
     fallback_local_control && exit 0
     report_control_failure "no local tmux target available"
     exit 0
