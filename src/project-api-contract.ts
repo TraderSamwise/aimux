@@ -1115,6 +1115,9 @@ export interface ResurrectAgentResponse extends ProjectLifecycleTransitionRespon
 export interface AgentListItem {
   id: string;
   tool?: string;
+  toolConfigKey?: string;
+  command?: string;
+  backendSessionId?: string;
   role?: string;
   status?: string;
   restoreState?: string;

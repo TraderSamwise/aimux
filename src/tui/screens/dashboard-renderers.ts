@@ -758,8 +758,13 @@ export function renderDashboardFrame(
     }
 
     const selected = selectedSession!;
-    lines.push(...wrapKeyValue("Agent", `${selected.label ?? selected.command} (${selected.id})`, width));
-    lines.push(...wrapKeyValue("Tool", selected.command, width));
+    lines.push(...wrapKeyValue("Agent", selected.label ?? selected.command, width));
+    lines.push(...wrapKeyValue("Canonical", selected.toolConfigKey ?? selected.command, width));
+    lines.push(...wrapKeyValue("Aimux ID", selected.id, width));
+    if (selected.backendSessionId) lines.push(...wrapKeyValue("Backend ID", selected.backendSessionId, width));
+    if (selected.command !== (selected.toolConfigKey ?? selected.command)) {
+      lines.push(...wrapKeyValue("Command", selected.command, width));
+    }
     if (selected.worktreeName || selected.worktreeBranch) {
       lines.push(
         ...wrapKeyValue(

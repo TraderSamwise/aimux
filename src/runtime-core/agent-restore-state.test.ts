@@ -209,6 +209,19 @@ describe("agent restore state", () => {
     expect(readAgentRestoreOffer()).toBeNull();
   });
 
+  it("clears existing inventory offers from the previous-running derivation path", () => {
+    expect(
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [{ id: "codex-offline", command: "codex", label: "codex(offline)" }],
+        { now: "2026-08-22T01:08:00.000Z" },
+      )?.source,
+    ).toBe("restorable-inventory");
+
+    expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:09:00.000Z" })).toBeNull();
+    expect(readAgentRestoreOffer()).toBeNull();
+  });
+
   it("removes live sessions from an existing inventory offer", () => {
     expect(
       deriveAgentRestoreOfferFromRestorableInventory(
@@ -232,6 +245,32 @@ describe("agent restore state", () => {
 
     expect(offer?.sessionIds).toEqual(["codex-offline"]);
     expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-offline"]);
+  });
+
+  it("removes non-restorable sessions from an existing last-online offer", () => {
+    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+      version: 1,
+      id: "snapshot-old",
+      writerInstanceId: "previous-process",
+      createdAt: "2026-08-22T01:00:00.000Z",
+      updatedAt: "2026-08-22T01:00:00.000Z",
+      sessionIds: ["codex-current", "codex-stale"],
+      sessions: [
+        { id: "codex-current", command: "codex", label: "codex(current)" },
+        { id: "codex-stale", command: "codex", label: "codex(stale)" },
+      ],
+    });
+    deriveAgentRestoreOffer([], { now: "2026-08-22T01:01:00.000Z" });
+
+    const offer = deriveAgentRestoreOfferFromRestorableInventory(
+      [],
+      [{ id: "codex-current", command: "codex", label: "codex(current)" }],
+      { now: "2026-08-22T01:02:00.000Z" },
+    );
+
+    expect(offer?.source).toBe("last-online");
+    expect(offer?.sessionIds).toEqual(["codex-current"]);
+    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-current"]);
   });
 
   it("clears an existing inventory offer when every offered session is live or no longer restorable", () => {

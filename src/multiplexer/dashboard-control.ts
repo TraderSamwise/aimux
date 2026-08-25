@@ -957,8 +957,12 @@ function restoreAgentRestoreOffer(host: DashboardControlHost): void {
   const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   host.clearDashboardOverlay();
   host.agentRestoreConfirmSelection = "restore";
-  host.footerFlash = "Restoring previously running agents";
-  host.footerFlashTicks = 4;
+  const count = host.dashboardAgentRestoreOfferCache?.sessionIds?.length;
+  host.footerFlash =
+    typeof count === "number" && count > 0
+      ? `Restoring ${count} previously running agent${count === 1 ? "" : "s"}`
+      : "Restoring previously running agents";
+  host.footerFlashTicks = Number.MAX_SAFE_INTEGER;
   host.renderDashboard();
   void mutateDashboardApi(host, PROJECT_API_ROUTES.agents.restorePrevious, {}, { timeoutMs: 120_000 })
     .then(async (result: any) => {
@@ -972,6 +976,8 @@ function restoreAgentRestoreOffer(host: DashboardControlHost): void {
     })
     .catch((error: unknown) => {
       if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.footerFlash = null;
+      host.footerFlashTicks = 0;
       host.showDashboardError("Failed to restore agents", [error instanceof Error ? error.message : String(error)]);
     });
 }

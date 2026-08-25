@@ -3609,7 +3609,10 @@ export class MetadataServer {
         const task = activeTaskFor(session.id);
         return {
           id: session.id,
-          tool: session.tool,
+          tool: session.tool ?? session.toolConfigKey ?? session.command,
+          toolConfigKey: session.toolConfigKey,
+          command: session.command,
+          backendSessionId: session.backendSessionId,
           role: session.team?.role,
           status: session.status,
           restoreState: session.restoreState,

@@ -1230,8 +1230,13 @@ export function renderSessionDetails(host: DashboardOpsHost, session: any, width
   if (!session) return new Array(height).fill("");
   const lines: string[] = [];
   lines.push("\x1b[1mDetails\x1b[0m");
-  lines.push(...wrapKeyValue("Agent", `${session.label ?? session.command} (${session.id})`, width));
-  lines.push(...wrapKeyValue("Tool", session.command, width));
+  lines.push(...wrapKeyValue("Agent", session.label ?? session.command, width));
+  lines.push(...wrapKeyValue("Canonical", session.toolConfigKey ?? session.command, width));
+  lines.push(...wrapKeyValue("Aimux ID", session.id, width));
+  if (session.backendSessionId) lines.push(...wrapKeyValue("Backend ID", session.backendSessionId, width));
+  if (session.command !== (session.toolConfigKey ?? session.command)) {
+    lines.push(...wrapKeyValue("Command", session.command, width));
+  }
   if (session.worktreeName || session.worktreeBranch) {
     lines.push(
       ...wrapKeyValue(

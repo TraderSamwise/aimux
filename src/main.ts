@@ -17,7 +17,12 @@ import {
   getRuntimeTopologyPath,
 } from "./paths.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
-import { PROJECT_API_ROUTES, type AgentLoopInput, type TeamConfig } from "./project-api-contract.js";
+import {
+  PROJECT_API_ROUTES,
+  type AgentListItem,
+  type AgentLoopInput,
+  type TeamConfig,
+} from "./project-api-contract.js";
 import { assertPublishableSource } from "./attachment-store.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
@@ -2560,6 +2565,79 @@ const publishMimeTypes = new Map([
   [".webp", "image/webp"],
 ]);
 
+type CliAgentListItem = AgentListItem & {
+  loop?: { active?: boolean; goal?: string };
+  task?: { description?: string; status?: string };
+};
+
+function agentCanonicalId(agent: CliAgentListItem): string {
+  return agent.toolConfigKey ?? agent.tool ?? agent.command ?? "?";
+}
+
+function agentWorktreeLabel(path: string | undefined, projectRoot: string | undefined): string {
+  if (!path) return "Main Checkout";
+  if (projectRoot && path === projectRoot) return "Main Checkout";
+  return basename(path);
+}
+
+function agentWorktreeSortKey(path: string | undefined, projectRoot: string | undefined): string {
+  if (!path || (projectRoot && path === projectRoot)) return "";
+  return path;
+}
+
+function renderAgentSummary(agent: CliAgentListItem): string {
+  const tags = [
+    agent.role ? `role=${agent.role}` : null,
+    agent.overseer ? "overseer" : null,
+    agent.loop?.active ? `loop${agent.loop.goal ? `=${agent.loop.goal}` : ""}` : null,
+  ].filter(Boolean);
+  const state = [agent.activity, agent.attention].filter(Boolean).join("/");
+  const detail = [
+    `canonical=${agentCanonicalId(agent)}`,
+    `aimux=${agent.id}`,
+    agent.backendSessionId ? `backend=${agent.backendSessionId}` : null,
+    state ? `state=${state}` : null,
+    tags.length ? tags.join(" ") : null,
+  ].filter(Boolean);
+  return `  ${agent.status ?? "?"}  ${detail.join("  ")}`;
+}
+
+function printAgentsFlat(agents: CliAgentListItem[], projectRoot?: string): void {
+  if (agents.length === 0) {
+    console.log("no agents");
+    return;
+  }
+  for (const agent of agents) {
+    console.log(`${agent.id}  [${agentCanonicalId(agent)}]${agent.role ? `  ${agent.role}` : ""}`);
+    console.log(renderAgentSummary(agent));
+    if (agent.worktreePath) console.log(`    worktree: ${agent.worktreePath}`);
+    else if (projectRoot) console.log(`    worktree: ${projectRoot}`);
+    if (agent.task) console.log(`    task: ${agent.task.description ?? ""} (${agent.task.status ?? "?"})`);
+  }
+}
+
+function printAgentsByWorktree(agents: CliAgentListItem[], projectRoot?: string): void {
+  if (agents.length === 0) {
+    console.log("no agents");
+    return;
+  }
+  const groups = new Map<string, CliAgentListItem[]>();
+  for (const agent of agents) {
+    const key = agentWorktreeSortKey(agent.worktreePath, projectRoot);
+    groups.set(key, [...(groups.get(key) ?? []), agent]);
+  }
+  const sortedGroups = [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  for (const [index, [path, group]] of sortedGroups.entries()) {
+    if (index > 0) console.log("");
+    const label = agentWorktreeLabel(path || undefined, projectRoot);
+    console.log(`${label}${path ? `  ${path}` : projectRoot ? `  ${projectRoot}` : ""}`);
+    for (const agent of group.sort((left, right) => left.id.localeCompare(right.id))) {
+      console.log(renderAgentSummary(agent));
+      if (agent.task) console.log(`    task: ${agent.task.description ?? ""} (${agent.task.status ?? "?"})`);
+    }
+  }
+}
+
 program
   .command("ps")
   .description("Show all agents in this project (across worktrees) with activity and loop state")
@@ -2569,39 +2647,29 @@ program
     const projectRoot = opts.project ? await prepareProjectContext(opts.project) : undefined;
     if (!projectRoot) await initPaths();
     const result = await getProjectServiceJson("/agents", projectRoot ? { projectRoot } : undefined);
-    const agents: Array<{
-      id: string;
-      tool?: string;
-      role?: string;
-      status?: string;
-      worktreePath?: string;
-      activity?: string;
-      attention?: string;
-      loop?: { active: boolean; goal?: string };
-      overseer?: boolean;
-      task?: { description: string; status: string };
-    }> = result.agents ?? [];
+    const agents: CliAgentListItem[] = result.agents ?? [];
     if (opts.json) {
       console.log(JSON.stringify(agents, null, 2));
       return;
     }
-    if (agents.length === 0) {
-      console.log("no agents");
+    printAgentsFlat(agents, projectRoot);
+  });
+
+program
+  .command("list")
+  .description("List agents grouped by worktree with canonical, Aimux, and backend ids")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    const projectRoot = opts.project ? await prepareProjectContext(opts.project) : undefined;
+    if (!projectRoot) await initPaths();
+    const result = await getProjectServiceJson("/agents", projectRoot ? { projectRoot } : undefined);
+    const agents: CliAgentListItem[] = result.agents ?? [];
+    if (opts.json) {
+      console.log(JSON.stringify(agents, null, 2));
       return;
     }
-    for (const agent of agents) {
-      const tags = [
-        agent.overseer ? "overseer" : null,
-        agent.loop?.active ? `loop${agent.loop.goal ? `:${agent.loop.goal}` : ""}` : null,
-      ].filter(Boolean);
-      const state = [agent.activity, agent.attention].filter(Boolean).join("/");
-      console.log(
-        `${agent.id}  [${agent.tool ?? "?"}${agent.role ? `:${agent.role}` : ""}]  ${agent.status ?? "?"}` +
-          `${state ? `  ${state}` : ""}${tags.length ? `  {${tags.join(" ")}}` : ""}`,
-      );
-      if (agent.worktreePath) console.log(`    worktree: ${agent.worktreePath}`);
-      if (agent.task) console.log(`    task: ${agent.task.description} (${agent.task.status})`);
-    }
+    printAgentsByWorktree(agents, projectRoot);
   });
 
 const loopCmd = program.command("loop").description("Manage agents in an overseer-managed loop");

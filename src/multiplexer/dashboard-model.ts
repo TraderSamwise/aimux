@@ -42,7 +42,6 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   agentRestoreSessionKey,
   deriveAgentRestoreOffer,
-  deriveAgentRestoreOfferFromRestorableInventory,
   recordLastOnlineAgents,
   type AgentRestoreSession,
 } from "../runtime-core/agent-restore-state.js";
@@ -1185,27 +1184,8 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
         worktreePath: session.worktreePath,
       };
     });
-  const restorableOfflineSessions = [
-    ...new Map([...sessions, ...teammates].map((session) => [session.id, session])).values(),
-  ]
-    .filter((session) => isDashboardSessionOffline(session) && session.restoreState === "ready")
-    .map((session): AgentRestoreSession => {
-      return {
-        id: session.id,
-        tool: session.toolConfigKey,
-        command: session.command,
-        label: session.label,
-        worktreePath: session.worktreePath,
-      };
-    });
   const liveRestoreSessionIds = onlineRestoreSessions.map((session) => session.id);
-  const agentRestoreOffer =
-    deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot }) ??
-    (onlineRestoreSessions.length === 0
-      ? deriveAgentRestoreOfferFromRestorableInventory(liveRestoreSessionIds, restorableOfflineSessions, {
-          projectRoot,
-        })
-      : null);
+  const agentRestoreOffer = deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot });
   const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
   const shouldRecordRestoreSnapshot =
     onlineRestoreSessions.length > 0 ||

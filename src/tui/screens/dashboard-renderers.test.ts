@@ -930,6 +930,8 @@ describe("renderDashboardFrame worktree progress", () => {
             index: 0,
             id: "codex-1",
             command: "codex",
+            toolConfigKey: "codex",
+            backendSessionId: "official-codex-session-1",
             status: "running",
             active: true,
             previewSnapshot: {
@@ -951,7 +953,10 @@ describe("renderDashboardFrame worktree progress", () => {
     const plain = stripAnsi(frame);
     expect(plain).toContain("DETAILS");
     expect(plain).toContain("PREVIEW");
-    expect(plain).toContain("Agent: codex (codex-1)");
+    expect(plain).toContain("Agent: codex");
+    expect(plain).toContain("Canonical: codex");
+    expect(plain).toContain("Aimux ID: codex-1");
+    expect(plain).toContain("Backend ID: official-codex-session-1");
     expect(plain).toContain("preview 06");
     expect(plain).toContain("preview 16");
     expect(frame).not.toContain("\x1b]0;bad title");

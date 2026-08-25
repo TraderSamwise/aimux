@@ -8,6 +8,7 @@ import { updateSessionMetadata } from "../metadata-store.js";
 import { initPaths, withProjectPaths } from "../paths.js";
 import { saveRuntimeTopologySessions, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import { addNotification } from "../notifications.js";
+import { deriveAgentRestoreOfferFromRestorableInventory } from "../runtime-core/agent-restore-state.js";
 import {
   applyDashboardModel,
   buildDesktopStateSnapshot,
@@ -1968,7 +1969,7 @@ describe("refreshDashboardModelFromService", () => {
     ]);
   });
 
-  it("offers restore from restorable offline inventory when the online snapshot is missing", async () => {
+  it("does not offer restore from offline inventory when the online snapshot is missing", async () => {
     const previousAimuxHome = process.env.AIMUX_HOME;
     const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-repo-"));
@@ -1999,13 +2000,55 @@ describe("refreshDashboardModelFromService", () => {
 
       const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
 
-      expect(snapshot.agentRestoreOffer).toEqual(
-        expect.objectContaining({
-          source: "restorable-inventory",
-          sessionIds: ["codex-offline"],
-          sessions: [expect.objectContaining({ id: "codex-offline", command: "codex" })],
-        }),
+      expect(snapshot.agentRestoreOffer).toBeNull();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(aimuxHome, { recursive: true, force: true });
+      if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = previousAimuxHome;
+    }
+  });
+
+  it("clears stale inventory restore offers instead of prompting from offline history", async () => {
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-repo-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      deriveAgentRestoreOfferFromRestorableInventory(
+        [],
+        [
+          { id: "codex-current", command: "codex", label: "codex(current)", worktreePath: repoRoot },
+          { id: "codex-stale", command: "codex", label: "codex(stale)", worktreePath: repoRoot },
+        ],
+        { now: "2026-08-25T01:00:00.000Z" },
       );
+
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        offlineSessions: [
+          {
+            id: "codex-current",
+            command: "codex",
+            toolConfigKey: "codex",
+            label: "codex(current)",
+            backendSessionId: "codex-backend-current",
+            status: "offline",
+            worktreePath: repoRoot,
+          },
+        ],
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology: vi.fn(),
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.agentRestoreOffer).toBeNull();
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
       rmSync(aimuxHome, { recursive: true, force: true });

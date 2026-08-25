@@ -241,7 +241,9 @@ export function deriveAgentRestoreOffer(
     }
     const existing = readAgentRestoreOffer();
     const snapshot = readLastOnlineAgentsSnapshot();
-    if (
+    if (existing?.source === "restorable-inventory") {
+      rmSync(offerPath(), { force: true });
+    } else if (
       existing &&
       (!snapshot || snapshot.id === existing.snapshotId || snapshot.writerInstanceId === WRITER_INSTANCE_ID)
     ) {
@@ -297,7 +299,7 @@ export function deriveAgentRestoreOfferFromRestorableInventory(
     if (existing) {
       const existingSessions = existing.sessions.filter((session) => {
         if (liveIds.has(session.id)) return false;
-        if (existing.source === "restorable-inventory" && !candidateIds.has(session.id)) return false;
+        if (!candidateIds.has(session.id)) return false;
         if (existing.source === "restorable-inventory" && dismissedInventoryIds.has(session.id)) return false;
         return true;
       });

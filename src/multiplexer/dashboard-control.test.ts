@@ -2555,7 +2555,10 @@ describe("agent restore confirm overlay", () => {
       dashboardBusyState: null,
       dashboardErrorState: null,
       dashboardOverlayState: { kind: "agent-restore-confirm" },
+      dashboardAgentRestoreOfferCache: { sessionIds: ["claude-1", "codex-1"] },
       agentRestoreConfirmSelection: "restore",
+      footerFlash: null,
+      footerFlashTicks: 0,
       clearDashboardOverlay: vi.fn(() => {
         host.dashboardOverlayState.kind = "none";
       }),
@@ -2597,6 +2600,26 @@ describe("agent restore confirm overlay", () => {
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, expect.anything());
     });
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+  });
+
+  it("clears restore progress feedback when restore fails", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = restoreOverlayHost();
+    host.postToProjectService = vi.fn(async () => {
+      throw new Error("project service endpoint did not become ready");
+    });
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(true);
+    expect(host.footerFlash).toBe("Restoring 2 previously running agents");
+    expect(host.footerFlashTicks).toBe(Number.MAX_SAFE_INTEGER);
+
+    await vi.waitFor(() => {
+      expect(host.showDashboardError).toHaveBeenCalledWith("Failed to restore agents", [
+        "project service endpoint did not become ready",
+      ]);
+    });
+    expect(host.footerFlash).toBeNull();
+    expect(host.footerFlashTicks).toBe(0);
   });
 
   it("ignores immediate Enter after opening the restore overlay", async () => {
