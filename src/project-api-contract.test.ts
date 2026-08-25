@@ -24,6 +24,7 @@ describe("project api contract", () => {
 
   it("keeps shared TUI/app screen routes stable", () => {
     expect(PROJECT_API_ROUTES.desktopState).toBe("/desktop-state");
+    expect(PROJECT_API_ROUTES.diagnosticsLifecycle).toBe("/diagnostics/lifecycle");
     expect(PROJECT_API_ROUTES.coordinationWorklist).toBe("/coordination-worklist");
     expect(PROJECT_API_ROUTES.projectObservability).toBe("/project-observability");
     expect(PROJECT_API_ROUTES.topology).toBe("/topology");

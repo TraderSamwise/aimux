@@ -5,6 +5,7 @@ export const PROJECT_API_ROUTES = {
   events: "/events",
   health: "/health",
   diagnostics: "/diagnostics",
+  diagnosticsLifecycle: "/diagnostics/lifecycle",
   state: "/state",
   desktopState: "/desktop-state",
   coordinationWorklist: "/coordination-worklist",

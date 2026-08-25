@@ -3905,6 +3905,50 @@ doctorCmd
   });
 
 doctorCmd
+  .command("lifecycle")
+  .description("Inspect project-service lifecycle queue diagnostics")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = opts.project ? await prepareProjectContext(opts.project) : resolveProjectRoot(process.cwd());
+      const diagnostics = await getProjectServiceJson(PROJECT_API_ROUTES.diagnosticsLifecycle, { projectRoot });
+      if (opts.json) {
+        console.log(JSON.stringify(diagnostics, null, 2));
+        return;
+      }
+      const telemetry = diagnostics.telemetry ?? {};
+      console.log(`Project: ${diagnostics.projectRoot ?? projectRoot}`);
+      console.log(`Queue: ${diagnostics.queuedCount ?? "?"}/${diagnostics.queueLimit ?? "?"}`);
+      console.log(
+        `Lifecycle: enqueued=${telemetry.enqueued ?? 0} started=${telemetry.started ?? 0} succeeded=${
+          telemetry.succeeded ?? 0
+        } failed=${telemetry.failed ?? 0} released=${telemetry.released ?? 0}`,
+      );
+      console.log(
+        `Max: queued=${telemetry.maxQueuedCount ?? 0} wait=${telemetry.maxQueuedMs ?? 0}ms duration=${
+          telemetry.maxDurationMs ?? 0
+        }ms`,
+      );
+      console.log(
+        `Rejected: conflicts=${telemetry.rejectedConflicts ?? 0} queueFull=${telemetry.rejectedQueueFull ?? 0}`,
+      );
+      if (telemetry.lastError) console.log(`Last error: ${telemetry.lastError}`);
+      const activeTargets = Array.isArray(diagnostics.activeTargets) ? diagnostics.activeTargets : [];
+      if (activeTargets.length > 0) {
+        console.log("Active targets:");
+        for (const target of activeTargets) {
+          console.log(`  ${target.operation ?? "?"} ${target.key ?? target.targetId ?? target.targetPath ?? "?"}`);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+doctorCmd
   .command("disk")
   .description("Inspect Aimux-managed worktree cache disk usage")
   .option("--project <path>", "Project path")

@@ -97,6 +97,38 @@ describe("MetadataServer threads API", () => {
     expect(json.plugins).toBeUndefined();
   });
 
+  it("reports lifecycle queue diagnostics", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}${PROJECT_API_ROUTES.diagnosticsLifecycle}`);
+    const json = await response.json();
+
+    expect(json).toMatchObject({
+      ok: true,
+      pid: process.pid,
+      projectRoot: repoRoot,
+      queuedCount: 0,
+      queueLimit: expect.any(Number),
+      activeTargets: [],
+      telemetry: {
+        enqueued: 0,
+        started: 0,
+        succeeded: 0,
+        failed: 0,
+        released: 0,
+        rejectedConflicts: 0,
+        rejectedQueueFull: 0,
+        maxQueuedCount: 0,
+        maxQueuedMs: 0,
+        maxDurationMs: 0,
+        lastStartedAt: null,
+        lastSettledAt: null,
+        lastError: null,
+      },
+    });
+  });
+
   it("bounds hot list and detail endpoints by default", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
@@ -3674,7 +3706,6 @@ describe("MetadataServer threads API", () => {
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
-
     const spawn = await post(PROJECT_API_ROUTES.agents.spawn, { tool: "claude" });
     expect(spawn.status).toBe(200);
     expect(spawn.body.transition).toMatchObject({
@@ -3956,7 +3987,6 @@ describe("MetadataServer threads API", () => {
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
-
     const stop = await post(PROJECT_API_ROUTES.agents.stop, { sessionId: "codex-1" });
     const blockedAttempts = await Promise.all([
       post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" }),
@@ -4019,6 +4049,10 @@ describe("MetadataServer threads API", () => {
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
+    const diagnostics = async () => {
+      const res = await fetch(`${base}${PROJECT_API_ROUTES.diagnosticsLifecycle}`);
+      return (await res.json()) as { telemetry: Record<string, unknown> };
+    };
 
     const stop = await post(PROJECT_API_ROUTES.agents.stop, { sessionId: "codex-1" });
     const blockedResume = await post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" });
@@ -4031,6 +4065,12 @@ describe("MetadataServer threads API", () => {
     await waitForCondition(() => failed.includes("codex-1"));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect((await diagnostics()).telemetry).toMatchObject({
+      failed: 1,
+      rejectedConflicts: 1,
+      lastError: "stop failed",
+    });
+
     const resumed = await post(PROJECT_API_ROUTES.agents.resume, { sessionId: "codex-1" });
 
     expect(resumed.status).toBe(200);
@@ -4040,6 +4080,10 @@ describe("MetadataServer threads API", () => {
       sessionId: "codex-1",
       status: "running",
       transition: { operation: "agent.resume", targetKind: "agent", targetId: "codex-1" },
+    });
+    expect((await diagnostics()).telemetry).toMatchObject({
+      succeeded: 1,
+      lastError: null,
     });
   });
 
@@ -4189,6 +4233,10 @@ describe("MetadataServer threads API", () => {
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
+    const diagnostics = async () => {
+      const res = await fetch(`${base}${PROJECT_API_ROUTES.diagnosticsLifecycle}`);
+      return (await res.json()) as { telemetry: Record<string, unknown>; queuedCount: number };
+    };
 
     const worktree = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "queued" });
     const servicePromise = post(PROJECT_API_ROUTES.services.stop, { serviceId: "svc-queued" });
@@ -4203,6 +4251,14 @@ describe("MetadataServer threads API", () => {
       serviceId: "svc-queued",
       status: "offline",
       transition: { operation: "service.stop", targetKind: "service", targetId: "svc-queued", phase: "settling" },
+    });
+    expect(await diagnostics()).toMatchObject({
+      queuedCount: 2,
+      telemetry: {
+        enqueued: 2,
+        started: 1,
+        maxQueuedCount: 2,
+      },
     });
 
     resolvers.get("worktree:queued")?.();

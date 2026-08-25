@@ -253,6 +253,21 @@ type EarlyLifecycleResult<T> =
   | { kind: "resolved"; result: T }
   | { kind: "rejected"; error: unknown }
   | { kind: "pending" };
+type LifecycleMutationTelemetry = {
+  enqueued: number;
+  started: number;
+  succeeded: number;
+  failed: number;
+  released: number;
+  rejectedConflicts: number;
+  rejectedQueueFull: number;
+  maxQueuedCount: number;
+  maxQueuedMs: number;
+  maxDurationMs: number;
+  lastStartedAt: string | null;
+  lastSettledAt: string | null;
+  lastError: string | null;
+};
 
 class LifecycleMutationConflictError extends Error {
   readonly status = 409;
@@ -1745,6 +1760,21 @@ export class MetadataServer {
   private lifecycleMutationQueue: Promise<void> = Promise.resolve();
   private readonly lifecycleMutationTargets = new Map<string, LifecycleTransitionInput>();
   private lifecycleMutationQueuedCount = 0;
+  private readonly lifecycleMutationTelemetry: LifecycleMutationTelemetry = {
+    enqueued: 0,
+    started: 0,
+    succeeded: 0,
+    failed: 0,
+    released: 0,
+    rejectedConflicts: 0,
+    rejectedQueueFull: 0,
+    maxQueuedCount: 0,
+    maxQueuedMs: 0,
+    maxDurationMs: 0,
+    lastStartedAt: null,
+    lastSettledAt: null,
+    lastError: null,
+  };
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -1774,14 +1804,22 @@ export class MetadataServer {
   private enqueueLifecycleMutation<T>(action: () => Promise<T> | T, transition?: LifecycleTransitionInput): Promise<T> {
     const targetKey = transition ? lifecycleTargetKey(transition) : undefined;
     if (targetKey && transition && this.lifecycleMutationTargets.has(targetKey)) {
+      this.lifecycleMutationTelemetry.rejectedConflicts += 1;
       throw new LifecycleMutationConflictError(transition, this.lifecycleMutationTargets.get(targetKey)!);
     }
     const queueLimit = this.options.lifecycleMutationQueueLimit ?? 32;
     if (transition && this.lifecycleMutationQueuedCount >= queueLimit) {
+      this.lifecycleMutationTelemetry.rejectedQueueFull += 1;
       throw new LifecycleMutationQueueFullError(transition, this.lifecycleMutationQueuedCount, queueLimit);
     }
     if (targetKey && transition) this.lifecycleMutationTargets.set(targetKey, transition);
     const queueDepthAtEnqueue = this.lifecycleMutationQueuedCount;
+    const queueDepthAfterEnqueue = queueDepthAtEnqueue + 1;
+    this.lifecycleMutationTelemetry.enqueued += 1;
+    this.lifecycleMutationTelemetry.maxQueuedCount = Math.max(
+      this.lifecycleMutationTelemetry.maxQueuedCount,
+      queueDepthAfterEnqueue,
+    );
     const operationId = transition
       ? `${transition.operation}:${transition.targetId ?? transition.targetPath ?? "unknown"}:${randomUUID()}`
       : undefined;
@@ -1802,19 +1840,31 @@ export class MetadataServer {
       .catch(() => undefined)
       .then(async () => {
         if (transition) {
+          const queuedMs = Date.now() - queuedAt;
+          this.lifecycleMutationTelemetry.started += 1;
+          this.lifecycleMutationTelemetry.maxQueuedMs = Math.max(this.lifecycleMutationTelemetry.maxQueuedMs, queuedMs);
+          this.lifecycleMutationTelemetry.lastStartedAt = new Date().toISOString();
           log.info("lifecycle mutation started", "api", {
             operationId,
             operation: transition.operation,
             targetKind: transition.targetKind,
             targetId: transition.targetId,
             targetPath: transition.targetPath,
-            queuedMs: Date.now() - queuedAt,
+            queuedMs,
             queueDepthAtStart: this.lifecycleMutationQueuedCount,
           });
         }
         const startedAt = Date.now();
         try {
           const result = await action();
+          const durationMs = Date.now() - startedAt;
+          this.lifecycleMutationTelemetry.succeeded += 1;
+          this.lifecycleMutationTelemetry.maxDurationMs = Math.max(
+            this.lifecycleMutationTelemetry.maxDurationMs,
+            durationMs,
+          );
+          this.lifecycleMutationTelemetry.lastSettledAt = new Date().toISOString();
+          this.lifecycleMutationTelemetry.lastError = null;
           if (transition) {
             log.info("lifecycle mutation succeeded", "api", {
               operationId,
@@ -1822,11 +1872,19 @@ export class MetadataServer {
               targetKind: transition.targetKind,
               targetId: transition.targetId,
               targetPath: transition.targetPath,
-              durationMs: Date.now() - startedAt,
+              durationMs,
             });
           }
           return result;
         } catch (error) {
+          const durationMs = Date.now() - startedAt;
+          this.lifecycleMutationTelemetry.failed += 1;
+          this.lifecycleMutationTelemetry.maxDurationMs = Math.max(
+            this.lifecycleMutationTelemetry.maxDurationMs,
+            durationMs,
+          );
+          this.lifecycleMutationTelemetry.lastSettledAt = new Date().toISOString();
+          this.lifecycleMutationTelemetry.lastError = userFacingErrorMessage(error);
           if (transition) {
             log.warn("lifecycle mutation failed", "api", {
               operationId,
@@ -1834,7 +1892,7 @@ export class MetadataServer {
               targetKind: transition.targetKind,
               targetId: transition.targetId,
               targetPath: transition.targetPath,
-              durationMs: Date.now() - startedAt,
+              durationMs,
               error: userFacingErrorMessage(error),
             });
           }
@@ -1843,6 +1901,7 @@ export class MetadataServer {
       });
     const tracked = queued.finally(() => {
       this.lifecycleMutationQueuedCount = Math.max(0, this.lifecycleMutationQueuedCount - 1);
+      this.lifecycleMutationTelemetry.released += 1;
       if (targetKey && this.lifecycleMutationTargets.get(targetKey) === transition) {
         this.lifecycleMutationTargets.delete(targetKey);
       }
@@ -1862,6 +1921,26 @@ export class MetadataServer {
       () => undefined,
     );
     return tracked;
+  }
+
+  private lifecycleDiagnostics() {
+    const queueLimit = this.options.lifecycleMutationQueueLimit ?? 32;
+    const activeTargets = [...this.lifecycleMutationTargets.entries()].map(([key, transition]) => ({
+      key,
+      operation: transition.operation,
+      targetKind: transition.targetKind,
+      targetId: transition.targetId,
+      targetPath: transition.targetPath,
+    }));
+    return {
+      ok: true,
+      pid: process.pid,
+      projectRoot: this.currentProjectRoot(),
+      queuedCount: this.lifecycleMutationQueuedCount,
+      queueLimit,
+      activeTargets,
+      telemetry: { ...this.lifecycleMutationTelemetry },
+    };
   }
 
   private notifyLifecycleSettled(
@@ -3519,6 +3598,11 @@ export class MetadataServer {
           taps: this.exposePaneOutputTap?.stats?.() ?? null,
         },
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.diagnosticsLifecycle) {
+      this.publishEndpoint();
+      send(res, 200, this.lifecycleDiagnostics());
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.state) {
