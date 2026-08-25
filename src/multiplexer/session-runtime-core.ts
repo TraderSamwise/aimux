@@ -199,6 +199,14 @@ export function resolveRunningSession(host: SessionRuntimeHost, sessionId: strin
   return session;
 }
 
+const TARGET_METADATA_STARTUP_GRACE_MS = 5_000;
+
+function canAcceptMetadatalessTarget(host: SessionRuntimeHost, sessionId: string): boolean {
+  const runtime = host.sessions?.find?.((candidate: any) => candidate.id === sessionId);
+  const startTime = typeof runtime?.startTime === "number" ? runtime.startTime : undefined;
+  return startTime !== undefined && Date.now() - startTime <= TARGET_METADATA_STARTUP_GRACE_MS;
+}
+
 export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId: string, fallback?: any): any {
   const candidate = host.sessionTmuxTargets.get(sessionId) ?? fallback;
   if (candidate) {
@@ -210,7 +218,10 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
       const metadata = resolved ? host.tmuxRuntimeManager.getWindowMetadata(resolved) : null;
       if (!resolved) {
         host.sessionTmuxTargets.delete(sessionId);
-      } else if (!metadata || (metadata.kind === "agent" && metadata.sessionId === sessionId)) {
+      } else if (metadata?.kind === "agent" && metadata.sessionId === sessionId) {
+        host.sessionTmuxTargets.set(sessionId, resolved);
+        return resolved;
+      } else if (!metadata && canAcceptMetadatalessTarget(host, sessionId)) {
         host.sessionTmuxTargets.set(sessionId, resolved);
         return resolved;
       } else {
@@ -386,53 +397,15 @@ export function reconcileAgentActivity(
 }
 
 /**
- * How long a cached tmux target is trusted before its ownership is rechecked.
- *
- * tmux does not reuse window ids within a server's lifetime, so a cached target
- * can only point at someone else's window after a tmux server restart — where
- * ids begin again at `@0`. Rare, but being wrong there means serving one
- * agent's pane as another's, so it is bounded rather than assumed away. One
- * fork per interval against two per poll.
- */
-const TARGET_OWNERSHIP_RECHECK_MS = 30_000;
-const lastTargetOwnershipCheckAt = new Map<string, number>();
-
-function targetOwnershipIsDue(target: { sessionName?: string }, sessionId: string): boolean {
-  const key = `${target.sessionName ?? ""} ${sessionId}`;
-  const previous = lastTargetOwnershipCheckAt.get(key);
-  const now = Date.now();
-  if (previous !== undefined && now - previous < TARGET_OWNERSHIP_RECHECK_MS) return false;
-  lastTargetOwnershipCheckAt.set(key, now);
-  return true;
-}
-
-/**
- * Capture a session's pane without revalidating its target first.
- *
- * The output stream polls this about once a second per open session, and
- * `resolveLiveSessionTmuxTarget` spends two tmux forks — a `list-windows` and a
- * `show-window-options` — confirming a window id that only changes when the
- * window itself does. Measured, that revalidation was the single largest
- * consumer of the daemon's blocked event loop.
- *
- * A capture against a target that has gone away fails, and that failure is the
- * same evidence the revalidation was buying, so it is paid for only then.
- * `syncSessionsFromTopology` already retargets transports when a window moves,
- * so the cached target is maintained rather than merely hoped for.
+ * Chat output must fail closed rather than briefly show another pane's bytes.
+ * Revalidate ownership before every capture; lifecycle churn and tmux restarts
+ * can otherwise make a cached target look like discontinuous old chat history.
  */
 function captureSessionPane(
   host: SessionRuntimeHost,
   sessionId: string,
   options: { startLine: number; includeEscapes: boolean },
 ): string {
-  const cached = host.sessionTmuxTargets.get(sessionId);
-  if (cached && !targetOwnershipIsDue(cached, sessionId)) {
-    try {
-      return host.tmuxRuntimeManager.captureTarget(cached, options);
-    } catch {
-      // Fall through and re-resolve: the window is gone or has moved.
-    }
-  }
   const target = resolveLiveSessionTmuxTarget(host, sessionId);
   if (!target) {
     throw new Error(`Session "${sessionId}" does not have a live tmux target`);
@@ -849,12 +822,8 @@ const policyAppliedWindows = new Set<string>();
 export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: string): void {
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
-  let target = resolveLiveSessionTmuxTarget(host, sessionId, runtime.transport.tmuxTarget);
-  if (!target) {
-    target = runtime.transport.tmuxTarget;
-    const fallbackMetadata = host.tmuxRuntimeManager.getWindowMetadata(target);
-    if (fallbackMetadata && fallbackMetadata.sessionId !== sessionId) return;
-  }
+  const target = resolveLiveSessionTmuxTarget(host, sessionId, runtime.transport.tmuxTarget);
+  if (!target) return;
   const existing = host.tmuxRuntimeManager.getWindowMetadata(target);
   const metadata = buildTmuxWindowMetadata(host, sessionId, runtime.command, existing);
   metadata.createdAt =

@@ -17,6 +17,7 @@ function gitInit(cwd: string): void {
 }
 import {
   createSession,
+  createSessionAsync,
   focusSession,
   injectCodexDeveloperInstructions,
   migrateAgent,
@@ -128,6 +129,90 @@ describe("createSession", () => {
     );
 
     expect(buildSessionPreamble).not.toHaveBeenCalled();
+
+    session.destroy();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("clears tmux pane history after creating a session window", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-clear-history-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    const target = { sessionName: "aimux-test", windowId: "@1", windowName: "codex" };
+    const host: any = {
+      sessionBootstrap: {
+        ...realArgComposition(),
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => target),
+        clearTargetHistory: vi.fn(),
+        getTargetByWindowId: vi.fn(() => target),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    const session = createSession(host, "codex", [], undefined, "codex", undefined, undefined, repoRoot);
+
+    expect(host.tmuxRuntimeManager.clearTargetHistory).toHaveBeenCalledWith(target);
+
+    session.destroy();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("clears tmux pane history after asynchronously creating a session window", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-clear-history-async-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    const target = { sessionName: "aimux-test", windowId: "@1", windowName: "codex" };
+    const host: any = {
+      sessionBootstrap: {
+        ...realArgComposition(),
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSessionAsync: vi.fn(async () => ({ sessionName: "aimux-test" })),
+        createWindowAsync: vi.fn(async () => target),
+        clearTargetHistoryAsync: vi.fn(async () => undefined),
+        setWindowMetadataAsync: vi.fn(async () => undefined),
+        applyManagedAgentWindowPolicyAsync: vi.fn(async () => undefined),
+        getTargetByWindowId: vi.fn(() => target),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      sessionToolKeys: new Map(),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      sessionStartTimes: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    const session = await createSessionAsync(host, "codex", [], undefined, "codex", undefined, undefined, repoRoot);
+
+    expect(host.tmuxRuntimeManager.clearTargetHistoryAsync).toHaveBeenCalledWith(target);
 
     session.destroy();
     rmSync(repoRoot, { recursive: true, force: true });

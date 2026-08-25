@@ -921,6 +921,14 @@ export class TmuxRuntimeManager {
     });
   }
 
+  clearTargetHistory(target: TmuxTarget): void {
+    this.exec(["clear-history", "-t", target.windowId]);
+  }
+
+  async clearTargetHistoryAsync(target: TmuxTarget): Promise<void> {
+    await this.execAsync(["clear-history", "-t", target.windowId]);
+  }
+
   replaceWindowWhenReady(
     target: TmuxTarget,
     spec: TmuxCommandSpec,

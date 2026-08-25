@@ -306,7 +306,18 @@ export const persistenceMethods = {
     for (const session of this.sessions) {
       const target = liveTargets.get(session.id);
       if (!target) continue;
+      const previousTarget = this.sessionTmuxTargets.get(session.id);
       this.sessionTmuxTargets.set(session.id, target);
+      if (previousTarget?.windowId !== target.windowId) {
+        try {
+          this.tmuxRuntimeManager.clearTargetHistory?.(target);
+        } catch (error) {
+          debug(
+            `tmux pane history reset failed for ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
+            "tmux",
+          );
+        }
+      }
       if (session.transport instanceof Object && typeof session.transport.retarget === "function") {
         session.transport.retarget(target);
       }

@@ -1948,6 +1948,7 @@ describe("resumeOfflineSession", () => {
             },
           },
         ]),
+        clearTargetHistory: vi.fn(),
       },
       registerManagedSession: vi.fn(),
       sessionLabels: new Map(),
@@ -2003,6 +2004,7 @@ describe("resumeOfflineSession", () => {
             },
           },
         ]),
+        clearTargetHistory: vi.fn(),
       },
       registerManagedSession: vi.fn((session: any) => host.sessions.push(session)),
       sessionLabels: new Map(),
@@ -2014,6 +2016,53 @@ describe("resumeOfflineSession", () => {
 
     expect(host.sessions[0].backendSessionId).toBe("backend-live");
     expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("codex-live");
+    expect(host.tmuxRuntimeManager.clearTargetHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ windowId: "@1" }),
+    );
+  });
+
+  it("clears pane history when topology restore rebinds an existing runtime target", () => {
+    const previousTarget = {
+      sessionName: "aimux-test",
+      windowId: "@1",
+      windowIndex: 1,
+      windowName: "codex",
+    };
+    const nextTarget = {
+      sessionName: "aimux-test",
+      windowId: "@2",
+      windowIndex: 2,
+      windowName: "codex",
+    };
+    const transport = { retarget: vi.fn() };
+    const host: any = {
+      sessions: [{ id: "codex-live", command: "codex", transport }],
+      sessionTmuxTargets: new Map([["codex-live", previousTarget]]),
+      contextWatcher: { stop: vi.fn() },
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: nextTarget,
+            metadata: {
+              kind: "agent",
+              sessionId: "codex-live",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: repoRoot,
+            },
+          },
+        ]),
+        clearTargetHistory: vi.fn(),
+      },
+      updateContextWatcherSessions: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    restoreTmuxSessionsFromTopology(host);
+
+    expect(host.sessionTmuxTargets.get("codex-live")).toEqual(nextTarget);
+    expect(host.tmuxRuntimeManager.clearTargetHistory).toHaveBeenCalledWith(nextTarget);
   });
 
   it("rehydrates live tmux windows from the host project root", () => {

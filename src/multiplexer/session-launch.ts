@@ -44,6 +44,36 @@ function projectRootFor(host: SessionLaunchHost): string {
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
 }
 
+function clearManagedAgentPaneHistory(host: SessionLaunchHost, sessionId: string, target: any): void {
+  try {
+    host.tmuxRuntimeManager.clearTargetHistory?.(target);
+  } catch (error) {
+    debug(
+      `tmux pane history reset failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      "tmux",
+    );
+  }
+}
+
+async function clearManagedAgentPaneHistoryAsync(
+  host: SessionLaunchHost,
+  sessionId: string,
+  target: any,
+): Promise<void> {
+  try {
+    if (typeof host.tmuxRuntimeManager.clearTargetHistoryAsync === "function") {
+      await host.tmuxRuntimeManager.clearTargetHistoryAsync(target);
+    } else {
+      host.tmuxRuntimeManager.clearTargetHistory?.(target);
+    }
+  } catch (error) {
+    debug(
+      `tmux pane history reset failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      "tmux",
+    );
+  }
+}
+
 function listLaunchableTopologySessions(toolFilter?: string): any[] {
   const sessions = listTopologySessionStates({ statuses: ["offline"] });
   return toolFilter ? sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter) : sessions;
@@ -806,6 +836,7 @@ export function createSession(
     finalArgs,
     { detached: detachedInTmux },
   );
+  clearManagedAgentPaneHistory(host, sessionId, target);
   const tmuxTransport = new TmuxSessionTransport(
     sessionId,
     command,
@@ -1029,6 +1060,7 @@ export async function createSessionAsync(
     finalArgs,
     { detached: detachedInTmux },
   );
+  await clearManagedAgentPaneHistoryAsync(host, sessionId, target);
   const tmuxTransport = new TmuxSessionTransport(
     sessionId,
     command,

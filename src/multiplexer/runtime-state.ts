@@ -81,6 +81,17 @@ function listLiveAgentWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
   return windows;
 }
 
+function clearAdoptedAgentPaneHistory(host: RuntimeStateHost, sessionId: string, target: any): void {
+  try {
+    host.tmuxRuntimeManager.clearTargetHistory?.(target);
+  } catch (error) {
+    host.debug?.(
+      `tmux pane history reset failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      "tmux",
+    );
+  }
+}
+
 function listLiveServiceWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
   if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return [];
   const graveyardPaths = listWorktreeGraveyardPaths();
@@ -528,6 +539,7 @@ export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): Managed
     const target = host.sessionTmuxTargets.get(runtime.id);
     if (!target || target.windowId !== live.target.windowId) {
       host.sessionTmuxTargets.set(runtime.id, live.target);
+      clearAdoptedAgentPaneHistory(host, runtime.id, live.target);
       if (runtime.transport instanceof TmuxSessionTransport) {
         runtime.transport.retarget(live.target);
       }
@@ -551,6 +563,7 @@ export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): Managed
       rows,
     );
     host.sessionTmuxTargets.set(metadata.sessionId, target);
+    clearAdoptedAgentPaneHistory(host, metadata.sessionId, target);
     const saved = savedById.get(metadata.sessionId);
     const backendSessionId = metadata.backendSessionId ?? saved?.backendSessionId;
     if (backendSessionId) {

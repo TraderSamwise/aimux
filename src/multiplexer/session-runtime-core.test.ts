@@ -317,6 +317,7 @@ describe("session runtime prompt submission", () => {
     const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
     const resolved = { ...target, windowIndex: 2 };
     const host: any = {
+      sessions: [{ id: "claude-1", startTime: Date.now() }],
       sessionTmuxTargets: new Map([["claude-1", target]]),
       tmuxRuntimeManager: {
         getTargetByWindowId: vi.fn(() => resolved),
@@ -326,6 +327,22 @@ describe("session runtime prompt submission", () => {
 
     expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toEqual(resolved);
     expect(host.sessionTmuxTargets.get("claude-1")).toEqual(resolved);
+  });
+
+  it("rejects a metadata-less tmux target after startup grace", () => {
+    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
+    const host: any = {
+      sessions: [{ id: "claude-1", startTime: Date.now() - 60_000 }],
+      sessionTmuxTargets: new Map([["claude-1", target]]),
+      tmuxRuntimeManager: {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => null),
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+    };
+
+    expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toBeUndefined();
+    expect(host.sessionTmuxTargets.has("claude-1")).toBe(false);
   });
 
   it("rejects a cached tmux target when metadata belongs to another session", () => {
@@ -384,10 +401,7 @@ describe("session runtime prompt submission", () => {
     }
   });
 
-  it("captures the pane without revalidating the target on every poll", async () => {
-    // The output stream polls once a second per open session. Revalidating cost
-    // a list-windows and a show-window-options each time to confirm a window id
-    // that only changes when the window does.
+  it("revalidates target ownership before every output capture", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
@@ -419,14 +433,14 @@ describe("session runtime prompt submission", () => {
       expect(existsSync(livePath)).toBe(true);
       expect(readFileSync(livePath, "utf-8")).toContain("pane text");
       expect(tmuxRuntimeManager.captureTarget).toHaveBeenCalledTimes(3);
-      // The first poll rechecks ownership; the rest ride the cached target.
-      expect(tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledTimes(1);
+      expect(tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledTimes(3);
+      expect(tmuxRuntimeManager.getWindowMetadata).toHaveBeenCalledTimes(3);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
 
-  it("re-resolves the target when a capture against the cached one fails", async () => {
+  it("re-resolves the target before capture when the cached target moved", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
@@ -435,12 +449,7 @@ describe("session runtime prompt submission", () => {
       const tmuxRuntimeManager = {
         getTargetByWindowId: vi.fn(() => moved),
         getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-1" })),
-        captureTarget: vi.fn((captureTargetArg: any) => {
-          // A window that has gone away makes tmux exit non-zero, and that
-          // failure is the same evidence the removed revalidation was buying.
-          if (captureTargetArg.windowId === "@3") throw new Error("can't find window: @3");
-          return "pane text";
-        }),
+        captureTarget: vi.fn(() => "pane text"),
         listProjectManagedWindows: vi.fn(() => []),
         isWindowAlive: vi.fn(() => true),
       };
@@ -459,9 +468,7 @@ describe("session runtime prompt submission", () => {
       const result = await readAgentOutput(host, "claude-1");
 
       expect(result.output).toContain("pane text");
-      // The cached target must actually be attempted first — otherwise this
-      // passes just as well against the old always-resolve path.
-      expect(tmuxRuntimeManager.captureTarget.mock.calls[0]![0]).toEqual(stale);
+      expect(tmuxRuntimeManager.captureTarget.mock.calls[0]![0]).toEqual(moved);
       expect(tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalled();
       expect(host.sessionTmuxTargets.get("claude-1")).toEqual(moved);
     } finally {
@@ -532,7 +539,7 @@ describe("session runtime prompt submission", () => {
       };
       const transport = new TmuxSessionTransport("claude-1", "claude", target, tmuxRuntimeManager as any, 80, 24);
       const host: any = {
-        sessions: [{ id: "claude-1", command: "claude", transport, startTime: 1_700_000_000_000 }],
+        sessions: [{ id: "claude-1", command: "claude", transport, startTime: Date.now() }],
         sessionTmuxTargets: new Map([["claude-1", target]]),
         sessionOriginalArgs: new Map([["claude-1", []]]),
         sessionToolKeys: new Map([["claude-1", "claude"]]),
@@ -575,7 +582,7 @@ describe("session runtime prompt submission", () => {
       };
       const transport = new TmuxSessionTransport("claude-2", "claude", target, tmuxRuntimeManager as any, 80, 24);
       const host: any = {
-        sessions: [{ id: "claude-2", command: "claude", transport, startTime: 1_700_000_000_000 }],
+        sessions: [{ id: "claude-2", command: "claude", transport, startTime: Date.now() }],
         sessionTmuxTargets: new Map([["claude-2", target]]),
         sessionOriginalArgs: new Map([["claude-2", []]]),
         sessionToolKeys: new Map([["claude-2", "claude"]]),
@@ -597,6 +604,44 @@ describe("session runtime prompt submission", () => {
 
         expect(tmuxRuntimeManager.setWindowMetadata).toHaveBeenCalledTimes(2);
         expect(stored.label).toBe("after");
+      } finally {
+        transport.destroy();
+      }
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not stamp metadata onto a rejected metadata-less target", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-stale-metadata-"));
+    try {
+      await initPaths(repoRoot);
+      const target = { sessionName: "aimux-test", windowId: "@9", windowIndex: 9, windowName: "claude" };
+      const tmuxRuntimeManager = {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => null),
+        listProjectManagedWindows: vi.fn(() => []),
+        setWindowMetadata: vi.fn(),
+        applyManagedAgentWindowPolicy: vi.fn(),
+      };
+      const transport = new TmuxSessionTransport("claude-stale", "claude", target, tmuxRuntimeManager as any, 80, 24);
+      const host: any = {
+        sessions: [{ id: "claude-stale", command: "claude", transport, startTime: Date.now() - 60_000 }],
+        sessionTmuxTargets: new Map([["claude-stale", target]]),
+        sessionOriginalArgs: new Map([["claude-stale", []]]),
+        sessionToolKeys: new Map([["claude-stale", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-stale", repoRoot]]),
+        sessionLabels: new Map(),
+        sessionRoles: new Map(),
+        offlineSessions: [],
+        tmuxRuntimeManager,
+      };
+
+      try {
+        syncTmuxWindowMetadata(host, "claude-stale");
+
+        expect(tmuxRuntimeManager.setWindowMetadata).not.toHaveBeenCalled();
+        expect(tmuxRuntimeManager.applyManagedAgentWindowPolicy).not.toHaveBeenCalled();
       } finally {
         transport.destroy();
       }

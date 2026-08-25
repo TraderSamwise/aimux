@@ -1890,6 +1890,20 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("clears a target's tmux history", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+
+    manager.clearTargetHistory({
+      sessionName: "aimux-mobile-abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    });
+
+    expect(exec.calls.at(-1)?.args).toEqual(["clear-history", "-t", "@3"]);
+  });
+
   it("replaces a window only after a detached replacement reports ready", () => {
     const exec = vi.fn<TmuxExec>((args: string[]) => {
       const joined = args.join(" ");

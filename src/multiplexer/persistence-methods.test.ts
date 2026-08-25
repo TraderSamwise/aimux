@@ -170,6 +170,44 @@ describe("persistenceMethods", () => {
     expect(host.tmuxRuntimeManager.refreshStatus).toHaveBeenCalledOnce();
   });
 
+  it("clears pane history when repair rebinds a session to a new tmux target", () => {
+    const previous = { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" };
+    const next = { sessionName: "aimux-repo", windowId: "@2", windowIndex: 2, windowName: "codex" };
+    const retarget = vi.fn();
+    const host: any = {
+      projectRoot: "/repo",
+      sessions: [{ id: "codex-1", transport: { retarget } }],
+      sessionTmuxTargets: new Map([["codex-1", previous]]),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [{ target: next, metadata: { kind: "agent", sessionId: "codex-1" } }]),
+        clearTargetHistory: vi.fn(),
+      },
+    };
+
+    persistenceMethods.repairManagedTmuxTargets.call(host);
+
+    expect(host.sessionTmuxTargets.get("codex-1")).toEqual(next);
+    expect(retarget).toHaveBeenCalledWith(next);
+    expect(host.tmuxRuntimeManager.clearTargetHistory).toHaveBeenCalledWith(next);
+  });
+
+  it("does not clear pane history when repair keeps the same tmux target", () => {
+    const target = { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" };
+    const host: any = {
+      projectRoot: "/repo",
+      sessions: [{ id: "codex-1", transport: { retarget: vi.fn() } }],
+      sessionTmuxTargets: new Map([["codex-1", target]]),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [{ target, metadata: { kind: "agent", sessionId: "codex-1" } }]),
+        clearTargetHistory: vi.fn(),
+      },
+    };
+
+    persistenceMethods.repairManagedTmuxTargets.call(host);
+
+    expect(host.tmuxRuntimeManager.clearTargetHistory).not.toHaveBeenCalled();
+  });
+
   it("seeds desktop state when creating a worktree", () => {
     const child = new EventEmitter() as EventEmitter & {
       stderr: EventEmitter;
