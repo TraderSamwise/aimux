@@ -15,7 +15,7 @@ import { TranscriptReconciler } from "./transcript-reconciler.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo, withWorktreeMemo } from "../worktree.js";
 import { withTmuxQueryMemo } from "../tmux/query-memo.js";
-import { listThreadSummaries, readMessages } from "../threads.js";
+import { listThreadSummarySnapshot } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { isNotificationStale } from "../coordination-model.js";
@@ -825,7 +825,10 @@ export function computeDashboardSessions(
   // Notification records are exchange threads tagged `notification`; they are surfaced by the
   // per-session unread-notification count, so excluding them here keeps the dashboard's
   // thread chips from double-counting the same needs-input record.
-  const threadSummaries = listThreadSummaries().filter((summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG));
+  const threadSnapshot = listThreadSummarySnapshot();
+  const threadSummaries = threadSnapshot.summaries.filter(
+    (summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG),
+  );
   const threadStats = new Map<
     string,
     {
@@ -850,7 +853,7 @@ export function computeDashboardSessions(
     }
   >();
   for (const summary of threadSummaries) {
-    const messages = readMessages(summary.thread.id);
+    const messages = threadSnapshot.messagesByThreadId.get(summary.thread.id) ?? [];
     const pendingByParticipant = new Map<string, number>();
     for (const message of messages) {
       for (const recipient of message.to ?? []) {
@@ -1181,12 +1184,15 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
     mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
   }
   const sessionOptions = { ...options, managedWindows };
-  const sessions = recordPhase("computeDashboardSessions", () => computeDashboardSessions(host, sessionOptions));
-  const teammates = recordPhase("computeDashboardTeammates", () =>
-    computeDashboardSessions(host, { ...sessionOptions, includeTeammates: true }).filter((session) =>
-      isTeammateSession(session),
-    ),
+  const allSessions = recordPhase("computeDashboardSessions", () =>
+    computeDashboardSessions(host, { ...sessionOptions, includeTeammates: true }),
   );
+  const sessions = allSessions
+    .filter((session) => !isTeammateSession(session))
+    .map((session, index) => ({ ...session, index }));
+  const teammates = allSessions
+    .filter((session) => isTeammateSession(session))
+    .map((session, index) => ({ ...session, index }));
   const services = recordPhase("computeDashboardServices", () =>
     computeDashboardServices(host, worktrees, { ...options, managedWindows }),
   );

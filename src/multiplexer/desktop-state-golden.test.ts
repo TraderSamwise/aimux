@@ -279,9 +279,8 @@ describe("desktop-state golden snapshot", () => {
     expect((GOLDEN.runtimeLight as any).sessions[0].pid).toBeUndefined();
   });
 
-  // Pins the cost model the performance work targets. Reads are asserted exactly: they
-  // must NOT drop, because a change there would mean the call graph moved rather than
-  // the work getting cheaper. Parses are the thing being driven down.
+  // Pins the cost model the performance work targets. Reads are asserted exactly so a
+  // snapshot build cannot accidentally reintroduce redundant whole-store reads.
   it("pins how much redundant work one snapshot build performs", () => {
     resetExchangeStoreStats();
     resetTopologyStoreStats();

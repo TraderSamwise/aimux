@@ -1181,8 +1181,8 @@
     "mainCheckoutPath": "<REPO>"
   },
   "costModel": {
-    "exchangeReads": 138,
-    "topologyReads": 7,
+    "exchangeReads": 21,
+    "topologyReads": 4,
     "topologyParses": 1,
     "gitCalls": 2
   }

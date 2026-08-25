@@ -18,6 +18,11 @@ export interface ThreadSummary {
   latestMessage?: OrchestrationMessage;
 }
 
+export interface ThreadSummarySnapshot {
+  summaries: ThreadSummary[];
+  messagesByThreadId: Map<string, OrchestrationMessage[]>;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -246,12 +251,29 @@ export function listThreadsForParticipant(participantId: string): OrchestrationT
 }
 
 export function listThreadSummaries(participantId?: string): ThreadSummary[] {
-  const threads = participantId ? listThreadsForParticipant(participantId) : listThreads();
-  return threads.map((thread) => {
-    const messages = readMessages(thread.id);
+  return listThreadSummarySnapshot(participantId).summaries;
+}
+
+export function listThreadSummarySnapshot(participantId?: string): ThreadSummarySnapshot {
+  const exchange = createRuntimeExchangeStore().read();
+  const threads = [...exchange.threads]
+    .filter((thread) => !participantId || thread.participants.includes(participantId))
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+  const messagesByThreadId = new Map<string, OrchestrationMessage[]>();
+  for (const message of exchange.messages) {
+    const messages = messagesByThreadId.get(message.threadId) ?? [];
+    messages.push(message);
+    messagesByThreadId.set(message.threadId, messages);
+  }
+  for (const messages of messagesByThreadId.values()) {
+    messages.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  }
+  const summaries = threads.map((thread) => {
+    const messages = messagesByThreadId.get(thread.id) ?? [];
     return {
       thread,
       latestMessage: messages[messages.length - 1],
     };
   });
+  return { summaries, messagesByThreadId };
 }
