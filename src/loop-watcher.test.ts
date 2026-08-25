@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { findLoopCandidates, LoopWatcher, type LoopWatcherDeps, type LoopWatcherSession } from "./loop-watcher.js";
+import {
+  buildOverseerBriefing,
+  findLoopCandidates,
+  LoopWatcher,
+  type LoopWatcherDeps,
+  type LoopWatcherSession,
+} from "./loop-watcher.js";
 import type { MetadataState, SessionMetadata } from "./metadata-store.js";
 import type { LoopConfig } from "./config.js";
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
@@ -116,6 +122,47 @@ function watcherDeps(overrides: Partial<LoopWatcherDeps> = {}) {
 }
 
 describe("LoopWatcher.scan", () => {
+  it("builds the default overseer briefing without the human-decision warning", () => {
+    const briefing = buildOverseerBriefing([
+      {
+        id: "a",
+        tool: "claude",
+        worktreePath: "/wt/a",
+        loopSince: "2026-06-13T00:00:00.000Z",
+        loopSource: "dashboard",
+        loopUpdatedBy: "dashboard",
+      },
+    ]);
+
+    expect(briefing).toContain("[aimux loop check]");
+    expect(briefing).toContain("- a (claude) @ /wt/a");
+    expect(briefing).not.toContain("Never push an agent that is waiting on a human decision.");
+  });
+
+  it("renders a custom overseer briefing template", () => {
+    const briefing = buildOverseerBriefing(
+      [
+        {
+          id: "a",
+          tool: "claude",
+          worktreePath: "/wt/a",
+          loopSince: "2026-06-13T00:00:00.000Z",
+          loopSource: "dashboard",
+          loopUpdatedBy: "dashboard",
+        },
+      ],
+      "Loop check: {{count}}\n{{candidates}}\nUse my project-specific policy.",
+    );
+
+    expect(briefing).toBe(
+      [
+        "Loop check: 1",
+        "- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard",
+        "Use my project-specific policy.",
+      ].join("\n"),
+    );
+  });
+
   it("wakes the overseer with a briefing when one is running, respecting cooldown", async () => {
     const overseerSessions: LoopWatcherSession[] = [...sessions, { id: "boss", status: "running" }];
     const { deps, sendAgentInput, advance } = watcherDeps({
@@ -131,6 +178,7 @@ describe("LoopWatcher.scan", () => {
     expect(sendAgentInput.mock.calls[0][1]).toContain("- a");
     expect(sendAgentInput.mock.calls[0][1]).toContain("loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard");
     expect(sendAgentInput.mock.calls[0][1]).toContain("Current loop membership is authoritative");
+    expect(sendAgentInput.mock.calls[0][1]).not.toContain("Never push an agent that is waiting on a human decision.");
 
     await watcher.scan(); // within cooldown
     expect(sendAgentInput).toHaveBeenCalledTimes(1);
@@ -138,6 +186,25 @@ describe("LoopWatcher.scan", () => {
     advance(config.nudgeCooldownMs + 1);
     await watcher.scan();
     expect(sendAgentInput).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the configured overseer briefing template", async () => {
+    const overseerSessions: LoopWatcherSession[] = [...sessions, { id: "boss", status: "running" }];
+    const { deps, sendAgentInput } = watcherDeps({
+      config: {
+        ...config,
+        overseerBriefingTemplate: "Custom loop copy for {{count}}:\n{{candidates}}",
+      },
+      loadSessions: () => overseerSessions,
+      loadMetadata: () => state({ a: derived("idle"), boss: meta({ overseer: true }) }),
+    });
+
+    await new LoopWatcher(deps).scan();
+
+    expect(sendAgentInput).toHaveBeenCalledTimes(1);
+    expect(sendAgentInput.mock.calls[0][1]).toContain("Custom loop copy for 1:");
+    expect(sendAgentInput.mock.calls[0][1]).toContain("- a (claude) @ /wt/a");
+    expect(sendAgentInput.mock.calls[0][1]).not.toContain("[aimux loop check]");
   });
 
   it("does nothing without an overseer when autoNudge is off", async () => {

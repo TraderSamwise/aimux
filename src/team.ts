@@ -186,7 +186,7 @@ export function buildOverseerPreamble(): string {
     "decide whether it gave back its turn prematurely. If it should keep going, send a",
     'specific next instruction with `aimux input <id> "…"`. If it has genuinely completed',
     "its goal or is blocked beyond repair, run `aimux loop remove <id>` and report to the",
-    "human. Never push an agent that is waiting on a human decision (needs input / blocked).",
+    "human.",
     "Agents can also self-exit a loop with `aimux loop done` / `aimux loop block`; when they",
     "do, they drop off your loop checks on their own.",
     "",

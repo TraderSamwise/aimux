@@ -297,6 +297,41 @@ describe("config", () => {
     });
   });
 
+  it("allows project loop copy config to override global loop copy config", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      getGlobalConfigPath(),
+      JSON.stringify(
+        {
+          loop: {
+            overseerBriefingTemplate: "global {{count}}\n{{candidates}}",
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          loop: {
+            overseerBriefingTemplate: "project {{count}}\n{{candidates}}",
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    expect(loadConfig().loop).toMatchObject({
+      scanIntervalMs: 15000,
+      nudgeCooldownMs: 60000,
+      autoNudgeWithoutOverseer: false,
+      overseerBriefingTemplate: "project {{count}}\n{{candidates}}",
+    });
+  });
+
   it("allows project graveyard config to override global graveyard config", () => {
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(

@@ -68,6 +68,8 @@ export interface LoopConfig {
   nudgeCooldownMs: number;
   /** When no overseer exists, send a canned continue-nudge directly. */
   autoNudgeWithoutOverseer: boolean;
+  /** Optional overseer briefing template. Supports {{count}} and {{candidates}}. */
+  overseerBriefingTemplate?: string;
 }
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
@@ -283,6 +285,15 @@ function stringArrayEquals(a: string[] | undefined, b: string[]): boolean {
 }
 
 function normalizeConfig(config: AimuxConfig): AimuxConfig {
+  if (!config.loop || typeof config.loop !== "object") {
+    config.loop = cloneJson(DEFAULT_CONFIG.loop);
+  } else if (
+    config.loop.overseerBriefingTemplate !== undefined &&
+    typeof config.loop.overseerBriefingTemplate !== "string"
+  ) {
+    delete config.loop.overseerBriefingTemplate;
+  }
+
   if (!config.expose || typeof config.expose !== "object") {
     config.expose = cloneJson(DEFAULT_CONFIG.expose);
   } else if (!["worktree", "project", "global"].includes(config.expose.initialScope)) {

@@ -81,7 +81,17 @@ function describeCandidate(candidate: LoopCandidate): string {
   return `- ${candidate.id}${tool}${where}${provenance}${lastAction}${goal}`;
 }
 
-export function buildOverseerBriefing(candidates: LoopCandidate[]): string {
+function renderOverseerBriefingTemplate(template: string, candidates: LoopCandidate[]): string {
+  const candidateList = candidates.map(describeCandidate).join("\n");
+  return template
+    .replace(/\{\{\s*count\s*\}\}/g, String(candidates.length))
+    .replace(/\{\{\s*candidates\s*\}\}/g, candidateList);
+}
+
+export function buildOverseerBriefing(candidates: LoopCandidate[], template?: string): string {
+  const trimmedTemplate = template?.trim();
+  if (trimmedTemplate) return renderOverseerBriefingTemplate(trimmedTemplate, candidates);
+
   return [
     "[aimux loop check] These agents are in a managed loop but appear to have stopped:",
     ...candidates.map(describeCandidate),
@@ -90,7 +100,6 @@ export function buildOverseerBriefing(candidates: LoopCandidate[]): string {
     "For each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.",
     'If it should keep going, send a specific next instruction with `aimux input <id> "…"`.',
     "If it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back.",
-    "Never push an agent that is waiting on a human decision.",
   ].join("\n");
 }
 
@@ -161,7 +170,9 @@ export class LoopWatcher {
         if (now - this.lastOverseerWakeAt < cooldown) return;
         // Only start the cooldown once the briefing actually lands; a failed
         // send must not silence the overseer for a whole cooldown window.
-        if (await this.deliver(overseerId, buildOverseerBriefing(candidates))) {
+        if (
+          await this.deliver(overseerId, buildOverseerBriefing(candidates, this.deps.config.overseerBriefingTemplate))
+        ) {
           this.lastOverseerWakeAt = now;
         }
         return;
