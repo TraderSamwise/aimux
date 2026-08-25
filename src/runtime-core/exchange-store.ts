@@ -9,7 +9,7 @@ export const RUNTIME_EXCHANGE_VERSION = 1;
 const UPDATE_LOCK_TIMEOUT_MS = 5_000;
 const UPDATE_LOCK_RETRY_MS = 25;
 const UPDATE_LOCK_STALE_MS = UPDATE_LOCK_TIMEOUT_MS - 1_000;
-const SLOW_EXCHANGE_READ_MS = 250;
+const SLOW_EXCHANGE_READ_MS = 25;
 
 export type RuntimeExchangeThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
 export type RuntimeExchangeThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
@@ -590,7 +590,7 @@ export function resetExchangeStoreStats(): void {
 }
 
 function recordSlowExchangeRead(fields: Record<string, unknown>): void {
-  log.warn("slow runtime exchange read", "runtime-exchange", fields);
+  log.warn("slow runtime exchange read", "api", fields);
 }
 
 export class RuntimeExchangeStore {
