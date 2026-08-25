@@ -2,7 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RuntimeExchangeStore, emptyRuntimeExchange } from "./exchange-store.js";
+import {
+  RuntimeExchangeStore,
+  emptyRuntimeExchange,
+  getExchangeStoreStats,
+  resetExchangeStoreStats,
+} from "./exchange-store.js";
 
 describe("RuntimeExchangeStore", () => {
   it("round-trips the runtime exchange YAML", () => {
@@ -150,10 +155,9 @@ describe("RuntimeExchangeStore", () => {
     }
   });
 
-  // The read cache stores the raw parse and re-coerces per read, which is only safe
-  // while coerceRuntimeExchange rebuilds every nested value. If someone later adds a
-  // passthrough field, a caller mutating it would poison every later read process-wide.
-  // This is the test that turns that invariant from "true today" into "stays true".
+  // The read cache stores a normalized exchange and clones it per read. If a later
+  // optimization returns shared cached state, a caller mutating it would poison every
+  // later read process-wide. This is the test that keeps the invariant explicit.
   it("never lets a caller's mutation leak into a later read", () => {
     const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
     try {
@@ -268,6 +272,48 @@ describe("RuntimeExchangeStore", () => {
       });
 
       expect(store.read()).toEqual(pristine);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses the normalized exchange graph across unchanged reads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const store = new RuntimeExchangeStore(path);
+      const now = "2026-05-25T00:00:00.000Z";
+      store.write({
+        ...emptyRuntimeExchange(now),
+        threads: Array.from({ length: 100 }, (_, index) => ({
+          id: `thread-${index}`,
+          title: `Thread ${index}`,
+          kind: "task",
+          status: "open",
+          createdAt: now,
+          updatedAt: now,
+          createdBy: "user",
+          participants: ["user", "codex-1"],
+          waitingOn: ["codex-1"],
+          unreadBy: ["codex-1"],
+        })),
+        messages: Array.from({ length: 100 }, (_, index) => ({
+          id: `msg-${index}`,
+          threadId: `thread-${index}`,
+          ts: now,
+          from: "user",
+          to: ["codex-1"],
+          kind: "request",
+          body: `message ${index}`,
+          metadata: { index },
+        })),
+      });
+
+      resetExchangeStoreStats();
+      expect(store.read().threads).toHaveLength(100);
+      expect(store.read().messages).toHaveLength(100);
+
+      expect(getExchangeStoreStats()).toEqual({ reads: 2, parses: 1 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

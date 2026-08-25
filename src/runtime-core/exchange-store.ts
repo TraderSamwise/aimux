@@ -557,13 +557,18 @@ function isProcessAlive(pid: number): boolean {
  *
  * Keyed on content, not on `(ino, mtime, size)`: inodes are recycled after the rename
  * in `atomicWrite`, Linux mtimes are only tick-granular, and timestamp-only writes are
- * byte-length identical — so a stat key can collide. `read()` feeds `update()`'s
+ * byte-length identical, so a stat key can collide. `read()` feeds `update()`'s
  * read-modify-write, so a stale hit would silently clobber another process's records
- * rather than merely show stale data. Reading the file is ~1% of a parse, so comparing
- * contents buys that correctness for almost nothing.
+ * rather than merely show stale data. Reading the file is much cheaper than parsing it,
+ * so comparing contents buys that correctness for almost nothing.
+ *
+ * Cache the normalized graph too. The dashboard may hit the same exchange file dozens
+ * of times per refresh; re-coercing a large exchange can starve the project-service
+ * event loop just like reparsing did. Hits return a clone so callers still get a
+ * mutation-safe graph.
  */
 const RAW_CACHE_MAX = 32;
-const rawCache = new Map<string, { text: string; raw: unknown }>();
+const rawCache = new Map<string, { text: string; normalized: RuntimeExchange }>();
 
 // Errnos for which the `existsSync` guard this replaced returned false, so they must
 // keep degrading to an empty exchange instead of failing the whole read.
@@ -605,21 +610,20 @@ export class RuntimeExchangeStore {
     if (cached && cached.text === text) {
       rawCache.delete(this.path);
       rawCache.set(this.path, cached);
-      // Re-coerce rather than hand back a shared object: every field is rebuilt, so
-      // each caller gets its own graph and can mutate it without touching the cache.
-      return coerceRuntimeExchange(cached.raw);
+      return structuredClone(cached.normalized);
     }
     parseCount += 1;
     const raw = parse(text);
+    const normalized = coerceRuntimeExchange(raw);
     // Delete before set so re-inserting an existing path moves it to the tail; without
     // it, a path whose contents change often would drift toward eviction while hottest.
     rawCache.delete(this.path);
-    rawCache.set(this.path, { text, raw });
+    rawCache.set(this.path, { text, normalized });
     if (rawCache.size > RAW_CACHE_MAX) {
       const oldest = rawCache.keys().next().value;
       if (oldest !== undefined) rawCache.delete(oldest);
     }
-    return coerceRuntimeExchange(raw);
+    return structuredClone(normalized);
   }
 
   // Deliberately does not seed the cache: `normalized` is handed back to the caller, so
