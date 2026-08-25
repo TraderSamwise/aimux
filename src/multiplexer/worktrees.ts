@@ -5,6 +5,7 @@ import { debug } from "../debug.js";
 import { commandKey, parseKeys, printableInputText } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
+  buildWorktreeCacheCleanupConfirmOverlayOutput,
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
   hints,
@@ -15,6 +16,7 @@ import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 import { isRecoverableTuiApiError } from "./tui-api-runtime.js";
 import type { WorktreeGroup } from "../dashboard/index.js";
+import { formatWorktreeCacheBytes, type WorktreeCacheCleanupRunResult } from "../worktree-cache-cleanup.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -640,6 +642,95 @@ export function renderWorktreeRemoveConfirm(host: WorktreeHost): void {
   if (output) process.stdout.write(output);
 }
 
+function cleanupResultFromResponse(response: any): WorktreeCacheCleanupRunResult {
+  const result = response?.result ?? response;
+  if (!result || typeof result !== "object" || !result.plan || typeof result.plan !== "object") {
+    throw new Error("project service returned invalid worktree cache cleanup response");
+  }
+  return result as WorktreeCacheCleanupRunResult;
+}
+
+export function renderWorktreeCacheCleanupConfirm(host: WorktreeHost): void {
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  const { cols, rows } = host.getViewportSize();
+  const output = buildWorktreeCacheCleanupConfirmOverlayOutput(host, cols, rows);
+  if (output) process.stdout.write(output);
+}
+
+export function showWorktreeCacheCleanupPreview(host: WorktreeHost): void {
+  if (host.mode !== "dashboard") {
+    host.showDashboardError("Failed to inspect worktree caches", [
+      "Worktree cache cleanup requires the project service.",
+    ]);
+    return;
+  }
+  if (host.dashboardBusyState) return;
+  host.worktreeCacheCleanupConfirm = null;
+  host.clearDashboardOverlay();
+  host.startDashboardBusy("Worktree Cache Cleanup", ["  Scanning inactive generated worktree caches"]);
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  void postWorktreeMutation(
+    host,
+    PROJECT_API_ROUTES.worktreeActions.cacheCleanup,
+    { dryRun: true, includeActive: false },
+    { timeoutMs: 180_000 },
+  )
+    .then((response) => {
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.clearDashboardBusy();
+      host.worktreeCacheCleanupConfirm = cleanupResultFromResponse(response);
+      host.openDashboardOverlay("worktree-cache-cleanup-confirm");
+      renderWorktreeCacheCleanupConfirm(host);
+    })
+    .catch((error: unknown) => {
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.clearDashboardBusy();
+      host.showDashboardError("Failed to inspect worktree caches", [
+        error instanceof Error ? error.message : String(error),
+      ]);
+    });
+}
+
+function applyWorktreeCacheCleanup(host: WorktreeHost, preview: WorktreeCacheCleanupRunResult): void {
+  host.worktreeCacheCleanupConfirm = null;
+  host.clearDashboardOverlay();
+  host.startDashboardBusy("Worktree Cache Cleanup", ["  Removing inactive generated worktree caches"]);
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  void postWorktreeMutation(
+    host,
+    PROJECT_API_ROUTES.worktreeActions.cacheCleanup,
+    { dryRun: false, includeActive: false },
+    { timeoutMs: 180_000 },
+  )
+    .then((response) => {
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.clearDashboardBusy();
+      const result = cleanupResultFromResponse(response);
+      const failed = result.results.filter((entry) => entry.status === "failed").length;
+      host.footerFlash = `Removed ${formatWorktreeCacheBytes(result.reclaimedBytes)} from ${result.plan.targets.length} cache item(s)`;
+      host.footerFlashTicks = failed > 0 ? 6 : 4;
+      if (failed > 0) {
+        host.showDashboardError("Worktree cache cleanup finished with failures", [
+          `Removed: ${formatWorktreeCacheBytes(result.reclaimedBytes)}`,
+          `Failed: ${failed}`,
+        ]);
+        return;
+      }
+      host.renderDashboard();
+    })
+    .catch((error: unknown) => {
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.clearDashboardBusy();
+      host.showDashboardError("Failed to remove worktree caches", [
+        `Planned: ${formatWorktreeCacheBytes(preview.plan.reclaimableBytes)}`,
+        error instanceof Error ? error.message : String(error),
+      ]);
+    });
+}
+
 export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: string, oldIdx: number): void {
   if (host.worktreeRemovalJob?.path === path) return;
   if (host.worktreeRemovalJob && host.worktreeRemovalJob.path !== path) {
@@ -775,6 +866,36 @@ export function handleWorktreeRemoveConfirmKey(host: WorktreeHost, data: Buffer)
 
   if (key === "n" || key === "escape") {
     host.worktreeRemoveConfirm = null;
+    host.clearDashboardOverlay();
+    host.restoreDashboardAfterOverlayDismiss();
+  }
+}
+
+export function handleWorktreeCacheCleanupConfirmKey(host: WorktreeHost, data: Buffer): void {
+  const events = parseKeys(data);
+  if (events.length === 0) return;
+  const key = commandKey(events[0]);
+  const preview = host.worktreeCacheCleanupConfirm as WorktreeCacheCleanupRunResult | null;
+  if (!preview) {
+    host.clearDashboardOverlay();
+    host.restoreDashboardAfterOverlayDismiss();
+    return;
+  }
+
+  if (preview.plan.targets.length === 0 && (key === "enter" || key === "return" || key === "escape")) {
+    host.worktreeCacheCleanupConfirm = null;
+    host.clearDashboardOverlay();
+    host.restoreDashboardAfterOverlayDismiss();
+    return;
+  }
+
+  if (preview.plan.targets.length > 0 && (key === "y" || key === "enter" || key === "return")) {
+    applyWorktreeCacheCleanup(host, preview);
+    return;
+  }
+
+  if (key === "n" || key === "escape") {
+    host.worktreeCacheCleanupConfirm = null;
     host.clearDashboardOverlay();
     host.restoreDashboardAfterOverlayDismiss();
   }

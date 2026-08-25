@@ -179,6 +179,7 @@ export class Multiplexer {
   private orchestrationInputMode: "message" | "handoff" | "task" | null = null;
   private orchestrationRouteMode: "message" | "handoff" | "task" | null = null;
   private orchestrationRouteOptions: DashboardOrchestrationTarget[] = [];
+  private worktreeCacheCleanupConfirm: any | null = null;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
   private worktreeCreateJob: WorktreeCreateJob | null = null;

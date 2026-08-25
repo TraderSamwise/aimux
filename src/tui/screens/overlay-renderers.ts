@@ -1,4 +1,9 @@
 import { runtimeGuardOverlayCopy } from "../../multiplexer/runtime-guard.js";
+import {
+  formatWorktreeCacheBytes,
+  renderWorktreeCacheCleanupRunResult,
+  type WorktreeCacheCleanupRunResult,
+} from "../../worktree-cache-cleanup.js";
 import { renderOverlayBox } from "../render/box.js";
 import { keycap, keycapHint, style } from "../render/theme.js";
 
@@ -98,6 +103,45 @@ export function renderWorktreeRemoveConfirmOverlay(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const output = buildWorktreeRemoveConfirmOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
+}
+
+export function buildWorktreeCacheCleanupConfirmOverlayOutput(ctx: any, cols: number, rows: number): string | null {
+  const result = ctx.worktreeCacheCleanupConfirm as WorktreeCacheCleanupRunResult | null | undefined;
+  if (!result) return null;
+  const targetCount = result.plan.targets.length;
+  const summary = renderWorktreeCacheCleanupRunResult(result, { maxWorktrees: 6, maxTargets: 8 }).map(
+    (line) => `  ${style(line, "muted")}`,
+  );
+  const body =
+    targetCount === 0
+      ? [
+          `  ${style("No inactive generated worktree caches found.", "muted")}`,
+          "",
+          hints([
+            ["Enter", "dismiss"],
+            ["Esc", "back"],
+          ]),
+        ]
+      : [
+          ...summary,
+          "",
+          `  ${style(
+            `This removes ${formatWorktreeCacheBytes(result.plan.reclaimableBytes)} from inactive worktrees.`,
+            "muted",
+          )}`,
+          "",
+          hints([
+            ["Enter/y", "remove"],
+            ["n/Esc", "cancel"],
+          ]),
+        ];
+  return renderOverlayBox({
+    title: "Worktree Cache Cleanup",
+    body,
+    cols,
+    rows,
+    variant: targetCount > 0 ? "red" : undefined,
+  });
 }
 
 function restoreConfirmAction(ctx: any): "restore" | "cancel" {

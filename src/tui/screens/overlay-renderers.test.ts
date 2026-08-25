@@ -4,6 +4,7 @@ import {
   buildAgentRestoreConfirmOverlayOutput,
   buildHelpOverlayOutput,
   buildOverseerOverlayOutput,
+  buildWorktreeCacheCleanupConfirmOverlayOutput,
   buildWorktreeListOverlayOutput,
 } from "./overlay-renderers.js";
 
@@ -29,6 +30,73 @@ describe("buildWorktreeListOverlayOutput", () => {
     expect(output).toContain("Main Checkout");
     expect(output).toContain("feature");
     expect(ctx.listAllWorktrees).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildWorktreeCacheCleanupConfirmOverlayOutput", () => {
+  it("renders a dismiss-only state when there are no cleanup targets", () => {
+    const output = plain(
+      buildWorktreeCacheCleanupConfirmOverlayOutput(
+        {
+          worktreeCacheCleanupConfirm: {
+            dryRun: true,
+            reclaimedBytes: 0,
+            plan: {
+              reclaimableBytes: 0,
+              targets: [],
+              skipped: [],
+            },
+            results: [],
+          },
+        },
+        100,
+        30,
+      ) ?? "",
+    );
+
+    expect(output).toContain("WORKTREE CACHE CLEANUP");
+    expect(output).toContain("No inactive generated worktree caches found.");
+    expect(output).toContain("Enter  dismiss");
+    expect(output).not.toContain("remove");
+  });
+
+  it("renders a removal confirmation for inactive generated caches", () => {
+    const output = plain(
+      buildWorktreeCacheCleanupConfirmOverlayOutput(
+        {
+          worktreeCacheCleanupConfirm: {
+            dryRun: true,
+            reclaimedBytes: 0,
+            plan: {
+              reclaimableBytes: 2048,
+              targets: [
+                {
+                  worktreePath: "/repo/.aimux/worktrees/old",
+                  relativePath: "node_modules",
+                  path: "/repo/.aimux/worktrees/old/node_modules",
+                  sizeBytes: 2048,
+                },
+              ],
+              skipped: [{ worktreePath: "/repo/.aimux/worktrees/live", reason: "active-runtime" }],
+            },
+            results: [
+              {
+                path: "/repo/.aimux/worktrees/old/node_modules",
+                status: "dry-run",
+                sizeBytes: 2048,
+              },
+            ],
+          },
+        },
+        120,
+        40,
+      ) ?? "",
+    );
+
+    expect(output).toContain("Worktree cache cleanup would remove 1 item(s), 2.0KB; 0 failed.");
+    expect(output).toContain("This removes 2.0KB from inactive worktrees.");
+    expect(output).toContain("Enter/y  remove");
+    expect(output).toContain("n/Esc  cancel");
   });
 });
 

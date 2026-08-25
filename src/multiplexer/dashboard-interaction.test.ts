@@ -76,6 +76,24 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("opens worktree cache cleanup from Shift+D on the dashboard", () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardState: {
+        quickJumpDigits: "",
+        hasWorktrees: () => true,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      clearDashboardQuickJump: vi.fn(),
+      showWorktreeCacheCleanupPreview: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("D"));
+
+    expect(host.showWorktreeCacheCleanupPreview).toHaveBeenCalledOnce();
+  });
+
   it("requests reviews through the project service", async () => {
     const host: any = {
       activeSession: { id: "codex-1", command: "codex" },

@@ -21,8 +21,10 @@ vi.mock("../worktree.js", () => ({
 
 import {
   beginWorktreeRemoval,
+  handleWorktreeCacheCleanupConfirmKey,
   handleWorktreeInputKey,
   handleWorktreeRemoveConfirmKey,
+  showWorktreeCacheCleanupPreview,
   worktreeSettlePollDelay,
 } from "./worktrees.js";
 
@@ -1266,5 +1268,103 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
     expect(host.restoreDashboardAfterOverlayDismiss).not.toHaveBeenCalled();
     expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
+  });
+
+  it("previews worktree cache cleanup through a safe dry-run", async () => {
+    const postToProjectService = vi.fn(async () => ({
+      ok: true,
+      result: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: {
+          reclaimableBytes: 1024,
+          targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 1024 }],
+          skipped: [],
+        },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "dry-run", sizeBytes: 1024 }],
+      },
+    }));
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardBusyState: null,
+      worktreeCacheCleanupConfirm: null,
+      postToProjectService,
+      clearDashboardOverlay: vi.fn(),
+      startDashboardBusy: vi.fn((title: string, lines: string[]) => {
+        host.dashboardBusyState = { title, lines };
+      }),
+      clearDashboardBusy: vi.fn(() => {
+        host.dashboardBusyState = null;
+      }),
+      openDashboardOverlay: vi.fn(),
+      redrawDashboardWithOverlay: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    showWorktreeCacheCleanupPreview(host);
+
+    await vi.waitFor(() => expect(host.openDashboardOverlay).toHaveBeenCalledWith("worktree-cache-cleanup-confirm"));
+    expect(postToProjectService).toHaveBeenCalledWith(
+      "/worktrees/cache-cleanup",
+      { dryRun: true, includeActive: false },
+      { timeoutMs: 180_000 },
+    );
+    expect(host.worktreeCacheCleanupConfirm.plan.reclaimableBytes).toBe(1024);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("applies confirmed worktree cache cleanup without active worktrees", async () => {
+    const postToProjectService = vi.fn(async () => ({
+      ok: true,
+      result: {
+        dryRun: false,
+        reclaimedBytes: 2048,
+        plan: {
+          reclaimableBytes: 2048,
+          targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 2048 }],
+          skipped: [],
+        },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "removed", sizeBytes: 2048 }],
+      },
+    }));
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeCacheCleanupConfirm: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: {
+          reclaimableBytes: 2048,
+          targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 2048 }],
+          skipped: [],
+        },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "dry-run", sizeBytes: 2048 }],
+      },
+      postToProjectService,
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      startDashboardBusy: vi.fn((title: string, lines: string[]) => {
+        host.dashboardBusyState = { title, lines };
+      }),
+      clearDashboardBusy: vi.fn(() => {
+        host.dashboardBusyState = null;
+      }),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    handleWorktreeCacheCleanupConfirmKey(host, Buffer.from("\r"));
+
+    await vi.waitFor(() => expect(host.renderDashboard).toHaveBeenCalledOnce());
+    expect(postToProjectService).toHaveBeenCalledWith(
+      "/worktrees/cache-cleanup",
+      { dryRun: false, includeActive: false },
+      { timeoutMs: 180_000 },
+    );
+    expect(host.footerFlash).toBe("Removed 2.0KB from 1 cache item(s)");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 });

@@ -687,6 +687,10 @@ export const dashboardInteractionMethods = {
       this.showWorktreeList();
       return;
     }
+    if (isShiftedCommand(event, key, "d")) {
+      this.showWorktreeCacheCleanupPreview();
+      return;
+    }
     if (isShiftedCommand(event, key, "o")) {
       this.showOverseerOverlay();
       return;

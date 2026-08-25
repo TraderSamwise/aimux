@@ -1,12 +1,14 @@
 import {
   beginWorktreeRemoval as beginWorktreeRemovalImpl,
   finishWorktreeRemoval as finishWorktreeRemovalImpl,
+  handleWorktreeCacheCleanupConfirmKey as handleWorktreeCacheCleanupConfirmKeyImpl,
   handleWorktreeInputKey as handleWorktreeInputKeyImpl,
   handleWorktreeRemoveConfirmKey as handleWorktreeRemoveConfirmKeyImpl,
   handleWorktreeListKey as handleWorktreeListKeyImpl,
   renderWorktreeInput as renderWorktreeInputImpl,
   renderWorktreeList as renderWorktreeListImpl,
   renderWorktreeRemoveConfirm as renderWorktreeRemoveConfirmImpl,
+  showWorktreeCacheCleanupPreview as showWorktreeCacheCleanupPreviewImpl,
   showWorktreeCreatePrompt as showWorktreeCreatePromptImpl,
   showWorktreeList as showWorktreeListImpl,
 } from "./worktrees.js";
@@ -268,6 +270,10 @@ export const dashboardViewMethods = {
     renderWorktreeRemoveConfirmImpl(this);
   },
 
+  showWorktreeCacheCleanupPreview(this: any): void {
+    showWorktreeCacheCleanupPreviewImpl(this);
+  },
+
   renderDashboardBusyOverlay(this: any): void {
     this.redrawDashboardWithOverlay();
   },
@@ -307,6 +313,10 @@ export const dashboardViewMethods = {
 
   handleWorktreeRemoveConfirmKey(this: any, data: Buffer): void {
     handleWorktreeRemoveConfirmKeyImpl(this, data);
+  },
+
+  handleWorktreeCacheCleanupConfirmKey(this: any, data: Buffer): void {
+    handleWorktreeCacheCleanupConfirmKeyImpl(this, data);
   },
 
   handleWorktreeListKey(this: any, data: Buffer): void {

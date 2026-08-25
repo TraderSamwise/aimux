@@ -32,6 +32,7 @@ import {
   buildDashboardErrorOverlayOutput,
   buildDashboardRuntimeGuardOverlayOutput,
   buildAgentRestoreConfirmOverlayOutput,
+  buildWorktreeCacheCleanupConfirmOverlayOutput,
   buildLabelInputOverlayOutput,
   buildMigratePickerOverlayOutput,
   buildOverseerOverlayOutput,
@@ -829,6 +830,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "worktree-remove-confirm":
       host.handleWorktreeRemoveConfirmKey(data);
       return true;
+    case "worktree-cache-cleanup-confirm":
+      host.handleWorktreeCacheCleanupConfirmKey(data);
+      return true;
     case "worktree-input":
       host.handleWorktreeInputKey(data);
       return true;
@@ -948,6 +952,9 @@ export function buildActiveDashboardOverlayOutput(
   const { cols, rows } = viewport ?? host.getViewportSize();
   if (host.dashboardOverlayState.kind === "worktree-remove-confirm") {
     return buildWorktreeRemoveConfirmOverlayOutput(host, cols, rows);
+  }
+  if (host.dashboardOverlayState.kind === "worktree-cache-cleanup-confirm") {
+    return buildWorktreeCacheCleanupConfirmOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "agent-restore-confirm") {
     return buildAgentRestoreConfirmOverlayOutput(host, cols, rows);

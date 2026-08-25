@@ -92,11 +92,11 @@ describe("buildDashboardFooterHints", () => {
   it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
-      new Set(["u", "Tab", "n", "v", "f", "a", "s", "H", "T", "o", "O", "R", "?", "q"]),
+      new Set(["u", "Tab", "n", "v", "f", "D", "a", "s", "H", "T", "o", "O", "R", "?", "q"]),
     );
     // worktree level
     expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
-      new Set(["↑↓/jk", "1-9", "Enter/→/l", "u", "Tab", "n", "v", "f", "w", "a", "?", "q"]),
+      new Set(["↑↓/jk", "1-9", "Enter/→/l", "u", "Tab", "n", "v", "f", "D", "w", "a", "?", "q"]),
     );
     // session level with worktrees + a selected session + a teammate
     expect(
@@ -119,6 +119,7 @@ describe("buildDashboardFooterHints", () => {
         "n",
         "v",
         "f",
+        "D",
         "a",
         "s",
         "S",
@@ -145,6 +146,7 @@ describe("buildDashboardFooterHints", () => {
         "n",
         "v",
         "f",
+        "D",
         "w",
         "a",
         "s",
@@ -780,7 +782,7 @@ describe("renderDashboardFrame worktree progress", () => {
 
     expect(
       buildDashboardFooterHints(baseDashboardViewModel({ agentRestoreOffer })).filter((hint) =>
-        ["C", "D"].includes(hint[0]),
+        ["C"].includes(hint[0]),
       ),
     ).toEqual([]);
 
