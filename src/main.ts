@@ -120,6 +120,7 @@ import {
 } from "./local-ui-server.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
+import { isRuntimeRestartInProgress } from "./runtime-restart.js";
 import { isAimuxBuildDriftError } from "./runtime-drift.js";
 import { registerExposeCommand } from "./popup-expose.js";
 const program = new Command();
@@ -148,6 +149,42 @@ class ProjectServiceHttpError extends Error {
 }
 
 const PROJECT_SERVICE_READ_TIMEOUT_MS = 15_000;
+const CONCURRENT_RUNTIME_RESTART_WAIT_MS = 60_000;
+
+function isRuntimeRestartAlreadyRunningError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("aimux restart is already running");
+}
+
+async function waitForConcurrentRuntimeRestart(projectRoot: string): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + CONCURRENT_RUNTIME_RESTART_WAIT_MS;
+  let lastError = "aimux restart is already running";
+  log.warn("waiting for concurrent aimux restart", "runtime", { projectRoot });
+
+  while (Date.now() < deadline) {
+    if (isRuntimeRestartInProgress()) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
+    try {
+      await waitForVerifiedProjectService(projectRoot, { timeoutMs: 4000, repair: false });
+      log.info("concurrent aimux restart settled", "runtime", {
+        projectRoot,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof ProjectServiceVersionError || isAimuxBuildDriftError(error)) throw error;
+      lastError = error instanceof Error ? error.message : String(error);
+      if (!isRepairableCoreProjectStartupError(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  throw new Error(
+    `aimux restart is already running and project service did not settle after ${CONCURRENT_RUNTIME_RESTART_WAIT_MS}ms; last error: ${lastError}`,
+  );
+}
 
 function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): string {
   const lines = [
@@ -169,8 +206,14 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
 async function restartStaleControlPlane(projectRoot: string): Promise<void> {
   console.error(`aimux: restarting stale daemon-managed control plane for ${projectRoot}...`);
   log.warn("restarting stale control plane", "runtime", { projectRoot });
-  removeMetadataEndpoint(projectRoot);
-  const result = (await restartControlPlaneFromCli(projectRoot)).restart;
+  let result;
+  try {
+    result = (await restartControlPlaneFromCli(projectRoot)).restart;
+  } catch (error) {
+    if (!isRuntimeRestartAlreadyRunningError(error)) throw error;
+    await waitForConcurrentRuntimeRestart(projectRoot);
+    return;
+  }
   const project = result.projects.find((entry) => entry.projectRoot === projectRoot);
   if (!project) throw new Error("failed to restart project service: project was not included in restart result");
   if (project.runtime.status === "failed") {
@@ -203,7 +246,7 @@ async function fetchProjectServiceHealth(endpoint: { host: string; port: number 
 
 async function waitForVerifiedProjectService(
   projectRoot: string,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; repair?: boolean },
 ): Promise<{
   endpoint: { host: string; port: number; pid: number };
   health: { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string };
@@ -211,6 +254,7 @@ async function waitForVerifiedProjectService(
   const expected = getProjectServiceManifest();
   const expectedProjectStateDir = getProjectStateDirFor(projectRoot);
   const timeoutMs = opts?.timeoutMs ?? 8000;
+  const repair = opts?.repair ?? true;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
   let lastError = "project service did not become reachable";
@@ -232,7 +276,7 @@ async function waitForVerifiedProjectService(
             endpoint,
             healthPid: health.pid,
           });
-          if (!respawnAttempted) {
+          if (repair && !respawnAttempted) {
             respawnAttempted = true;
             await restartCoreProjectServiceForReadiness(projectRoot);
           }
@@ -252,7 +296,7 @@ async function waitForVerifiedProjectService(
             expectedProjectStateDir,
             actualProjectStateDir: health.projectStateDir ?? null,
           });
-          if (!respawnAttempted) {
+          if (repair && !respawnAttempted) {
             respawnAttempted = true;
             await restartCoreProjectServiceForReadiness(projectRoot);
           }
@@ -292,6 +336,7 @@ async function waitForVerifiedProjectService(
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
         if (
+          repair &&
           !respawnAttempted &&
           typeof lastError === "string" &&
           (lastError.includes("ECONNREFUSED") ||
@@ -316,7 +361,7 @@ async function waitForVerifiedProjectService(
       lastError = "no live project service metadata endpoint";
       if (!missingEndpointSince) {
         missingEndpointSince = Date.now();
-      } else if (!respawnAttempted && Date.now() - missingEndpointSince >= 1000) {
+      } else if (repair && !respawnAttempted && Date.now() - missingEndpointSince >= 1000) {
         respawnAttempted = true;
         log.warn("respawning project service after missing endpoint", "runtime", { projectRoot });
         await restartCoreProjectServiceForReadiness(projectRoot);

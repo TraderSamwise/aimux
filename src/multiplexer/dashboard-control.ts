@@ -1,5 +1,5 @@
 import { writeTextAtomic } from "../atomic-write.js";
-import { debug } from "../debug.js";
+import { debug, log } from "../debug.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
@@ -74,6 +74,8 @@ type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
 const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
+const RUNTIME_GUARD_REPAIR_SETTLE_TIMEOUT_MS = 15_000;
+const RUNTIME_GUARD_REPAIR_SETTLE_RETRY_MS = 500;
 const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
 const RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS = 120_000;
 const RUNTIME_GUARD_REPAIR_FLAP_LIMIT = 5;
@@ -457,6 +459,10 @@ function describeRuntimeGuardState(state: RuntimeGuardState): string {
   return "project service unreachable";
 }
 
+function isRuntimeRestartAlreadyRunningError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("aimux restart is already running");
+}
+
 function runtimeGuardRepairResultError(result: RuntimeRestartResult, projectRoot: string): string | null {
   const project = result.projects.find((entry) => entry.projectRoot === projectRoot);
   if (!project) return "aimux repair completed but did not include this project";
@@ -546,6 +552,59 @@ function blockRuntimeGuardRepair(host: DashboardControlHost, lifecycle: Dashboar
   );
   showDashboardFooterFlash(host, "Aimux repair already running", 3);
   renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+}
+
+async function sleepRuntimeGuardRepairSettle(deadline: number): Promise<void> {
+  const delayMs = Math.min(RUNTIME_GUARD_REPAIR_SETTLE_RETRY_MS, Math.max(0, deadline - Date.now()));
+  if (delayMs <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function waitForRuntimeGuardRepairSettlement(
+  host: DashboardControlHost,
+  lifecycle: DashboardLifecycleToken,
+  projectRoot: string,
+  isCanceled: () => boolean = () => false,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const startedAt = Date.now();
+  const deadline = startedAt + RUNTIME_GUARD_REPAIR_SETTLE_TIMEOUT_MS;
+  let lastMessage = "project service endpoint could not be verified";
+  for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+    if (isCanceled()) return { ok: true };
+    const probed = await probeRuntimeGuard(projectRoot);
+    if (isCanceled()) return { ok: true };
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return { ok: true };
+    if (probed.kind !== "ok") {
+      lastMessage = `aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`;
+      log.warn("runtime guard repair settlement probe not ready", "runtime", {
+        projectRoot,
+        attempt,
+        state: probed,
+        elapsedMs: Date.now() - startedAt,
+      });
+      await sleepRuntimeGuardRepairSettle(deadline);
+      continue;
+    }
+    const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+    if (isCanceled()) return { ok: true };
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return { ok: true };
+    if (isDashboardModelRefreshUsable(refreshed)) {
+      log.info("runtime guard repair settled", "runtime", {
+        projectRoot,
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return { ok: true };
+    }
+    lastMessage = "aimux repair completed but dashboard data is still unavailable";
+    log.warn("runtime guard repair settlement refresh not ready", "runtime", {
+      projectRoot,
+      attempt,
+      elapsedMs: Date.now() - startedAt,
+    });
+    await sleepRuntimeGuardRepairSettle(deadline);
+  }
+  return { ok: false, message: lastMessage };
 }
 
 function stabilizeRepairRuntimeGuardProbe(
@@ -657,30 +716,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     showRuntimeGuardRepairFailure(host, options.title ?? "Aimux repair failed", message);
   };
-  const succeed = async (result: RuntimeRestartResult) => {
-    if (settled) return;
-    const resultError = runtimeGuardRepairResultError(result, projectRoot);
-    if (resultError) {
-      fail(resultError);
-      return;
-    }
-    const shouldReloadDashboard = state.kind === "stale" && state.reason === "self-drift";
-    if (!shouldReloadDashboard) {
-      const probed = await probeRuntimeGuard(projectRoot);
-      if (settled) return;
-      if (probed.kind !== "ok") {
-        fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
-        return;
-      }
-    }
-    if (!shouldReloadDashboard && isDashboardLifecycleCurrent(host, lifecycle)) {
-      const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
-      if (settled) return;
-      if (!isDashboardModelRefreshUsable(refreshed)) {
-        fail("aimux repair completed but dashboard data is still unavailable");
-        return;
-      }
-    }
+  const completeSuccess = (shouldReloadDashboard: boolean) => {
     if (settled) return;
     settled = true;
     clearRepairTimeout();
@@ -713,6 +749,50 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (flushPendingDashboardLocalNavigation(host)) return;
     host.renderCurrentDashboardView?.();
   };
+  const succeed = async (result: RuntimeRestartResult) => {
+    if (settled) return;
+    const resultError = runtimeGuardRepairResultError(result, projectRoot);
+    if (resultError) {
+      fail(resultError);
+      return;
+    }
+    const shouldReloadDashboard = state.kind === "stale" && state.reason === "self-drift";
+    if (!shouldReloadDashboard) {
+      const settlement = await waitForRuntimeGuardRepairSettlement(host, lifecycle, projectRoot, () => settled);
+      if (settled) return;
+      if (!settlement.ok) {
+        fail(settlement.message);
+        return;
+      }
+    }
+    completeSuccess(shouldReloadDashboard);
+  };
+  const waitForConcurrentRestartSettlement = async () => {
+    if (settled) return;
+    releaseRepairLock();
+    recordDashboardRepairNotice(
+      host,
+      {
+        kind: "runtime-guard-repair",
+        phase: "blocked",
+        message: "Aimux repair already running",
+      },
+      { flash: false },
+    );
+    showDashboardFooterFlash(host, "Aimux repair already running", 3);
+    const shouldReloadDashboard = state.kind === "stale" && state.reason === "self-drift";
+    if (shouldReloadDashboard) {
+      completeSuccess(true);
+      return;
+    }
+    const settlement = await waitForRuntimeGuardRepairSettlement(host, lifecycle, projectRoot, () => settled);
+    if (settled) return;
+    if (!settlement.ok) {
+      fail(settlement.message);
+      return;
+    }
+    completeSuccess(false);
+  };
 
   try {
     writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
@@ -735,7 +815,15 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     void repair
       .then(
         (result) => void succeed(result).catch((error) => fail(error instanceof Error ? error.message : String(error))),
-        (error) => fail(error instanceof Error ? error.message : String(error)),
+        (error) => {
+          if (isRuntimeRestartAlreadyRunningError(error)) {
+            void waitForConcurrentRestartSettlement().catch((settleError) =>
+              fail(settleError instanceof Error ? settleError.message : String(settleError)),
+            );
+            return;
+          }
+          fail(error instanceof Error ? error.message : String(error));
+        },
       )
       .finally(() => {
         host.runtimeGuardRepairTimedOutPending = false;
