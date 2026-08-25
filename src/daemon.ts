@@ -2156,7 +2156,8 @@ export class AimuxDaemon {
     if (typeof project !== "string") return project;
     const taskId = this.requiredParam(routeUrl, body, "taskId");
     if (typeof taskId !== "string") return taskId;
-    const bodyText = this.stringParam(routeUrl, body, "body") || undefined;
+    const resultText = input.action === "task complete" ? this.stringParam(routeUrl, body, "result") : undefined;
+    const bodyText = this.stringParam(routeUrl, body, "body") || resultText || undefined;
     const result = await this.postProjectServiceJson(
       project,
       input.routePath,

@@ -3010,25 +3010,32 @@ taskCmd
   .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Completion summary/result")
+  .option("--result <text>", "Alias for --body")
   .option("--json", "Emit JSON")
-  .action(async (taskId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
-    const projectRoot = await prepareProjectContext(opts.project);
-    const result = await postProjectServiceJson(
-      "/tasks/complete",
-      {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      },
-      { projectRoot },
-    );
-    if (opts.json) {
-      console.log(JSON.stringify(result, null, 2));
-      return;
-    }
-    console.log(`task ${result.task.id}`);
-    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-  });
+  .action(
+    async (
+      taskId: string,
+      opts: { project?: string; from?: string; body?: string; result?: string; json?: boolean },
+    ) => {
+      const projectRoot = await prepareProjectContext(opts.project);
+      const body = opts.body ?? opts.result;
+      const result = await postProjectServiceJson(
+        "/tasks/complete",
+        {
+          taskId,
+          from: opts.from ?? "user",
+          body,
+        },
+        { projectRoot },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+    },
+  );
 
 taskCmd
   .command("reopen")

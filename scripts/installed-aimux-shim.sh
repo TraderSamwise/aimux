@@ -2263,6 +2263,8 @@ aimux_try_task() {
     accept|block|complete|reopen)
       action="$subcommand"
       shift
+      AIMUX_PARSE_TASK_RESULT_ALIAS=0
+      [ "$action" = "complete" ] && AIMUX_PARSE_TASK_RESULT_ALIAS=1
       aimux_parse_task_action_args "$@" || return 1
       case "$action" in
         accept) path="/core/task/accept-text" ;;
@@ -2297,6 +2299,8 @@ aimux_parse_task_action_args() {
       --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
       --body) shift; aimux_require_arg_value "$@" || return 1; body="$AIMUX_ARG_VALUE" ;;
       --body=*) aimux_require_inline_value "${1#--body=}" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --result) [ "${AIMUX_PARSE_TASK_RESULT_ALIAS:-0}" = 1 ] || return 1; shift; aimux_require_arg_value "$@" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --result=*) [ "${AIMUX_PARSE_TASK_RESULT_ALIAS:-0}" = 1 ] || return 1; aimux_require_inline_value "${1#--result=}" || return 1; body="$AIMUX_ARG_VALUE" ;;
       --json) json=1 ;;
       *) return 1 ;;
     esac

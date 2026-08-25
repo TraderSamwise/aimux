@@ -3033,6 +3033,7 @@ describe("daemon supervision", () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     writeMetadataEndpointFor(process.pid);
+    const taskCompleteBodies: unknown[] = [];
     vi.mocked(requestJson).mockImplementation(
       async (url: string, opts: { body?: unknown; timeoutMs?: number } = {}) => {
         if (url.endsWith(`${PROJECT_API_ROUTES.tasks.list}?session=claude-1&status=todo`)) {
@@ -3109,7 +3110,7 @@ describe("daemon supervision", () => {
           return { status: 200, json: { ok: true, task: { id: "task-2" }, thread: { id: "thread-3" } } };
         }
         if (url.endsWith(PROJECT_API_ROUTES.tasks.complete)) {
-          expect(opts.body).toEqual({ taskId: "task-1", from: "claude-1", body: "done" });
+          taskCompleteBodies.push(opts.body);
           return { status: 200, json: { ok: true, task: { id: "task-1" }, thread: { id: "thread-1" } } };
         }
         if (url.endsWith(PROJECT_API_ROUTES.reviews.approve)) {
@@ -3176,6 +3177,12 @@ describe("daemon supervision", () => {
       from: "claude-1",
       body: "done",
     });
+    const completedWithResult = await daemon.routeRequest("POST", CORE_API_ROUTES.taskCompleteText, {
+      project: projectRoot,
+      taskId: "task-1",
+      from: "claude-1",
+      result: "done via result",
+    });
     const approved = await daemon.routeRequest("POST", CORE_API_ROUTES.reviewApproveText, {
       project: projectRoot,
       taskId: "task-1",
@@ -3206,6 +3213,11 @@ describe("daemon supervision", () => {
     expect(accepted.body).toBe("thread thread-2\nmessage msg-3\n");
     expect(assigned.body).toBe("task task-2\nthread thread-3\n");
     expect(completed.body).toBe("task task-1\nthread thread-1\n");
+    expect(completedWithResult.body).toBe("task task-1\nthread thread-1\n");
+    expect(taskCompleteBodies).toEqual([
+      { taskId: "task-1", from: "claude-1", body: "done" },
+      { taskId: "task-1", from: "claude-1", body: "done via result" },
+    ]);
     expect(approved.body).toBe("task task-1\nthread thread-1\n");
     expect(changes.body).toBe("task task-1\nfollow-up task-3\nthread thread-1\n");
     expect(badHandoff.status).toBe(400);

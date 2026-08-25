@@ -1858,6 +1858,9 @@ describe("installed aimux shim", () => {
     expect(
       fixture.run(["task", "complete", "task-1", "--from=claude-1", "--body=done", "--project=/repo"]).stdout,
     ).toBe("task task-1\nthread thread-1\n");
+    expect(
+      fixture.run(["task", "complete", "task-1", "--from=claude-1", "--result=shipped", "--project=/repo"]).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
     expect(fixture.run(["task", "reopen", "task-1", "--from=claude-1", "--body=again", "--project=/repo"]).stdout).toBe(
       "task task-1\nthread thread-1\n",
     );
@@ -1900,6 +1903,7 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("description=Ship it\n");
     expect(curlLog).toContain("diff=--- before\n+++ after\n");
     expect(curlLog).toContain("body=Please take over\n");
+    expect(curlLog).toContain("body=shipped\n");
     expect(curlLog).toContain("/core/task/list-text?json=1");
     expect(curlLog).toContain("/core/task/assign-text?json=1");
     expect(curlLog).toContain("/core/handoff/send-text?json=1");
@@ -1915,6 +1919,7 @@ describe("installed aimux shim", () => {
 
     expectInvalidNoNode(fixture, ["task", "assign", "Ship", "--to="]);
     expectInvalidNoNode(fixture, ["handoff", "accept", "thread-1", "--body"]);
+    expectInvalidNoNode(fixture, ["task", "block", "task-1", "--result=blocked"]);
     expectInvalidNoNode(fixture, ["review", "approve", "task-1", "--from", "--body=ok"]);
   });
 
