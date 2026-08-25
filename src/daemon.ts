@@ -23,7 +23,7 @@ import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from 
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, loadGlobalConfig } from "./config.js";
 import {
   assertOperatorStreamAllowed,
   assertRemoteAccessAllowed,
@@ -907,6 +907,7 @@ export class AimuxDaemon {
 
   private scheduleGlobalExposeHotSnapshotRefresh(delayMs = GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
     if (!this.server || this.stopping) return;
+    if (!loadGlobalConfig().expose.hotSnapshotsEnabled) return;
     if (this.globalExposeHotSnapshotTimer) clearTimeout(this.globalExposeHotSnapshotTimer);
     this.globalExposeHotSnapshotTimer = setTimeout(() => {
       this.globalExposeHotSnapshotTimer = null;
@@ -1019,6 +1020,7 @@ export class AimuxDaemon {
 
   private refreshGlobalExposeHotSnapshots(): void {
     if (this.stopping) return;
+    if (!loadGlobalConfig().expose.hotSnapshotsEnabled) return;
     const projects = this.listProjectsForRoute();
     for (const project of projects) {
       pruneExpiredHotExposeSnapshots(getProjectStateDirById(project.id));

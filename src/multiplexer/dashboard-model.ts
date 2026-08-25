@@ -1444,10 +1444,12 @@ export function refreshLocalDashboardModel(host: DashboardModelHost): void {
 export async function startProjectServices(host: DashboardModelHost): Promise<void> {
   if (host.metadataServer) return;
   const projectRoot = projectRootFor(host);
+  const config = loadConfig({ projectRoot });
   host.projectServiceStartupMetadataSettling = true;
   host.projectServiceUiRefreshPending = false;
   host.metadataServer = new MetadataServer({
     projectRoot,
+    exposeHotSnapshots: config.expose.hotSnapshotsEnabled,
     events: { bus: host.eventBus },
     diagnostics: {
       pluginStatuses: () => host.pluginRuntime?.getPluginStatuses() ?? [],

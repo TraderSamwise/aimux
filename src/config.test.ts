@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadConfig } from "./config.js";
+import { loadConfig, loadGlobalConfig } from "./config.js";
 import { getGlobalConfigPath, initPaths } from "./paths.js";
 
 describe("config", () => {
@@ -241,6 +241,7 @@ describe("config", () => {
   it("defaults expose to the current worktree", () => {
     expect(loadConfig({ includeGlobal: false }).expose).toEqual({
       initialScope: "worktree",
+      hotSnapshotsEnabled: true,
     });
   });
 
@@ -252,6 +253,33 @@ describe("config", () => {
     );
 
     expect(loadConfig({ includeGlobal: false }).expose.initialScope).toBe("global");
+  });
+
+  it("allows config to disable expose hot snapshots", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify({ expose: { hotSnapshotsEnabled: false } }, null, 2) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({
+      initialScope: "worktree",
+      hotSnapshotsEnabled: false,
+    });
+  });
+
+  it("loads global expose hot snapshot config without project config", () => {
+    writeFileSync(
+      getGlobalConfigPath(),
+      JSON.stringify({ expose: { initialScope: "global", hotSnapshotsEnabled: false } }, null, 2) + "\n",
+    );
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(join(repoRoot, ".aimux/config.json"), JSON.stringify({ expose: { initialScope: "project" } }));
+
+    expect(loadGlobalConfig().expose).toEqual({
+      initialScope: "global",
+      hotSnapshotsEnabled: false,
+    });
   });
 
   it("normalizes invalid expose scope config", () => {

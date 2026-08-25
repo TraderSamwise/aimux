@@ -902,6 +902,52 @@ describe("daemon supervision", () => {
     expect(snapshotText).not.toContain("SECRET_TOKEN=should-expire");
   });
 
+  it("does not refresh global expose hot snapshots when config disables them", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    writeFileSync(
+      join(tmpRoot, ".aimux", "config.json"),
+      JSON.stringify({ expose: { hotSnapshotsEnabled: false } }, null, 2) + "\n",
+    );
+    const projectStateDir = getProjectStateDirFor(projectRoot);
+    const path = join(projectStateDir, "expose-hot-snapshots.json");
+    writeHotExposeScopeView(
+      projectStateDir,
+      { projectRoot, scope: "global" },
+      {
+        scope: "global",
+        scopeLabel: "all projects",
+        sublabel: "project-worktree",
+        items: [
+          {
+            id: "stale-agent",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            projectRoot,
+            projectName: "repo",
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: { worktreePath: projectRoot },
+            previewSnapshot: {
+              output: "SECRET_TOKEN=should-not-be-touched\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "tap",
+              windowId: "@1",
+            },
+          },
+        ],
+      },
+    );
+    const raw = JSON.parse(readFileSync(path, "utf8")) as { views: Record<string, { updatedAt: string }> };
+    for (const record of Object.values(raw.views)) record.updatedAt = "2020-01-01T00:00:00.000Z";
+    writeFileSync(path, JSON.stringify(raw, null, 2));
+
+    const daemon = new AimuxDaemon();
+    (daemon as unknown as { refreshGlobalExposeHotSnapshots: () => void }).refreshGlobalExposeHotSnapshots();
+
+    expect(readFileSync(path, "utf8")).toContain("SECRET_TOKEN=should-not-be-touched");
+  });
+
   it("stops project actors through the core command bus", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 

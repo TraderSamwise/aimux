@@ -52,6 +52,8 @@ export type ExposeInitialScope = "worktree" | "project" | "global";
 export interface ExposeConfig {
   /** Initial Exposé rung when launched outside the meta dashboard. */
   initialScope: ExposeInitialScope;
+  /** Keep Exposé previews warm in the background for near-instant opening. */
+  hotSnapshotsEnabled: boolean;
 }
 
 export interface StatuslineDefaultPluginConfig {
@@ -217,6 +219,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
   },
   expose: {
     initialScope: "worktree",
+    hotSnapshotsEnabled: true,
   },
   runtime: {
     agentPreambleEnabled: true,
@@ -337,8 +340,13 @@ function normalizeConfig(config: AimuxConfig): AimuxConfig {
 
   if (!config.expose || typeof config.expose !== "object") {
     config.expose = cloneJson(DEFAULT_CONFIG.expose);
-  } else if (!["worktree", "project", "global"].includes(config.expose.initialScope)) {
-    config.expose.initialScope = DEFAULT_CONFIG.expose.initialScope;
+  } else {
+    if (!["worktree", "project", "global"].includes(config.expose.initialScope)) {
+      config.expose.initialScope = DEFAULT_CONFIG.expose.initialScope;
+    }
+    if (typeof config.expose.hotSnapshotsEnabled !== "boolean") {
+      config.expose.hotSnapshotsEnabled = DEFAULT_CONFIG.expose.hotSnapshotsEnabled;
+    }
   }
 
   const codex = config.tools.codex;
@@ -421,6 +429,20 @@ export function loadConfig(opts: { includeGlobal?: boolean; projectRoot?: string
     }
   }
 
+  return normalizeConfig(config);
+}
+
+export function loadGlobalConfig(): AimuxConfig {
+  let config = cloneJson(DEFAULT_CONFIG);
+  const globalPath = getGlobalConfigPath();
+  if (existsSync(globalPath)) {
+    try {
+      const globalRaw = JSON.parse(readFileSync(globalPath, "utf-8"));
+      config = deepMerge(config, globalRaw) as AimuxConfig;
+    } catch {
+      quarantineCorruptFile(globalPath);
+    }
+  }
   return normalizeConfig(config);
 }
 
