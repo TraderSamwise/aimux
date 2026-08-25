@@ -80,6 +80,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/services/resume": "client-api",
   "/services/remove": "client-api",
   "/worktrees/create": "client-api",
+  "/worktrees/cache-cleanup": "client-api",
   "/worktrees/remove": "client-api",
   "/worktrees/graveyard": "client-api",
   "/graveyard/resurrect": "client-api",
@@ -127,4 +128,5 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/notify": "internal-runtime",
   "/notification-context": "internal-runtime",
   "/shell-state": "internal-runtime",
+  "/runtime/exchange/compact": "local-control",
 } satisfies Record<string, AppProjectRouteCoverage>;

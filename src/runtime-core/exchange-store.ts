@@ -4,6 +4,13 @@ import { parse, stringify } from "yaml";
 import { atomicWrite } from "../atomic-write.js";
 import { log } from "../debug.js";
 import { getRuntimeExchangePath } from "../paths.js";
+import {
+  RUNTIME_EXCHANGE_RETENTION,
+  compactRuntimeExchange,
+  countRuntimeExchangeRecords,
+  type RuntimeExchangeCompactionReport,
+  type RuntimeExchangeCounts,
+} from "./exchange-retention.js";
 
 export const RUNTIME_EXCHANGE_VERSION = 1;
 const UPDATE_LOCK_TIMEOUT_MS = 5_000;
@@ -239,7 +246,11 @@ function normalizeRuntimeExchange(exchange: RuntimeExchange): RuntimeExchange {
   const threadIds = new Set(threads.map((thread) => thread.id));
   const messages = exchange.messages.filter((message) => threadIds.has(message.threadId));
   const messageIds = new Set(messages.map((message) => message.id));
-  const tasks = exchange.tasks.filter((task) => !task.threadId || threadIds.has(task.threadId));
+  const tasks = exchange.tasks.flatMap((task) => {
+    if (!task.threadId || threadIds.has(task.threadId)) return [task];
+    if (task.status !== "done" && task.status !== "failed") return [{ ...task, threadId: undefined }];
+    return [];
+  });
   const taskIds = new Set(tasks.map((task) => task.id));
   const handoffs = exchange.handoffs.filter((handoff) => threadIds.has(handoff.threadId));
   const handoffIds = new Set(handoffs.map((handoff) => handoff.id));
@@ -579,18 +590,110 @@ const MISSING_FILE_ERROR_CODES = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETO
 // Instrumentation for tests that assert how many times one operation parses this store.
 let readCount = 0;
 let parseCount = 0;
+let compactionCount = 0;
+let compactedRecordCount = 0;
+let lastCompaction:
+  | {
+      ts: string;
+      path: string;
+      changed: boolean;
+      bytesBefore: number;
+      bytesAfter: number;
+      before: RuntimeExchangeCounts;
+      after: RuntimeExchangeCounts;
+      removed: RuntimeExchangeCounts;
+      retention: RuntimeExchangeCompactionReport["retention"];
+    }
+  | undefined;
 
 export function getExchangeStoreStats(): { reads: number; parses: number } {
   return { reads: readCount, parses: parseCount };
 }
 
+export function getExchangeStoreTelemetry(): {
+  reads: number;
+  parses: number;
+  compactions: number;
+  compactedRecords: number;
+  lastCompaction?: typeof lastCompaction;
+} {
+  return {
+    reads: readCount,
+    parses: parseCount,
+    compactions: compactionCount,
+    compactedRecords: compactedRecordCount,
+    lastCompaction,
+  };
+}
+
 export function resetExchangeStoreStats(): void {
   readCount = 0;
   parseCount = 0;
+  compactionCount = 0;
+  compactedRecordCount = 0;
+  lastCompaction = undefined;
 }
 
 function recordSlowExchangeRead(fields: Record<string, unknown>): void {
   log.warn("slow runtime exchange read", "api", fields);
+}
+
+function recordExchangeCompaction(fields: Exclude<typeof lastCompaction, undefined>): void {
+  compactionCount += 1;
+  compactedRecordCount += fields.removed.totalRecords;
+  lastCompaction = fields;
+  log.info("runtime exchange compacted", "api", fields);
+}
+
+function serializeRuntimeExchange(exchange: RuntimeExchange): string {
+  return stringify(exchange, { lineWidth: 120, sortMapEntries: false });
+}
+
+export function inspectRuntimeExchangeStore(path = getRuntimeExchangePath()): {
+  path: string;
+  exists: boolean;
+  bytes: number;
+  counts: RuntimeExchangeCounts;
+  retention: RuntimeExchangeCompactionReport["retention"];
+  telemetry: ReturnType<typeof getExchangeStoreTelemetry>;
+  error?: string;
+} {
+  const store = new RuntimeExchangeStore(path);
+  const exists = existsSync(path);
+  const bytes = exists ? statSync(path).size : 0;
+  try {
+    const exchange = store.read();
+    const report = compactRuntimeExchange(exchange);
+    return {
+      path,
+      exists,
+      bytes,
+      counts: countRuntimeExchangeRecords(exchange),
+      retention: report.retention,
+      telemetry: getExchangeStoreTelemetry(),
+    };
+  } catch (error) {
+    return {
+      path,
+      exists,
+      bytes,
+      counts: countRuntimeExchangeRecords(emptyRuntimeExchange()),
+      retention: RUNTIME_EXCHANGE_RETENTION,
+      telemetry: getExchangeStoreTelemetry(),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export interface RuntimeExchangeCompactWriteResult {
+  path: string;
+  changed: boolean;
+  bytesBefore: number;
+  bytesAfter: number;
+  before: RuntimeExchangeCounts;
+  after: RuntimeExchangeCounts;
+  removed: RuntimeExchangeCounts;
+  retention: RuntimeExchangeCompactionReport["retention"];
 }
 
 export class RuntimeExchangeStore {
@@ -679,14 +782,44 @@ export class RuntimeExchangeStore {
     return exchange;
   }
 
-  // Deliberately does not seed the cache: `normalized` is handed back to the caller, so
-  // storing it would alias caller-owned state, and seeding safely would mean re-parsing
-  // what we just serialized. The content key makes invalidation here unnecessary anyway —
-  // the next read compares bytes.
-  write(exchange: RuntimeExchange): RuntimeExchange {
+  private writeCompacted(exchange: RuntimeExchange): {
+    exchange: RuntimeExchange;
+    result: RuntimeExchangeCompactWriteResult;
+  } {
     const normalized = coerceRuntimeExchange(exchange);
-    atomicWrite(this.path, stringify(normalized, { lineWidth: 120, sortMapEntries: false }));
-    return normalized;
+    const beforeText = serializeRuntimeExchange(normalized);
+    const compaction = compactRuntimeExchange(normalized);
+    const retained = coerceRuntimeExchange(compaction.retained);
+    const afterText = serializeRuntimeExchange(retained);
+    atomicWrite(this.path, afterText);
+    rawCache.delete(this.path);
+    const result = {
+      path: this.path,
+      changed: compaction.changed,
+      bytesBefore: Buffer.byteLength(beforeText),
+      bytesAfter: Buffer.byteLength(afterText),
+      before: compaction.before,
+      after: compaction.after,
+      removed: compaction.removed,
+      retention: compaction.retention,
+    };
+    if (result.changed) recordExchangeCompaction({ ts: new Date().toISOString(), ...result });
+    return { exchange: retained, result };
+  }
+
+  // Deliberately does not seed the cache: returned state belongs to the caller, so
+  // caching it would alias future reads. The next read validates through byte content.
+  write(exchange: RuntimeExchange): RuntimeExchange {
+    return this.writeCompacted(exchange).exchange;
+  }
+
+  compact(): RuntimeExchangeCompactWriteResult {
+    const release = this.acquireUpdateLock();
+    try {
+      return this.writeCompacted(this.read()).result;
+    } finally {
+      release();
+    }
   }
 
   private acquireUpdateLock(): () => void {

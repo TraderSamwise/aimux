@@ -88,6 +88,7 @@ import {
   type AssignTaskResult,
 } from "./orchestration-actions.js";
 import { readAllTaskSnapshots, readTaskSnapshot } from "./tasks.js";
+import { createRuntimeExchangeStore, inspectRuntimeExchangeStore } from "./runtime-core/exchange-store.js";
 import { buildCoordinationThreadEntries } from "./workflow.js";
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
@@ -3740,7 +3741,17 @@ export class MetadataServer {
           taps: this.exposePaneOutputTap?.stats?.() ?? null,
         },
         agentOutputReads: getAgentOutputReadMetrics(),
+        runtimeExchange: inspectRuntimeExchangeStore(),
       });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.compactExchange) {
+      const result = createRuntimeExchangeStore().compact();
+      this.notifyProjectChanged({
+        views: [...PROJECT_API_VIEW_INVALIDATIONS.runtime, ...PROJECT_API_VIEW_INVALIDATIONS.workflow],
+        reason: "runtime-exchange-compact",
+      });
+      send(res, 200, { ok: true, result, runtimeExchange: inspectRuntimeExchangeStore() });
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.diagnosticsLifecycle) {

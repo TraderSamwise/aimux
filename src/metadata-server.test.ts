@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { stringify } from "yaml";
 import { writeJsonAtomic } from "./atomic-write.js";
 import {
   getDashboardClientUiStatePath,
@@ -36,6 +37,8 @@ import {
   readAgentRestoreOffer,
   type AgentRestoreSession,
 } from "./runtime-core/agent-restore-state.js";
+import { emptyRuntimeExchange } from "./runtime-core/exchange-store.js";
+import { RUNTIME_EXCHANGE_RETENTION } from "./runtime-core/exchange-retention.js";
 import {
   getRuntimeOwnerId,
   TMUX_DASHBOARD_OWNER_OPTION,
@@ -296,6 +299,72 @@ describe("MetadataServer threads API", () => {
         total: { count: 0 },
         bySource: {},
         recent: [],
+      },
+      runtimeExchange: {
+        exists: false,
+        bytes: 0,
+        counts: { totalRecords: 0 },
+      },
+    });
+  });
+
+  it("compacts runtime exchange through the project service and reports diagnostics", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const now = "2026-05-25T00:00:00.000Z";
+    writeFileSync(
+      join(getProjectStateDir(), "runtime-exchange.yaml"),
+      stringify({
+        ...emptyRuntimeExchange(now),
+        generatedAt: now,
+        threads: Array.from({ length: RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads + 2 }, (_, index) => ({
+          id: `thread-${index}`,
+          title: `Thread ${index}`,
+          kind: "task",
+          status: "done",
+          createdAt: now,
+          updatedAt: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+          createdBy: "user",
+          participants: ["user", "codex-1"],
+        })),
+      }),
+    );
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}${PROJECT_API_ROUTES.runtime.compactExchange}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const json = await response.json();
+
+    expect(json).toMatchObject({
+      ok: true,
+      result: {
+        changed: true,
+        after: { threads: RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads },
+      },
+      runtimeExchange: {
+        counts: { threads: RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads },
+      },
+    });
+  });
+
+  it("reports runtime exchange inspection errors without failing diagnostics", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    writeFileSync(join(getProjectStateDir(), "runtime-exchange.yaml"), "version: nope\n");
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json).toMatchObject({
+      ok: true,
+      runtimeExchange: {
+        exists: true,
+        bytes: expect.any(Number),
+        counts: { totalRecords: 0 },
+        error: expect.stringContaining("unsupported runtime exchange version"),
       },
     });
   });

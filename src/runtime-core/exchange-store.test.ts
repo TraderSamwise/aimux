@@ -8,6 +8,7 @@ import {
   getExchangeStoreStats,
   resetExchangeStoreStats,
 } from "./exchange-store.js";
+import { RUNTIME_EXCHANGE_RETENTION, compactRuntimeExchange } from "./exchange-retention.js";
 
 describe("RuntimeExchangeStore", () => {
   it("round-trips the runtime exchange YAML", () => {
@@ -355,6 +356,32 @@ describe("RuntimeExchangeStore", () => {
     }
   });
 
+  it("compacts automatically before writing runtime exchange YAML", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const store = new RuntimeExchangeStore(path);
+      const now = "2026-05-25T00:00:00.000Z";
+      store.write({
+        ...emptyRuntimeExchange(now),
+        threads: Array.from({ length: RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads + 1 }, (_, index) => ({
+          id: `thread-${index}`,
+          title: `Thread ${index}`,
+          kind: "task",
+          status: "done",
+          createdAt: now,
+          updatedAt: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+          createdBy: "user",
+          participants: ["user", "codex-1"],
+        })),
+      });
+
+      expect(store.read().threads).toHaveLength(RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects corrupt exchange YAML instead of silently resetting exchange truth", () => {
     const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
     try {
@@ -505,7 +532,7 @@ describe("RuntimeExchangeStore", () => {
           },
           {
             id: "task-drop",
-            status: "pending",
+            status: "done",
             assignedBy: "user",
             threadId: "thread-drop",
             description: "drop",
@@ -619,6 +646,213 @@ describe("RuntimeExchangeStore", () => {
       expect(exchange.planRefs.map((ref) => ref.id)).toEqual(["plan-keep"]);
       expect(exchange.continuityRefs.map((ref) => ref.id)).toEqual(["context-keep"]);
       expect(exchange.attachmentRefs.map((ref) => ref.id)).toEqual(["attachment-keep"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("compacts closed exchange history while preserving active workflow state", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const old = "2026-05-01T00:00:00.000Z";
+    const activeThread = {
+      id: "thread-active",
+      title: "Active",
+      kind: "task" as const,
+      status: "waiting" as const,
+      createdAt: old,
+      updatedAt: now,
+      createdBy: "user",
+      participants: ["user", "codex-1"],
+      waitingOn: ["codex-1"],
+      unreadBy: ["codex-1"],
+      taskId: "task-active",
+      lastMessageId: "active-old",
+    };
+    const oldClosedThreads = Array.from(
+      { length: RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads + 5 },
+      (_, index) => ({
+        id: `thread-closed-${index}`,
+        title: `Closed ${index}`,
+        kind: "task" as const,
+        status: "done" as const,
+        createdAt: old,
+        updatedAt: `2026-05-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+        createdBy: "user",
+        participants: ["user", "codex-1"],
+        taskId: `task-closed-${index}`,
+      }),
+    );
+    const activeMessages = Array.from({ length: RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 10 }, (_, index) => ({
+      id: `active-${index}`,
+      threadId: "thread-active",
+      ts: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+      from: index % 2 === 0 ? "user" : "codex-1",
+      kind: "reply" as const,
+      body: `active message ${index}`,
+    }));
+    const closedMessages = oldClosedThreads.map((thread, index) => ({
+      id: `closed-message-${index}`,
+      threadId: thread.id,
+      ts: thread.updatedAt,
+      from: "codex-1",
+      kind: "reply" as const,
+      body: `closed message ${index}`,
+    }));
+
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      threads: [activeThread, ...oldClosedThreads],
+      messages: [...activeMessages, ...closedMessages],
+      tasks: [
+        {
+          id: "task-active",
+          status: "in_progress",
+          assignedBy: "user",
+          assignedTo: "codex-1",
+          threadId: "thread-active",
+          description: "Active task",
+          prompt: "Do active task",
+          createdAt: old,
+          updatedAt: now,
+        },
+        ...oldClosedThreads.map((thread, index) => ({
+          id: `task-closed-${index}`,
+          status: "done" as const,
+          assignedBy: "user",
+          assignedTo: "codex-1",
+          threadId: thread.id,
+          description: `Closed task ${index}`,
+          prompt: `Do closed task ${index}`,
+          createdAt: old,
+          updatedAt: thread.updatedAt,
+        })),
+      ],
+      waits: [
+        {
+          id: "wait-active",
+          status: "waiting",
+          subjectKind: "thread",
+          subjectId: "thread-active",
+          waitingOn: ["codex-1"],
+          createdAt: old,
+          updatedAt: now,
+        },
+        {
+          id: "wait-pruned",
+          status: "satisfied",
+          subjectKind: "thread",
+          subjectId: "thread-closed-0",
+          waitingOn: ["codex-1"],
+          createdAt: old,
+          updatedAt: old,
+        },
+      ],
+      attachmentRefs: [
+        { id: "attachment-active", path: "/active", messageId: "active-309", createdAt: now, updatedAt: now },
+        { id: "attachment-pruned", path: "/pruned", messageId: "active-0", createdAt: old, updatedAt: old },
+      ],
+    });
+
+    expect(report.changed).toBe(true);
+    expect(report.retained.threads.some((thread) => thread.id === "thread-active")).toBe(true);
+    expect(report.retained.tasks.some((task) => task.id === "task-active")).toBe(true);
+    expect(report.retained.threads.filter((thread) => thread.id.startsWith("thread-closed-"))).toHaveLength(
+      RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads,
+    );
+    expect(report.retained.messages.filter((message) => message.threadId === "thread-active")).toHaveLength(
+      RUNTIME_EXCHANGE_RETENTION.activeThreadMessages,
+    );
+    expect(report.retained.messages.some((message) => message.id === "active-0")).toBe(false);
+    expect(report.retained.messages.some((message) => message.id === "active-309")).toBe(true);
+    expect(report.retained.waits.map((wait) => wait.id)).toEqual(["wait-active"]);
+    expect(report.retained.attachmentRefs.map((ref) => ref.id)).toEqual(["attachment-active"]);
+  });
+
+  it("keeps only bounded latest notification threads and their latest messages", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const notificationThreads = Array.from(
+      { length: RUNTIME_EXCHANGE_RETENTION.notificationThreads + 3 },
+      (_, index) => ({
+        id: `notification-${index}`,
+        title: `Notification ${index}`,
+        kind: "conversation" as const,
+        status: "open" as const,
+        createdAt: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+        updatedAt: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+        createdBy: "aimux",
+        participants: ["aimux", "project"],
+        tags: ["notification"],
+        lastMessageId: `notification-message-${index}-1`,
+      }),
+    );
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      threads: notificationThreads,
+      messages: notificationThreads.flatMap((thread, index) => [
+        {
+          id: `notification-message-${index}-0`,
+          threadId: thread.id,
+          ts: thread.createdAt,
+          from: "aimux",
+          kind: "note" as const,
+          body: "older",
+        },
+        {
+          id: `notification-message-${index}-1`,
+          threadId: thread.id,
+          ts: thread.updatedAt,
+          from: "aimux",
+          kind: "note" as const,
+          body: "latest",
+        },
+      ]),
+    });
+
+    expect(report.retained.threads).toHaveLength(RUNTIME_EXCHANGE_RETENTION.notificationThreads);
+    expect(report.retained.messages).toHaveLength(RUNTIME_EXCHANGE_RETENTION.notificationThreads);
+    expect(report.retained.threads.some((thread) => thread.id === "notification-0")).toBe(false);
+    expect(report.retained.threads.some((thread) => thread.id === "notification-502")).toBe(true);
+    expect(report.retained.messages.every((message) => message.id.endsWith("-1"))).toBe(true);
+  });
+
+  it("preserves active tasks that reference a missing thread by clearing the dangling thread id", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const store = new RuntimeExchangeStore(path);
+      const now = "2026-05-25T00:00:00.000Z";
+
+      store.write({
+        ...emptyRuntimeExchange(now),
+        tasks: [
+          {
+            id: "task-active",
+            status: "in_progress",
+            assignedBy: "user",
+            assignedTo: "codex-1",
+            threadId: "thread-missing",
+            description: "keep active",
+            prompt: "keep active",
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            id: "task-done",
+            status: "done",
+            assignedBy: "user",
+            assignedTo: "codex-1",
+            threadId: "thread-missing",
+            description: "drop done",
+            prompt: "drop done",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      });
+
+      expect(store.read().tasks).toEqual([
+        expect.objectContaining({ id: "task-active", status: "in_progress", threadId: undefined }),
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

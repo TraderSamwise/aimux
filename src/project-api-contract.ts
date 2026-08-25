@@ -151,6 +151,7 @@ export const PROJECT_API_ROUTES = {
     notify: "/notify",
     notificationContext: "/notification-context",
     shellState: "/shell-state",
+    compactExchange: "/runtime/exchange/compact",
   },
 } as const;
 
@@ -331,6 +332,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.runtime.setAttention:
     case PROJECT_API_ROUTES.runtime.clearLog:
     case PROJECT_API_ROUTES.runtime.shellState:
+    case PROJECT_API_ROUTES.runtime.compactExchange:
     case PROJECT_API_ROUTES.agents.interactionRegister:
     case PROJECT_API_ROUTES.agents.interactionNotify:
     case PROJECT_API_ROUTES.agents.interactionRequest:

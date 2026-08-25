@@ -3949,6 +3949,46 @@ doctorCmd
     }
   });
 
+function printExchangeDiagnostics(diagnostics: any): void {
+  const exchange = diagnostics.runtimeExchange ?? {};
+  const counts = exchange.counts ?? {};
+  const telemetry = exchange.telemetry ?? {};
+  console.log(`Project: ${diagnostics.projectRoot ?? "unknown"}`);
+  console.log(`Path: ${exchange.path ?? "unknown"}`);
+  console.log(`Bytes: ${exchange.bytes ?? 0}`);
+  console.log(
+    `Records: total=${counts.totalRecords ?? 0} threads=${counts.threads ?? 0} messages=${counts.messages ?? 0} tasks=${
+      counts.tasks ?? 0
+    } inbox=${counts.inbox ?? 0}`,
+  );
+  console.log(
+    `Store: reads=${telemetry.reads ?? 0} parses=${telemetry.parses ?? 0} compactions=${
+      telemetry.compactions ?? 0
+    } compactedRecords=${telemetry.compactedRecords ?? 0}`,
+  );
+}
+
+doctorCmd
+  .command("exchange")
+  .description("Inspect runtime exchange size, counts, and retention telemetry")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = opts.project ? await prepareProjectContext(opts.project) : resolveProjectRoot(process.cwd());
+      const diagnostics = await getProjectServiceJson(PROJECT_API_ROUTES.diagnostics, { projectRoot });
+      if (opts.json) {
+        console.log(JSON.stringify(diagnostics.runtimeExchange ?? diagnostics, null, 2));
+        return;
+      }
+      printExchangeDiagnostics({ ...diagnostics, projectRoot });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
 doctorCmd
   .command("disk")
   .description("Inspect Aimux-managed worktree cache disk usage")
@@ -4063,6 +4103,32 @@ notificationsCmd
       process.exit(1);
     }
     console.log(`Sent notification via ${attempt.transport}${attempt.helperPath ? ` (${attempt.helperPath})` : ""}.`);
+  });
+
+repairCmd
+  .command("exchange")
+  .description("Compact runtime-exchange.yaml using project-service retention rules")
+  .option("--project <path>", "Project path", process.cwd())
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      const result = await postProjectServiceJson(PROJECT_API_ROUTES.runtime.compactExchange, {}, { projectRoot });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      const compact = result.result ?? {};
+      console.log(`Project: ${projectRoot}`);
+      console.log(`Path: ${compact.path ?? "unknown"}`);
+      console.log(`Bytes: ${compact.bytesBefore ?? 0} -> ${compact.bytesAfter ?? 0}`);
+      console.log(`Removed records: ${compact.removed?.totalRecords ?? 0}`);
+      printExchangeDiagnostics({ ...result, projectRoot });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
   });
 
 repairCmd
