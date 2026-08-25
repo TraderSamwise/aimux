@@ -204,6 +204,11 @@ import {
   type ClaudeHookPayload,
 } from "./claude-hooks.js";
 import type { CodexHookPayload } from "./codex-hooks.js";
+import {
+  getAgentOutputReadMetrics,
+  recordAgentOutputReadMetric,
+  type AgentOutputReadSource,
+} from "./agent-output-read-metrics.js";
 
 const LIBRARY_DOC_ALLOWLIST = [
   { path: "AGENTS.md", kind: "instructions", title: "AGENTS.md" },
@@ -805,6 +810,10 @@ export interface MetadataServerOptions {
   exposePaneOutputTap?: ExposePaneOutputTapLike | false;
   exposeHotSnapshots?: boolean;
 }
+
+type MetadataReadAgentOutputResult = Awaited<
+  ReturnType<NonNullable<NonNullable<MetadataServerOptions["lifecycle"]>["readAgentOutput"]>>
+>;
 
 const EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 1500;
 const EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS = 1500;
@@ -2114,6 +2123,49 @@ export class MetadataServer {
     return this.projectRoot ? withProjectPaths(this.projectRoot, fn) : fn();
   }
 
+  private async measureAgentOutputRead(
+    source: AgentOutputReadSource,
+    input: { sessionId: string; startLine?: number },
+  ): Promise<{ result: MetadataReadAgentOutputResult; durationMs: number }> {
+    if (!this.options.lifecycle?.readAgentOutput) {
+      throw new Error("agent output not supported by this service");
+    }
+    const startedAt = performance.now();
+    try {
+      const result = await this.options.lifecycle.readAgentOutput(input);
+      return { result, durationMs: performance.now() - startedAt };
+    } catch (error) {
+      recordAgentOutputReadMetric({
+        source,
+        sessionId: input.sessionId,
+        requestedStartLine: input.startLine,
+        durationMs: performance.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  private recordAgentOutputRead(
+    source: AgentOutputReadSource,
+    input: { sessionId: string; startLine?: number },
+    result: MetadataReadAgentOutputResult,
+    durationMs: number,
+    changed?: boolean,
+  ): void {
+    recordAgentOutputReadMetric({
+      source,
+      sessionId: input.sessionId,
+      requestedStartLine: input.startLine,
+      startLine: result.startLine,
+      endLine: result.endLine,
+      captureLineLimit: result.captureLineLimit,
+      outputBytes: Buffer.byteLength(result.output ?? "", "utf8"),
+      durationMs,
+      changed,
+    });
+  }
+
   private currentProjectRoot(): string {
     return this.projectRoot ?? process.cwd();
   }
@@ -2178,10 +2230,12 @@ export class MetadataServer {
     await Promise.all(
       sessionIds.map(async (sessionId) => {
         try {
-          const result = await this.options.lifecycle!.readAgentOutput!({
+          const readInput = {
             sessionId,
             startLine: DESKTOP_STATE_CHAT_PREVIEW_START_LINE,
-          });
+          };
+          const { result, durationMs } = await this.measureAgentOutputRead("chat-preview", readInput);
+          this.recordAgentOutputRead("chat-preview", readInput, result, durationMs);
           const messages = (result.messages ?? []).slice(-DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES);
           if (messages.length === 0) return;
           previewsBySessionId.set(sessionId, {
@@ -3453,13 +3507,16 @@ export class MetadataServer {
         if (outputPollInFlight) return;
         outputPollInFlight = true;
         try {
-          const result = await this.options.lifecycle.readAgentOutput({
+          const readInput = {
             sessionId: sessionFilter,
             startLine: parsedStartLine.value,
-          });
+          };
+          const { result, durationMs } = await this.measureAgentOutputRead("events", readInput);
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
-          if (result.output !== lastOutput || liveness !== lastLiveness) {
+          const changed = result.output !== lastOutput || liveness !== lastLiveness;
+          this.recordAgentOutputRead("events", readInput, result, durationMs, changed);
+          if (changed) {
             lastOutput = result.output;
             lastLiveness = liveness;
             sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, {
@@ -3597,6 +3654,7 @@ export class MetadataServer {
           cache: this.exposePreviewCache?.stats?.() ?? null,
           taps: this.exposePaneOutputTap?.stats?.() ?? null,
         },
+        agentOutputReads: getAgentOutputReadMetrics(),
       });
       return;
     }
@@ -3965,13 +4023,16 @@ export class MetadataServer {
         if (pollInFlight) return;
         pollInFlight = true;
         try {
-          const result = await this.options.lifecycle!.readAgentOutput!({
+          const readInput = {
             sessionId,
             startLine: parsedStartLine.value,
-          });
+          };
+          const { result, durationMs } = await this.measureAgentOutputRead("output-stream", readInput);
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
-          if (result.output !== lastOutput || liveness !== lastLiveness) {
+          const changed = result.output !== lastOutput || liveness !== lastLiveness;
+          this.recordAgentOutputRead("output-stream", readInput, result, durationMs, changed);
+          if (changed) {
             lastOutput = result.output;
             lastLiveness = liveness;
             sendSseEvent(res, outputEventName, {
@@ -6960,7 +7021,9 @@ export class MetadataServer {
         }
         const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
         const startLine = captureWindow.startLine;
-        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
+        const readInput = { sessionId, startLine };
+        const { result, durationMs } = await this.measureAgentOutputRead("live-pane-output", readInput);
+        this.recordAgentOutputRead("live-pane-output", readInput, result, durationMs);
         send(res, 200, {
           ok: true,
           ...result,
@@ -7026,7 +7089,9 @@ export class MetadataServer {
           resize = { cols: result.cols, rows: result.rows };
         }
 
-        const output = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
+        const readInput = { sessionId, startLine };
+        const { result: output, durationMs } = await this.measureAgentOutputRead("live-pane-attach", readInput);
+        this.recordAgentOutputRead("live-pane-attach", readInput, output, durationMs);
         send(res, 200, {
           ok: true,
           ...output,

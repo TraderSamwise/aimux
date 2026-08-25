@@ -44,6 +44,7 @@ import {
 } from "./runtime-owner.js";
 import { loadLastUsedState } from "./last-used.js";
 import { worktreeColorCode } from "./worktree-colors.js";
+import { resetAgentOutputReadMetrics } from "./agent-output-read-metrics.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -104,6 +105,7 @@ describe("MetadataServer threads API", () => {
 
   afterEach(() => {
     server?.stop();
+    resetAgentOutputReadMetrics();
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
@@ -290,6 +292,11 @@ describe("MetadataServer threads API", () => {
         memoryHeapUsedBytes: expect.any(Number),
       },
       recentSlowRequests: [],
+      agentOutputReads: {
+        total: { count: 0 },
+        bySource: {},
+        recent: [],
+      },
     });
   });
 
@@ -7609,6 +7616,52 @@ describe("MetadataServer threads API", () => {
 
     expect(text).toContain('"activity":"running"');
     expect(text).toContain('"activity":"done"');
+  });
+
+  it("counts unchanged agent output stream polls in diagnostics", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => ({
+          sessionId,
+          startLine: startLine ?? -120,
+          output: "same pane",
+          parsed: { blocks: [{ type: "response" as const, text: "same pane" }] },
+          activity: "running" as const,
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+    const res = await fetch(`${base}/agents/output/stream?sessionId=codex-1&intervalMs=100`, {
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+
+    const text = await readSseUntil(res.body!, (value) => value.includes(": keepalive"));
+    controller.abort();
+    expect(text).toContain('"output":"same pane"');
+
+    const diagnostics = await fetch(`${base}/diagnostics`);
+    const json = await diagnostics.json();
+    const streamMetrics = json.agentOutputReads.bySource["output-stream"];
+    expect(streamMetrics).toMatchObject({
+      changed: 1,
+      errors: 0,
+    });
+    expect(streamMetrics.count).toBeGreaterThanOrEqual(2);
+    expect(streamMetrics.unchanged).toBeGreaterThanOrEqual(1);
+    expect(json.agentOutputReads.recent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "output-stream",
+          sessionId: "codex-1",
+        }),
+      ]),
+    );
   });
 
   it("preserves mined parser blocks in agent output SSE events", async () => {
