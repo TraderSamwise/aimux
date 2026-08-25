@@ -383,7 +383,6 @@ export function parseAgentOutput(
     if (isBottomChrome(lines[end] ?? "")) return null;
 
     let cursor = end - 1;
-    let ruleCount = 0;
     let sawPromptMarker = false;
     while (cursor >= 0) {
       const trimmed = (lines[cursor] ?? "").trim();
@@ -392,7 +391,6 @@ export function parseAgentOutput(
         continue;
       }
       if (isDivider(trimmed) || isTitledDivider(trimmed) || isWrappedDividerFragment(trimmed)) {
-        ruleCount += 1;
         cursor -= 1;
         continue;
       }

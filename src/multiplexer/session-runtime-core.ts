@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -30,7 +31,14 @@ import {
 } from "../attachment-store.js";
 import { parseSgrRichTextLines } from "../rich-text.js";
 import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
-import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
+import {
+  normalizeSubmittedPrompt,
+  type PromptInputBufferEvent,
+  type VisiblePromptInputDraft,
+  waitForTmuxPromptSubmit,
+  waitForVisiblePromptInputIdle,
+} from "../agent-prompt-delivery.js";
+import { logAlways } from "../debug.js";
 import { captureGitContext, writeLivePaneSnapshot } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { upsertTopologySession } from "../runtime-core/topology-sessions.js";
@@ -65,6 +73,7 @@ function readRecordingTail(path: string): string {
 
 type SessionRuntimeHost = any;
 const RESTORE_EXIT_BLOCK_MS = 30_000;
+const ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS = 10_000;
 
 function projectRootFor(host: SessionRuntimeHost): string {
   const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
@@ -75,6 +84,28 @@ export function getSessionLabel(host: SessionRuntimeHost, sessionId: string): st
   return (
     host.sessionLabels.get(sessionId) ?? host.offlineSessions.find((session: any) => session.id === sessionId)?.label
   );
+}
+
+function activePromptDraftFields(draft?: VisiblePromptInputDraft): Record<string, unknown> {
+  if (!draft) return {};
+  return {
+    marker: draft.marker,
+    draftChars: draft.text.length,
+    draftHash: createHash("sha256").update(draft.text).digest("hex").slice(0, 12),
+  };
+}
+
+function logActivePromptInputBuffer(host: SessionRuntimeHost, sessionId: string, event: PromptInputBufferEvent): void {
+  logAlways.info("agent input active prompt buffer", "session", {
+    sessionId,
+    worktreePath: host.sessionWorktreePaths?.get?.(sessionId),
+    event: event.kind,
+    waitedMs: event.waitedMs,
+    polls: event.polls,
+    changes: event.changes,
+    maxWaitMs: ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS,
+    ...activePromptDraftFields(event.draft),
+  });
 }
 
 export function applySessionLabel(host: SessionRuntimeHost, sessionId: string, label?: string): void {
@@ -283,7 +314,7 @@ export async function sendAgentInput(
   host: SessionRuntimeHost,
   sessionId: string,
   text: string,
-  opts?: { waitForSubmit?: boolean },
+  opts?: { waitForSubmit?: boolean; waitForActiveDraftIdle?: boolean },
 ): Promise<{ sessionId: string; accepted: true }> {
   // Default true preserves the blocking behavior the TUI and loop-watcher rely
   // on. The HTTP `input` route passes false: it returns once the input is
@@ -298,6 +329,16 @@ export async function sendAgentInput(
     if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
     session.transport.retarget(target);
     const prompt = normalizeSubmittedPrompt(host.sessionToolKeys.get(sessionId), text, true);
+    if (opts?.waitForActiveDraftIdle) {
+      const bufferResult = await waitForVisiblePromptInputIdle({
+        tmuxRuntimeManager: host.tmuxRuntimeManager,
+        target,
+        isTargetCurrent: () => resolveLiveSessionTmuxTarget(host, sessionId, target)?.windowId === target.windowId,
+        maxWaitMs: ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS,
+        onEvent: (event) => logActivePromptInputBuffer(host, sessionId, event),
+      });
+      if (!bufferResult.ok) throw new Error(`Session "${sessionId}" changed before input delivery`);
+    }
     session.transport.write(prompt);
     const confirmSubmit = waitForTmuxPromptSubmit({
       tmuxRuntimeManager: host.tmuxRuntimeManager,

@@ -266,6 +266,21 @@ export function logAt(level: LogLevel, message: string, category = "general", fi
   });
 }
 
+export function logAlwaysAt(level: LogLevel, message: string, category = "general", fields?: LogFields): void {
+  if (!runtimeConfig.path) return;
+  writeRecord({
+    ts: new Date().toISOString(),
+    level,
+    category,
+    message: sanitizeLogString(message),
+    pid: process.pid,
+    processKind: runtimeConfig.processKind,
+    projectId: runtimeConfig.projectId,
+    projectRoot: runtimeConfig.projectRoot,
+    fields: sanitizeLogFields(fields),
+  });
+}
+
 /**
  * A record that is written whether or not logging is switched on.
  *
@@ -306,6 +321,15 @@ export const log = {
   info: (message: string, category?: string, fields?: LogFields): void => logAt("info", message, category, fields),
   debug: (message: string, category?: string, fields?: LogFields): void => logAt("debug", message, category, fields),
   trace: (message: string, category?: string, fields?: LogFields): void => logAt("trace", message, category, fields),
+};
+
+export const logAlways = {
+  error: (message: string, category?: string, fields?: LogFields): void =>
+    logAlwaysAt("error", message, category, fields),
+  warn: (message: string, category?: string, fields?: LogFields): void =>
+    logAlwaysAt("warn", message, category, fields),
+  info: (message: string, category?: string, fields?: LogFields): void =>
+    logAlwaysAt("info", message, category, fields),
 };
 
 export function debug(msg: string, category?: string): void {

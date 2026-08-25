@@ -7065,12 +7065,13 @@ describe("MetadataServer threads API", () => {
   });
 
   it("live-delivers assigned tasks to the target agent", async () => {
-    const sent: Array<{ sessionId: string; text: string; waitForSubmit?: boolean }> = [];
+    const sent: Array<{ sessionId: string; text: string; waitForSubmit?: boolean; waitForActiveDraftIdle?: boolean }> =
+      [];
     server?.stop();
     server = new MetadataServer({
       lifecycle: {
-        sendAgentInput: ({ sessionId, text, waitForSubmit }) => {
-          sent.push({ sessionId, text, waitForSubmit });
+        sendAgentInput: ({ sessionId, text, waitForSubmit, waitForActiveDraftIdle }) => {
+          sent.push({ sessionId, text, waitForSubmit, waitForActiveDraftIdle });
           return { sessionId, accepted: true };
         },
       },
@@ -7101,7 +7102,7 @@ describe("MetadataServer threads API", () => {
     expect(taskRes.ok).toBe(true);
     expect(assigned.deliveredTo).toEqual(["codex-1"]);
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ sessionId: "codex-1", waitForSubmit: false });
+    expect(sent[0]).toMatchObject({ sessionId: "codex-1", waitForSubmit: false, waitForActiveDraftIdle: true });
     expect(sent[0]?.text).toContain("[aimux task assigned]");
     expect(sent[0]?.text).toContain("Task id:");
     expect(sent[0]?.text).toContain("Accept before starting: aimux task accept");

@@ -46,12 +46,7 @@ import {
   type SessionAlertDisplayContext,
 } from "./alert-display.js";
 import { notifyAlert } from "./notify.js";
-import {
-  clearNotifications,
-  listNotificationSnapshot,
-  listNotifications,
-  markNotificationsRead,
-} from "./notifications.js";
+import { clearNotifications, listNotificationSnapshot, markNotificationsRead } from "./notifications.js";
 import { updateNotificationContext } from "./notification-context.js";
 import { markSessionViewed } from "./session-viewed.js";
 import { AgentTracker } from "./agent-tracker.js";
@@ -70,7 +65,6 @@ import {
   markThreadSeen,
   type OrchestrationMessage,
   type OrchestrationThread,
-  readMessages,
   readMessageSnapshot,
   readThread,
   setThreadStatus,
@@ -93,7 +87,7 @@ import {
   type TaskLifecycleResult,
   type AssignTaskResult,
 } from "./orchestration-actions.js";
-import { readAllTaskSnapshots, readAllTasks, readTaskSnapshot } from "./tasks.js";
+import { readAllTaskSnapshots, readTaskSnapshot } from "./tasks.js";
 import { buildCoordinationThreadEntries } from "./workflow.js";
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
@@ -771,6 +765,7 @@ export interface MetadataServerOptions {
       // When false, the call returns once the input is accepted and confirms the
       // tmux submit in the background (output arrives via SSE, not this response).
       waitForSubmit?: boolean;
+      waitForActiveDraftIdle?: boolean;
     }) => Promise<{ sessionId: string; accepted: true }> | { sessionId: string; accepted: true };
     readAgentOutput?: (input: { sessionId: string; startLine?: number }) =>
       | Promise<{
@@ -3163,7 +3158,12 @@ export class MetadataServer {
     if (!target || target === "user" || target === "aimux") return false;
     if (!this.options.lifecycle?.sendAgentInput) return false;
     try {
-      await this.options.lifecycle.sendAgentInput({ sessionId: target, text, waitForSubmit: false });
+      await this.options.lifecycle.sendAgentInput({
+        sessionId: target,
+        text,
+        waitForSubmit: false,
+        waitForActiveDraftIdle: true,
+      });
       return true;
     } catch (error) {
       log.warn("live exchange delivery failed", "api", {

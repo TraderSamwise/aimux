@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { configureLogging, debug, log, resetLoggingForTests, resolveLoggingRuntimeConfig } from "./debug.js";
+import { configureLogging, debug, log, logAlways, resetLoggingForTests, resolveLoggingRuntimeConfig } from "./debug.js";
 
 describe("debug logging", () => {
   let root = "";
@@ -26,6 +26,21 @@ describe("debug logging", () => {
     debug("hidden", "test");
 
     expect(existsSync(logPath)).toBe(false);
+  });
+
+  it("writes explicit always records when logging is disabled", () => {
+    configureLogging({ enabled: false, path: logPath, level: "debug", processKind: "test" });
+
+    logAlways.info("visible", "session", { promptChars: 12 });
+
+    const record = JSON.parse(readFileSync(logPath, "utf-8").trim()) as Record<string, any>;
+    expect(record).toMatchObject({
+      level: "info",
+      category: "session",
+      message: "visible",
+      processKind: "test",
+      fields: { promptChars: 12 },
+    });
   });
 
   it("writes structured JSONL when enabled", () => {
