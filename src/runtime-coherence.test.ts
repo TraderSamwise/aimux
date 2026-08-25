@@ -445,7 +445,9 @@ describe("runtime coherence report", () => {
       expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
       rebuildRequired: true,
     });
-    expect(renderRuntimeCoherenceReport(report)).toContain("runtime: contract=legacy-contract expected=1 rebuild=yes");
+    expect(renderRuntimeCoherenceReport(report)).toContain(
+      `runtime: contract=legacy-contract expected=${AIMUX_TMUX_RUNTIME_CONTRACT_VERSION} rebuild=yes`,
+    );
   });
 
   it("reports stale client tmux runtime contracts as requiring runtime rebuild", async () => {
@@ -503,7 +505,7 @@ describe("runtime coherence report", () => {
       ],
     });
     expect(renderRuntimeCoherenceReport(report)).toContain(
-      "client: aimux-beta-222-client-deadbeef contract=legacy-contract expected=1 rebuild=yes",
+      `client: aimux-beta-222-client-deadbeef contract=legacy-contract expected=${AIMUX_TMUX_RUNTIME_CONTRACT_VERSION} rebuild=yes`,
     );
   });
 
@@ -555,7 +557,7 @@ describe("runtime coherence report", () => {
       },
     ]);
     expect(renderRuntimeCoherenceReport(report)).toContain(
-      "client: aimux-beta-222-client-aaaaaaaa contract=(missing) expected=1 rebuild=yes",
+      `client: aimux-beta-222-client-aaaaaaaa contract=(missing) expected=${AIMUX_TMUX_RUNTIME_CONTRACT_VERSION} rebuild=yes`,
     );
   });
 
