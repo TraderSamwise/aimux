@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,7 +7,6 @@ import { getProjectStateDir, initPaths } from "../paths.js";
 import {
   acknowledgeAgentRestoreOffer,
   deriveAgentRestoreOffer,
-  deriveAgentRestoreOfferFromRestorableInventory,
   readAgentRestoreOffer,
   readLastOnlineAgentsSnapshot,
   recordLastOnlineAgents,
@@ -174,147 +173,22 @@ describe("agent restore state", () => {
     expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:03:00.000Z" })).toBeNull();
   });
 
-  it("creates a one-shot offer from restorable inventory when no online snapshot exists", () => {
-    const offer = deriveAgentRestoreOfferFromRestorableInventory(
-      [],
-      [{ id: "codex-offline", command: "codex", label: "codex(coder)" }],
-      { now: "2026-08-22T01:04:00.000Z" },
-    );
-
-    expect(offer?.source).toBe("restorable-inventory");
-    expect(offer?.sessionIds).toEqual(["codex-offline"]);
-    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-offline"]);
-
-    acknowledgeAgentRestoreOffer();
-
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [{ id: "codex-offline", command: "codex", label: "codex(coder)" }],
-        { now: "2026-08-22T01:05:00.000Z" },
-      ),
-    ).toBeNull();
-  });
-
-  it("clears inventory offers when live agents are present", () => {
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [{ id: "codex-offline", command: "codex", label: "codex(coder)" }],
-        { now: "2026-08-22T01:08:00.000Z" },
-      )?.source,
-    ).toBe("restorable-inventory");
-
-    expect(deriveAgentRestoreOffer(["codex-live"], { now: "2026-08-22T01:09:00.000Z" })).toBeNull();
-    expect(readAgentRestoreOffer()).toBeNull();
-  });
-
-  it("clears existing inventory offers from the previous-running derivation path", () => {
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [{ id: "codex-offline", command: "codex", label: "codex(offline)" }],
-        { now: "2026-08-22T01:08:00.000Z" },
-      )?.source,
-    ).toBe("restorable-inventory");
-
-    expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:09:00.000Z" })).toBeNull();
-    expect(readAgentRestoreOffer()).toBeNull();
-  });
-
-  it("removes live sessions from an existing inventory offer", () => {
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [
-          { id: "codex-live", command: "codex", label: "codex(live)" },
-          { id: "codex-offline", command: "codex", label: "codex(offline)" },
-        ],
-        { now: "2026-08-22T01:08:00.000Z" },
-      )?.sessionIds,
-    ).toEqual(["codex-live", "codex-offline"]);
-
-    const offer = deriveAgentRestoreOfferFromRestorableInventory(
-      ["codex-live"],
-      [
-        { id: "codex-live", command: "codex", label: "codex(live)" },
-        { id: "codex-offline", command: "codex", label: "codex(offline)" },
-      ],
-      { now: "2026-08-22T01:09:00.000Z" },
-    );
-
-    expect(offer?.sessionIds).toEqual(["codex-offline"]);
-    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-offline"]);
-  });
-
-  it("removes non-restorable sessions from an existing last-online offer", () => {
-    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+  it("deletes stale inventory-derived restore offers without prompting", () => {
+    const staleOfferPath = join(getProjectStateDir(), "agent-restore-offer.json");
+    writeJsonAtomic(staleOfferPath, {
       version: 1,
-      id: "snapshot-old",
-      writerInstanceId: "previous-process",
+      id: "restore-inventory-old",
+      snapshotId: "inventory-old",
+      snapshotUpdatedAt: "2026-08-22T01:00:00.000Z",
+      source: "restorable-inventory",
       createdAt: "2026-08-22T01:00:00.000Z",
       updatedAt: "2026-08-22T01:00:00.000Z",
-      sessionIds: ["codex-current", "codex-stale"],
-      sessions: [
-        { id: "codex-current", command: "codex", label: "codex(current)" },
-        { id: "codex-stale", command: "codex", label: "codex(stale)" },
-      ],
+      sessionIds: ["codex-stale"],
+      sessions: [{ id: "codex-stale", command: "codex" }],
     });
-    deriveAgentRestoreOffer([], { now: "2026-08-22T01:01:00.000Z" });
 
-    const offer = deriveAgentRestoreOfferFromRestorableInventory(
-      [],
-      [{ id: "codex-current", command: "codex", label: "codex(current)" }],
-      { now: "2026-08-22T01:02:00.000Z" },
-    );
-
-    expect(offer?.source).toBe("last-online");
-    expect(offer?.sessionIds).toEqual(["codex-current"]);
-    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-current"]);
-  });
-
-  it("clears an existing inventory offer when every offered session is live or no longer restorable", () => {
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [{ id: "codex-live", command: "codex", label: "codex(live)" }],
-        { now: "2026-08-22T01:08:00.000Z" },
-      )?.sessionIds,
-    ).toEqual(["codex-live"]);
-
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        ["codex-live"],
-        [{ id: "codex-live", command: "codex", label: "codex(live)" }],
-        { now: "2026-08-22T01:09:00.000Z" },
-      ),
-    ).toBeNull();
     expect(readAgentRestoreOffer()).toBeNull();
-  });
-
-  it("does not re-offer dismissed inventory sessions when the restorable set changes", () => {
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [
-          { id: "codex-a", command: "codex", label: "codex(a)" },
-          { id: "codex-b", command: "codex", label: "codex(b)" },
-        ],
-        { now: "2026-08-22T01:06:00.000Z" },
-      )?.sessionIds,
-    ).toEqual(["codex-a", "codex-b"]);
-
-    acknowledgeAgentRestoreOffer();
-
-    expect(
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [
-          { id: "codex-b", command: "codex", label: "codex(b-renamed)" },
-          { id: "codex-c", command: "codex", label: "codex(c)" },
-        ],
-        { now: "2026-08-22T01:07:00.000Z" },
-      )?.sessionIds,
-    ).toEqual(["codex-c"]);
+    expect(existsSync(staleOfferPath)).toBe(false);
+    expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:01:00.000Z" })).toBeNull();
   });
 });

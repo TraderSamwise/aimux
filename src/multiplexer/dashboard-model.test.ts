@@ -5,10 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { updateSessionMetadata } from "../metadata-store.js";
-import { initPaths, withProjectPaths } from "../paths.js";
+import { getProjectStateDir, initPaths, withProjectPaths } from "../paths.js";
+import { writeJsonAtomic } from "../atomic-write.js";
 import { saveRuntimeTopologySessions, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import { addNotification } from "../notifications.js";
-import { deriveAgentRestoreOfferFromRestorableInventory } from "../runtime-core/agent-restore-state.js";
 import {
   applyDashboardModel,
   buildDesktopStateSnapshot,
@@ -2017,14 +2017,22 @@ describe("refreshDashboardModelFromService", () => {
       process.env.AIMUX_HOME = aimuxHome;
       mkdirSync(join(repoRoot, ".git"), { recursive: true });
       await initPaths(repoRoot);
-      deriveAgentRestoreOfferFromRestorableInventory(
-        [],
-        [
-          { id: "codex-current", command: "codex", label: "codex(current)", worktreePath: repoRoot },
-          { id: "codex-stale", command: "codex", label: "codex(stale)", worktreePath: repoRoot },
-        ],
-        { now: "2026-08-25T01:00:00.000Z" },
-      );
+      withProjectPaths(repoRoot, () => {
+        writeJsonAtomic(join(getProjectStateDir(), "agent-restore-offer.json"), {
+          version: 1,
+          id: "restore-inventory-old",
+          snapshotId: "inventory-old",
+          snapshotUpdatedAt: "2026-08-25T01:00:00.000Z",
+          source: "restorable-inventory",
+          createdAt: "2026-08-25T01:00:00.000Z",
+          updatedAt: "2026-08-25T01:00:00.000Z",
+          sessionIds: ["codex-current", "codex-stale"],
+          sessions: [
+            { id: "codex-current", command: "codex", label: "codex(current)", worktreePath: repoRoot },
+            { id: "codex-stale", command: "codex", label: "codex(stale)", worktreePath: repoRoot },
+          ],
+        });
+      });
 
       const host = {
         ...minimalDashboardHost([]),

@@ -4,7 +4,14 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { getDashboardClientUiStatePath, getPlansDir, getProjectStateDir, initPaths } from "./paths.js";
+import { writeJsonAtomic } from "./atomic-write.js";
+import {
+  getDashboardClientUiStatePath,
+  getPlansDir,
+  getProjectStateDir,
+  initPaths,
+  withProjectPaths,
+} from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
@@ -25,8 +32,9 @@ import {
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
 import {
-  deriveAgentRestoreOfferFromRestorableInventory,
+  deriveAgentRestoreOffer,
   readAgentRestoreOffer,
+  type AgentRestoreSession,
 } from "./runtime-core/agent-restore-state.js";
 import {
   getRuntimeOwnerId,
@@ -61,6 +69,25 @@ async function waitForCondition(predicate: () => boolean, ms = 1000): Promise<vo
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`timed out after ${ms}ms`);
+}
+
+function seedPreviousAgentRestoreOffer(
+  repoRoot: string,
+  sessions: AgentRestoreSession[],
+  now = "2026-08-24T13:40:00.000Z",
+): void {
+  withProjectPaths(repoRoot, () => {
+    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+      version: 1,
+      id: `snapshot-${sessions.map((session) => session.id).join("-")}`,
+      writerInstanceId: "previous-process",
+      createdAt: now,
+      updatedAt: now,
+      sessionIds: sessions.map((session) => session.id),
+      sessions,
+    });
+  });
+  deriveAgentRestoreOffer([], { projectRoot: repoRoot, now });
 }
 
 describe("MetadataServer threads API", () => {
@@ -4765,13 +4792,13 @@ describe("MetadataServer threads API", () => {
 
   it("keeps failed previous-restore sessions in the retry offer", async () => {
     server?.stop();
-    deriveAgentRestoreOfferFromRestorableInventory(
-      [],
+    seedPreviousAgentRestoreOffer(
+      repoRoot,
       [
         { id: "codex-ok", command: "codex" },
         { id: "claude-fail", command: "claude" },
       ],
-      { projectRoot: repoRoot, now: "2026-08-24T13:40:00.000Z" },
+      "2026-08-24T13:40:00.000Z",
     );
     const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => {
       if (sessionId === "claude-fail") throw new Error("resume unavailable");
@@ -4817,13 +4844,13 @@ describe("MetadataServer threads API", () => {
 
   it("uses exact single-agent restores for previous-restore batches when available", async () => {
     server?.stop();
-    deriveAgentRestoreOfferFromRestorableInventory(
-      [],
+    seedPreviousAgentRestoreOffer(
+      repoRoot,
       [
         { id: "claude-parent", command: "claude" },
         { id: "claude-teammate", command: "claude" },
       ],
-      { projectRoot: repoRoot, now: "2026-08-24T16:05:00.000Z" },
+      "2026-08-24T16:05:00.000Z",
     );
     const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => {
       return { sessionId: `${sessionId}-with-team`, status: "running" as const };
@@ -4870,10 +4897,7 @@ describe("MetadataServer threads API", () => {
       id: `codex-${index + 1}`,
       command: "codex",
     }));
-    deriveAgentRestoreOfferFromRestorableInventory([], sessions, {
-      projectRoot: repoRoot,
-      now: "2026-08-24T16:10:00.000Z",
-    });
+    seedPreviousAgentRestoreOffer(repoRoot, sessions, "2026-08-24T16:10:00.000Z");
     const restoreAgent = vi.fn(({ sessionId }: { sessionId: string }) => {
       return { sessionId, status: "running" as const };
     });
@@ -4911,13 +4935,13 @@ describe("MetadataServer threads API", () => {
 
   it("serializes restore-previous agent resumes through the lifecycle queue", async () => {
     server?.stop();
-    deriveAgentRestoreOfferFromRestorableInventory(
-      [],
+    seedPreviousAgentRestoreOffer(
+      repoRoot,
       [
         { id: "codex-a", command: "codex" },
         { id: "codex-b", command: "codex" },
       ],
-      { projectRoot: repoRoot, now: "2026-08-24T16:15:00.000Z" },
+      "2026-08-24T16:15:00.000Z",
     );
     const started: string[] = [];
     const resolvers = new Map<string, () => void>();

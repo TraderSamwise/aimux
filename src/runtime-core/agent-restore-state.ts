@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
@@ -29,7 +29,7 @@ export interface AgentRestoreOffer {
   id: string;
   snapshotId: string;
   snapshotUpdatedAt: string;
-  source?: "last-online" | "restorable-inventory";
+  source?: "last-online";
   createdAt: string;
   updatedAt: string;
   sessionIds: string[];
@@ -39,8 +39,7 @@ export interface AgentRestoreOffer {
 interface RestoreOfferAck {
   version: 1;
   snapshotId: string;
-  source?: "last-online" | "restorable-inventory";
-  inventorySessionIds?: string[];
+  source?: "last-online";
   acknowledgedAt: string;
 }
 
@@ -89,11 +88,6 @@ function normalizeSessions(value: unknown): AgentRestoreSession[] {
   return [...byId.values()];
 }
 
-function normalizeSessionIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((id): id is string => typeof id === "string" && Boolean(id.trim())))];
-}
-
 export function agentRestoreSessionKey(sessions: AgentRestoreSession[]): string {
   return JSON.stringify(
     sessions.map((session) => [
@@ -104,10 +98,6 @@ export function agentRestoreSessionKey(sessions: AgentRestoreSession[]): string 
       session.worktreePath ?? "",
     ]),
   );
-}
-
-function inventorySnapshotId(sessions: AgentRestoreSession[]): string {
-  return `inventory-${createHash("sha256").update(agentRestoreSessionKey(sessions)).digest("hex").slice(0, 16)}`;
 }
 
 function sameSessionIds(left: AgentRestoreSession[], right: AgentRestoreSession[]): boolean {
@@ -151,6 +141,7 @@ function normalizeSnapshot(value: unknown): LastOnlineAgentsSnapshot | null {
 function normalizeOffer(value: unknown): AgentRestoreOffer | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
+  if (record.source === "restorable-inventory") return null;
   const sessions = normalizeSessions(record.sessions);
   if (sessions.length === 0) return null;
   const now = new Date().toISOString();
@@ -161,7 +152,7 @@ function normalizeOffer(value: unknown): AgentRestoreOffer | null {
     snapshotId,
     snapshotUpdatedAt:
       typeof record.snapshotUpdatedAt === "string" && record.snapshotUpdatedAt.trim() ? record.snapshotUpdatedAt : now,
-    source: record.source === "restorable-inventory" ? "restorable-inventory" : "last-online",
+    source: "last-online",
     createdAt: typeof record.createdAt === "string" && record.createdAt.trim() ? record.createdAt : now,
     updatedAt: typeof record.updatedAt === "string" && record.updatedAt.trim() ? record.updatedAt : now,
     sessionIds: sessions.map((session) => session.id),
@@ -176,8 +167,7 @@ function normalizeAck(value: unknown): RestoreOfferAck | null {
   return {
     version: 1,
     snapshotId: record.snapshotId,
-    source: record.source === "restorable-inventory" ? "restorable-inventory" : "last-online",
-    inventorySessionIds: normalizeSessionIds(record.inventorySessionIds),
+    source: "last-online",
     acknowledgedAt:
       typeof record.acknowledgedAt === "string" && record.acknowledgedAt.trim()
         ? record.acknowledgedAt
@@ -186,7 +176,25 @@ function normalizeAck(value: unknown): RestoreOfferAck | null {
 }
 
 export function readAgentRestoreOffer(projectRoot?: string): AgentRestoreOffer | null {
-  const read = () => readJsonFile(offerPath(), normalizeOffer);
+  const read = () => {
+    const path = offerPath();
+    if (!existsSync(path)) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf-8"));
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as Record<string, unknown>).source === "restorable-inventory"
+      ) {
+        rmSync(path, { force: true });
+        return null;
+      }
+      return normalizeOffer(parsed);
+    } catch {
+      quarantineCorruptFile(path);
+      return null;
+    }
+  };
   return projectRoot ? withProjectPaths(projectRoot, read) : read();
 }
 
@@ -241,9 +249,7 @@ export function deriveAgentRestoreOffer(
     }
     const existing = readAgentRestoreOffer();
     const snapshot = readLastOnlineAgentsSnapshot();
-    if (existing?.source === "restorable-inventory") {
-      rmSync(offerPath(), { force: true });
-    } else if (
+    if (
       existing &&
       (!snapshot || snapshot.id === existing.snapshotId || snapshot.writerInstanceId === WRITER_INSTANCE_ID)
     ) {
@@ -281,72 +287,6 @@ export function deriveAgentRestoreOffer(
   return input.projectRoot ? withProjectPaths(input.projectRoot, derive) : derive();
 }
 
-export function deriveAgentRestoreOfferFromRestorableInventory(
-  liveSessionIds: Iterable<string>,
-  candidateSessions: AgentRestoreSession[],
-  input: { projectRoot?: string; now?: string } = {},
-): AgentRestoreOffer | null {
-  const derive = () => {
-    const ack = readJsonFile(ackPath(), normalizeAck);
-    const dismissedInventoryIds =
-      ack?.source === "restorable-inventory" ? new Set(ack.inventorySessionIds ?? []) : new Set<string>();
-    const liveIds = new Set(liveSessionIds);
-    const candidates = normalizeSessions(candidateSessions);
-    const candidateIds = new Set(candidates.map((session) => session.id));
-    const sessions = candidates.filter((session) => !liveIds.has(session.id) && !dismissedInventoryIds.has(session.id));
-
-    const existing = readAgentRestoreOffer();
-    if (existing) {
-      const existingSessions = existing.sessions.filter((session) => {
-        if (liveIds.has(session.id)) return false;
-        if (!candidateIds.has(session.id)) return false;
-        if (existing.source === "restorable-inventory" && dismissedInventoryIds.has(session.id)) return false;
-        return true;
-      });
-      if (existingSessions.length === 0) {
-        rmSync(offerPath(), { force: true });
-        return null;
-      }
-      if (sameSessions(existing.sessions, existingSessions)) return existing;
-      const updated: AgentRestoreOffer = {
-        ...existing,
-        updatedAt: input.now ?? new Date().toISOString(),
-        sessionIds: existingSessions.map((session) => session.id),
-        sessions: existingSessions,
-      };
-      writeJsonAtomic(offerPath(), updated);
-      return updated;
-    }
-
-    if (sessions.length === 0) {
-      rmSync(offerPath(), { force: true });
-      return null;
-    }
-
-    const snapshotId = inventorySnapshotId(sessions);
-    if (ack?.snapshotId === snapshotId) {
-      rmSync(offerPath(), { force: true });
-      return null;
-    }
-
-    const now = input.now ?? new Date().toISOString();
-    const offer: AgentRestoreOffer = {
-      version: 1,
-      id: `restore-${snapshotId}`,
-      snapshotId,
-      snapshotUpdatedAt: now,
-      source: "restorable-inventory",
-      createdAt: now,
-      updatedAt: now,
-      sessionIds: sessions.map((session) => session.id),
-      sessions,
-    };
-    writeJsonAtomic(offerPath(), offer);
-    return offer;
-  };
-  return input.projectRoot ? withProjectPaths(input.projectRoot, derive) : derive();
-}
-
 export function acknowledgeAgentRestoreOffer(projectRoot?: string): void {
   const acknowledge = () => {
     const offer = readAgentRestoreOffer();
@@ -354,8 +294,7 @@ export function acknowledgeAgentRestoreOffer(projectRoot?: string): void {
       writeJsonAtomic(ackPath(), {
         version: 1,
         snapshotId: offer.snapshotId,
-        source: offer.source ?? "last-online",
-        inventorySessionIds: offer.source === "restorable-inventory" ? offer.sessionIds : undefined,
+        source: "last-online",
         acknowledgedAt: new Date().toISOString(),
       } satisfies RestoreOfferAck);
     }
