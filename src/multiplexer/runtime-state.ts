@@ -33,6 +33,11 @@ import {
   startDashboardLifecycleTask,
 } from "./dashboard-lifecycle.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import {
+  consumeDashboardTuiVisibilityWake,
+  isDashboardTuiVisible,
+  readDashboardTuiVisibilityForHost,
+} from "./tui-visibility.js";
 
 type RuntimeStateHost = any;
 
@@ -191,6 +196,7 @@ function isIntentionalOfflineSession(session: any): boolean {
 }
 
 export function renderCurrentDashboardView(host: RuntimeStateHost): void {
+  if (host.mode === "dashboard" && !isDashboardTuiVisible(host)) return;
   host.reconcileDashboardRenderState();
   if (host.isDashboardScreen("coordination")) {
     host.renderCoordination();
@@ -256,6 +262,13 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
     recordOnlineAgentsForRestore(host);
 
     if (host.mode === "dashboard") {
+      const tuiVisible = readDashboardTuiVisibilityForHost(host, { force: true }).visible;
+      const tuiJustWoke = consumeDashboardTuiVisibilityWake(host);
+      if (!tuiVisible) return;
+      if (tuiJustWoke) {
+        host.dashboardNextBackgroundRefreshAt = 0;
+        host.invalidateDashboardFrame?.();
+      }
       const now = Date.now();
       if (host.dashboardStartupPriming) {
         if (dashboardNeedsRender) {
@@ -268,7 +281,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
         }
         const modelLifecycle = captureDashboardLifecycle(host);
         const renderLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
-        void refreshDashboardModelThroughApi(host, { lifecycle: modelLifecycle })
+        void refreshDashboardModelThroughApi(host, { force: tuiJustWoke, lifecycle: modelLifecycle })
           .then((refreshed) => {
             if (
               isDashboardLifecycleCurrent(host, renderLifecycle) &&

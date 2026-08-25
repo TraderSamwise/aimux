@@ -29,6 +29,7 @@ import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashbo
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { filterDashboardVisibleModel, isDashboardSessionOffline } from "../dashboard/visibility.js";
+import { isDashboardTuiVisible } from "./tui-visibility.js";
 
 function buildStaticDashboardRenderErrorFrame(message: string, cols: number, rows: number): string {
   const width = Math.max(24, Math.min(cols, 120));
@@ -71,9 +72,10 @@ export const dashboardViewMethods = {
       pendingTarget,
       itemId,
       () => {
+        if (!isDashboardTuiVisible(this)) return;
         void refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle })
           .then(() => {
-            if (isDashboardLifecycleCurrent(this, renderLifecycle)) this.renderDashboard();
+            if (isDashboardLifecycleCurrent(this, renderLifecycle)) this.renderCurrentDashboardView();
           })
           .catch(() => undefined);
       },
@@ -81,6 +83,10 @@ export const dashboardViewMethods = {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
           if (!isDashboardLifecycleCurrent(this, settleLifecycle)) return true;
+          if (!isDashboardTuiVisible(this)) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            return false;
+          }
           const refreshed = await refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle });
           if (!refreshed.ok) return false;
           if (pendingTarget === "worktree") {

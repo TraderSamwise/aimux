@@ -23,6 +23,7 @@ import { refreshDashboardModelThroughApi, type DashboardModelRefreshOutcome } fr
 import { refreshLibrary } from "./library.js";
 import { refreshProjectObservability } from "./project.js";
 import { refreshTopology } from "./topology.js";
+import { isDashboardTuiVisible } from "./tui-visibility.js";
 
 type ProjectEventStreamHost = any;
 
@@ -31,6 +32,7 @@ export const PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS = 35_000;
 export const PROJECT_EVENT_STREAM_RETRY_BASE_MS = 1_000;
 export const PROJECT_EVENT_STREAM_RETRY_MAX_MS = 15_000;
 export const EVENT_REFRESH_DEBOUNCE_MS = 250;
+export const HIDDEN_TUI_EVENT_REFRESH_RECHECK_MS = 1_000;
 
 class DashboardProjectEventAdapter {
   private controller: AbortController | null = null;
@@ -96,11 +98,15 @@ class DashboardProjectEventAdapter {
 
   scheduleViewRefresh(views: readonly ProjectApiView[]): void {
     if (this.disposed) return;
+    this.requeueViews(views);
+    if (this.refreshTimer || this.refreshInFlightGeneration !== null) return;
+    this.armRefreshTimer();
+  }
+
+  private requeueViews(views: Iterable<ProjectApiView>): void {
     const pending = this.pendingViews ?? new Set<ProjectApiView>();
     for (const view of views) pending.add(view);
     this.pendingViews = pending;
-    if (this.refreshTimer || this.refreshInFlightGeneration !== null) return;
-    this.armRefreshTimer();
   }
 
   /**
@@ -112,7 +118,7 @@ class DashboardProjectEventAdapter {
    * that, so every tool call from every agent bought its own full desktop-state
    * rebuild, and each rebuild costs more than the window did.
    */
-  private armRefreshTimer(): void {
+  private armRefreshTimer(delayMs = EVENT_REFRESH_DEBOUNCE_MS): void {
     const generation = this.generation;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
@@ -121,14 +127,23 @@ class DashboardProjectEventAdapter {
         this.pendingViews = null;
         return;
       }
+      if (!isDashboardTuiVisible(this.host)) {
+        this.armRefreshTimer(HIDDEN_TUI_EVENT_REFRESH_RECHECK_MS);
+        return;
+      }
       const current = this.pendingViews;
       this.pendingViews = null;
       if (current) void this.runRefresh(current, generation);
-    }, EVENT_REFRESH_DEBOUNCE_MS);
+    }, delayMs);
   }
 
   private async runRefresh(views: Set<ProjectApiView>, generation: number): Promise<void> {
     if (generation !== this.generation || this.refreshInFlightGeneration !== null) return;
+    if (!isDashboardTuiVisible(this.host)) {
+      this.requeueViews(views);
+      if (!this.refreshTimer) this.armRefreshTimer(HIDDEN_TUI_EVENT_REFRESH_RECHECK_MS);
+      return;
+    }
     this.refreshInFlightGeneration = generation;
     try {
       await this.refreshViews(views, generation);

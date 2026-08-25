@@ -32,6 +32,7 @@ import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
 import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
 import { discoverCodexBackendSessionId, relocateClaudeTranscript } from "../backend-session-discovery.js";
 import { StartupInterstitialDismisser } from "../tmux/startup-interstitials.js";
+import { isDashboardTuiVisible } from "./tui-visibility.js";
 
 type SessionLaunchHost = any;
 
@@ -39,6 +40,7 @@ const CODEX_BACKEND_CAPTURE_ATTEMPTS = 20;
 const CODEX_BACKEND_CAPTURE_INTERVAL_MS = 250;
 const STARTUP_INTERSTITIAL_INTERVAL_MS = 500;
 const STARTUP_INTERSTITIAL_WINDOW_MS = 30_000;
+const DASHBOARD_VIEWPORT_POLL_MS = 250;
 
 function projectRootFor(host: SessionLaunchHost): string {
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
@@ -392,12 +394,13 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.dashboardLastViewportKey = host.getViewportKey();
   host.dashboardViewportPollInterval = setInterval(() => {
     if (host.mode !== "dashboard") return;
+    if (!isDashboardTuiVisible(host)) return;
     const viewportKey = host.getViewportKey();
     if (viewportKey === host.dashboardLastViewportKey) return;
     host.dashboardLastViewportKey = viewportKey;
     host.invalidateDashboardFrame();
     host.renderCurrentDashboardView();
-  }, 40);
+  }, DASHBOARD_VIEWPORT_POLL_MS);
 
   host.mode = "dashboard";
   const dashboardRunGeneration = (host.dashboardRunGeneration ?? 0) + 1;
@@ -876,7 +879,7 @@ export function createSession(
     if (!isOverseerSession({ team })) {
       host.preferDashboardEntrySelection("session", sessionId, worktreePath);
     }
-    host.renderDashboard();
+    host.renderCurrentDashboardView();
   }
 
   host.saveState();
@@ -1151,7 +1154,7 @@ export async function createSessionAsync(
     if (!isOverseerSession({ team })) {
       host.preferDashboardEntrySelection("session", sessionId, worktreePath);
     }
-    host.renderDashboard();
+    host.renderCurrentDashboardView();
   }
 
   host.saveState();

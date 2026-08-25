@@ -11,6 +11,7 @@ import {
   applyDashboardAlert,
   EVENT_REFRESH_DEBOUNCE_MS,
   handleProjectEvent,
+  HIDDEN_TUI_EVENT_REFRESH_RECHECK_MS,
   PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS,
   PROJECT_EVENT_STREAM_RETRY_BASE_MS,
   scheduleProjectViewRefresh,
@@ -172,6 +173,30 @@ describe("dashboard project event refresh", () => {
 
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("queues event refreshes while the tmux dashboard is hidden", async () => {
+    let visible = false;
+    const host: any = {
+      mode: "dashboard",
+      isDashboardTuiVisible: vi.fn(() => visible),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["desktop-state"]);
+    await vi.advanceTimersByTimeAsync(EVENT_REFRESH_DEBOUNCE_MS);
+
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+
+    scheduleProjectViewRefresh(host, ["threads"]);
+    visible = true;
+    await vi.advanceTimersByTimeAsync(HIDDEN_TUI_EVENT_REFRESH_RECHECK_MS);
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
   it("drops pending refreshes when the dashboard exits before the timer fires", async () => {

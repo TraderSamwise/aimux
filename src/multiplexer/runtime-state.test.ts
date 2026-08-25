@@ -232,6 +232,65 @@ describe("startStatusRefresh", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
+  it("does not refresh or render hidden tmux dashboards", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      startedInDashboard: true,
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => true) },
+      mode: "dashboard",
+      dashboardStartupPriming: false,
+      dashboardNextBackgroundRefreshAt: 0,
+      isDashboardTuiVisible: vi.fn(() => false),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("forces one dashboard model refresh when a hidden dashboard becomes visible", async () => {
+    vi.useFakeTimers();
+    const isDashboardTuiVisible = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    const host: any = {
+      startedInDashboard: true,
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardStartupPriming: false,
+      dashboardNextBackgroundRefreshAt: 0,
+      isDashboardTuiVisible,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await Promise.resolve();
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ mode: "dashboard" }),
+      }),
+    );
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
   it("records online agents from the refresh loop only when the online set changes", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-22T02:00:00.000Z"));

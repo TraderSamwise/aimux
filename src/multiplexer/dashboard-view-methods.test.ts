@@ -343,6 +343,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       getDashboardServices: vi.fn(() => []),
       getDashboardSessions: vi.fn(() => []),
       renderDashboard: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
     };
 
     dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
@@ -354,6 +355,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     await Promise.resolve();
 
     expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
   it("renders create settlement callbacks after later dashboard input", async () => {
@@ -374,6 +376,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       getDashboardSessions: vi.fn(() => [{ id: "codex-1", status: "running", tmuxWindowId: "@12" }]),
       isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
       renderDashboard: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
     };
 
     dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
@@ -384,7 +387,44 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(host.renderDashboard).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("does not force create settlement refreshes while the tmux dashboard is hidden", async () => {
+    vi.useFakeTimers();
+    let onSettled: (() => void) | undefined;
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardTuiVisible: vi.fn(() => false),
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_target, _itemId, settled, opts) => {
+          onSettled = settled;
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => [{ id: "codex-1", status: "running", tmuxWindowId: "@12" }]),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
+      const settled = Promise.resolve(isSettled?.());
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(settled).resolves.toBe(false);
+      onSettled?.();
+      await Promise.resolve();
+
+      expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+      expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not treat later dashboard input as create settlement", async () => {
