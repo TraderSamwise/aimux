@@ -537,7 +537,7 @@ aimux_try_host_agent_stream() {
   case "$session_id" in -*) return 1 ;; esac
   shift
   project_root="$(pwd -P 2>/dev/null)" || return 1
-  start_line="-120"
+  start_line="-2000"
   interval_ms="500"
   while [ "$#" -gt 0 ]; do
     case "$1" in

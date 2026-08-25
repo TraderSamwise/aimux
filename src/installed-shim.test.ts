@@ -1085,6 +1085,21 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("defaults host agent-stream to the bounded scrollback window", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "streamed output\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "agent-stream", "claude-1", "--project", "/repo"]);
+
+    expect(result.status).toBe(0);
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("startLine=-2000\n");
+    expect(curlLog).toContain("intervalMs=500\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
   it("falls back to the Node launcher for host agent-stream when daemon health is stale", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);

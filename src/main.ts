@@ -1313,7 +1313,8 @@ hostCmd
       if (lines !== undefined && lines <= 0) {
         throw new Error("--lines must be a positive integer");
       }
-      const startLine = lines === undefined ? parseStrictInteger(opts.startLine ?? "-120") : -lines;
+      const startLine =
+        lines === undefined ? parseStrictInteger(opts.startLine ?? String(-MAX_AGENT_OUTPUT_CAPTURE_LINES)) : -lines;
       const intervalMs = parseStrictInteger(opts.intervalMs ?? "500");
       if (startLine === undefined) {
         throw new Error("--start-line must be an integer");
