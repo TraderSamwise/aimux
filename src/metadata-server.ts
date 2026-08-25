@@ -263,12 +263,24 @@ class LifecycleMutationConflictError extends Error {
   }
 }
 
+class LifecycleMutationQueueFullError extends Error {
+  readonly status = 429;
+
+  constructor(
+    readonly requested: LifecycleTransitionInput,
+    readonly queuedCount: number,
+    readonly limit: number,
+  ) {
+    super(`lifecycle mutation queue is full (${queuedCount}/${limit}); wait for current operations to settle`);
+  }
+}
+
 function lifecycleTargetKey(input: LifecycleTransitionInput): string | undefined {
   const target =
     input.targetKind === "worktree"
       ? input.targetPath?.trim() || input.targetId?.trim()
       : input.targetId?.trim() || input.targetPath?.trim();
-  return target ? `${input.targetKind}:${target}` : undefined;
+  return target ? `${input.targetKind}:${target}` : `${input.targetKind}:${input.operation}:__project__`;
 }
 
 function safeWorktreeCreatePath(name: string, projectRoot: string): string {
@@ -504,6 +516,7 @@ async function readExposeSocketHeader(socket: Socket): Promise<{ header: string[
 
 export interface MetadataServerOptions {
   projectRoot?: string;
+  lifecycleMutationQueueLimit?: number;
   onChange?: () => void;
   events?: {
     bus?: ProjectEventBus;
@@ -1691,6 +1704,7 @@ export class MetadataServer {
   private readonly promptContexts = new PromptContextStore();
   private lifecycleMutationQueue: Promise<void> = Promise.resolve();
   private readonly lifecycleMutationTargets = new Map<string, LifecycleTransitionInput>();
+  private lifecycleMutationQueuedCount = 0;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -1722,9 +1736,15 @@ export class MetadataServer {
     if (targetKey && transition && this.lifecycleMutationTargets.has(targetKey)) {
       throw new LifecycleMutationConflictError(transition, this.lifecycleMutationTargets.get(targetKey)!);
     }
+    const queueLimit = this.options.lifecycleMutationQueueLimit ?? 8;
+    if (transition && this.lifecycleMutationQueuedCount >= queueLimit) {
+      throw new LifecycleMutationQueueFullError(transition, this.lifecycleMutationQueuedCount, queueLimit);
+    }
     if (targetKey && transition) this.lifecycleMutationTargets.set(targetKey, transition);
+    this.lifecycleMutationQueuedCount += 1;
     const queued = this.lifecycleMutationQueue.catch(() => undefined).then(action);
     const tracked = queued.finally(() => {
+      this.lifecycleMutationQueuedCount = Math.max(0, this.lifecycleMutationQueuedCount - 1);
       if (targetKey && this.lifecycleMutationTargets.get(targetKey) === transition) {
         this.lifecycleMutationTargets.delete(targetKey);
       }
@@ -6934,6 +6954,20 @@ export class MetadataServer {
           activeTransition: buildLifecycleTransition({
             ...error.active,
             phase: "settling",
+          }),
+        });
+        return;
+      }
+      if (error instanceof LifecycleMutationQueueFullError) {
+        send(res, error.status, {
+          ok: false,
+          error: message,
+          queuedCount: error.queuedCount,
+          limit: error.limit,
+          transition: buildLifecycleTransition({
+            ...error.requested,
+            phase: "failed",
+            error: message,
           }),
         });
         return;

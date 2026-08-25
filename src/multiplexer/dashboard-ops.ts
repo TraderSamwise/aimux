@@ -9,6 +9,7 @@ import {
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
+import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
@@ -34,6 +35,7 @@ export type DashboardMutationResult = "settled" | "pending" | "failed";
 const dashboardAgentRestoreQueues = new WeakMap<object, Promise<void>>();
 const dashboardQueuedAgentRestores = new WeakMap<object, Set<string>>();
 const DASHBOARD_MUTATION_SETTLE_INTERVAL_MS = 100;
+const DASHBOARD_MUTATION_IN_FLIGHT_LIMIT = 4;
 
 function queuedAgentRestoresFor(host: object): Set<string> {
   let queued = dashboardQueuedAgentRestores.get(host);
@@ -99,6 +101,7 @@ interface DashboardSessionMutationOptions {
   sessionId: string;
   pendingAction: DashboardSessionMutationPendingAction;
   sessionSeed?: DashboardSession;
+  allowExistingPendingAction?: boolean;
   request: () => Promise<void>;
   settle: (modelLifecycle: DashboardLifecycleToken, renderLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   lifecycle?: DashboardLifecycleToken;
@@ -211,6 +214,46 @@ function hasPendingDashboardServiceAction(
   kind: PendingServiceActionKind,
 ): boolean {
   return host.dashboardPendingActions?.getServiceAction?.(serviceId) === kind;
+}
+
+function existingDashboardSessionAction(
+  host: DashboardOpsHost,
+  sessionId: string,
+): PendingSessionActionKind | undefined {
+  const action =
+    host.dashboardPendingActions?.getSessionAction?.(sessionId) ?? getExternalDashboardSessionAction(host, sessionId);
+  return isBlockingPendingDashboardActionKind(action) ? (action as PendingSessionActionKind) : undefined;
+}
+
+function existingDashboardServiceAction(
+  host: DashboardOpsHost,
+  serviceId: string,
+): PendingServiceActionKind | undefined {
+  const action =
+    host.dashboardPendingActions?.getServiceAction?.(serviceId) ?? getExternalDashboardServiceAction(host, serviceId);
+  return isBlockingPendingDashboardActionKind(action) ? (action as PendingServiceActionKind) : undefined;
+}
+
+function getExternalDashboardSessionAction(host: DashboardOpsHost, sessionId: string): string | undefined {
+  const entry = getDashboardSessionEntry(host, sessionId);
+  return entry?.optimistic ? undefined : entry?.pendingAction;
+}
+
+function getExternalDashboardServiceAction(host: DashboardOpsHost, serviceId: string): string | undefined {
+  const entry = getDashboardServiceEntry(host, serviceId);
+  return entry?.optimistic ? undefined : entry?.pendingAction;
+}
+
+function dashboardMutationInFlightCount(host: DashboardOpsHost): number {
+  const sessionCount = host.dashboardPendingActions?.listSessionActions?.().length ?? 0;
+  const serviceCount = host.dashboardPendingActions?.listServiceActions?.().length ?? 0;
+  return sessionCount + serviceCount;
+}
+
+function flashDashboardMutationPressure(host: DashboardOpsHost, lifecycle: DashboardLifecycleToken): void {
+  host.footerFlash = "Lifecycle queue is settling";
+  host.footerFlashTicks = 2;
+  renderDashboardMutationFrame(host, lifecycle);
 }
 
 function hasPendingDashboardMutationAction(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): boolean {
@@ -758,11 +801,21 @@ async function runDashboardSessionMutation(
   const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
   const coalescesDuplicateSessionAction = opts.pendingAction === "stopping" || opts.pendingAction === "graveyarding";
-  const existingSessionAction = host.dashboardPendingActions?.getSessionAction?.(opts.sessionId);
+  const existingSessionAction = existingDashboardSessionAction(host, opts.sessionId);
   if (coalescesDuplicateSessionAction && existingSessionAction === opts.pendingAction) {
     host.footerFlash = `${existingSessionAction} is already settling`;
     host.footerFlashTicks = 2;
     renderDashboardMutationFrame(host, lifecycle);
+    return "pending";
+  }
+  if (existingSessionAction && !opts.allowExistingPendingAction) {
+    host.footerFlash = `${existingSessionAction} is already settling`;
+    host.footerFlashTicks = 2;
+    renderDashboardMutationFrame(host, lifecycle);
+    return "pending";
+  }
+  if (!opts.allowExistingPendingAction && dashboardMutationInFlightCount(host) >= DASHBOARD_MUTATION_IN_FLIGHT_LIMIT) {
+    flashDashboardMutationPressure(host, lifecycle);
     return "pending";
   }
   if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
@@ -834,13 +887,21 @@ async function runDashboardServiceMutation(
   const lifecycle = captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
   const coalescesDuplicateServiceAction = opts.pendingAction === "stopping" || opts.pendingAction === "removing";
-  if (
-    coalescesDuplicateServiceAction &&
-    host.dashboardPendingActions?.getServiceAction?.(opts.serviceId) === opts.pendingAction
-  ) {
+  const existingServiceAction = existingDashboardServiceAction(host, opts.serviceId);
+  if (coalescesDuplicateServiceAction && existingServiceAction === opts.pendingAction) {
     host.footerFlash = `${opts.pendingAction} is already settling`;
     host.footerFlashTicks = 2;
     renderDashboardMutationFrame(host, lifecycle);
+    return "pending";
+  }
+  if (existingServiceAction) {
+    host.footerFlash = `${existingServiceAction} is already settling`;
+    host.footerFlashTicks = 2;
+    renderDashboardMutationFrame(host, lifecycle);
+    return "pending";
+  }
+  if (dashboardMutationInFlightCount(host) >= DASHBOARD_MUTATION_IN_FLIGHT_LIMIT) {
+    flashDashboardMutationPressure(host, lifecycle);
     return "pending";
   }
   if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
@@ -1343,6 +1404,7 @@ export async function resumeOfflineSessionWithFeedback(
           pendingAction: "starting",
           sessionSeed,
           lifecycle,
+          allowExistingPendingAction: true,
           onBeforeRequest: () => {
             host.footerFlash = `Restoring ${label}`;
             host.footerFlashTicks = 3;

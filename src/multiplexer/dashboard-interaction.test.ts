@@ -770,7 +770,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
-  it("queues stop instead of deleting an offline service that is still starting", () => {
+  it("blocks deleting an offline service that is still starting", () => {
     const service = {
       id: "service-1",
       status: "offline",
@@ -801,11 +801,13 @@ describe("dashboardInteractionMethods", () => {
 
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
 
-    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.stopDashboardServiceWithFeedback).not.toHaveBeenCalled();
     expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Service shell is starting");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
-  it("queues stop instead of deleting a service whose activation is in flight", () => {
+  it("blocks deleting a service whose activation is in flight", () => {
     const service = {
       id: "service-1",
       status: "offline",
@@ -836,11 +838,13 @@ describe("dashboardInteractionMethods", () => {
 
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
 
-    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.stopDashboardServiceWithFeedback).not.toHaveBeenCalled();
     expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Service shell is starting");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
-  it("does not drop a coalesced stop key after starting a selected service", () => {
+  it("drops a coalesced stop key after starting a selected service", () => {
     const service = {
       id: "service-1",
       status: "offline",
@@ -877,7 +881,7 @@ describe("dashboardInteractionMethods", () => {
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\rx"));
 
     expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
-    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.stopDashboardServiceWithFeedback).not.toHaveBeenCalled();
     expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
   });
 
@@ -1379,7 +1383,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("does not let stale service activation clear a newer activation marker", async () => {
+  it("blocks duplicate service activation while startup is pending", async () => {
     const service = {
       id: "service-1",
       status: "offline",
@@ -1387,7 +1391,6 @@ describe("dashboardInteractionMethods", () => {
       worktreePath: "/repo/.aimux/worktrees/demo",
     };
     const firstResume = deferred<"pending">();
-    const secondResume = deferred<"pending">();
     let resumeCalls = 0;
     const host: any = {
       mode: "dashboard",
@@ -1397,7 +1400,7 @@ describe("dashboardInteractionMethods", () => {
       waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
       resumeOfflineServiceWithFeedback: vi.fn(() => {
         resumeCalls += 1;
-        return resumeCalls === 1 ? firstResume.promise : secondResume.promise;
+        return firstResume.promise;
       }),
       refreshDashboardModelFromService: vi.fn(async () => true),
       renderDashboard: vi.fn(),
@@ -1411,12 +1414,13 @@ describe("dashboardInteractionMethods", () => {
     const secondActivation = dashboardInteractionMethods.activateDashboardService.call(host, service);
     await Promise.resolve();
 
-    firstResume.resolve("pending");
-    await expect(firstActivation).resolves.toBe("missing");
+    await expect(secondActivation).resolves.toBe("blocked");
+    expect(host.footerFlash).toBe("Service shell is starting");
+    expect(resumeCalls).toBe(1);
     expect(host.dashboardActivatingServiceIds.has("service-1")).toBe(true);
 
-    secondResume.resolve("pending");
-    await expect(secondActivation).resolves.toBe("pending");
+    firstResume.resolve("pending");
+    await expect(firstActivation).resolves.toBe("pending");
     expect(host.dashboardActivatingServiceIds.has("service-1")).toBe(false);
   });
 

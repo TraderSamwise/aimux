@@ -33,6 +33,9 @@ function getDashboardEntryPendingAction(
         ? host.dashboardPendingActions?.getServiceAction?.(entry.id)
         : host.dashboardPendingActions?.getSessionAction?.(entry.id)
       : undefined;
+  if (!storeAction && fallbackKind === "service" && entry.id && host.dashboardActivatingServiceIds?.has?.(entry.id)) {
+    return "starting";
+  }
   return storeAction ?? entry.pendingAction;
 }
 
@@ -45,16 +48,10 @@ function hasBlockingPendingDashboardAction(
 }
 
 function isStoppableStartingService(
-  host: any,
-  entry: { id?: string; pendingAction?: string } | null | undefined,
+  _host: any,
+  _entry: { id?: string; pendingAction?: string } | null | undefined,
 ): boolean {
-  const pendingAction = getDashboardEntryPendingAction(host, entry, "service");
-  return Boolean(
-    entry &&
-    (pendingAction === "creating" ||
-      pendingAction === "starting" ||
-      (typeof entry.id === "string" && host.dashboardActivatingServiceIds?.has?.(entry.id))),
-  );
+  return false;
 }
 
 function pendingDashboardItemMessage(
@@ -956,7 +953,6 @@ export const dashboardInteractionMethods = {
 
   async activateDashboardService(this: any, service: DashboardService): Promise<DashboardActivationResult> {
     if (!service) return "missing";
-    const activationToken = beginDashboardActivation(this, "service", service.id);
     const worktreeGroup = findDashboardWorktreeGroup(this, service.worktreePath);
     if (isRemovingDashboardWorktree(worktreeGroup)) {
       this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, service.worktreePath);
@@ -969,6 +965,7 @@ export const dashboardInteractionMethods = {
       return "blocked";
     }
 
+    const activationToken = beginDashboardActivation(this, "service", service.id);
     this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
     this.persistDashboardUiState();
     if (service.status !== "running") {
@@ -1016,7 +1013,6 @@ export const dashboardInteractionMethods = {
     options: { preserveDashboardSelection?: boolean } = {},
   ): Promise<DashboardActivationResult> {
     if (!entry) return "missing";
-    const activationToken = beginDashboardActivation(this, "session", entry.id);
     const worktreeGroup = findDashboardWorktreeGroup(this, entry.worktreePath);
     if (isRemovingDashboardWorktree(worktreeGroup)) {
       this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, entry.worktreePath);
@@ -1029,6 +1025,7 @@ export const dashboardInteractionMethods = {
       return "blocked";
     }
 
+    const activationToken = beginDashboardActivation(this, "session", entry.id);
     if (!options.preserveDashboardSelection) {
       this.preferDashboardEntrySelection("session", entry.id, entry.worktreePath);
       this.persistDashboardUiState();

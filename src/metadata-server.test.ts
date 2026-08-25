@@ -3640,6 +3640,98 @@ describe("MetadataServer threads API", () => {
     expect(finished).toEqual(["codex-1", "codex-2"]);
   });
 
+  it("rejects lifecycle mutations after the project-service queue limit is reached", async () => {
+    server?.stop();
+    const started: string[] = [];
+    const resolvers = new Map<string, () => void>();
+    server = new MetadataServer({
+      lifecycleMutationQueueLimit: 2,
+      lifecycle: {
+        killAgent: ({ sessionId }) =>
+          new Promise<{ sessionId: string; status: "graveyard"; previousStatus: "running" }>((resolve) => {
+            started.push(sessionId);
+            resolvers.set(sessionId, () => resolve({ sessionId, status: "graveyard", previousStatus: "running" }));
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const kill = async (sessionId: string) => {
+      const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.kill}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const first = await kill("codex-1");
+    const second = await kill("codex-2");
+    const third = await kill("codex-3");
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(third.status).toBe(429);
+    expect(third.body).toMatchObject({
+      ok: false,
+      queuedCount: 2,
+      limit: 2,
+      transition: {
+        operation: "agent.kill",
+        targetKind: "agent",
+        targetId: "codex-3",
+        phase: "failed",
+      },
+    });
+    expect(started).toEqual(["codex-1"]);
+
+    resolvers.get("codex-1")?.();
+    await waitForCondition(() => started.includes("codex-2"));
+    resolvers.get("codex-2")?.();
+  });
+
+  it("rejects duplicate untargeted lifecycle mutations instead of queueing them indefinitely", async () => {
+    server?.stop();
+    let releaseSpawn: (() => void) | undefined;
+    const spawned: string[] = [];
+    server = new MetadataServer({
+      lifecycle: {
+        spawnAgent: ({ tool }) =>
+          new Promise<{ sessionId: string }>((resolve) => {
+            spawned.push(tool);
+            releaseSpawn = () => resolve({ sessionId: `${tool}-1` });
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const spawn = async () => {
+      const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.spawn}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tool: "codex" }),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const first = spawn();
+    await waitForCondition(() => spawned.length === 1);
+    const duplicate = await spawn();
+
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body).toMatchObject({
+      ok: false,
+      transition: { operation: "agent.spawn", targetKind: "agent", phase: "failed" },
+      activeTransition: { operation: "agent.spawn", targetKind: "agent", phase: "settling" },
+    });
+    expect(spawned).toEqual(["codex"]);
+
+    releaseSpawn?.();
+    await expect(first).resolves.toMatchObject({ status: 200 });
+  });
+
   it("rejects overlapping lifecycle mutations for the same agent target", async () => {
     server?.stop();
     let releaseStop: (() => void) | undefined;

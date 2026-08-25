@@ -249,6 +249,72 @@ describe("dashboard-ops", () => {
     }
   });
 
+  it("does not overwrite a pending service create with a stop request", async () => {
+    const pending = makePendingActionsFake();
+    const token = pending.setServiceAction("service-starting", "creating");
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: pending,
+      setPendingDashboardServiceAction: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => [
+        {
+          id: "service-starting",
+          command: "zsh",
+          args: [],
+          status: "offline",
+          label: "api",
+          pendingAction: "creating",
+        },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    await stopDashboardServiceWithFeedback(host, { id: "service-starting", label: "api" });
+
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.setPendingDashboardServiceAction).not.toHaveBeenCalled();
+    expect(host.dashboardPendingActions.listServiceActions()).toEqual([
+      { id: "service-starting", kind: "creating", token },
+    ]);
+    expect(host.footerFlash).toBe("creating is already settling");
+  });
+
+  it("does not overwrite a model-backed pending service action", async () => {
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => [
+        {
+          id: "service-starting",
+          command: "zsh",
+          args: [],
+          status: "offline",
+          label: "api",
+          pendingAction: "creating",
+        },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    await stopDashboardServiceWithFeedback(host, { id: "service-starting", label: "api" });
+
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.setPendingDashboardServiceAction).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("creating is already settling");
+    expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
   it("keeps a service create pending when reconciliation stays unavailable", async () => {
     vi.useFakeTimers();
     let createdServiceId = "";
@@ -334,8 +400,7 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("stops a service immediately when startup is still pending", async () => {
-    vi.useFakeTimers();
+  it("does not stop a service while startup is still pending", async () => {
     let phase: "starting" | "offline" = "starting";
     const request = deferred<void>();
     const host = {
@@ -371,32 +436,12 @@ describe("dashboard-ops", () => {
     };
     host.dashboardPendingActions.setServiceAction("svc-1", "starting");
 
-    try {
-      const action = stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(host.postToProjectService).toHaveBeenCalledWith(
-        "/services/stop",
-        { serviceId: "svc-1" },
-        { timeoutMs: 10_000 },
-      );
+    await stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
 
-      await vi.advanceTimersByTimeAsync(500);
-      expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBe("stopping");
-      expect(host.footerFlash).toBe("Canceling shell startup");
-      request.resolve();
-      await vi.advanceTimersByTimeAsync(500);
-      await action;
-    } finally {
-      vi.useRealTimers();
-    }
-
-    expect(host.postToProjectService).toHaveBeenCalledWith(
-      "/services/stop",
-      { serviceId: "svc-1" },
-      { timeoutMs: 10_000 },
-    );
-    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
-    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBe("starting");
+    expect(host.footerFlash).toBe("starting is already settling");
+    expect(host.renderDashboard).toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -686,7 +731,7 @@ describe("dashboard-ops", () => {
         return true;
       }),
       getDashboardServices: vi.fn(() =>
-        removed ? [] : [{ id: "svc-1", status: "offline", pendingAction: "removing" }],
+        removed ? [] : [{ id: "svc-1", status: "offline", pendingAction: "removing", optimistic: true }],
       ),
       showDashboardError: vi.fn(),
     };
@@ -809,7 +854,7 @@ describe("dashboard-ops", () => {
         return true;
       }),
       getDashboardSessions: vi.fn(() => [
-        { ...session, status: stopped ? "offline" : "running", pendingAction: "stopping" },
+        { ...session, status: stopped ? "offline" : "running", pendingAction: "stopping", optimistic: true },
       ]),
       showDashboardError: vi.fn(),
     };
@@ -824,7 +869,7 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("lets graveyard supersede a pending stop for the same agent", async () => {
+  it("does not let graveyard supersede a pending stop for the same agent", async () => {
     const session = { id: "sess-1", command: "codex", label: "codex", status: "running" };
     const pendingActions = makePendingActionsFake();
     pendingActions.setSessionAction("sess-1", "stopping");
@@ -858,14 +903,10 @@ describe("dashboard-ops", () => {
 
     await graveyardSessionWithFeedback(host, "sess-1", true);
 
-    expect(host.postToProjectService).toHaveBeenCalledWith(
-      "/agents/kill",
-      { sessionId: "sess-1" },
-      { timeoutMs: 10_000 },
-    );
-    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
-    expect(host.footerFlash).toBe("Sent codex to graveyard");
-    expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("stopping");
+    expect(host.footerFlash).toBe("stopping is already settling");
+    expect(host.adjustAfterRemove).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -2118,7 +2159,14 @@ describe("dashboard-ops", () => {
       }),
       getDashboardServices: vi.fn(() => [
         refreshCount < 3
-          ? { ...service, status: "offline", pendingAction: "starting", pid: 61700, foregroundCommand: "zsh" }
+          ? {
+              ...service,
+              status: "offline",
+              pendingAction: "starting",
+              optimistic: true,
+              pid: 61700,
+              foregroundCommand: "zsh",
+            }
           : { ...service, status: "running", pid: 61700, foregroundCommand: "zsh" },
       ]),
       showDashboardError: vi.fn(),
@@ -2442,6 +2490,108 @@ describe("dashboard-ops", () => {
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "claude-abcd12", "/repo");
     expect(host.dashboardPendingActions.getSessionAction("claude-abcd12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("drops dashboard agent creates while the lifecycle queue is saturated", async () => {
+    const pending = makePendingActionsFake();
+    for (const id of ["codex-one", "codex-two", "claude-one", "claude-two"]) {
+      pending.setSessionAction(id, "creating");
+    }
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: pending,
+      setPendingDashboardSessionAction: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() => []),
+      showDashboardError: vi.fn(),
+    };
+
+    await spawnDashboardAgentWithFeedback(host, {
+      sessionId: "codex-extra",
+      tool: "codex",
+      worktreePath: "/repo",
+    });
+
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.setPendingDashboardSessionAction).not.toHaveBeenCalled();
+    expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Lifecycle queue is settling");
+    expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
+  it("coalesces dashboard operations for a session that is already mutating", async () => {
+    const pending = makePendingActionsFake();
+    pending.setSessionAction("codex-starting", "creating");
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: pending,
+      sessions: [],
+      offlineSessions: [],
+      setPendingDashboardSessionAction: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() => [
+        {
+          id: "codex-starting",
+          command: "codex",
+          status: "waiting",
+          pendingAction: "creating",
+        },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    await stopSessionToOfflineWithFeedback(host, {
+      id: "codex-starting",
+      command: "codex",
+      status: "waiting",
+    });
+
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.setPendingDashboardSessionAction).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("creating is already settling");
+    expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
+  it("coalesces dashboard operations for a model-backed pending session", async () => {
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      sessions: [],
+      offlineSessions: [],
+      setPendingDashboardSessionAction: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() => [
+        {
+          id: "codex-starting",
+          command: "codex",
+          status: "waiting",
+          pendingAction: "creating",
+        },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    await stopSessionToOfflineWithFeedback(host, {
+      id: "codex-starting",
+      command: "codex",
+      status: "waiting",
+    });
+
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.setPendingDashboardSessionAction).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("creating is already settling");
+    expect(host.renderDashboard).toHaveBeenCalled();
   });
 
   it("keeps a spawning overseer out of the worktree groups instead of inventing one for the main repo", async () => {
