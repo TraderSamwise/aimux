@@ -21,7 +21,7 @@ import { PROJECT_API_ROUTES, type AgentLoopInput, type TeamConfig } from "./proj
 import { assertPublishableSource } from "./attachment-store.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
-import type { WorktreeCacheCleanupRunResult } from "./worktree-cache-cleanup.js";
+import { renderWorktreeCacheCleanupRunResult, type WorktreeCacheCleanupRunResult } from "./worktree-cache-cleanup.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
   buildTmuxDoctorReport,
@@ -47,14 +47,16 @@ import {
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { AimuxDaemon } from "./daemon.js";
 import { getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
-import { isStaleAgainstDaemon, stopDaemon } from "./daemon-supervisor.js";
+import { ensureDaemonRunning, isStaleAgainstDaemon, stopDaemon } from "./daemon-supervisor.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import {
+  CORE_API_ROUTES,
   CORE_COMMAND_NAMES,
   type CoreProjectServiceState,
   type CoreRelaySnapshot,
   type CoreStatusProject,
 } from "./core-command-contract.js";
+import { renderDiskDoctorReport, type DiskDoctorReport } from "./disk-doctor.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
 import { runLoginFlow } from "./login-flow.js";
@@ -453,6 +455,21 @@ async function getLiveProjectServiceJson(projectRoot: string, path: string): Pro
     timeoutMs: PROJECT_SERVICE_READ_TIMEOUT_MS,
   });
   if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
+}
+
+async function getDaemonTextJson(path: string, params: Record<string, string | undefined> = {}): Promise<unknown> {
+  const info = await ensureDaemonRunning();
+  const query = new URLSearchParams({ json: "1" });
+  for (const [key, value] of Object.entries(params)) {
+    if (value) query.set(key, value);
+  }
+  const { status, json } = await requestJson(`http://${getDaemonHost()}:${info.port}${path}?${query.toString()}`, {
+    timeoutMs: 120_000,
+  });
+  if (status < 200 || status >= 300) {
     throw new Error(json?.error || `request failed: ${status}`);
   }
   return json;
@@ -2158,32 +2175,8 @@ function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const decimals = value >= 10 || unitIndex === 0 ? 0 : 1;
-  return `${value.toFixed(decimals)}${units[unitIndex]}`;
-}
-
 function printWorktreeCacheCleanup(result: WorktreeCacheCleanupRunResult): void {
-  const action = result.dryRun ? "would remove" : "removed";
-  const bytes = result.dryRun ? result.plan.reclaimableBytes : result.reclaimedBytes;
-  const failed = result.results.filter((item) => item.status === "failed").length;
-  console.log(
-    `Worktree cache cleanup ${action} ${result.plan.targets.length} item(s), ${formatBytes(bytes)}; ${failed} failed.`,
-  );
-  for (const target of result.plan.targets) {
-    console.log(`${formatBytes(target.sizeBytes).padStart(7)}  ${target.path}`);
-  }
-  if (result.plan.skipped.length > 0) {
-    console.log(`Skipped ${result.plan.skipped.length} worktree(s).`);
-  }
+  console.log(renderWorktreeCacheCleanupRunResult(result).join("\n"));
 }
 
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
@@ -3795,6 +3788,27 @@ doctorCmd
       return;
     }
     console.log(renderRuntimeCoherenceReport(report));
+  });
+
+doctorCmd
+  .command("disk")
+  .description("Inspect Aimux-managed worktree cache disk usage")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    try {
+      const project = opts.project ? resolveProjectRoot(pathResolve(opts.project)) : undefined;
+      const report = (await getDaemonTextJson(CORE_API_ROUTES.doctorDiskText, { project })) as DiskDoctorReport;
+      if (opts.json) {
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
+      console.log(renderDiskDoctorReport(report));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
   });
 
 /** Zero is a real answer here, so only unparseable input falls back to the default. */

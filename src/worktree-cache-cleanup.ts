@@ -58,6 +58,12 @@ export interface WorktreeCacheCleanupRunResult {
   reclaimedBytes: number;
 }
 
+export interface WorktreeCacheCleanupWorktreeSummary {
+  worktreePath: string;
+  sizeBytes: number;
+  targetCount: number;
+}
+
 export interface WorktreeCacheCleanupOptions {
   projectRoot: string;
   worktreeBaseDir?: string;
@@ -67,7 +73,81 @@ export interface WorktreeCacheCleanupOptions {
   protectedWorktrees?: WorktreeCacheCleanupProtectedWorktree[];
   worktrees?: WorktreeInfo[];
   measureSize?: (path: string) => number;
-  removeDir?: (path: string) => void;
+  removeDir?: (path: string) => void | Promise<void>;
+}
+
+export function formatWorktreeCacheBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const decimals = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(decimals)}${units[unitIndex]}`;
+}
+
+export function summarizeWorktreeCacheTargets(
+  targets: WorktreeCacheCleanupTarget[],
+): WorktreeCacheCleanupWorktreeSummary[] {
+  const byWorktree = new Map<string, WorktreeCacheCleanupWorktreeSummary>();
+  for (const target of targets) {
+    const entry = byWorktree.get(target.worktreePath) ?? {
+      worktreePath: target.worktreePath,
+      sizeBytes: 0,
+      targetCount: 0,
+    };
+    entry.sizeBytes += target.sizeBytes;
+    entry.targetCount += 1;
+    byWorktree.set(target.worktreePath, entry);
+  }
+  return [...byWorktree.values()].sort((left, right) => right.sizeBytes - left.sizeBytes);
+}
+
+export function renderWorktreeCacheCleanupRunResult(
+  result: WorktreeCacheCleanupRunResult,
+  opts: { maxWorktrees?: number; maxTargets?: number } = {},
+): string[] {
+  const maxWorktrees = opts.maxWorktrees ?? 12;
+  const maxTargets = opts.maxTargets ?? 20;
+  const action = result.dryRun ? "would remove" : "removed";
+  const bytes = result.dryRun ? result.plan.reclaimableBytes : result.reclaimedBytes;
+  const failed = result.results.filter((item) => item.status === "failed").length;
+  const lines = [
+    `Worktree cache cleanup ${action} ${result.plan.targets.length} item(s), ${formatWorktreeCacheBytes(
+      bytes,
+    )}; ${failed} failed.`,
+  ];
+  const byWorktree = summarizeWorktreeCacheTargets(result.plan.targets);
+  if (byWorktree.length > 0) {
+    lines.push("By worktree:");
+    for (const entry of byWorktree.slice(0, maxWorktrees)) {
+      lines.push(
+        `${formatWorktreeCacheBytes(entry.sizeBytes).padStart(7)}  ${entry.targetCount
+          .toString()
+          .padStart(4)} item(s)  ${entry.worktreePath}`,
+      );
+    }
+    if (byWorktree.length > maxWorktrees) {
+      lines.push(`... ${byWorktree.length - maxWorktrees} more worktree(s) hidden; use --json for full detail.`);
+    }
+  }
+  if (result.plan.targets.length > 0 && result.plan.targets.length <= maxTargets) {
+    lines.push("Targets:");
+    for (const target of result.plan.targets) {
+      lines.push(`${formatWorktreeCacheBytes(target.sizeBytes).padStart(7)}  ${target.path}`);
+    }
+  } else if (result.plan.targets.length > maxTargets) {
+    lines.push(`Targets hidden (${result.plan.targets.length}); use --json for full detail.`);
+  }
+  if (result.plan.skipped.length > 0) {
+    const activeSkipped = result.plan.skipped.filter((entry) => entry.reason === "active-runtime").length;
+    const suffix = activeSkipped > 0 ? ` (${activeSkipped} active-runtime)` : "";
+    lines.push(`Skipped ${result.plan.skipped.length} worktree(s)${suffix}.`);
+  }
+  return lines;
 }
 
 function canonical(path: string): string {

@@ -1082,6 +1082,72 @@ describe("daemon supervision", () => {
     expect(runtimeCoherenceMock.buildRuntimeCoherenceReport).toHaveBeenCalledTimes(2);
   });
 
+  it("serves daemon-owned disk doctor routes with inactive and protected cache totals", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    vi.mocked(requestJson).mockImplementation(
+      async (url: string, opts: { body?: { includeActive?: boolean } } = {}) => {
+        if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.cacheCleanup)) {
+          const includeActive = opts.body?.includeActive === true;
+          return {
+            status: 200,
+            json: {
+              ok: true,
+              result: {
+                dryRun: true,
+                reclaimedBytes: 0,
+                plan: {
+                  reclaimableBytes: includeActive ? 3072 : 1024,
+                  targets: includeActive
+                    ? [
+                        { path: `${projectRoot}/.aimux/worktrees/old/node_modules`, sizeBytes: 1024 },
+                        { path: `${projectRoot}/.aimux/worktrees/live/.next`, sizeBytes: 2048 },
+                      ]
+                    : [{ path: `${projectRoot}/.aimux/worktrees/old/node_modules`, sizeBytes: 1024 }],
+                  skipped: includeActive
+                    ? []
+                    : [{ worktreePath: `${projectRoot}/.aimux/worktrees/live`, reason: "active-runtime" }],
+                },
+                results: [],
+              },
+            },
+          };
+        }
+        return { status: 200, json: projectServiceHealth(readMetadataEndpointPid()) };
+      },
+    );
+
+    const text = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.doctorDiskText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const json = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.doctorDiskText}?project=${encodeURIComponent(projectRoot)}&json=1`,
+    );
+
+    expect(text.body).toContain("Aimux Disk\n");
+    expect(text.body).toContain("inactive generated caches: 1.0KB (1 item(s))");
+    expect(text.body).toContain("protected active caches: 2.0KB (1 item(s), 1 active worktree(s))");
+    expect(JSON.parse(json.body as string)).toMatchObject({
+      projects: [
+        {
+          projectRoot,
+          inactiveReclaimableBytes: 1024,
+          inactiveTargetCount: 1,
+          protectedActiveBytes: 2048,
+          protectedActiveTargetCount: 1,
+          skippedActiveWorktrees: 1,
+        },
+      ],
+      totals: {
+        inactiveReclaimableBytes: 1024,
+        protectedActiveBytes: 2048,
+        failures: 0,
+      },
+    });
+  });
+
   it("serves daemon-owned tmux doctor routes with explicit project context", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();

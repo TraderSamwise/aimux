@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { initPaths } from "./paths.js";
 import { upsertTopologyService } from "./runtime-core/topology-services.js";
 import { upsertTopologySession } from "./runtime-core/topology-sessions.js";
-import { buildWorktreeCacheCleanupPlan, runWorktreeCacheCleanup } from "./worktree-cache-cleanup.js";
+import {
+  buildWorktreeCacheCleanupPlan,
+  renderWorktreeCacheCleanupRunResult,
+  runWorktreeCacheCleanup,
+} from "./worktree-cache-cleanup.js";
 
 describe("worktree cache cleanup", () => {
   let tmpRoot = "";
@@ -113,5 +117,34 @@ describe("worktree cache cleanup", () => {
     expect(deleted.results).toMatchObject([{ path: cachePath, status: "removed" }]);
     expect(existsSync(cachePath)).toBe(false);
     expect(existsSync(sourcePath)).toBe(true);
+  });
+
+  it("renders large cleanup results as a summarized report", () => {
+    const result = {
+      dryRun: true,
+      reclaimedBytes: 0,
+      plan: {
+        projectRoot,
+        dryRun: true,
+        includeActive: false,
+        cacheDirNames: ["node_modules", ".next"],
+        reclaimableBytes: 4096,
+        skipped: [{ worktreePath: join(worktreeRoot, "live"), reason: "active-runtime" as const }],
+        targets: Array.from({ length: 25 }, (_, index) => ({
+          worktreePath: join(worktreeRoot, index % 2 === 0 ? "alpha" : "beta"),
+          relativePath: `pkg-${index}/node_modules`,
+          path: join(worktreeRoot, index % 2 === 0 ? "alpha" : "beta", `pkg-${index}`, "node_modules"),
+          sizeBytes: index % 2 === 0 ? 256 : 128,
+        })),
+      },
+      results: [],
+    };
+
+    const lines = renderWorktreeCacheCleanupRunResult(result);
+
+    expect(lines[0]).toBe("Worktree cache cleanup would remove 25 item(s), 4.0KB; 0 failed.");
+    expect(lines).toContain("By worktree:");
+    expect(lines).toContain("Targets hidden (25); use --json for full detail.");
+    expect(lines.join("\n")).not.toContain("pkg-24/node_modules");
   });
 });

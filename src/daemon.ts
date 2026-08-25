@@ -165,6 +165,7 @@ import {
 import { runLoginFlow } from "./login-flow.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
+import { buildDiskDoctorReport, renderDiskDoctorReport, type DiskDoctorProjectReport } from "./disk-doctor.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 import { resolveDashboardTarget } from "./dashboard/targets.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
@@ -212,6 +213,7 @@ import { parseRuntimeMetadataCliArgs } from "./metadata-cli-routing.js";
 import { getEventLoopDelay, startEventLoopMonitor } from "./event-loop-metrics.js";
 import { getTmuxExecMetrics } from "./tmux/exec-metrics.js";
 import { assessLoopBudget } from "./event-loop-budget.js";
+import type { WorktreeCacheCleanupRunResult } from "./worktree-cache-cleanup.js";
 
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
@@ -264,6 +266,7 @@ const LOCAL_AUTH_ROUTES = new Set<string>([
   CORE_API_ROUTES.securityUnlockText,
 ]);
 const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
+  CORE_API_ROUTES.doctorDiskText,
   CORE_API_ROUTES.doctorTmuxText,
   CORE_API_ROUTES.doctorVersionsText,
   CORE_API_ROUTES.graveyardCleanupText,
@@ -3120,6 +3123,86 @@ export class AimuxDaemon {
     }
   }
 
+  private cleanupRunFromProjectResponse(json: ProjectServiceJson): WorktreeCacheCleanupRunResult {
+    const result = json.result ?? json;
+    if (!result || typeof result !== "object") {
+      throw new Error("project service returned invalid worktree cache cleanup response");
+    }
+    return result as WorktreeCacheCleanupRunResult;
+  }
+
+  private async diskDoctorProjectReport(projectRoot: string): Promise<DiskDoctorProjectReport> {
+    try {
+      const inactiveResponse = await this.postProjectServiceJson(
+        projectRoot,
+        PROJECT_API_ROUTES.worktreeActions.cacheCleanup,
+        { dryRun: true, includeActive: false },
+        { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+      );
+      if (!inactiveResponse.ok) {
+        return {
+          projectRoot,
+          inactiveReclaimableBytes: 0,
+          inactiveTargetCount: 0,
+          protectedActiveBytes: 0,
+          protectedActiveTargetCount: 0,
+          skippedActiveWorktrees: 0,
+          error: String(inactiveResponse.response.body ?? "project service request failed").trim(),
+        };
+      }
+      const allResponse = await this.postProjectServiceJson(
+        projectRoot,
+        PROJECT_API_ROUTES.worktreeActions.cacheCleanup,
+        { dryRun: true, includeActive: true },
+        { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+      );
+      if (!allResponse.ok) {
+        return {
+          projectRoot,
+          inactiveReclaimableBytes: 0,
+          inactiveTargetCount: 0,
+          protectedActiveBytes: 0,
+          protectedActiveTargetCount: 0,
+          skippedActiveWorktrees: 0,
+          error: String(allResponse.response.body ?? "project service request failed").trim(),
+        };
+      }
+      const inactive = this.cleanupRunFromProjectResponse(inactiveResponse.json);
+      const all = this.cleanupRunFromProjectResponse(allResponse.json);
+      return {
+        projectRoot,
+        inactiveReclaimableBytes: inactive.plan.reclaimableBytes,
+        inactiveTargetCount: inactive.plan.targets.length,
+        protectedActiveBytes: Math.max(0, all.plan.reclaimableBytes - inactive.plan.reclaimableBytes),
+        protectedActiveTargetCount: Math.max(0, all.plan.targets.length - inactive.plan.targets.length),
+        skippedActiveWorktrees: inactive.plan.skipped.filter((entry) => entry.reason === "active-runtime").length,
+      };
+    } catch (error) {
+      return {
+        projectRoot,
+        inactiveReclaimableBytes: 0,
+        inactiveTargetCount: 0,
+        protectedActiveBytes: 0,
+        protectedActiveTargetCount: 0,
+        skippedActiveWorktrees: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async doctorDiskTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
+    const projectParam = routeUrl.searchParams.get("project");
+    const projectRoots = projectParam
+      ? [this.resolveProjectRoot(pathResolve(projectParam))]
+      : this.listProjectsForRoute().map((project) => project.path);
+    const projects: DiskDoctorProjectReport[] = [];
+    for (const projectRoot of projectRoots) {
+      projects.push(await this.diskDoctorProjectReport(projectRoot));
+    }
+    const report = buildDiskDoctorReport({ generatedAt: new Date().toISOString(), projects });
+    return this.textOrJsonLines(routeUrl, report, renderDiskDoctorReport(report).split("\n"));
+  }
+
   private async doctorTmuxTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
     const projectParam = routeUrl.searchParams.get("projectRoot");
     if (!projectParam) {
@@ -3498,6 +3581,10 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === CORE_API_ROUTES.doctorVersionsText) {
       return this.doctorVersionsTextRoute(routeUrl);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.doctorDiskText) {
+      return this.doctorDiskTextRoute(routeUrl);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.doctorTmuxText) {

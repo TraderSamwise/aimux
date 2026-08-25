@@ -5,6 +5,7 @@ import type {
   CoreTmuxTarget,
 } from "./core-command-contract.js";
 import type { NotificationRecord, TeamConfig } from "./project-api-contract.js";
+import { renderWorktreeCacheCleanupRunResult } from "./worktree-cache-cleanup.js";
 
 export interface CoreDaemonStatusTextPayload {
   daemon: { pid?: number; port?: number; serviceInfo?: unknown } | null;
@@ -189,6 +190,8 @@ export interface CoreWorktreePathTextPayload {
 
 export interface CoreWorktreeCacheCleanupTargetTextPayload {
   path: string;
+  worktreePath?: string;
+  relativePath?: string;
   sizeBytes: number;
 }
 
@@ -605,35 +608,26 @@ export function renderCoreWorktreeDeleteGraveyardLines(payload: CoreWorktreePath
   return [`deleted ${payload.path}`];
 }
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const decimals = value >= 10 || unitIndex === 0 ? 0 : 1;
-  return `${value.toFixed(decimals)}${units[unitIndex]}`;
-}
-
 export function renderCoreWorktreeCacheCleanupLines(payload: CoreWorktreeCacheCleanupTextPayload): string[] {
-  const action = payload.dryRun ? "would remove" : "removed";
-  const bytes = payload.dryRun ? payload.reclaimableBytes : payload.reclaimedBytes;
-  const failed = payload.results.filter((item) => {
-    return Boolean(item && typeof item === "object" && (item as { status?: unknown }).status === "failed");
-  }).length;
-  const lines = [
-    `Worktree cache cleanup ${action} ${payload.targets.length} item(s), ${formatBytes(bytes)}; ${failed} failed.`,
-  ];
-  for (const target of payload.targets) {
-    lines.push(`${formatBytes(target.sizeBytes).padStart(7)}  ${target.path}`);
-  }
-  if (payload.skipped.length > 0) {
-    lines.push(`Skipped ${payload.skipped.length} worktree(s).`);
-  }
-  return lines;
+  return renderWorktreeCacheCleanupRunResult({
+    dryRun: payload.dryRun,
+    plan: {
+      projectRoot: "",
+      dryRun: payload.dryRun,
+      includeActive: false,
+      cacheDirNames: [],
+      targets: payload.targets.map((target) => ({
+        path: target.path,
+        worktreePath: target.worktreePath ?? target.path,
+        relativePath: target.relativePath ?? target.path,
+        sizeBytes: target.sizeBytes,
+      })),
+      skipped: payload.skipped as any,
+      reclaimableBytes: payload.reclaimableBytes,
+    },
+    results: payload.results as any,
+    reclaimedBytes: payload.reclaimedBytes,
+  });
 }
 
 export function renderCoreGraveyardLines(payload: CoreGraveyardTextPayload): string[] {
