@@ -25,7 +25,7 @@ import {
 } from "../graveyard-cleanup.js";
 import { buildInboxCleanupPlan, runInboxCleanup, type InboxCleanupRunResult } from "../inbox-cleanup.js";
 import {
-  runWorktreeCacheCleanup,
+  runWorktreeCacheCleanupAsync,
   type WorktreeCacheCleanupProtectedWorktree,
   type WorktreeCacheCleanupRunResult,
 } from "../worktree-cache-cleanup.js";
@@ -766,8 +766,8 @@ export const persistenceMethods = {
   cleanupWorktreeCaches(
     this: any,
     input?: { dryRun?: boolean; includeActive?: boolean },
-  ): WorktreeCacheCleanupRunResult {
-    return runWorktreeCacheCleanup({
+  ): Promise<WorktreeCacheCleanupRunResult> {
+    return runWorktreeCacheCleanupAsync({
       projectRoot: projectRootFor(this),
       dryRun: input?.dryRun !== false,
       includeActive: input?.includeActive === true,

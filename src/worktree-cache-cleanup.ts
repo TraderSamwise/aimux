@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { listTopologyServiceStates } from "./runtime-core/topology-services.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
@@ -269,6 +270,40 @@ export function runWorktreeCacheCleanup(options: WorktreeCacheCleanupOptions): W
         throw new Error("planned cache target failed final safety validation");
       }
       removeDir(target.path);
+      reclaimedBytes += target.sizeBytes;
+      results.push({ path: target.path, status: "removed", sizeBytes: target.sizeBytes });
+    } catch (error) {
+      results.push({
+        path: target.path,
+        status: "failed",
+        sizeBytes: target.sizeBytes,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { dryRun, plan, results, reclaimedBytes };
+}
+
+export async function runWorktreeCacheCleanupAsync(
+  options: WorktreeCacheCleanupOptions,
+): Promise<WorktreeCacheCleanupRunResult> {
+  const plan = buildWorktreeCacheCleanupPlan(options);
+  const dryRun = plan.dryRun;
+  const removeDir = options.removeDir ?? ((path: string) => rm(path, { recursive: true, force: true }));
+  const results: WorktreeCacheCleanupItemResult[] = [];
+  let reclaimedBytes = 0;
+
+  for (const target of plan.targets) {
+    if (dryRun) {
+      results.push({ path: target.path, status: "dry-run", sizeBytes: target.sizeBytes });
+      continue;
+    }
+    try {
+      if (!isRemovableCacheTarget(target, plan.cacheDirNames)) {
+        throw new Error("planned cache target failed final safety validation");
+      }
+      await removeDir(target.path);
       reclaimedBytes += target.sizeBytes;
       results.push({ path: target.path, status: "removed", sizeBytes: target.sizeBytes });
     } catch (error) {

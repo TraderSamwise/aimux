@@ -1172,7 +1172,7 @@ describe("persistenceMethods", () => {
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
   });
 
-  it("cleans generated cache directories from inactive Aimux worktrees", () => {
+  it("cleans generated cache directories from inactive Aimux worktrees", async () => {
     const worktreeBase = join(pathsRoot, ".aimux", "worktrees");
     getWorktreeBaseDirMock.mockReturnValue(worktreeBase);
     const worktreePath = join(worktreeBase, "cache");
@@ -1185,13 +1185,13 @@ describe("persistenceMethods", () => {
       dashboardPendingActions: new DashboardPendingActions(),
     };
 
-    const dryRun = persistenceMethods.cleanupWorktreeCaches.call(host);
+    const dryRun = await persistenceMethods.cleanupWorktreeCaches.call(host);
 
     expect(dryRun.dryRun).toBe(true);
     expect(dryRun.plan.targets).toMatchObject([{ path: expect.stringContaining("/cache/apps/web/.next") }]);
     expect(existsSync(cachePath)).toBe(true);
 
-    const deleted = persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
+    const deleted = await persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
 
     expect(deleted.results).toMatchObject([
       { path: expect.stringContaining("/cache/apps/web/.next"), status: "removed" },
@@ -1199,7 +1199,7 @@ describe("persistenceMethods", () => {
     expect(existsSync(cachePath)).toBe(false);
   });
 
-  it("skips cache cleanup for worktrees with active runtime", () => {
+  it("skips cache cleanup for worktrees with active runtime", async () => {
     const worktreeBase = join(pathsRoot, ".aimux", "worktrees");
     getWorktreeBaseDirMock.mockReturnValue(worktreeBase);
     const worktreePath = join(worktreeBase, "live");
@@ -1213,14 +1213,14 @@ describe("persistenceMethods", () => {
       dashboardPendingActions: new DashboardPendingActions(),
     };
 
-    const result = persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
+    const result = await persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
 
     expect(result.plan.targets).toEqual([]);
     expect(result.plan.skipped).toMatchObject([{ reason: "active-runtime" }]);
     expect(existsSync(cachePath)).toBe(true);
   });
 
-  it("skips cache cleanup when host-local live sessions have not reached topology yet", () => {
+  it("skips cache cleanup when host-local live sessions have not reached topology yet", async () => {
     const worktreeBase = join(pathsRoot, ".aimux", "worktrees");
     getWorktreeBaseDirMock.mockReturnValue(worktreeBase);
     const worktreePath = join(worktreeBase, "host-live");
@@ -1236,7 +1236,7 @@ describe("persistenceMethods", () => {
       isSessionRuntimeLive: vi.fn(() => true),
     };
 
-    const result = persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
+    const result = await persistenceMethods.cleanupWorktreeCaches.call(host, { dryRun: false });
 
     expect(result.plan.targets).toEqual([]);
     expect(result.plan.skipped).toMatchObject([{ reason: "active-runtime", sessions: ["codex-host-live"] }]);
