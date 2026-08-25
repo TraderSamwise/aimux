@@ -71,6 +71,7 @@ const DESKTOP_STATE_REFRESH_TIMEOUT_MS = 3_000;
 const DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS = 5_000;
 const PROJECT_SERVICE_UI_REFRESH_IDLE_MS = 1_000;
 const PENDING_START_OFFLINE_SETTLE_MS = 5_000;
+const SLOW_DESKTOP_STATE_BUILD_MS = 250;
 
 function projectRootFor(host: DashboardModelHost): string {
   const configuredProjectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
@@ -1133,12 +1134,27 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost, options: Das
 }
 
 function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
+  const startedAt = Date.now();
+  const phases: Array<{ name: string; durationMs: number }> = [];
+  const recordPhase = <T>(name: string, run: () => T): T => {
+    const phaseStartedAt = Date.now();
+    try {
+      return run();
+    } finally {
+      phases.push({ name, durationMs: Date.now() - phaseStartedAt });
+    }
+  };
   const projectRoot = projectRootFor(host);
-  if (options.includeRuntimeInfo !== false) host.syncSessionsFromTopology();
-  const worktrees = host.listDesktopWorktrees();
-  let managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
+  if (options.includeRuntimeInfo !== false)
+    recordPhase("syncSessionsFromTopology", () => host.syncSessionsFromTopology());
+  const worktrees = recordPhase("listDesktopWorktrees", () => host.listDesktopWorktrees());
+  let managedWindows =
+    options.managedWindows ??
+    recordPhase("listProjectManagedWindows", () => host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot));
   if (!options.managedWindows && options.hydrateLiveAgentWindows !== false) {
-    managedWindows = hydrateLiveAgentWindowsForSnapshot(host, managedWindows);
+    managedWindows = recordPhase("hydrateLiveAgentWindows", () =>
+      hydrateLiveAgentWindowsForSnapshot(host, managedWindows),
+    );
   }
   // A worktree that exists cannot still be failing to be created. The record is
   // written by paths that throw before they can retire it — "already exists"
@@ -1165,36 +1181,44 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
     mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
   }
   const sessionOptions = { ...options, managedWindows };
-  const sessions = computeDashboardSessions(host, sessionOptions);
-  const teammates = computeDashboardSessions(host, { ...sessionOptions, includeTeammates: true }).filter((session) =>
-    isTeammateSession(session),
+  const sessions = recordPhase("computeDashboardSessions", () => computeDashboardSessions(host, sessionOptions));
+  const teammates = recordPhase("computeDashboardTeammates", () =>
+    computeDashboardSessions(host, { ...sessionOptions, includeTeammates: true }).filter((session) =>
+      isTeammateSession(session),
+    ),
   );
-  const services = computeDashboardServices(host, worktrees, { ...options, managedWindows });
-  const worktreeGroups = buildDashboardWorktreeGroups(host, sessions, services, worktrees, mainCheckoutPath);
-  const onlineRestoreSessions = [
-    ...new Map([...sessions, ...teammates].map((session) => [session.id, session])).values(),
-  ]
-    .filter((session) => !isDashboardSessionOffline(session))
-    .map((session): AgentRestoreSession => {
-      return {
-        id: session.id,
-        tool: session.toolConfigKey,
-        command: session.command,
-        label: session.label,
-        worktreePath: session.worktreePath,
-      };
-    });
-  const liveRestoreSessionIds = onlineRestoreSessions.map((session) => session.id);
-  const agentRestoreOffer = deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot });
-  const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
-  const shouldRecordRestoreSnapshot =
-    onlineRestoreSessions.length > 0 ||
-    ((host as any).lastOnlineAgentRestoreSnapshotKey !== undefined && !agentRestoreOffer);
-  if (shouldRecordRestoreSnapshot && (host as any).lastOnlineAgentRestoreSnapshotKey !== restoreSnapshotKey) {
-    recordLastOnlineAgents(onlineRestoreSessions, { projectRoot });
-    (host as any).lastOnlineAgentRestoreSnapshotKey = restoreSnapshotKey;
-  }
-  return {
+  const services = recordPhase("computeDashboardServices", () =>
+    computeDashboardServices(host, worktrees, { ...options, managedWindows }),
+  );
+  const worktreeGroups = recordPhase("buildDashboardWorktreeGroups", () =>
+    buildDashboardWorktreeGroups(host, sessions, services, worktrees, mainCheckoutPath),
+  );
+  const agentRestoreOffer = recordPhase("agentRestoreOffer", () => {
+    const onlineRestoreSessions = [
+      ...new Map([...sessions, ...teammates].map((session) => [session.id, session])).values(),
+    ]
+      .filter((session) => !isDashboardSessionOffline(session))
+      .map((session): AgentRestoreSession => {
+        return {
+          id: session.id,
+          tool: session.toolConfigKey,
+          command: session.command,
+          label: session.label,
+          worktreePath: session.worktreePath,
+        };
+      });
+    const liveRestoreSessionIds = onlineRestoreSessions.map((session) => session.id);
+    const offer = deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot });
+    const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
+    const shouldRecordRestoreSnapshot =
+      onlineRestoreSessions.length > 0 || ((host as any).lastOnlineAgentRestoreSnapshotKey !== undefined && !offer);
+    if (shouldRecordRestoreSnapshot && (host as any).lastOnlineAgentRestoreSnapshotKey !== restoreSnapshotKey) {
+      recordLastOnlineAgents(onlineRestoreSessions, { projectRoot });
+      (host as any).lastOnlineAgentRestoreSnapshotKey = restoreSnapshotKey;
+    }
+    return offer;
+  });
+  const state = {
     sessions,
     teammates,
     services,
@@ -1205,6 +1229,18 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
     mainCheckoutInfo,
     mainCheckoutPath,
   };
+  const durationMs = Date.now() - startedAt;
+  if (durationMs >= SLOW_DESKTOP_STATE_BUILD_MS) {
+    log.warn("slow desktop-state build", "api", {
+      durationMs,
+      phases,
+      sessionCount: sessions.length,
+      teammateCount: teammates.length,
+      serviceCount: services.length,
+      worktreeCount: worktrees.length,
+    });
+  }
+  return state;
 }
 
 function isMainCheckoutInfo(value: any): value is { name: string; branch: string } {
