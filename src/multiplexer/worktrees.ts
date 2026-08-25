@@ -679,15 +679,15 @@ export function showWorktreeCacheCleanupPreview(host: WorktreeHost): void {
     { timeoutMs: 180_000 },
   )
     .then((response) => {
-      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.clearDashboardBusy();
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.worktreeCacheCleanupConfirm = cleanupResultFromResponse(response);
       host.openDashboardOverlay("worktree-cache-cleanup-confirm");
       renderWorktreeCacheCleanupConfirm(host);
     })
     .catch((error: unknown) => {
-      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.clearDashboardBusy();
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.showDashboardError("Failed to inspect worktree caches", [
         error instanceof Error ? error.message : String(error),
       ]);
@@ -706,8 +706,8 @@ function applyWorktreeCacheCleanup(host: WorktreeHost, preview: WorktreeCacheCle
     { timeoutMs: 180_000 },
   )
     .then((response) => {
-      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.clearDashboardBusy();
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       const result = cleanupResultFromResponse(response);
       const failed = result.results.filter((entry) => entry.status === "failed").length;
       host.footerFlash = `Removed ${formatWorktreeCacheBytes(result.reclaimedBytes)} from ${result.plan.targets.length} cache item(s)`;
@@ -722,8 +722,8 @@ function applyWorktreeCacheCleanup(host: WorktreeHost, preview: WorktreeCacheCle
       host.renderDashboard();
     })
     .catch((error: unknown) => {
-      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.clearDashboardBusy();
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.showDashboardError("Failed to remove worktree caches", [
         `Planned: ${formatWorktreeCacheBytes(preview.plan.reclaimableBytes)}`,
         error instanceof Error ? error.message : String(error),

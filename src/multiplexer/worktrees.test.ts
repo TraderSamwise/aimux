@@ -1314,6 +1314,49 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears cache cleanup busy state when preview completion is stale", async () => {
+    let resolveMutation!: (value: unknown) => void;
+    const postToProjectService = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveMutation = resolve;
+        }),
+    );
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardBusyState: null,
+      worktreeCacheCleanupConfirm: null,
+      postToProjectService,
+      clearDashboardOverlay: vi.fn(),
+      startDashboardBusy: vi.fn((title: string, lines: string[]) => {
+        host.dashboardBusyState = { title, lines };
+      }),
+      clearDashboardBusy: vi.fn(() => {
+        host.dashboardBusyState = null;
+      }),
+      openDashboardOverlay: vi.fn(),
+      redrawDashboardWithOverlay: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    showWorktreeCacheCleanupPreview(host);
+    host.dashboardInputEpoch += 1;
+    resolveMutation({
+      ok: true,
+      result: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: { reclaimableBytes: 0, targets: [], skipped: [] },
+        results: [],
+      },
+    });
+
+    await vi.waitFor(() => expect(host.clearDashboardBusy).toHaveBeenCalledOnce());
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.openDashboardOverlay).not.toHaveBeenCalled();
+  });
+
   it("applies confirmed worktree cache cleanup without active worktrees", async () => {
     const postToProjectService = vi.fn(async () => ({
       ok: true,
