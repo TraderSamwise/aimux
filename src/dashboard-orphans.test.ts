@@ -115,6 +115,28 @@ describe("selectOrphanedDashboards", () => {
     expect(selectOrphanedDashboards([dash(10)], parents, 999)).toEqual([]);
   });
 
+  it("selects a dashboard whose shell is no longer a live tmux pane", () => {
+    const parents = new Map([
+      [10, 110],
+      [110, 900],
+      [20, 120],
+      [120, 900],
+      [900, 1],
+    ]);
+    expect(selectOrphanedDashboards([dash(10), dash(20)], parents, 999, new Set([120])).map((e) => e.pid)).toEqual([
+      10,
+    ]);
+  });
+
+  it("leaves a dashboard whose shell is still a live tmux pane", () => {
+    const parents = new Map([
+      [10, 110],
+      [110, 900],
+      [900, 1],
+    ]);
+    expect(selectOrphanedDashboards([dash(10)], parents, 999, new Set([110]))).toEqual([]);
+  });
+
   it("treats an unknown parent as unknown, not orphaned", () => {
     expect(selectOrphanedDashboards([dash(10)], new Map(), 999)).toEqual([]);
   });

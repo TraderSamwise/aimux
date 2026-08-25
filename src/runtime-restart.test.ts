@@ -10,6 +10,7 @@ import {
   renderRuntimeRestartResult,
 } from "./runtime-restart.js";
 import type { RuntimeCoherenceReport } from "./runtime-coherence.js";
+import { AIMUX_TMUX_RUNTIME_CONTRACT_VERSION } from "./runtime-owner.js";
 
 const execFileSyncMock = vi.hoisted(() => vi.fn());
 
@@ -31,7 +32,7 @@ function coherenceReport(): RuntimeCoherenceReport {
     expected: {
       projectService: { apiVersion: 4, capabilities: {}, buildStamp: "service-new" },
       runtimeOwner: "owner-new",
-      runtimeContract: "1",
+      runtimeContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
     },
     daemon: {
       running: true,
@@ -51,8 +52,8 @@ function coherenceReport(): RuntimeCoherenceReport {
         expectedDashboardBuildStamp: "dashboard-new",
         runtime: {
           sessionName: "aimux-alpha-111",
-          contract: "1",
-          expectedContract: "1",
+          contract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+          expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
           rebuildRequired: false,
         },
         service: {
@@ -92,8 +93,8 @@ function coherenceReport(): RuntimeCoherenceReport {
         expectedDashboardBuildStamp: "dashboard-new",
         runtime: {
           sessionName: "aimux-beta-222",
-          contract: "1",
-          expectedContract: "1",
+          contract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+          expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
           rebuildRequired: false,
         },
         service: {
@@ -1925,8 +1926,16 @@ describe("restartAimuxControlPlane", () => {
 
     expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111", "/repo/alpha");
     expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "/repo/alpha");
-    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-contract", "1");
-    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "@aimux-runtime-contract", "1");
+    expect(setSessionOption).toHaveBeenCalledWith(
+      "aimux-alpha-111",
+      "@aimux-runtime-contract",
+      AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
+    expect(setSessionOption).toHaveBeenCalledWith(
+      "aimux-alpha-111-client-deadbeef",
+      "@aimux-runtime-contract",
+      AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
     expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
     expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "0");
     expect(setSessionOption).toHaveBeenCalledWith(
@@ -1982,7 +1991,11 @@ describe("restartAimuxControlPlane", () => {
 
     expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111", "/repo/alpha");
     expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "/repo/alpha");
-    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "@aimux-runtime-contract", "1");
+    expect(setSessionOption).toHaveBeenCalledWith(
+      "aimux-alpha-111-client-deadbeef",
+      "@aimux-runtime-contract",
+      AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
     expect(result.summary).toMatchObject({ runtimeRepairs: 1, runtimeRebuildRequired: 1, failures: 0 });
     expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);
     expect(result.projects[0]?.runtime.status).toBe("repaired");

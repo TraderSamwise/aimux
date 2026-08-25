@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   listProcessArgs,
   listProcessParents as defaultListProcessParents,
@@ -33,6 +34,7 @@ export interface CleanupLifecycleOrphansOptions {
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
   sleep?: (ms: number) => Promise<void>;
   tmux?: LifecycleOrphanTmux;
+  listLiveTmuxPanePids?: () => ReadonlySet<number>;
   processExitTimeoutMs?: number;
   processKillGraceMs?: number;
   currentPid?: number;
@@ -56,6 +58,24 @@ function uniqueNumbers(values: number[]): number[] {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function listLiveTmuxPanePids(): ReadonlySet<number> {
+  try {
+    const raw = execFileSync("tmux", ["list-panes", "-a", "-F", "#{pane_pid}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 500,
+    });
+    return new Set(
+      raw
+        .split("\n")
+        .map((line) => Number(line.trim()))
+        .filter((pid) => Number.isInteger(pid) && pid > 0),
+    );
+  } catch {
+    return new Set();
+  }
 }
 
 export function isLifecycleValidationProcessArgs(args: string): boolean {
@@ -124,7 +144,10 @@ export async function cleanupLifecycleValidationOrphans(
   // inverted. A dashboard whose shell has been reparented to init has no window
   // to render to on any build, which is safe to reap from any caller.
   const parents = (options.listProcessParents ?? defaultListProcessParents)();
-  const orphanedDashboardPids = selectOrphanedDashboards(listProcesses(), parents, currentPid).map(
+  const livePanePids = tmux.isAvailable()
+    ? (options.listLiveTmuxPanePids ?? listLiveTmuxPanePids)()
+    : new Set<number>();
+  const orphanedDashboardPids = selectOrphanedDashboards(listProcesses(), parents, currentPid, livePanePids).map(
     (entry) => entry.pid,
   );
   const orphanedPidSet = new Set(orphanedDashboardPids);
@@ -132,7 +155,9 @@ export async function cleanupLifecycleValidationOrphans(
   // must not be killed just because the pid was on the list.
   const isReapable = (pid: number, args: string): boolean =>
     isLifecycleValidationProcessArgs(args) ||
-    (isDashboardProcessArgs(args) && orphanedPidSet.has(pid) && parents.get(parents.get(pid) ?? -1) === 1);
+    (isDashboardProcessArgs(args) &&
+      orphanedPidSet.has(pid) &&
+      selectOrphanedDashboards([{ pid, args }], parents, currentPid, livePanePids).length > 0);
   const candidatePids = uniqueNumbers([
     ...listProcesses()
       .filter((entry) => entry.pid !== currentPid && isLifecycleValidationProcessArgs(entry.args))

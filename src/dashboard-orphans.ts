@@ -75,6 +75,7 @@ export function selectOrphanedDashboards(
   processes: readonly DashboardProcess[],
   parents: ReadonlyMap<number, number>,
   currentPid = process.pid,
+  livePanePids: ReadonlySet<number> = new Set(),
 ): DashboardProcess[] {
   return processes.filter((entry) => {
     if (entry.pid === currentPid) return false;
@@ -83,6 +84,7 @@ export function selectOrphanedDashboards(
     // No parent recorded is unknown, not orphaned.
     if (shell === undefined) return false;
     const grandparent = parents.get(shell);
-    return grandparent === 1;
+    if (grandparent === 1) return true;
+    return livePanePids.size > 0 && !livePanePids.has(shell);
   });
 }

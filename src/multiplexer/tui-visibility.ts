@@ -11,8 +11,22 @@ export interface TuiVisibilitySnapshot {
 }
 
 export type TmuxVisibilityQuery = (paneId: string) => string | null | undefined;
+export type TmuxPaneListQuery = () => string | null | undefined;
+export type ProcessListQuery = () => string | null | undefined;
 
 export const DASHBOARD_TUI_VISIBILITY_CACHE_MS = 250;
+
+export interface TmuxPaneRow {
+  paneId: string;
+  panePid: number;
+  attachedRaw: string;
+  activeWindowRaw: string;
+}
+
+interface TmuxProcessVisibilityResolution {
+  snapshot: TuiVisibilitySnapshot;
+  matched: boolean;
+}
 
 export function parseTmuxVisibility(raw: string | null | undefined, paneId?: string): TuiVisibilitySnapshot {
   const [attachedRaw, activeWindowRaw] = String(raw ?? "")
@@ -43,15 +57,125 @@ export function visibleFallback(paneId: string | undefined, reason: TuiVisibilit
   };
 }
 
+export function parseTmuxPaneRows(raw: string | null | undefined): TmuxPaneRow[] {
+  return String(raw ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const [paneId, panePidRaw, attachedRaw, activeWindowRaw] = line.split("\t");
+      const panePid = Number(panePidRaw);
+      if (!paneId || !Number.isFinite(panePid) || !attachedRaw || !activeWindowRaw) return [];
+      return [{ paneId, panePid, attachedRaw, activeWindowRaw }];
+    });
+}
+
+export function parseProcessParents(raw: string | null | undefined): Map<number, number> {
+  const parents = new Map<number, number>();
+  for (const line of String(raw ?? "").split("\n")) {
+    const [pidRaw, ppidRaw] = line.trim().split(/\s+/);
+    const pid = Number(pidRaw);
+    const ppid = Number(ppidRaw);
+    if (Number.isFinite(pid) && Number.isFinite(ppid)) parents.set(pid, ppid);
+  }
+  return parents;
+}
+
+export function findTmuxPaneForProcess(
+  panes: TmuxPaneRow[],
+  parents: Map<number, number>,
+  pid: number,
+): TmuxPaneRow | undefined {
+  const panePids = new Set(panes.map((pane) => pane.panePid));
+  const seen = new Set<number>();
+  let current = pid;
+  while (Number.isFinite(current) && current > 0 && !seen.has(current)) {
+    if (panePids.has(current)) return panes.find((pane) => pane.panePid === current);
+    seen.add(current);
+    const parent = parents.get(current);
+    if (!parent || parent === current) break;
+    current = parent;
+  }
+  return undefined;
+}
+
+function readTmuxPaneList(query?: TmuxPaneListQuery): string | null | undefined {
+  const listPanes =
+    query ??
+    (() =>
+      execFileSync(
+        "tmux",
+        ["list-panes", "-a", "-F", "#{pane_id}\t#{pane_pid}\t#{session_attached}\t#{window_active}"],
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 500,
+        },
+      ));
+  return listPanes();
+}
+
+function readProcessList(query?: ProcessListQuery): string | null | undefined {
+  const listProcesses =
+    query ??
+    (() =>
+      execFileSync("ps", ["-axo", "pid=,ppid="], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 500,
+      }));
+  return listProcesses();
+}
+
+function readTmuxTuiVisibilityFromProcess(
+  options: {
+    listPanes?: TmuxPaneListQuery;
+    listProcesses?: ProcessListQuery;
+    pid?: number;
+    stalePaneId?: string;
+  } = {},
+): TmuxProcessVisibilityResolution | null {
+  const panes = parseTmuxPaneRows(readTmuxPaneList(options.listPanes));
+  if (panes.length === 0) return null;
+  const parents = parseProcessParents(readProcessList(options.listProcesses));
+  const pane = findTmuxPaneForProcess(panes, parents, options.pid ?? process.pid);
+  if (pane) {
+    return {
+      snapshot: parseTmuxVisibility(`${pane.attachedRaw}\t${pane.activeWindowRaw}`, pane.paneId),
+      matched: true,
+    };
+  }
+  if (options.stalePaneId && panes.some((row) => row.paneId === options.stalePaneId)) {
+    return {
+      snapshot: visibleFallback(options.stalePaneId, "query-failed"),
+      matched: false,
+    };
+  }
+  return {
+    snapshot: {
+      paneId: options.stalePaneId,
+      attached: false,
+      activeWindow: false,
+      visible: false,
+      reason: "detached",
+    },
+    matched: false,
+  };
+}
+
 export function readTmuxTuiVisibility(
   options: {
     env?: NodeJS.ProcessEnv;
     query?: TmuxVisibilityQuery;
+    listPanes?: TmuxPaneListQuery;
+    listProcesses?: ProcessListQuery;
+    pid?: number;
   } = {},
 ): TuiVisibilitySnapshot {
   const env = options.env ?? process.env;
   const paneId = env.TMUX_PANE?.trim();
   if (!paneId) return visibleFallback(undefined, "not-tmux");
+  let directSnapshot: TuiVisibilitySnapshot | null = null;
   try {
     const query =
       options.query ??
@@ -61,10 +185,25 @@ export function readTmuxTuiVisibility(
           stdio: ["ignore", "pipe", "ignore"],
           timeout: 500,
         }));
-    return parseTmuxVisibility(query(paneId), paneId);
+    directSnapshot = parseTmuxVisibility(query(paneId), paneId);
   } catch {
-    return visibleFallback(paneId, "query-failed");
+    // Fall through to process-tree recovery below. Dashboard reloads can leave
+    // an old node process with a stale TMUX_PANE that tmux no longer knows.
   }
+  try {
+    const processResolution = readTmuxTuiVisibilityFromProcess({
+      listPanes: options.listPanes,
+      listProcesses: options.listProcesses,
+      pid: options.pid,
+      stalePaneId: paneId,
+    });
+    if (processResolution?.matched) return processResolution.snapshot;
+    if (directSnapshot?.reason && directSnapshot.reason !== "query-failed") return directSnapshot;
+    if (processResolution) return processResolution.snapshot;
+  } catch {
+    if (directSnapshot?.reason && directSnapshot.reason !== "query-failed") return directSnapshot;
+  }
+  return visibleFallback(paneId, "query-failed");
 }
 
 export function readDashboardTuiVisibilityForHost(

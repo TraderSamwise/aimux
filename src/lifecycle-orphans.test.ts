@@ -220,6 +220,38 @@ describe("lifecycle validation orphan cleanup", () => {
     expect(result.processPids.sort()).toEqual([11, 12]);
   });
 
+  it("reaps a dashboard whose shell is not a live tmux pane anymore", async () => {
+    const dash = "/Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal";
+    const processes = [
+      { pid: 11, args: dash },
+      { pid: 12, args: dash },
+    ];
+    const parents = new Map<number, number>([
+      [11, 111],
+      [111, 900],
+      [12, 112],
+      [112, 900],
+      [900, 1],
+    ]);
+    const killed: number[] = [];
+
+    const result = await cleanupLifecycleValidationOrphans({
+      currentPid: 999,
+      tmux: { isAvailable: () => true } as never,
+      listProcesses: () => processes,
+      listProcessParents: () => parents,
+      listLiveTmuxPanePids: () => new Set([112]),
+      readProcessArgs: (pid) => processes.find((entry) => entry.pid === pid)?.args ?? null,
+      isPidAlive: () => false,
+      killPid: (pid) => {
+        killed.push(pid);
+      },
+    });
+
+    expect(killed).toEqual([11]);
+    expect(result.processPids).toEqual([11]);
+  });
+
   it("never reaps a dashboard merely because its build differs", async () => {
     // Build difference is symmetric while the guard against replacing a newer
     // install is not, so reaping on it lets an older process kill the newer
