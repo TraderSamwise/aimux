@@ -814,10 +814,25 @@ export interface MetadataServerOptions {
 type MetadataReadAgentOutputResult = Awaited<
   ReturnType<NonNullable<NonNullable<MetadataServerOptions["lifecycle"]>["readAgentOutput"]>>
 >;
+type MetadataReadAgentOutputMeasurement = {
+  result: MetadataReadAgentOutputResult;
+  durationMs: number;
+  coalesced: boolean;
+};
+type AgentOutputReadCoalescerEntry = {
+  promise: Promise<MetadataReadAgentOutputResult>;
+  expiresAt: number;
+};
+type AgentChatPreviewCacheEntry = {
+  expiresAt: number;
+  preview: NonNullable<FastControlItem["chatPreview"]> | null;
+};
 
+const AGENT_OUTPUT_READ_COALESCE_MS = 150;
 const EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 1500;
 const EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS = 1500;
 const EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
+const DESKTOP_STATE_CHAT_PREVIEW_CACHE_MS = 1500;
 const WORKTREE_CACHE_CLEANUP_INITIAL_JITTER_MS = 300_000;
 type InteractionDisplay = {
   title: string;
@@ -1755,6 +1770,8 @@ export class MetadataServer {
   private readonly exposePaneOutputTap: ExposePaneOutputTapLike | null;
   private readonly visualClientLeases = new VisualClientLeaseRegistry();
   private readonly exposeHotSnapshotsEnabled: boolean;
+  private readonly agentOutputReadCoalescer = new Map<string, AgentOutputReadCoalescerEntry>();
+  private readonly agentChatPreviewCache = new Map<string, AgentChatPreviewCacheEntry>();
   private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeHotSnapshotRefreshing = false;
   private exposeHotSnapshotWorker: Worker | null = null;
@@ -2126,23 +2143,70 @@ export class MetadataServer {
   private async measureAgentOutputRead(
     source: AgentOutputReadSource,
     input: { sessionId: string; startLine?: number },
-  ): Promise<{ result: MetadataReadAgentOutputResult; durationMs: number }> {
+  ): Promise<MetadataReadAgentOutputMeasurement> {
     if (!this.options.lifecycle?.readAgentOutput) {
       throw new Error("agent output not supported by this service");
     }
     const startedAt = performance.now();
+    const coalesceKey = `${input.sessionId}\0${input.startLine ?? ""}`;
+    const now = Date.now();
+    const existing = this.agentOutputReadCoalescer.get(coalesceKey);
+    if (existing && existing.expiresAt > now) {
+      try {
+        return {
+          result: await existing.promise,
+          durationMs: performance.now() - startedAt,
+          coalesced: true,
+        };
+      } catch (error) {
+        recordAgentOutputReadMetric({
+          source,
+          sessionId: input.sessionId,
+          requestedStartLine: input.startLine,
+          durationMs: performance.now() - startedAt,
+          coalesced: true,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    }
+
+    const promise = Promise.resolve(this.options.lifecycle.readAgentOutput(input));
+    const entry: AgentOutputReadCoalescerEntry = {
+      promise,
+      expiresAt: Number.POSITIVE_INFINITY,
+    };
+    this.agentOutputReadCoalescer.set(coalesceKey, entry);
+    let retainSettledResult = false;
+
     try {
-      const result = await this.options.lifecycle.readAgentOutput(input);
-      return { result, durationMs: performance.now() - startedAt };
+      const result = await promise;
+      retainSettledResult = true;
+      return { result, durationMs: performance.now() - startedAt, coalesced: false };
     } catch (error) {
       recordAgentOutputReadMetric({
         source,
         sessionId: input.sessionId,
         requestedStartLine: input.startLine,
         durationMs: performance.now() - startedAt,
+        coalesced: false,
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
+    } finally {
+      if (!retainSettledResult) {
+        if (this.agentOutputReadCoalescer.get(coalesceKey) === entry) {
+          this.agentOutputReadCoalescer.delete(coalesceKey);
+        }
+      } else {
+        entry.expiresAt = Date.now() + AGENT_OUTPUT_READ_COALESCE_MS;
+        const cleanup = setTimeout(() => {
+          if (this.agentOutputReadCoalescer.get(coalesceKey) === entry) {
+            this.agentOutputReadCoalescer.delete(coalesceKey);
+          }
+        }, AGENT_OUTPUT_READ_COALESCE_MS);
+        cleanup.unref?.();
+      }
     }
   }
 
@@ -2152,6 +2216,7 @@ export class MetadataServer {
     result: MetadataReadAgentOutputResult,
     durationMs: number,
     changed?: boolean,
+    coalesced = false,
   ): void {
     recordAgentOutputReadMetric({
       source,
@@ -2162,6 +2227,7 @@ export class MetadataServer {
       captureLineLimit: result.captureLineLimit,
       outputBytes: Buffer.byteLength(result.output ?? "", "utf8"),
       durationMs,
+      coalesced,
       changed,
     });
   }
@@ -2227,22 +2293,41 @@ export class MetadataServer {
   ): Promise<Map<string, NonNullable<FastControlItem["chatPreview"]>>> {
     const previewsBySessionId = new Map<string, NonNullable<FastControlItem["chatPreview"]>>();
     if (!this.options.lifecycle?.readAgentOutput) return previewsBySessionId;
+    const uncachedSessionIds: string[] = [];
+    const now = Date.now();
+    for (const sessionId of new Set(sessionIds)) {
+      const cached = this.agentChatPreviewCache.get(sessionId);
+      if (cached && cached.expiresAt > now) {
+        if (cached.preview) previewsBySessionId.set(sessionId, cached.preview);
+        continue;
+      }
+      uncachedSessionIds.push(sessionId);
+    }
+    if (uncachedSessionIds.length === 0) return previewsBySessionId;
+
     await Promise.all(
-      sessionIds.map(async (sessionId) => {
+      uncachedSessionIds.map(async (sessionId) => {
         try {
           const readInput = {
             sessionId,
             startLine: DESKTOP_STATE_CHAT_PREVIEW_START_LINE,
           };
-          const { result, durationMs } = await this.measureAgentOutputRead("chat-preview", readInput);
-          this.recordAgentOutputRead("chat-preview", readInput, result, durationMs);
+          const { result, durationMs, coalesced } = await this.measureAgentOutputRead("chat-preview", readInput);
+          this.recordAgentOutputRead("chat-preview", readInput, result, durationMs, undefined, coalesced);
           const messages = (result.messages ?? []).slice(-DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES);
-          if (messages.length === 0) return;
-          previewsBySessionId.set(sessionId, {
-            messages,
-            capturedAt: new Date().toISOString(),
-            source: "readAgentOutput",
+          const preview =
+            messages.length > 0
+              ? {
+                  messages,
+                  capturedAt: new Date().toISOString(),
+                  source: "readAgentOutput" as const,
+                }
+              : null;
+          this.agentChatPreviewCache.set(sessionId, {
+            preview,
+            expiresAt: Date.now() + DESKTOP_STATE_CHAT_PREVIEW_CACHE_MS,
           });
+          if (preview) previewsBySessionId.set(sessionId, preview);
         } catch (error) {
           log.debug?.("agent chat preview failed", "api", {
             sessionId,
@@ -3511,11 +3596,11 @@ export class MetadataServer {
             sessionId: sessionFilter,
             startLine: parsedStartLine.value,
           };
-          const { result, durationMs } = await this.measureAgentOutputRead("events", readInput);
+          const { result, durationMs, coalesced } = await this.measureAgentOutputRead("events", readInput);
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
           const changed = result.output !== lastOutput || liveness !== lastLiveness;
-          this.recordAgentOutputRead("events", readInput, result, durationMs, changed);
+          this.recordAgentOutputRead("events", readInput, result, durationMs, changed, coalesced);
           if (changed) {
             lastOutput = result.output;
             lastLiveness = liveness;
@@ -4027,11 +4112,11 @@ export class MetadataServer {
             sessionId,
             startLine: parsedStartLine.value,
           };
-          const { result, durationMs } = await this.measureAgentOutputRead("output-stream", readInput);
+          const { result, durationMs, coalesced } = await this.measureAgentOutputRead("output-stream", readInput);
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
           const changed = result.output !== lastOutput || liveness !== lastLiveness;
-          this.recordAgentOutputRead("output-stream", readInput, result, durationMs, changed);
+          this.recordAgentOutputRead("output-stream", readInput, result, durationMs, changed, coalesced);
           if (changed) {
             lastOutput = result.output;
             lastLiveness = liveness;
@@ -7022,8 +7107,8 @@ export class MetadataServer {
         const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
         const startLine = captureWindow.startLine;
         const readInput = { sessionId, startLine };
-        const { result, durationMs } = await this.measureAgentOutputRead("live-pane-output", readInput);
-        this.recordAgentOutputRead("live-pane-output", readInput, result, durationMs);
+        const { result, durationMs, coalesced } = await this.measureAgentOutputRead("live-pane-output", readInput);
+        this.recordAgentOutputRead("live-pane-output", readInput, result, durationMs, undefined, coalesced);
         send(res, 200, {
           ok: true,
           ...result,
@@ -7090,8 +7175,12 @@ export class MetadataServer {
         }
 
         const readInput = { sessionId, startLine };
-        const { result: output, durationMs } = await this.measureAgentOutputRead("live-pane-attach", readInput);
-        this.recordAgentOutputRead("live-pane-attach", readInput, output, durationMs);
+        const {
+          result: output,
+          durationMs,
+          coalesced,
+        } = await this.measureAgentOutputRead("live-pane-attach", readInput);
+        this.recordAgentOutputRead("live-pane-attach", readInput, output, durationMs, undefined, coalesced);
         send(res, 200, {
           ok: true,
           ...output,

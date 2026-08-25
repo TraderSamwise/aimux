@@ -28,6 +28,7 @@ describe("agent output read metrics", () => {
       startLine: -120,
       outputBytes: 42,
       durationMs: 7,
+      coalesced: true,
       changed: false,
     });
 
@@ -37,6 +38,7 @@ describe("agent output read metrics", () => {
       errors: 0,
       changed: 1,
       unchanged: 1,
+      coalesced: 1,
       totalOutputBytes: 84,
       maxOutputBytes: 42,
     });
@@ -44,6 +46,7 @@ describe("agent output read metrics", () => {
       count: 2,
       changed: 1,
       unchanged: 1,
+      coalesced: 1,
       totalMs: 12,
     });
     expect(metrics.recent).toHaveLength(2);

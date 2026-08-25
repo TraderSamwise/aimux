@@ -14,6 +14,7 @@ export interface AgentOutputReadMetricInput {
   captureLineLimit?: number;
   outputBytes?: number;
   durationMs: number;
+  coalesced?: boolean;
   changed?: boolean;
   error?: string;
 }
@@ -24,6 +25,7 @@ export interface AgentOutputReadSourceMetrics {
   changed: number;
   unchanged: number;
   unknownChange: number;
+  coalesced: number;
   totalMs: number;
   maxMs: number;
   totalOutputBytes: number;
@@ -50,6 +52,7 @@ function emptySourceMetrics(): AgentOutputReadSourceMetrics {
     changed: 0,
     unchanged: 0,
     unknownChange: 0,
+    coalesced: 0,
     totalMs: 0,
     maxMs: 0,
     totalOutputBytes: 0,
@@ -68,6 +71,7 @@ function accumulate(target: AgentOutputReadSourceMetrics, input: AgentOutputRead
   if (input.changed === true) target.changed += 1;
   else if (input.changed === false) target.unchanged += 1;
   else target.unknownChange += 1;
+  if (input.coalesced) target.coalesced += 1;
   target.totalMs += input.durationMs;
   target.maxMs = Math.max(target.maxMs, input.durationMs);
   const outputBytes = input.outputBytes ?? 0;
