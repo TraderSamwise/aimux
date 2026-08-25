@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   FlatList,
   Image,
   Platform,
@@ -176,6 +177,46 @@ const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
+
+function isAppVisible(): boolean {
+  if (Platform.OS === "web") {
+    const documentLike = (
+      globalThis as {
+        document?: {
+          visibilityState?: string;
+        };
+      }
+    ).document;
+    return documentLike?.visibilityState !== "hidden";
+  }
+  return AppState.currentState !== "background" && AppState.currentState !== "inactive";
+}
+
+function useAppVisible(): boolean {
+  const [visible, setVisible] = useState(isAppVisible);
+
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      const documentLike = (
+        globalThis as {
+          document?: {
+            addEventListener?: (event: "visibilitychange", listener: () => void) => void;
+            removeEventListener?: (event: "visibilitychange", listener: () => void) => void;
+          };
+        }
+      ).document;
+      if (!documentLike?.addEventListener || !documentLike.removeEventListener) return;
+      const update = () => setVisible(isAppVisible());
+      documentLike.addEventListener("visibilitychange", update);
+      return () => documentLike.removeEventListener?.("visibilitychange", update);
+    }
+
+    const subscription = AppState.addEventListener("change", () => setVisible(isAppVisible()));
+    return () => subscription.remove();
+  }, []);
+
+  return visible;
+}
 
 function basenamePath(path?: string | null): string | null {
   const normalized = path?.trim().replace(/[\\/]+$/, "");
@@ -437,6 +478,7 @@ export default function ChatScreen() {
   const pathname = usePathname();
   const { width, height: windowHeight } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
+  const appVisible = useAppVisible();
   const bottomInset = resolveChromeBottomInset(safeAreaInsets.bottom);
   const [token, setToken] = useState<string | null>(null);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
@@ -794,6 +836,7 @@ export default function ChatScreen() {
       setInitialTranscriptState({ key: "", status: "idle" });
       return;
     }
+    if (!appVisible) return;
     let cancelled = false;
     let inFlight = false;
     let firstSnapshotLoaded = false;
@@ -836,6 +879,7 @@ export default function ChatScreen() {
   }, [
     endpointHost,
     endpointPort,
+    appVisible,
     heartbeatReady,
     refreshOutputSnapshot,
     routeSessionMissing,
