@@ -7,8 +7,10 @@ import { getRuntimeExchangePath } from "../paths.js";
 import {
   RUNTIME_EXCHANGE_RETENTION,
   compactRuntimeExchange,
+  countRuntimeExchangeBytes,
   countRuntimeExchangeRecords,
   type RuntimeExchangeCompactionReport,
+  type RuntimeExchangeByteCounts,
   type RuntimeExchangeCounts,
 } from "./exchange-retention.js";
 
@@ -70,8 +72,11 @@ export interface RuntimeExchangeTask {
   tool?: string;
   description: string;
   prompt: string;
+  promptOriginalBytes?: number;
   result?: string;
+  resultOriginalBytes?: number;
   error?: string;
+  errorOriginalBytes?: number;
   createdAt: string;
   updatedAt: string;
   notifiedAt?: string;
@@ -342,8 +347,11 @@ function coerceRuntimeExchange(raw: unknown): RuntimeExchange {
         tool: asOptionalString(row.tool),
         description: asString(row.description, `tasks[${index}].description`),
         prompt: asString(row.prompt, `tasks[${index}].prompt`),
+        promptOriginalBytes: asOptionalNumber(row.promptOriginalBytes),
         result: asOptionalString(row.result),
+        resultOriginalBytes: asOptionalNumber(row.resultOriginalBytes),
         error: asOptionalString(row.error),
+        errorOriginalBytes: asOptionalNumber(row.errorOriginalBytes),
         createdAt: asString(row.createdAt, `tasks[${index}].createdAt`),
         updatedAt: asString(row.updatedAt, `tasks[${index}].updatedAt`),
         notifiedAt: asOptionalString(row.notifiedAt),
@@ -602,6 +610,7 @@ let lastCompaction:
       before: RuntimeExchangeCounts;
       after: RuntimeExchangeCounts;
       removed: RuntimeExchangeCounts;
+      byteCounts: RuntimeExchangeCompactionReport["bytes"];
       retention: RuntimeExchangeCompactionReport["retention"];
     }
   | undefined;
@@ -654,6 +663,8 @@ export function inspectRuntimeExchangeStore(path = getRuntimeExchangePath()): {
   exists: boolean;
   bytes: number;
   counts: RuntimeExchangeCounts;
+  byteCounts: RuntimeExchangeByteCounts;
+  compactableByteCounts: RuntimeExchangeCompactionReport["bytes"]["removed"];
   retention: RuntimeExchangeCompactionReport["retention"];
   telemetry: ReturnType<typeof getExchangeStoreTelemetry>;
   error?: string;
@@ -669,6 +680,8 @@ export function inspectRuntimeExchangeStore(path = getRuntimeExchangePath()): {
       exists,
       bytes,
       counts: countRuntimeExchangeRecords(exchange),
+      byteCounts: countRuntimeExchangeBytes(exchange),
+      compactableByteCounts: report.bytes.removed,
       retention: report.retention,
       telemetry: getExchangeStoreTelemetry(),
     };
@@ -678,6 +691,8 @@ export function inspectRuntimeExchangeStore(path = getRuntimeExchangePath()): {
       exists,
       bytes,
       counts: countRuntimeExchangeRecords(emptyRuntimeExchange()),
+      byteCounts: countRuntimeExchangeBytes(emptyRuntimeExchange()),
+      compactableByteCounts: countRuntimeExchangeBytes(emptyRuntimeExchange()),
       retention: RUNTIME_EXCHANGE_RETENTION,
       telemetry: getExchangeStoreTelemetry(),
       error: error instanceof Error ? error.message : String(error),
@@ -693,6 +708,7 @@ export interface RuntimeExchangeCompactWriteResult {
   before: RuntimeExchangeCounts;
   after: RuntimeExchangeCounts;
   removed: RuntimeExchangeCounts;
+  byteCounts: RuntimeExchangeCompactionReport["bytes"];
   retention: RuntimeExchangeCompactionReport["retention"];
 }
 
@@ -801,6 +817,7 @@ export class RuntimeExchangeStore {
       before: compaction.before,
       after: compaction.after,
       removed: compaction.removed,
+      byteCounts: compaction.bytes,
       retention: compaction.retention,
     };
     if (result.changed) recordExchangeCompaction({ ts: new Date().toISOString(), ...result });

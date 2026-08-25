@@ -3952,6 +3952,8 @@ doctorCmd
 function printExchangeDiagnostics(diagnostics: any): void {
   const exchange = diagnostics.runtimeExchange ?? {};
   const counts = exchange.counts ?? {};
+  const byteCounts = exchange.byteCounts ?? {};
+  const compactableByteCounts = exchange.compactableByteCounts ?? {};
   const telemetry = exchange.telemetry ?? {};
   console.log(`Project: ${diagnostics.projectRoot ?? "unknown"}`);
   console.log(`Path: ${exchange.path ?? "unknown"}`);
@@ -3961,6 +3963,14 @@ function printExchangeDiagnostics(diagnostics: any): void {
       counts.tasks ?? 0
     } inbox=${counts.inbox ?? 0}`,
   );
+  console.log(
+    `Text bytes: stored=${byteCounts.totalStoredTextBytes ?? 0} original=${
+      byteCounts.totalOriginalTextBytes ?? 0
+    } messages=${byteCounts.messageBodyBytes ?? 0} tasks=${
+      (byteCounts.taskPromptBytes ?? 0) + (byteCounts.taskResultBytes ?? 0) + (byteCounts.taskErrorBytes ?? 0)
+    } compactedMessages=${byteCounts.compactedMessageBodies ?? 0} compactedTasks=${byteCounts.compactedTasks ?? 0}`,
+  );
+  console.log(`Compactable text bytes: ${compactableByteCounts.totalStoredTextBytes ?? 0}`);
   console.log(
     `Store: reads=${telemetry.reads ?? 0} parses=${telemetry.parses ?? 0} compactions=${
       telemetry.compactions ?? 0
@@ -3977,7 +3987,7 @@ doctorCmd
     try {
       const projectRoot = opts.project ? await prepareProjectContext(opts.project) : resolveProjectRoot(process.cwd());
       const diagnostics = await getProjectServiceJson(PROJECT_API_ROUTES.diagnostics, { projectRoot });
-      if (opts.json) {
+      if (opts.json === true) {
         console.log(JSON.stringify(diagnostics.runtimeExchange ?? diagnostics, null, 2));
         return;
       }
@@ -4114,7 +4124,8 @@ repairCmd
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       const result = await postProjectServiceJson(PROJECT_API_ROUTES.runtime.compactExchange, {}, { projectRoot });
-      if (opts.json) {
+      const outputJson = opts.json === true || repairCmd.opts<{ json?: boolean }>().json === true;
+      if (outputJson) {
         console.log(JSON.stringify(result, null, 2));
         return;
       }
@@ -4123,6 +4134,7 @@ repairCmd
       console.log(`Path: ${compact.path ?? "unknown"}`);
       console.log(`Bytes: ${compact.bytesBefore ?? 0} -> ${compact.bytesAfter ?? 0}`);
       console.log(`Removed records: ${compact.removed?.totalRecords ?? 0}`);
+      console.log(`Removed text bytes: ${compact.byteCounts?.removed?.totalStoredTextBytes ?? 0}`);
       printExchangeDiagnostics({ ...result, projectRoot });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

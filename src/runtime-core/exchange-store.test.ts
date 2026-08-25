@@ -8,7 +8,7 @@ import {
   getExchangeStoreStats,
   resetExchangeStoreStats,
 } from "./exchange-store.js";
-import { RUNTIME_EXCHANGE_RETENTION, compactRuntimeExchange } from "./exchange-retention.js";
+import { RUNTIME_EXCHANGE_RETENTION, compactRuntimeExchange, countRuntimeExchangeBytes } from "./exchange-retention.js";
 
 describe("RuntimeExchangeStore", () => {
   it("round-trips the runtime exchange YAML", () => {
@@ -813,6 +813,173 @@ describe("RuntimeExchangeStore", () => {
     expect(report.retained.threads.some((thread) => thread.id === "notification-0")).toBe(false);
     expect(report.retained.threads.some((thread) => thread.id === "notification-502")).toBe(true);
     expect(report.retained.messages.every((message) => message.id.endsWith("-1"))).toBe(true);
+  });
+
+  it("compacts oversized delivered message bodies but preserves pending delivery bodies", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const hugeBody = "x".repeat(RUNTIME_EXCHANGE_RETENTION.deliveredMessageBodyBytes + 10_000);
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      threads: [
+        {
+          id: "thread-1",
+          title: "Active thread",
+          kind: "conversation",
+          status: "open",
+          createdAt: now,
+          updatedAt: now,
+          createdBy: "user",
+          participants: ["user", "codex-1"],
+          lastMessageId: "msg-pending",
+        },
+      ],
+      messages: [
+        {
+          id: "msg-delivered",
+          threadId: "thread-1",
+          ts: now,
+          from: "user",
+          to: ["codex-1"],
+          deliveredTo: ["codex-1"],
+          kind: "request",
+          body: hugeBody,
+        },
+        {
+          id: "msg-pending",
+          threadId: "thread-1",
+          ts: "2026-05-25T00:01:00.000Z",
+          from: "user",
+          to: ["codex-1"],
+          kind: "request",
+          body: hugeBody,
+        },
+      ],
+    });
+
+    const delivered = report.retained.messages.find((message) => message.id === "msg-delivered");
+    const pending = report.retained.messages.find((message) => message.id === "msg-pending");
+    expect(delivered?.body.length).toBeLessThan(hugeBody.length);
+    expect(delivered?.metadata?.aimuxBodyCompacted).toBe(true);
+    expect(delivered?.metadata?.aimuxBodyOriginalBytes).toBe(Buffer.byteLength(hugeBody));
+    expect(pending?.body).toBe(hugeBody);
+    expect(report.changed).toBe(true);
+    expect(report.bytes.removed.totalStoredTextBytes).toBeGreaterThan(0);
+    expect(report.bytes.removed.compactedMessageBodies).toBe(1);
+    expect(compactRuntimeExchange(report.retained).changed).toBe(false);
+  });
+
+  it("compacts closed task text while preserving active task text", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const hugeText = "task text ".repeat(1000);
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      tasks: [
+        {
+          id: "task-closed",
+          status: "done",
+          assignedBy: "user",
+          assignedTo: "codex-1",
+          description: "Closed task",
+          prompt: hugeText,
+          result: hugeText,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: "task-active",
+          status: "in_progress",
+          assignedBy: "user",
+          assignedTo: "codex-1",
+          description: "Active task",
+          prompt: hugeText,
+          result: hugeText,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const closed = report.retained.tasks.find((task) => task.id === "task-closed");
+    const active = report.retained.tasks.find((task) => task.id === "task-active");
+    expect(closed?.prompt.length).toBeLessThan(hugeText.length);
+    expect(closed?.result?.length).toBeLessThan(hugeText.length);
+    expect(closed?.promptOriginalBytes).toBe(Buffer.byteLength(hugeText));
+    expect(closed?.resultOriginalBytes).toBe(Buffer.byteLength(hugeText));
+    expect(active?.prompt).toBe(hugeText);
+    expect(active?.result).toBe(hugeText);
+    expect(report.bytes.removed.compactedTasks).toBe(1);
+    expect(compactRuntimeExchange(report.retained).changed).toBe(false);
+  });
+
+  it("does not compact near-threshold text when metadata overhead would erase the savings", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const body = "x".repeat(RUNTIME_EXCHANGE_RETENTION.deliveredMessageBodyBytes + 1);
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      threads: [
+        {
+          id: "thread-1",
+          title: "Thread",
+          kind: "conversation",
+          status: "open",
+          createdAt: now,
+          updatedAt: now,
+          createdBy: "user",
+          participants: ["user"],
+          lastMessageId: "msg-1",
+        },
+      ],
+      messages: [
+        {
+          id: "msg-1",
+          threadId: "thread-1",
+          ts: now,
+          from: "user",
+          kind: "request",
+          body,
+        },
+      ],
+    });
+
+    expect(report.changed).toBe(false);
+    expect(report.retained.messages[0]?.body).toBe(body);
+    expect(report.retained.messages[0]?.metadata?.aimuxBodyCompacted).toBeUndefined();
+  });
+
+  it("reports stored and original text bytes after compaction", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const body = "message ".repeat(3000);
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      threads: [
+        {
+          id: "thread-1",
+          title: "Thread",
+          kind: "conversation",
+          status: "open",
+          createdAt: now,
+          updatedAt: now,
+          createdBy: "user",
+          participants: ["user"],
+          lastMessageId: "msg-1",
+        },
+      ],
+      messages: [
+        {
+          id: "msg-1",
+          threadId: "thread-1",
+          ts: now,
+          from: "user",
+          kind: "request",
+          body,
+        },
+      ],
+    });
+    const bytes = countRuntimeExchangeBytes(report.retained);
+
+    expect(bytes.messageBodyBytes).toBeLessThan(bytes.messageBodyOriginalBytes);
+    expect(bytes.compactedMessageBodies).toBe(1);
+    expect(bytes.totalOriginalTextBytes).toBe(Buffer.byteLength(body));
   });
 
   it("preserves active tasks that reference a missing thread by clearing the dangling thread id", () => {

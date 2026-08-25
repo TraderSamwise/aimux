@@ -15,7 +15,13 @@ export const RUNTIME_EXCHANGE_RETENTION = {
   activeThreadMessages: 300,
   closedThreadMessages: 50,
   notificationThreadMessages: 1,
+  deliveredMessageBodyBytes: 16 * 1024,
+  closedTaskTextBytes: 4 * 1024,
 } as const;
+
+const MESSAGE_BODY_COMPACTED = "aimuxBodyCompacted";
+const MESSAGE_BODY_ORIGINAL_BYTES = "aimuxBodyOriginalBytes";
+const MIN_COMPACTED_TEXT_SAVINGS_BYTES = 512;
 
 export interface RuntimeExchangeCounts {
   threads: number;
@@ -31,11 +37,31 @@ export interface RuntimeExchangeCounts {
   totalRecords: number;
 }
 
+export interface RuntimeExchangeByteCounts {
+  messageBodyBytes: number;
+  messageBodyOriginalBytes: number;
+  compactedMessageBodies: number;
+  taskPromptBytes: number;
+  taskPromptOriginalBytes: number;
+  taskResultBytes: number;
+  taskResultOriginalBytes: number;
+  taskErrorBytes: number;
+  taskErrorOriginalBytes: number;
+  compactedTasks: number;
+  totalStoredTextBytes: number;
+  totalOriginalTextBytes: number;
+}
+
 export interface RuntimeExchangeCompactionReport {
   retained: RuntimeExchange;
   before: RuntimeExchangeCounts;
   after: RuntimeExchangeCounts;
   removed: RuntimeExchangeCounts;
+  bytes: {
+    before: RuntimeExchangeByteCounts;
+    after: RuntimeExchangeByteCounts;
+    removed: RuntimeExchangeByteCounts;
+  };
   retention: typeof RUNTIME_EXCHANGE_RETENTION;
   changed: boolean;
 }
@@ -75,6 +101,117 @@ function subtractCounts(before: RuntimeExchangeCounts, after: RuntimeExchangeCou
   };
 }
 
+function subtractByteCounts(
+  before: RuntimeExchangeByteCounts,
+  after: RuntimeExchangeByteCounts,
+): RuntimeExchangeByteCounts {
+  return {
+    messageBodyBytes: before.messageBodyBytes - after.messageBodyBytes,
+    messageBodyOriginalBytes: before.messageBodyOriginalBytes - after.messageBodyOriginalBytes,
+    compactedMessageBodies: after.compactedMessageBodies - before.compactedMessageBodies,
+    taskPromptBytes: before.taskPromptBytes - after.taskPromptBytes,
+    taskPromptOriginalBytes: before.taskPromptOriginalBytes - after.taskPromptOriginalBytes,
+    taskResultBytes: before.taskResultBytes - after.taskResultBytes,
+    taskResultOriginalBytes: before.taskResultOriginalBytes - after.taskResultOriginalBytes,
+    taskErrorBytes: before.taskErrorBytes - after.taskErrorBytes,
+    taskErrorOriginalBytes: before.taskErrorOriginalBytes - after.taskErrorOriginalBytes,
+    compactedTasks: after.compactedTasks - before.compactedTasks,
+    totalStoredTextBytes: before.totalStoredTextBytes - after.totalStoredTextBytes,
+    totalOriginalTextBytes: before.totalOriginalTextBytes - after.totalOriginalTextBytes,
+  };
+}
+
+function textBytes(value: string | undefined): number {
+  return Buffer.byteLength(value ?? "", "utf8");
+}
+
+function originalMessageBodyBytes(message: RuntimeExchangeMessage): number {
+  const value = message.metadata?.[MESSAGE_BODY_ORIGINAL_BYTES];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : textBytes(message.body);
+}
+
+function originalTaskFieldBytes(task: RuntimeExchangeTask, field: "prompt" | "result" | "error"): number {
+  const key =
+    field === "prompt" ? "promptOriginalBytes" : field === "result" ? "resultOriginalBytes" : "errorOriginalBytes";
+  const value = task[key];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : textBytes(task[field]);
+}
+
+export function countRuntimeExchangeBytes(exchange: RuntimeExchange): RuntimeExchangeByteCounts {
+  const counts: RuntimeExchangeByteCounts = {
+    messageBodyBytes: 0,
+    messageBodyOriginalBytes: 0,
+    compactedMessageBodies: 0,
+    taskPromptBytes: 0,
+    taskPromptOriginalBytes: 0,
+    taskResultBytes: 0,
+    taskResultOriginalBytes: 0,
+    taskErrorBytes: 0,
+    taskErrorOriginalBytes: 0,
+    compactedTasks: 0,
+    totalStoredTextBytes: 0,
+    totalOriginalTextBytes: 0,
+  };
+  for (const message of exchange.messages) {
+    const stored = textBytes(message.body);
+    const original = originalMessageBodyBytes(message);
+    counts.messageBodyBytes += stored;
+    counts.messageBodyOriginalBytes += original;
+    if (message.metadata?.[MESSAGE_BODY_COMPACTED] === true) counts.compactedMessageBodies += 1;
+  }
+  for (const task of exchange.tasks) {
+    const promptStored = textBytes(task.prompt);
+    const promptOriginal = originalTaskFieldBytes(task, "prompt");
+    const resultStored = textBytes(task.result);
+    const resultOriginal = originalTaskFieldBytes(task, "result");
+    const errorStored = textBytes(task.error);
+    const errorOriginal = originalTaskFieldBytes(task, "error");
+    counts.taskPromptBytes += promptStored;
+    counts.taskPromptOriginalBytes += promptOriginal;
+    counts.taskResultBytes += resultStored;
+    counts.taskResultOriginalBytes += resultOriginal;
+    counts.taskErrorBytes += errorStored;
+    counts.taskErrorOriginalBytes += errorOriginal;
+    if (task.promptOriginalBytes || task.resultOriginalBytes || task.errorOriginalBytes) counts.compactedTasks += 1;
+  }
+  counts.totalStoredTextBytes =
+    counts.messageBodyBytes + counts.taskPromptBytes + counts.taskResultBytes + counts.taskErrorBytes;
+  counts.totalOriginalTextBytes =
+    counts.messageBodyOriginalBytes +
+    counts.taskPromptOriginalBytes +
+    counts.taskResultOriginalBytes +
+    counts.taskErrorOriginalBytes;
+  return counts;
+}
+
+function sliceTextByBytes(text: string, maxBytes: number, fromEnd = false): string {
+  if (maxBytes <= 0) return "";
+  const chars = Array.from(text);
+  const ordered = fromEnd ? chars.reverse() : chars;
+  let bytes = 0;
+  const selected: string[] = [];
+  for (const char of ordered) {
+    const charBytes = textBytes(char);
+    if (bytes + charBytes > maxBytes) break;
+    bytes += charBytes;
+    selected.push(char);
+  }
+  return fromEnd ? selected.reverse().join("") : selected.join("");
+}
+
+function compactText(text: string, maxBytes: number, label: string): { text: string; originalBytes?: number } {
+  const originalBytes = textBytes(text);
+  if (originalBytes <= maxBytes) return { text };
+  const marker = `\n\n[aimux: ${label} compacted from ${originalBytes} bytes; showing head and tail]\n\n`;
+  const markerBytes = textBytes(marker);
+  const contentBudget = Math.max(0, maxBytes - markerBytes);
+  const headBytes = Math.floor(contentBudget * 0.7);
+  const tailBytes = contentBudget - headBytes;
+  const compacted = `${sliceTextByBytes(text, headBytes)}${marker}${sliceTextByBytes(text, tailBytes, true)}`;
+  if (originalBytes - textBytes(compacted) < MIN_COMPACTED_TEXT_SAVINGS_BYTES) return { text };
+  return { text: compacted, originalBytes };
+}
+
 function byUpdatedAtDesc<T extends { updatedAt?: string; createdAt?: string; ts?: string }>(a: T, b: T): number {
   const left = a.updatedAt ?? a.ts ?? a.createdAt ?? "";
   const right = b.updatedAt ?? b.ts ?? b.createdAt ?? "";
@@ -97,6 +234,13 @@ function isActiveThread(thread: RuntimeExchangeThread, activeTaskIds: Set<string
 
 function isActiveTask(task: RuntimeExchangeTask): boolean {
   return task.status !== "done" && task.status !== "failed";
+}
+
+function hasPendingDelivery(message: RuntimeExchangeMessage): boolean {
+  const recipients = message.to ?? [];
+  if (recipients.length === 0) return false;
+  const deliveredTo = new Set(message.deliveredTo ?? []);
+  return recipients.some((recipient) => !deliveredTo.has(recipient));
 }
 
 function groupMessagesByThreadId(messages: RuntimeExchangeMessage[]): Map<string, RuntimeExchangeMessage[]> {
@@ -202,7 +346,41 @@ function selectRetainedMessages(
   }
   return [...messagesByThreadId.values()]
     .flat()
-    .filter((message) => selectedIds.has(message.id) && threadById.has(message.threadId));
+    .filter((message) => selectedIds.has(message.id) && threadById.has(message.threadId))
+    .map((message) => {
+      if (hasPendingDelivery(message)) return message;
+      const compacted = compactText(message.body, RUNTIME_EXCHANGE_RETENTION.deliveredMessageBodyBytes, "message body");
+      if (!compacted.originalBytes) return message;
+      return {
+        ...message,
+        body: compacted.text,
+        metadata: {
+          ...(message.metadata ?? {}),
+          [MESSAGE_BODY_COMPACTED]: true,
+          [MESSAGE_BODY_ORIGINAL_BYTES]: originalMessageBodyBytes(message),
+        },
+      };
+    });
+}
+
+function compactClosedTask(task: RuntimeExchangeTask): RuntimeExchangeTask {
+  if (isActiveTask(task)) return task;
+  const prompt = compactText(task.prompt, RUNTIME_EXCHANGE_RETENTION.closedTaskTextBytes, "closed task prompt");
+  const result = task.result
+    ? compactText(task.result, RUNTIME_EXCHANGE_RETENTION.closedTaskTextBytes, "closed task result")
+    : undefined;
+  const error = task.error
+    ? compactText(task.error, RUNTIME_EXCHANGE_RETENTION.closedTaskTextBytes, "closed task error")
+    : undefined;
+  return {
+    ...task,
+    prompt: prompt.text,
+    promptOriginalBytes: prompt.originalBytes ? originalTaskFieldBytes(task, "prompt") : task.promptOriginalBytes,
+    result: result?.text ?? task.result,
+    resultOriginalBytes: result?.originalBytes ? originalTaskFieldBytes(task, "result") : task.resultOriginalBytes,
+    error: error?.text ?? task.error,
+    errorOriginalBytes: error?.originalBytes ? originalTaskFieldBytes(task, "error") : task.errorOriginalBytes,
+  };
 }
 
 function subjectExists(
@@ -250,7 +428,8 @@ export function compactRuntimeExchange(exchange: RuntimeExchange): RuntimeExchan
     .filter(
       (task) => retainedTaskIds.has(task.id) && (!task.threadId || threadIds.has(task.threadId) || isActiveTask(task)),
     )
-    .map((task) => (task.threadId && !threadIds.has(task.threadId) ? { ...task, threadId: undefined } : task));
+    .map((task) => (task.threadId && !threadIds.has(task.threadId) ? { ...task, threadId: undefined } : task))
+    .map(compactClosedTask);
   const taskIds = new Set(tasks.map((task) => task.id));
   const handoffs = exchange.handoffs.filter((handoff) => threadIds.has(handoff.threadId));
   const handoffIds = new Set(handoffs.map((handoff) => handoff.id));
@@ -279,12 +458,19 @@ export function compactRuntimeExchange(exchange: RuntimeExchange): RuntimeExchan
   };
   const after = countRuntimeExchangeRecords(retained);
   const removed = subtractCounts(before, after);
+  const beforeBytes = countRuntimeExchangeBytes(exchange);
+  const afterBytes = countRuntimeExchangeBytes(retained);
   return {
     retained,
     before,
     after,
     removed,
+    bytes: {
+      before: beforeBytes,
+      after: afterBytes,
+      removed: subtractByteCounts(beforeBytes, afterBytes),
+    },
     retention: RUNTIME_EXCHANGE_RETENTION,
-    changed: removed.totalRecords > 0,
+    changed: removed.totalRecords > 0 || beforeBytes.totalStoredTextBytes !== afterBytes.totalStoredTextBytes,
   };
 }
