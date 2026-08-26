@@ -4382,6 +4382,112 @@ describe("MetadataServer threads API", () => {
     expect(started).toEqual(["worktree:queued", "service:svc-queued"]);
   });
 
+  it("accepts nine concurrent agent lifecycle requests without queue pressure failures", async () => {
+    server?.stop();
+    const sessionIds = Array.from({ length: 9 }, (_, index) => `codex-${index + 1}`);
+    const started: string[] = [];
+    const resolvers = new Map<string, () => void>();
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        resumeAgent: ({ sessionId }) =>
+          new Promise<{ sessionId: string; status: "running" }>((resolve) => {
+            started.push(sessionId);
+            resolvers.set(sessionId, () => resolve({ sessionId, status: "running" }));
+          }),
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+    const diagnostics = async () => {
+      const res = await fetch(`${base}${PROJECT_API_ROUTES.diagnosticsLifecycle}`);
+      return (await res.json()) as {
+        queuedCount: number;
+        activeTargets: Array<{ key: string; targetId?: string }>;
+        telemetry: {
+          enqueued: number;
+          started: number;
+          succeeded: number;
+          failed: number;
+          released: number;
+          rejectedConflicts: number;
+          rejectedQueueFull: number;
+          maxQueuedCount: number;
+        };
+      };
+    };
+
+    const responses = await Promise.all(
+      sessionIds.map((sessionId) => post(PROJECT_API_ROUTES.agents.resume, { sessionId })),
+    );
+
+    expect(responses.map((response) => response.status)).toEqual(sessionIds.map(() => 202));
+    expect(responses.map((response) => response.body.transition)).toEqual(
+      sessionIds.map((sessionId) =>
+        expect.objectContaining({
+          operation: "agent.resume",
+          targetKind: "agent",
+          targetId: sessionId,
+          phase: "settling",
+        }),
+      ),
+    );
+    const queuedDiagnostics = await diagnostics();
+    expect(queuedDiagnostics).toMatchObject({
+      queuedCount: 9,
+      telemetry: {
+        enqueued: 9,
+        started: 1,
+        failed: 0,
+        rejectedConflicts: 0,
+        rejectedQueueFull: 0,
+        maxQueuedCount: 9,
+      },
+    });
+    expect(new Set(queuedDiagnostics.activeTargets.map((target) => target.key))).toEqual(
+      new Set(sessionIds.map((sessionId) => `agent:${sessionId}`)),
+    );
+
+    for (const sessionId of sessionIds) {
+      await waitForCondition(() => started.includes(sessionId));
+      resolvers.get(sessionId)?.();
+    }
+    const startedAt = Date.now();
+    let settledDiagnostics = await diagnostics();
+    while (Date.now() - startedAt < 1000) {
+      settledDiagnostics = await diagnostics();
+      if (settledDiagnostics.queuedCount === 0 && settledDiagnostics.telemetry.released === 9) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (settledDiagnostics.queuedCount !== 0 || settledDiagnostics.telemetry.released !== 9) {
+      throw new Error(`timed out waiting for lifecycle queue drain: ${JSON.stringify(settledDiagnostics)}`);
+    }
+
+    expect(settledDiagnostics).toMatchObject({
+      queuedCount: 0,
+      activeTargets: [],
+      telemetry: {
+        enqueued: 9,
+        started: 9,
+        succeeded: 9,
+        failed: 0,
+        released: 9,
+        rejectedConflicts: 0,
+        rejectedQueueFull: 0,
+        maxQueuedCount: 9,
+      },
+    });
+  });
+
   it("serializes graveyard cleanup behind queued worktree lifecycle mutations", async () => {
     server?.stop();
     rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
@@ -4978,7 +5084,7 @@ describe("MetadataServer threads API", () => {
     await waitForCondition(() => readAgentRestoreOffer(repoRoot) === null);
   });
 
-  it("restores nine previous agents without tripping the lifecycle queue limit", async () => {
+  it("accepts and serially drains nine previous-agent restores without lifecycle rejects", async () => {
     server?.stop();
     const sessions = Array.from({ length: 9 }, (_, index) => ({
       id: `codex-${index + 1}`,
@@ -4997,6 +5103,49 @@ describe("MetadataServer threads API", () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const readLifecycleDiagnostics = async () => {
+      const diagnosticsResponse = await fetch(`${base}${PROJECT_API_ROUTES.diagnosticsLifecycle}`);
+      return (await diagnosticsResponse.json()) as {
+        ok: boolean;
+        queuedCount: number;
+        queueLimit: number;
+        activeTargets: Array<{ key: string; targetId?: string }>;
+        telemetry: {
+          enqueued: number;
+          started: number;
+          succeeded: number;
+          failed: number;
+          released: number;
+          rejectedConflicts: number;
+          rejectedQueueFull: number;
+          maxQueuedCount: number;
+        };
+      };
+    };
+    const waitForLifecycleDiagnostics = async (
+      predicate: (diagnostics: Awaited<ReturnType<typeof readLifecycleDiagnostics>>) => boolean,
+      ms = 1000,
+    ) => {
+      const startedAt = Date.now();
+      let lastDiagnostics: Awaited<ReturnType<typeof readLifecycleDiagnostics>> | null = null;
+      while (Date.now() - startedAt < ms) {
+        lastDiagnostics = await readLifecycleDiagnostics();
+        if (predicate(lastDiagnostics)) return lastDiagnostics;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`timed out waiting for lifecycle diagnostics: ${JSON.stringify(lastDiagnostics)}`);
+    };
+
+    await expect(readLifecycleDiagnostics()).resolves.toMatchObject({
+      ok: true,
+      queuedCount: 0,
+      activeTargets: [],
+      telemetry: {
+        enqueued: 0,
+        rejectedConflicts: 0,
+        rejectedQueueFull: 0,
+      },
+    });
 
     const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
     const body = (await res.json()) as {
@@ -5005,6 +5154,7 @@ describe("MetadataServer threads API", () => {
       total: number;
       restored: Array<{ sessionId: string; status: string }>;
       failed: Array<{ sessionId: string; error: string }>;
+      transitions: Array<{ targetId?: string; phase: string }>;
       offer: { sessionIds: string[] } | null;
     };
 
@@ -5015,9 +5165,36 @@ describe("MetadataServer threads API", () => {
     expect(body.restored).toEqual([]);
     expect(body.failed).toEqual([]);
     expect(body.offer?.sessionIds).toEqual(sessions.map((session) => session.id));
+    expect(body.transitions.map((transition) => [transition.targetId, transition.phase])).toEqual(
+      sessions.map((session) => [session.id, "queued"]),
+    );
     await waitForCondition(() => restoreAgent.mock.calls.length === 9);
     expect(restoreAgent).toHaveBeenCalledTimes(9);
     await waitForCondition(() => readAgentRestoreOffer(repoRoot) === null);
+    const diagnostics = await waitForLifecycleDiagnostics(
+      (current) =>
+        current.queuedCount === 0 &&
+        current.activeTargets.length === 0 &&
+        current.telemetry.enqueued === 9 &&
+        current.telemetry.released === 9,
+    );
+    expect(diagnostics).toMatchObject({
+      ok: true,
+      queuedCount: 0,
+      queueLimit: expect.any(Number),
+      activeTargets: [],
+      telemetry: {
+        enqueued: 9,
+        started: 9,
+        succeeded: 9,
+        failed: 0,
+        released: 9,
+        rejectedConflicts: 0,
+        rejectedQueueFull: 0,
+      },
+    });
+    expect(diagnostics.queueLimit).toBeGreaterThanOrEqual(9);
+    expect(diagnostics.telemetry.maxQueuedCount).toBeLessThanOrEqual(1);
   });
 
   it("serializes restore-previous agent resumes through the lifecycle queue", async () => {
