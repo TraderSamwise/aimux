@@ -21,7 +21,7 @@ function createDoctorExec(): TmuxExec {
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys") return "always";
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys-format") return "csi-u";
     if (joined === "show-options -v -t aimux-mobile-abc terminal-features") {
-      return "xterm*:clipboard:ccolour:cstyle:focus:title\nxterm*:extkeys\nxterm*:hyperlinks";
+      return "xterm*:clipboard:ccolour:cstyle:focus:title\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks";
     }
     if (joined === "show-options -v -t aimux-mobile-abc status-format[0]") return "#(top)";
     if (joined === "show-options -v -t aimux-mobile-abc status-format[1]") return "#(bottom)";
@@ -61,6 +61,7 @@ describe("tmux doctor", () => {
     expect(report.managedSession.options.mouse.ok).toBe(true);
     expect(report.managedSession.options["window-size"]?.ok).toBe(true);
     expect(report.managedSession.options["history-limit"]?.ok).toBe(true);
+    expect(report.managedSession.terminalFeatures["xterm*:RGB"]?.ok).toBe(true);
     expect(report.managedSession.terminalFeatures["xterm*:hyperlinks"]?.ok).toBe(true);
     expect(report.activeWindow?.tool).toBe("codex");
     expect(report.activeWindow?.options["allow-passthrough"]?.ok).toBe(true);
@@ -98,6 +99,7 @@ describe("tmux doctor", () => {
     expect(text).toContain("managed session exists: yes");
     expect(text).toContain("allow-passthrough: on");
     expect(text).toContain("aggressive-resize: on");
+    expect(text).toContain("xterm*:RGB: present");
     expect(text).toContain("xterm*:hyperlinks: present");
     expect(text).toContain("statusline:");
     expect(text).toContain("status-format[1]: #(bottom)");
@@ -127,7 +129,7 @@ describe("tmux doctor", () => {
         if (joined === `show-options -v -t ${expectedSession} extended-keys`) return "always";
         if (joined === `show-options -v -t ${expectedSession} extended-keys-format`) return "csi-u";
         if (joined === `show-options -v -t ${expectedSession} terminal-features`) {
-          return "xterm*:extkeys\nxterm*:hyperlinks";
+          return "xterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks";
         }
         if (joined === `show-options -v -t ${expectedSession} status-format[0]`) return "#(top)";
         if (joined === `show-options -v -t ${expectedSession} status-format[1]`) return "#(bottom)";

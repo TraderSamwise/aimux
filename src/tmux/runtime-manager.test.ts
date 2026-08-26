@@ -1886,8 +1886,8 @@ describe("TmuxRuntimeManager", () => {
     manager.ensureProjectSession("/repo/mobile");
 
     const featureAppendCalls = calls.filter((call) => call.args[0] === "set-option" && call.args[1] === "-as");
-    expect(featureAppendCalls).toHaveLength(2);
-    expect(terminalFeatures.split("\n")).toEqual(["xterm*:extkeys", "xterm*:hyperlinks"]);
+    expect(featureAppendCalls).toHaveLength(3);
+    expect(terminalFeatures.split("\n")).toEqual(["xterm*:RGB", "xterm*:extkeys", "xterm*:hyperlinks"]);
   });
 
   it("respawns a window with a specific command", () => {

@@ -153,7 +153,11 @@ export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
   focusEvents: "off",
 });
 
-export const MANAGED_TMUX_TERMINAL_FEATURES = Object.freeze(["xterm*:extkeys", "xterm*:hyperlinks"] as const);
+export const MANAGED_TMUX_TERMINAL_FEATURES = Object.freeze([
+  "xterm*:RGB",
+  "xterm*:extkeys",
+  "xterm*:hyperlinks",
+] as const);
 
 export const MANAGED_TMUX_AGENT_WINDOW_OPTIONS = Object.freeze({
   allowPassthrough: "on",
