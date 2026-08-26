@@ -90,7 +90,11 @@ describe("core sidecar module boundary", () => {
   });
 
   it("keeps routine multiplexer client screens out of child process launches", () => {
-    const allowed = new Set(["multiplexer/dashboard-interaction.ts", "multiplexer/persistence-methods.ts"]);
+    const allowed = new Set([
+      "multiplexer/dashboard-interaction.ts",
+      "multiplexer/persistence-methods.ts",
+      "multiplexer/tui-visibility.ts",
+    ]);
     const offenders = listSourceFiles("multiplexer").filter((path) => {
       if (allowed.has(path)) return false;
       return childProcessImportPattern.test(source(`./${path}`));

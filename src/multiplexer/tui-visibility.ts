@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { listProcessParents } from "../process-inspector.js";
 
 export type TuiVisibilityReason = "not-tmux" | "visible" | "hidden" | "detached" | "query-failed";
 
@@ -12,7 +13,7 @@ export interface TuiVisibilitySnapshot {
 
 export type TmuxVisibilityQuery = (paneId: string) => string | null | undefined;
 export type TmuxPaneListQuery = () => string | null | undefined;
-export type ProcessListQuery = () => string | null | undefined;
+export type ProcessListQuery = () => Map<number, number> | string | null | undefined;
 
 export const DASHBOARD_TUI_VISIBILITY_CACHE_MS = 250;
 
@@ -115,16 +116,10 @@ function readTmuxPaneList(query?: TmuxPaneListQuery): string | null | undefined 
   return listPanes();
 }
 
-function readProcessList(query?: ProcessListQuery): string | null | undefined {
-  const listProcesses =
-    query ??
-    (() =>
-      execFileSync("ps", ["-axo", "pid=,ppid="], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 500,
-      }));
-  return listProcesses();
+function readProcessParents(query?: ProcessListQuery): Map<number, number> {
+  if (!query) return listProcessParents();
+  const result = query();
+  return result instanceof Map ? result : parseProcessParents(result);
 }
 
 function readTmuxTuiVisibilityFromProcess(
@@ -137,7 +132,7 @@ function readTmuxTuiVisibilityFromProcess(
 ): TmuxProcessVisibilityResolution | null {
   const panes = parseTmuxPaneRows(readTmuxPaneList(options.listPanes));
   if (panes.length === 0) return null;
-  const parents = parseProcessParents(readProcessList(options.listProcesses));
+  const parents = readProcessParents(options.listProcesses);
   const pane = findTmuxPaneForProcess(panes, parents, options.pid ?? process.pid);
   if (pane) {
     return {
