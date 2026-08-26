@@ -116,7 +116,11 @@ export function readTask(id: string): Task | undefined {
  * Read all tasks from the runtime exchange.
  */
 export function readAllTaskSnapshots(): Task[] {
-  return createRuntimeExchangeStore().read().tasks.map(fromExchangeTask);
+  return taskSnapshotsFromExchange(createRuntimeExchangeStore().read());
+}
+
+export function taskSnapshotsFromExchange(exchange: RuntimeExchange): Task[] {
+  return exchange.tasks.map(fromExchangeTask);
 }
 
 /**

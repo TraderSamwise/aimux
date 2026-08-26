@@ -403,9 +403,14 @@ export interface SessionNotificationSummary {
   needsInputUnreadCount: number;
 }
 
-export function summarizeUnreadNotificationsBySession(): Map<string, SessionNotificationSummary> {
+export function summarizeUnreadNotificationsBySession(
+  exchange?: RuntimeExchange,
+): Map<string, SessionNotificationSummary> {
   const summaries = new Map<string, SessionNotificationSummary>();
-  for (const notification of listNotifications({ unreadOnly: true })) {
+  const notifications = exchange
+    ? notificationRecords(exchange).filter((notification) => !notification.cleared && notification.unread)
+    : listNotifications({ unreadOnly: true });
+  for (const notification of notifications) {
     if (!notification.sessionId) continue;
     const needsInput = notification.kind === "needs_input" ? 1 : 0;
     const current = summaries.get(notification.sessionId);

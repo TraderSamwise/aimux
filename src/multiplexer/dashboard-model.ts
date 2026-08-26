@@ -15,7 +15,8 @@ import { TranscriptReconciler } from "./transcript-reconciler.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo, withWorktreeMemo } from "../worktree.js";
 import { withTmuxQueryMemo } from "../tmux/query-memo.js";
-import { listThreadSummarySnapshot } from "../threads.js";
+import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
+import { threadSummarySnapshotFromExchange } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { isNotificationStale } from "../coordination-model.js";
@@ -820,12 +821,13 @@ export function computeDashboardSessions(
 ): DashboardSession[] {
   const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const projectRoot = projectRootFor(host);
+  const exchange = createRuntimeExchangeStore().read();
   const lastUsedState = loadLastUsedState(projectRoot);
   const metadata = loadMetadataState(projectRoot).sessions;
   // Notification records are exchange threads tagged `notification`; they are surfaced by the
   // per-session unread-notification count, so excluding them here keeps the dashboard's
   // thread chips from double-counting the same needs-input record.
-  const threadSnapshot = listThreadSummarySnapshot();
+  const threadSnapshot = threadSummarySnapshotFromExchange(exchange);
   const threadSummaries = threadSnapshot.summaries.filter(
     (summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG),
   );
@@ -884,7 +886,7 @@ export function computeDashboardSessions(
       threadStats.set(participant, current);
     }
   }
-  const workflowEntries = buildWorkflowEntries("user", { readOnly: true });
+  const workflowEntries = buildWorkflowEntries("user", { readOnly: true, exchange });
   for (const entry of workflowEntries) {
     const familyKey = entry.familyRootTaskId ?? entry.thread.id;
     for (const participant of entry.thread.participants) {
@@ -944,7 +946,7 @@ export function computeDashboardSessions(
     getSessionDerived: (sessionId: string) => metadata[sessionId]?.derived,
   });
   const metadataBySessionId = new Map<string, { createdAt?: string; target?: { windowIndex?: number } }>();
-  const notificationsBySessionId = summarizeUnreadNotificationsBySession();
+  const notificationsBySessionId = summarizeUnreadNotificationsBySession(exchange);
   const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
   for (const { target, metadata } of managedWindows) {
     if (metadata.kind !== "agent") continue;

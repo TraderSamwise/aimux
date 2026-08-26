@@ -7,8 +7,14 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { updateSessionMetadata } from "../metadata-store.js";
 import { getProjectStateDir, initPaths, withProjectPaths } from "../paths.js";
 import { writeJsonAtomic } from "../atomic-write.js";
+import {
+  createRuntimeExchangeStore,
+  emptyRuntimeExchange,
+  getExchangeStoreStats,
+  resetExchangeStoreStats,
+} from "../runtime-core/exchange-store.js";
 import { saveRuntimeTopologySessions, upsertTopologySession } from "../runtime-core/topology-sessions.js";
-import { addNotification } from "../notifications.js";
+import { NOTIFICATION_TAG, addNotification } from "../notifications.js";
 import {
   applyDashboardModel,
   buildDesktopStateSnapshot,
@@ -1305,6 +1311,111 @@ describe("computeDashboardSessions thread stats", () => {
       expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.displayMessage).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.captureTarget).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("builds read-only exchange stats from one exchange snapshot", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-exchange-snapshot-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      withProjectPaths(repoRoot, () => {
+        const now = "2026-06-21T00:00:00.000Z";
+        createRuntimeExchangeStore().write({
+          ...emptyRuntimeExchange(now),
+          threads: [
+            {
+              id: "thread-1",
+              title: "Task thread",
+              kind: "task",
+              status: "waiting",
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "user",
+              participants: ["user", "codex-1"],
+              waitingOn: ["codex-1"],
+              taskId: "task-1",
+              unreadBy: ["codex-1"],
+            },
+            {
+              id: "notification-1",
+              title: "Needs input",
+              kind: "conversation",
+              status: "open",
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "aimux",
+              participants: ["aimux", "codex-1"],
+              lastMessageId: "message-notification-1",
+              tags: [NOTIFICATION_TAG],
+            },
+          ],
+          messages: [
+            {
+              id: "message-1",
+              threadId: "thread-1",
+              ts: now,
+              from: "user",
+              to: ["codex-1"],
+              kind: "request",
+              body: "Please review",
+            },
+            {
+              id: "message-notification-1",
+              threadId: "notification-1",
+              ts: now,
+              from: "aimux",
+              to: ["codex-1"],
+              kind: "note",
+              body: "Needs input",
+              metadata: {
+                notificationSessionId: "codex-1",
+                notificationKind: "needs_input",
+              },
+            },
+          ],
+          tasks: [
+            {
+              id: "task-1",
+              status: "in_progress",
+              assignedBy: "user",
+              assignedTo: "codex-1",
+              threadId: "thread-1",
+              description: "Review task",
+              prompt: "Review task",
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+          inbox: [
+            {
+              id: "inbox-1",
+              participantId: "codex-1",
+              subjectKind: "thread",
+              subjectId: "notification-1",
+              state: "unread",
+              urgency: 1,
+              updatedAt: now,
+            },
+          ],
+        });
+        const host = minimalDashboardHost([{ id: "codex-1", command: "codex", status: "running" }]);
+
+        resetExchangeStoreStats();
+        const sessions = computeDashboardSessions(host, { includeRuntimeInfo: false });
+
+        expect(getExchangeStoreStats().reads).toBe(1);
+        expect(sessions[0]).toMatchObject({
+          id: "codex-1",
+          threadUnreadCount: 1,
+          threadPendingCount: 1,
+          workflowOnMeCount: 1,
+          notificationUnreadCount: 1,
+          notificationNeedsInputUnreadCount: 1,
+        });
+      });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

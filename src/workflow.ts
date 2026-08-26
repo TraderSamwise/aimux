@@ -1,6 +1,19 @@
 import { NOTIFICATION_TAG } from "./notifications.js";
-import { normalizeReviewStatus, readAllTaskSnapshots, readAllTasks, type Task } from "./tasks.js";
-import { listThreadSummarySnapshot, type OrchestrationMessage, type ThreadSummary } from "./threads.js";
+import {
+  normalizeReviewStatus,
+  readAllTaskSnapshots,
+  readAllTasks,
+  taskSnapshotsFromExchange,
+  type Task,
+} from "./tasks.js";
+import type { RuntimeExchange } from "./runtime-core/exchange-store.js";
+import {
+  listThreadSummarySnapshot,
+  threadSummarySnapshotFromExchange,
+  type OrchestrationMessage,
+  type ThreadSummary,
+  type ThreadSummarySnapshot,
+} from "./threads.js";
 
 export interface ThreadEntry extends ThreadSummary {
   displayTitle: string;
@@ -19,8 +32,7 @@ export interface WorkflowEntry extends ThreadEntry {
 
 export type WorkflowFilter = "all" | "on_me" | "blocked" | "families";
 
-export function buildThreadEntries(): ThreadEntry[] {
-  const snapshot = listThreadSummarySnapshot(undefined, { includeMessageGroups: true });
+function buildThreadEntriesFromSnapshot(snapshot: ThreadSummarySnapshot): ThreadEntry[] {
   return (
     snapshot.summaries
       // Notification records are stored as exchange threads tagged `notification`; they are the
@@ -50,11 +62,23 @@ export function buildThreadEntries(): ThreadEntry[] {
   );
 }
 
+export function buildThreadEntries(opts?: { exchange?: RuntimeExchange }): ThreadEntry[] {
+  const snapshot = opts?.exchange
+    ? threadSummarySnapshotFromExchange(opts.exchange, undefined, { includeMessageGroups: true })
+    : listThreadSummarySnapshot(undefined, { includeMessageGroups: true });
+  return buildThreadEntriesFromSnapshot(snapshot);
+}
+
 export function buildWorkflowEntries(
   currentParticipant = "user",
-  opts?: { allKinds?: boolean; readOnly?: boolean },
+  opts?: { allKinds?: boolean; readOnly?: boolean; exchange?: RuntimeExchange },
 ): WorkflowEntry[] {
-  const tasks = opts?.readOnly ? readAllTaskSnapshots() : readAllTasks();
+  const readOnlyExchange = opts?.readOnly ? opts.exchange : undefined;
+  const tasks = readOnlyExchange
+    ? taskSnapshotsFromExchange(readOnlyExchange)
+    : opts?.readOnly
+      ? readAllTaskSnapshots()
+      : readAllTasks();
   const taskById = new Map(tasks.map((task) => [task.id, task] as const));
   const familyByRoot = new Map<string, Task[]>();
   for (const task of tasks) {
@@ -66,7 +90,7 @@ export function buildWorkflowEntries(
   for (const family of familyByRoot.values()) {
     family.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
   }
-  return buildThreadEntries()
+  return buildThreadEntries({ exchange: readOnlyExchange })
     .filter(
       (entry) =>
         opts?.allKinds ||

@@ -1,6 +1,7 @@
 import { deriveRuntimeExchangeIndexes } from "./runtime-core/exchange-derived.js";
 import {
   createRuntimeExchangeStore,
+  type RuntimeExchange,
   type RuntimeExchangeMessage,
   type RuntimeExchangeThread,
 } from "./runtime-core/exchange-store.js";
@@ -291,7 +292,14 @@ export function listThreadSummarySnapshot(
   participantId?: string,
   options: ThreadListOptions = {},
 ): ThreadSummarySnapshot {
-  const exchange = createRuntimeExchangeStore().read();
+  return threadSummarySnapshotFromExchange(createRuntimeExchangeStore().read(), participantId, options);
+}
+
+export function threadSummarySnapshotFromExchange(
+  exchange: RuntimeExchange,
+  participantId?: string,
+  options: ThreadListOptions = {},
+): ThreadSummarySnapshot {
   const threads = [...exchange.threads]
     .filter((thread) => !participantId || thread.participants.includes(participantId))
     .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
