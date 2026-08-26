@@ -19,6 +19,7 @@ const UPDATE_LOCK_TIMEOUT_MS = 5_000;
 const UPDATE_LOCK_RETRY_MS = 25;
 const UPDATE_LOCK_STALE_MS = UPDATE_LOCK_TIMEOUT_MS - 1_000;
 const SLOW_EXCHANGE_READ_MS = 25;
+const SLOW_EXCHANGE_READ_LOG_INTERVAL_MS = 60_000;
 
 export type RuntimeExchangeThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
 export type RuntimeExchangeThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
@@ -614,6 +615,22 @@ let readCount = 0;
 let parseCount = 0;
 let readCacheHitCount = 0;
 let readCacheMissCount = 0;
+let slowReadCount = 0;
+let slowReadSuppressedCount = 0;
+let lastSlowRead:
+  | {
+      ts: string;
+      path: string;
+      cacheHit: boolean;
+      bytes: number;
+      durationMs: number;
+      readDurationMs: number;
+      compareDurationMs: number;
+      parseDurationMs?: number;
+      coerceDurationMs?: number;
+      cloneDurationMs: number;
+    }
+  | undefined;
 let writeCount = 0;
 let writeNoopCount = 0;
 let lastWrite:
@@ -658,6 +675,9 @@ export function getExchangeStoreTelemetry(): {
   writes: number;
   writeNoops: number;
   lastWrite?: typeof lastWrite;
+  slowReads: number;
+  slowReadSuppressed: number;
+  lastSlowRead?: typeof lastSlowRead;
   compactions: number;
   compactedRecords: number;
   lastCompaction?: typeof lastCompaction;
@@ -670,6 +690,9 @@ export function getExchangeStoreTelemetry(): {
     writes: writeCount,
     writeNoops: writeNoopCount,
     lastWrite,
+    slowReads: slowReadCount,
+    slowReadSuppressed: slowReadSuppressedCount,
+    lastSlowRead,
     compactions: compactionCount,
     compactedRecords: compactedRecordCount,
     lastCompaction,
@@ -681,6 +704,10 @@ export function resetExchangeStoreStats(): void {
   parseCount = 0;
   readCacheHitCount = 0;
   readCacheMissCount = 0;
+  slowReadCount = 0;
+  slowReadSuppressedCount = 0;
+  lastSlowRead = undefined;
+  slowReadLogState.clear();
   writeCount = 0;
   writeNoopCount = 0;
   lastWrite = undefined;
@@ -689,8 +716,28 @@ export function resetExchangeStoreStats(): void {
   lastCompaction = undefined;
 }
 
-function recordSlowExchangeRead(fields: Record<string, unknown>): void {
-  log.warn("slow runtime exchange read", "api", fields);
+type SlowExchangeReadFields = Exclude<typeof lastSlowRead, undefined>;
+
+const slowReadLogState = new Map<string, { lastLoggedAt: number; suppressed: number; maxDurationMs: number }>();
+
+function recordSlowExchangeRead(fields: Omit<SlowExchangeReadFields, "ts">): void {
+  slowReadCount += 1;
+  const entry = { ts: new Date().toISOString(), ...fields };
+  lastSlowRead = entry;
+  const now = Date.now();
+  const state = slowReadLogState.get(fields.path);
+  if (!state || now - state.lastLoggedAt >= SLOW_EXCHANGE_READ_LOG_INTERVAL_MS) {
+    log.warn("slow runtime exchange read", "api", {
+      ...entry,
+      suppressedSinceLastLog: state?.suppressed ?? 0,
+      maxDurationSinceLastLog: state?.maxDurationMs ?? fields.durationMs,
+    });
+    slowReadLogState.set(fields.path, { lastLoggedAt: now, suppressed: 0, maxDurationMs: fields.durationMs });
+    return;
+  }
+  state.suppressed += 1;
+  state.maxDurationMs = Math.max(state.maxDurationMs, fields.durationMs);
+  slowReadSuppressedCount += 1;
 }
 
 function recordExchangeCompaction(fields: Exclude<typeof lastCompaction, undefined>): void {

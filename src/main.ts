@@ -3976,6 +3976,12 @@ function printExchangeDiagnostics(diagnostics: any): void {
       telemetry.compactions ?? 0
     } compactedRecords=${telemetry.compactedRecords ?? 0}`,
   );
+  console.log(
+    `Cache: hits=${telemetry.readCacheHits ?? 0} misses=${telemetry.readCacheMisses ?? 0} slowReads=${
+      telemetry.slowReads ?? 0
+    } suppressedSlowReadLogs=${telemetry.slowReadSuppressed ?? 0}`,
+  );
+  console.log(`Writes: total=${telemetry.writes ?? 0} noops=${telemetry.writeNoops ?? 0}`);
 }
 
 doctorCmd
