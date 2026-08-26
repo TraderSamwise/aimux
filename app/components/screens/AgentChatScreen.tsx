@@ -414,7 +414,7 @@ function buildChatListItems({
     type: "message",
   }));
 
-  if (initialTranscriptStatus !== "idle") {
+  if (initialTranscriptStatus === "timed-out") {
     chronological.push({
       key: "initial-transcript",
       status: initialTranscriptStatus,
@@ -1086,8 +1086,11 @@ export default function ChatScreen() {
     !visibleLastError
       ? initialTranscriptStatus
       : "idle";
+  const showInitialTranscriptLoader = visibleInitialTranscriptStatus === "loading";
+  const visibleInitialTranscriptNoticeStatus =
+    visibleInitialTranscriptStatus === "timed-out" ? "timed-out" : "idle";
   const chatListItems = buildChatListItems({
-    initialTranscriptStatus: visibleInitialTranscriptStatus,
+    initialTranscriptStatus: visibleInitialTranscriptNoticeStatus,
     messages: allMessages,
     restoreBlockedReason,
     sendError,
@@ -2036,7 +2039,7 @@ export default function ChatScreen() {
       >
         <TranscriptContent
           dividerWidth={chatDividerWidth}
-          initialTranscriptStatus={visibleInitialTranscriptStatus}
+          initialTranscriptStatus={visibleInitialTranscriptNoticeStatus}
           messages={allMessages}
           restoreBlockedReason={restoreBlockedReason}
           sendError={sendError}
@@ -2459,8 +2462,10 @@ export default function ChatScreen() {
                         onLayout={(event: LayoutChangeEvent) =>
                           setChatPaneWidth(event.nativeEvent.layout.width)
                         }
+                        style={{ position: "relative" }}
                       >
                         {chatScroller}
+                        {showInitialTranscriptLoader ? <InitialTranscriptLoadingOverlay /> : null}
                       </View>
                     )}
                   </View>
@@ -2879,6 +2884,21 @@ const TranscriptContent = React.memo(function TranscriptContent({
   );
 });
 
+function InitialTranscriptLoadingOverlay() {
+  return (
+    <View
+      pointerEvents="none"
+      className="absolute inset-0 items-center justify-center px-4"
+      style={{ zIndex: 1 }}
+    >
+      <View className="flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 shadow-sm">
+        <ActivityIndicator size="small" color="#a1a1aa" />
+        <Text className="text-sm text-muted-foreground">Loading transcript history...</Text>
+      </View>
+    </View>
+  );
+}
+
 function InitialTranscriptNotice({ status }: { status: InitialTranscriptStatus }) {
   if (status === "timed-out") {
     return (
@@ -2889,13 +2909,7 @@ function InitialTranscriptNotice({ status }: { status: InitialTranscriptStatus }
       </View>
     );
   }
-  if (status !== "loading") return null;
-  return (
-    <View className="my-2 flex-row items-center gap-2 self-start rounded-lg border border-border bg-card px-3 py-2">
-      <ActivityIndicator size="small" color="#a1a1aa" />
-      <Text className="text-sm text-muted-foreground">Loading transcript history...</Text>
-    </View>
-  );
+  return null;
 }
 
 function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSession {
