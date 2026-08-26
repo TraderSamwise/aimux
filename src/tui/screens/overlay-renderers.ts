@@ -152,6 +152,28 @@ function restoreConfirmButton(label: string, active: boolean): string {
   return active ? `\x1b[7m ${label} \x1b[0m` : style(` ${label} `, "muted");
 }
 
+function restoreOfferGroupLabels(offer: any): string {
+  if (Array.isArray(offer.worktreeGroups) && offer.worktreeGroups.length > 0) {
+    return offer.worktreeGroups
+      .slice(0, 4)
+      .map((group: any) => `${group.name ?? "Worktree"} ${group.count ?? 0}`)
+      .join(" · ");
+  }
+  const groups = new Map<string, number>();
+  for (const session of Array.isArray(offer.sessions) ? offer.sessions : []) {
+    const path = typeof session.worktreePath === "string" ? session.worktreePath : "";
+    const marker = "/.aimux/worktrees/";
+    const name = path.includes(marker)
+      ? path.slice(path.indexOf(marker) + marker.length).split("/")[0]
+      : "Main Checkout";
+    groups.set(name || "Main Checkout", (groups.get(name || "Main Checkout") ?? 0) + 1);
+  }
+  return [...groups.entries()]
+    .slice(0, 4)
+    .map(([name, count]) => `${name} ${count}`)
+    .join(" · ");
+}
+
 export function buildAgentRestoreConfirmOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const offer = ctx.dashboardAgentRestoreOfferCache;
   if (!offer || !Array.isArray(offer.sessions) || !Array.isArray(offer.sessionIds)) return null;
@@ -162,8 +184,10 @@ export function buildAgentRestoreConfirmOverlayOutput(ctx: any, cols: number, ro
     .join(", ");
   const extra = offer.sessions.length > 5 ? `, +${offer.sessions.length - 5} more` : "";
   const count = offer.sessionIds.length;
+  const groups = restoreOfferGroupLabels(offer);
   const body = [
-    `  Restore ${count} previously running agent${count === 1 ? "" : "s"} for this project?`,
+    `  Restore ${count} restorable agent${count === 1 ? "" : "s"} for this project?`,
+    groups ? `  ${style(groups, "muted")}` : "",
     labels ? `  ${style(`${labels}${extra}`, "muted")}` : "",
     "",
     `  ${restoreConfirmButton("Restore", selected === "restore")}  ${restoreConfirmButton("Cancel", selected === "cancel")}`,

@@ -10,6 +10,7 @@ import {
   readAgentRestoreOffer,
   readLastOnlineAgentsSnapshot,
   recordLastOnlineAgents,
+  reconcileAgentRestoreOfferWithRestorableSessions,
   removeAgentRestoreOfferSessions,
 } from "./agent-restore-state.js";
 
@@ -74,6 +75,7 @@ describe("agent restore state", () => {
 
     expect(offer?.snapshotId).toBe("snapshot-old");
     expect(offer?.sessionIds).toEqual(["claude-1", "codex-2"]);
+    expect(offer?.worktreeGroups).toEqual([{ name: "Main Checkout", count: 2 }]);
     expect(readAgentRestoreOffer()?.sessionIds).toEqual(["claude-1", "codex-2"]);
 
     acknowledgeAgentRestoreOffer();
@@ -171,6 +173,53 @@ describe("agent restore state", () => {
     expect(removeAgentRestoreOfferSessions(["codex-2"])).toBeNull();
     expect(readAgentRestoreOffer()).toBeNull();
     expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:03:00.000Z" })).toBeNull();
+  });
+
+  it("reconciles stale offers to the currently restorable offline inventory", () => {
+    const worktreePath = join(repoRoot, ".aimux/worktrees/feature-a");
+    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+      version: 1,
+      id: "snapshot-old",
+      writerInstanceId: "previous-process",
+      createdAt: "2026-08-22T01:00:00.000Z",
+      updatedAt: "2026-08-22T01:00:00.000Z",
+      sessionIds: ["claude-ready", "codex-ready", "claude-stale", "codex-blocked"],
+      sessions: [
+        { id: "claude-ready", command: "claude", worktreePath: repoRoot },
+        { id: "codex-ready", command: "codex", worktreePath },
+        { id: "claude-stale", command: "claude", worktreePath },
+        { id: "codex-blocked", command: "codex", worktreePath },
+      ],
+    });
+    const offer = deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" });
+
+    const reconciled = reconcileAgentRestoreOfferWithRestorableSessions(offer, ["claude-ready", "codex-ready"]);
+
+    expect(reconciled?.sessionIds).toEqual(["claude-ready", "codex-ready"]);
+    expect(reconciled?.worktreeGroups).toEqual([
+      { name: "Main Checkout", count: 1 },
+      { name: "feature-a", count: 1, path: worktreePath },
+    ]);
+    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["claude-ready", "codex-ready"]);
+  });
+
+  it("groups legacy and repo-root main checkout sessions together", () => {
+    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+      version: 1,
+      id: "snapshot-main-mixed",
+      writerInstanceId: "previous-process",
+      createdAt: "2026-08-22T01:00:00.000Z",
+      updatedAt: "2026-08-22T01:00:00.000Z",
+      sessionIds: ["claude-legacy", "codex-main"],
+      sessions: [
+        { id: "claude-legacy", command: "claude" },
+        { id: "codex-main", command: "codex", worktreePath: repoRoot },
+      ],
+    });
+
+    const offer = deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" });
+
+    expect(offer?.worktreeGroups).toEqual([{ name: "Main Checkout", count: 2 }]);
   });
 
   it("deletes stale inventory-derived restore offers without prompting", () => {

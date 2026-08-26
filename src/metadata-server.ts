@@ -12,6 +12,7 @@ import {
   getProjectStateDir,
   getProjectStateDirFor,
   getRepoRoot,
+  getRuntimeTopologyPath,
   withProjectPaths,
 } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
@@ -116,6 +117,7 @@ import { getWorktreeCreatePath } from "./worktree.js";
 import {
   acknowledgeAgentRestoreOffer,
   readAgentRestoreOffer,
+  reconcileAgentRestoreOfferWithRestorableSessions,
   writeAgentRestoreRetryOffer,
 } from "./runtime-core/agent-restore-state.js";
 import type { LaunchOverride } from "./shell-args.js";
@@ -6484,7 +6486,18 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
-        const offer = readAgentRestoreOffer(this.currentProjectRoot());
+        const hasTopologyInventory = withProjectPaths(this.currentProjectRoot(), () =>
+          existsSync(getRuntimeTopologyPath()),
+        );
+        const offlineInventory = topologyDesktopSessionList(["offline"]);
+        const rawOffer = readAgentRestoreOffer(this.currentProjectRoot());
+        const offer = hasTopologyInventory
+          ? reconcileAgentRestoreOfferWithRestorableSessions(
+              rawOffer,
+              offlineInventory.filter((session) => session.restoreState === "ready").map((session) => session.id),
+              this.currentProjectRoot(),
+            )
+          : rawOffer;
         if (!offer) {
           send(res, 200, {
             ok: true,

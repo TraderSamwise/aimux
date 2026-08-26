@@ -14,6 +14,12 @@ export interface AgentRestoreSession {
   worktreePath?: string;
 }
 
+export interface AgentRestoreWorktreeGroup {
+  path?: string;
+  name: string;
+  count: number;
+}
+
 export interface LastOnlineAgentsSnapshot {
   version: 1;
   id: string;
@@ -22,6 +28,7 @@ export interface LastOnlineAgentsSnapshot {
   updatedAt: string;
   sessionIds: string[];
   sessions: AgentRestoreSession[];
+  worktreeGroups?: AgentRestoreWorktreeGroup[];
 }
 
 export interface AgentRestoreOffer {
@@ -34,6 +41,7 @@ export interface AgentRestoreOffer {
   updatedAt: string;
   sessionIds: string[];
   sessions: AgentRestoreSession[];
+  worktreeGroups?: AgentRestoreWorktreeGroup[];
 }
 
 interface RestoreOfferAck {
@@ -88,6 +96,44 @@ function normalizeSessions(value: unknown): AgentRestoreSession[] {
   return [...byId.values()];
 }
 
+function worktreeGroupName(path: string | undefined): string {
+  if (!path) return "Main Checkout";
+  const marker = "/.aimux/worktrees/";
+  const markerIndex = path.indexOf(marker);
+  if (markerIndex >= 0) return path.slice(markerIndex + marker.length).split("/")[0] || path;
+  return "Main Checkout";
+}
+
+function worktreeGroupKey(path: string | undefined): string {
+  if (!path) return "";
+  const marker = "/.aimux/worktrees/";
+  const markerIndex = path.indexOf(marker);
+  if (markerIndex < 0) return "";
+  return path.slice(0, markerIndex + marker.length + worktreeGroupName(path).length);
+}
+
+function buildWorktreeGroups(sessions: AgentRestoreSession[]): AgentRestoreWorktreeGroup[] {
+  const groups = new Map<string, AgentRestoreWorktreeGroup>();
+  for (const session of sessions) {
+    const key = worktreeGroupKey(session.worktreePath);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    groups.set(key, {
+      path: key || undefined,
+      name: worktreeGroupName(session.worktreePath),
+      count: 1,
+    });
+  }
+  return [...groups.values()].sort((left, right) => {
+    if (left.name === "Main Checkout" && right.name !== "Main Checkout") return -1;
+    if (left.name !== "Main Checkout" && right.name === "Main Checkout") return 1;
+    return left.name.localeCompare(right.name);
+  });
+}
+
 export function agentRestoreSessionKey(sessions: AgentRestoreSession[]): string {
   return JSON.stringify(
     sessions.map((session) => [
@@ -135,6 +181,7 @@ function normalizeSnapshot(value: unknown): LastOnlineAgentsSnapshot | null {
     updatedAt: typeof record.updatedAt === "string" && record.updatedAt.trim() ? record.updatedAt : now,
     sessionIds: sessions.map((session) => session.id),
     sessions,
+    worktreeGroups: buildWorktreeGroups(sessions),
   };
 }
 
@@ -157,6 +204,7 @@ function normalizeOffer(value: unknown): AgentRestoreOffer | null {
     updatedAt: typeof record.updatedAt === "string" && record.updatedAt.trim() ? record.updatedAt : now,
     sessionIds: sessions.map((session) => session.id),
     sessions,
+    worktreeGroups: buildWorktreeGroups(sessions),
   };
 }
 
@@ -230,6 +278,7 @@ export function recordLastOnlineAgents(
       updatedAt: now,
       sessionIds: normalized.map((session) => session.id),
       sessions: normalized,
+      worktreeGroups: buildWorktreeGroups(normalized),
     };
     writeJsonAtomic(lastOnlinePath(), snapshot);
     return snapshot;
@@ -280,6 +329,7 @@ export function deriveAgentRestoreOffer(
       updatedAt: now,
       sessionIds: sessions.map((session) => session.id),
       sessions,
+      worktreeGroups: buildWorktreeGroups(sessions),
     };
     writeJsonAtomic(offerPath(), offer);
     return offer;
@@ -317,6 +367,7 @@ export function writeAgentRestoreRetryOffer(
       updatedAt: new Date().toISOString(),
       sessionIds: sessions.map((session) => session.id),
       sessions,
+      worktreeGroups: buildWorktreeGroups(sessions),
     };
     writeJsonAtomic(offerPath(), retryOffer);
     return retryOffer;
@@ -342,9 +393,37 @@ export function removeAgentRestoreOfferSessions(
       updatedAt: new Date().toISOString(),
       sessionIds: sessions.map((session) => session.id),
       sessions,
+      worktreeGroups: buildWorktreeGroups(sessions),
     };
     writeJsonAtomic(offerPath(), updated);
     return updated;
   };
   return projectRoot ? withProjectPaths(projectRoot, remove) : remove();
+}
+
+export function reconcileAgentRestoreOfferWithRestorableSessions(
+  offer: AgentRestoreOffer | null,
+  restorableSessionIds: Iterable<string>,
+  projectRoot?: string,
+): AgentRestoreOffer | null {
+  const reconcile = () => {
+    if (!offer) return null;
+    const restorable = new Set(restorableSessionIds);
+    const sessions = offer.sessions.filter((session) => restorable.has(session.id));
+    if (sessions.length === offer.sessions.length) return offer;
+    if (sessions.length === 0) {
+      acknowledgeAgentRestoreOffer();
+      return null;
+    }
+    const updated: AgentRestoreOffer = {
+      ...offer,
+      updatedAt: new Date().toISOString(),
+      sessionIds: sessions.map((session) => session.id),
+      sessions,
+      worktreeGroups: buildWorktreeGroups(sessions),
+    };
+    writeJsonAtomic(offerPath(), updated);
+    return updated;
+  };
+  return projectRoot ? withProjectPaths(projectRoot, reconcile) : reconcile();
 }

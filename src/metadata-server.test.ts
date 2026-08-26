@@ -5035,6 +5035,136 @@ describe("MetadataServer threads API", () => {
     expect(readAgentRestoreOffer(repoRoot)?.sessionIds).toEqual(["claude-fail"]);
   });
 
+  it("filters previous-restore batches to current restorable offline sessions", async () => {
+    server?.stop();
+    seedPreviousAgentRestoreOffer(
+      repoRoot,
+      [
+        { id: "codex-main", command: "codex", worktreePath: repoRoot },
+        { id: "codex-feature", command: "codex", worktreePath: join(repoRoot, ".aimux/worktrees/feature-a") },
+        { id: "codex-blocked", command: "codex", worktreePath: join(repoRoot, ".aimux/worktrees/feature-a") },
+        { id: "codex-missing", command: "codex", worktreePath: join(repoRoot, ".aimux/worktrees/feature-a") },
+      ],
+      "2026-08-24T13:45:00.000Z",
+    );
+    saveRuntimeTopologySessions({
+      projectRoot: repoRoot,
+      sessions: [
+        {
+          id: "codex-main",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          status: "offline",
+          backendSessionId: "backend-main",
+          worktreePath: repoRoot,
+        },
+        {
+          id: "codex-feature",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          status: "offline",
+          backendSessionId: "backend-feature",
+          worktreePath: join(repoRoot, ".aimux/worktrees/feature-a"),
+        },
+        {
+          id: "codex-blocked",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          status: "offline",
+          worktreePath: join(repoRoot, ".aimux/worktrees/feature-a"),
+        },
+      ],
+    });
+    const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => ({ sessionId, status: "running" }));
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: { resumeAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      accepted: boolean;
+      total: number;
+      transitions: Array<{ targetId?: string; phase: string }>;
+      offer: { sessionIds: string[]; worktreeGroups?: Array<{ name: string; count: number }> } | null;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.accepted).toBe(true);
+    expect(body.total).toBe(2);
+    expect(body.transitions.map((transition) => [transition.targetId, transition.phase])).toEqual([
+      ["codex-main", "queued"],
+      ["codex-feature", "queued"],
+    ]);
+    expect(body.offer?.sessionIds).toEqual(["codex-main", "codex-feature"]);
+    expect(body.offer?.worktreeGroups).toMatchObject([
+      { name: "Main Checkout", count: 1 },
+      { name: "feature-a", count: 1 },
+    ]);
+    await waitForCondition(() => resumeAgent.mock.calls.length === 2);
+    expect(resumeAgent.mock.calls.map(([arg]) => arg.sessionId)).toEqual(["codex-main", "codex-feature"]);
+  });
+
+  it("clears previous-restore batches when topology has no current offline sessions", async () => {
+    server?.stop();
+    seedPreviousAgentRestoreOffer(
+      repoRoot,
+      [{ id: "codex-stale", command: "codex", worktreePath: repoRoot }],
+      "2026-08-24T13:45:00.000Z",
+    );
+    saveRuntimeTopologySessions({
+      projectRoot: repoRoot,
+      sessions: [
+        {
+          id: "codex-live",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          status: "running",
+          backendSessionId: "backend-live",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+    const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => ({ sessionId, status: "running" }));
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: { resumeAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      accepted: boolean;
+      total: number;
+      offer: null | { sessionIds: string[] };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, accepted: false, total: 0, offer: null });
+    expect(readAgentRestoreOffer(repoRoot)).toBeNull();
+    expect(resumeAgent).not.toHaveBeenCalled();
+  });
+
   it("uses exact single-agent restores for previous-restore batches when available", async () => {
     server?.stop();
     seedPreviousAgentRestoreOffer(

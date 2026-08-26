@@ -145,6 +145,11 @@ export interface DashboardAgentRestoreOffer {
     label?: string;
     worktreePath?: string;
   }>;
+  worktreeGroups?: Array<{
+    path?: string;
+    name: string;
+    count: number;
+  }>;
 }
 
 export interface MainCheckoutInfo {

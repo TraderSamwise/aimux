@@ -44,6 +44,7 @@ import {
   agentRestoreSessionKey,
   deriveAgentRestoreOffer,
   recordLastOnlineAgents,
+  reconcileAgentRestoreOfferWithRestorableSessions,
   type AgentRestoreSession,
 } from "../runtime-core/agent-restore-state.js";
 import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
@@ -1216,7 +1217,18 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
         };
       });
     const liveRestoreSessionIds = onlineRestoreSessions.map((session) => session.id);
-    const offer = deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot });
+    const offer = reconcileAgentRestoreOfferWithRestorableSessions(
+      deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot }),
+      allSessions
+        .filter(
+          (session) =>
+            isDashboardSessionOffline(session) &&
+            session.restoreState === "ready" &&
+            !liveRestoreSessionIds.includes(session.id),
+        )
+        .map((session) => session.id),
+      projectRoot,
+    );
     const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
     const shouldRecordRestoreSnapshot =
       onlineRestoreSessions.length > 0 || ((host as any).lastOnlineAgentRestoreSnapshotKey !== undefined && !offer);

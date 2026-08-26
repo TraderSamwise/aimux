@@ -109,8 +109,12 @@ describe("buildAgentRestoreConfirmOverlayOutput", () => {
           dashboardAgentRestoreOfferCache: {
             sessionIds: ["claude-1", "codex-2"],
             sessions: [
-              { id: "claude-1", label: "claude(coder)" },
-              { id: "codex-2", label: "codex(coder)" },
+              { id: "claude-1", label: "claude(coder)", worktreePath: "/repo" },
+              { id: "codex-2", label: "codex(coder)", worktreePath: "/repo/.aimux/worktrees/feature-a" },
+            ],
+            worktreeGroups: [
+              { name: "Main Checkout", path: "/repo", count: 1 },
+              { name: "feature-a", path: "/repo/.aimux/worktrees/feature-a", count: 1 },
             ],
           },
         },
@@ -120,7 +124,9 @@ describe("buildAgentRestoreConfirmOverlayOutput", () => {
     );
 
     expect(output).toContain("RESTORE AGENTS");
-    expect(output).toContain("Restore 2 previously running agents for this project?");
+    expect(output).toContain("Restore 2 restorable agents for this project?");
+    expect(output).toContain("Main Checkout 1");
+    expect(output).toContain("feature-a 1");
     expect(output).toContain("claude(coder), codex(coder)");
     expect(output).toContain("Restore");
     expect(output).toContain("Cancel");
