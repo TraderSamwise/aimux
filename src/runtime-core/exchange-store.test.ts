@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   RuntimeExchangeStore,
   emptyRuntimeExchange,
+  getExchangeStoreTelemetry,
   getExchangeStoreStats,
   resetExchangeStoreStats,
 } from "./exchange-store.js";
@@ -314,7 +315,48 @@ describe("RuntimeExchangeStore", () => {
       expect(store.read().threads).toHaveLength(100);
       expect(store.read().messages).toHaveLength(100);
 
-      expect(getExchangeStoreStats()).toEqual({ reads: 2, parses: 1 });
+      expect(getExchangeStoreStats()).toEqual({ reads: 2, parses: 0 });
+      expect(getExchangeStoreTelemetry()).toMatchObject({ readCacheHits: 2, readCacheMisses: 0 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips identical writes and keeps the post-write cache warm", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const store = new RuntimeExchangeStore(path);
+      const now = "2026-05-25T00:00:00.000Z";
+      const exchange = {
+        ...emptyRuntimeExchange(now),
+        threads: [
+          {
+            id: "thread-1",
+            title: "Thread",
+            kind: "task" as const,
+            status: "open" as const,
+            createdAt: now,
+            updatedAt: now,
+            createdBy: "user",
+            participants: ["user"],
+          },
+        ],
+      };
+
+      store.write(exchange);
+      resetExchangeStoreStats();
+      store.write(exchange);
+      expect(store.read().threads[0]?.title).toBe("Thread");
+
+      expect(getExchangeStoreTelemetry()).toMatchObject({
+        reads: 1,
+        parses: 0,
+        readCacheHits: 1,
+        writes: 1,
+        writeNoops: 1,
+        lastWrite: expect.objectContaining({ skipped: true, reason: "same-bytes" }),
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

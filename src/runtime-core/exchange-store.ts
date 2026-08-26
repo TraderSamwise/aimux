@@ -591,6 +591,20 @@ function isProcessAlive(pid: number): boolean {
 const RAW_CACHE_MAX = 32;
 const rawCache = new Map<string, { text: string; normalized: RuntimeExchange }>();
 
+function rememberRawCache(
+  path: string,
+  text: string,
+  normalized: RuntimeExchange,
+  options: { clone?: boolean } = {},
+): void {
+  rawCache.delete(path);
+  rawCache.set(path, { text, normalized: options.clone === false ? normalized : structuredClone(normalized) });
+  if (rawCache.size > RAW_CACHE_MAX) {
+    const oldest = rawCache.keys().next().value;
+    if (oldest !== undefined) rawCache.delete(oldest);
+  }
+}
+
 // Errnos for which the `existsSync` guard this replaced returned false, so they must
 // keep degrading to an empty exchange instead of failing the whole read.
 const MISSING_FILE_ERROR_CODES = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"]);
@@ -598,6 +612,23 @@ const MISSING_FILE_ERROR_CODES = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETO
 // Instrumentation for tests that assert how many times one operation parses this store.
 let readCount = 0;
 let parseCount = 0;
+let readCacheHitCount = 0;
+let readCacheMissCount = 0;
+let writeCount = 0;
+let writeNoopCount = 0;
+let lastWrite:
+  | {
+      ts: string;
+      path: string;
+      skipped: boolean;
+      reason: "changed" | "same-bytes" | "missing-file";
+      bytesBefore: number;
+      bytesAfter: number;
+      compacted: boolean;
+      compareDurationMs: number;
+      writeDurationMs: number;
+    }
+  | undefined;
 let compactionCount = 0;
 let compactedRecordCount = 0;
 let lastCompaction:
@@ -622,6 +653,11 @@ export function getExchangeStoreStats(): { reads: number; parses: number } {
 export function getExchangeStoreTelemetry(): {
   reads: number;
   parses: number;
+  readCacheHits: number;
+  readCacheMisses: number;
+  writes: number;
+  writeNoops: number;
+  lastWrite?: typeof lastWrite;
   compactions: number;
   compactedRecords: number;
   lastCompaction?: typeof lastCompaction;
@@ -629,6 +665,11 @@ export function getExchangeStoreTelemetry(): {
   return {
     reads: readCount,
     parses: parseCount,
+    readCacheHits: readCacheHitCount,
+    readCacheMisses: readCacheMissCount,
+    writes: writeCount,
+    writeNoops: writeNoopCount,
+    lastWrite,
     compactions: compactionCount,
     compactedRecords: compactedRecordCount,
     lastCompaction,
@@ -638,6 +679,11 @@ export function getExchangeStoreTelemetry(): {
 export function resetExchangeStoreStats(): void {
   readCount = 0;
   parseCount = 0;
+  readCacheHitCount = 0;
+  readCacheMissCount = 0;
+  writeCount = 0;
+  writeNoopCount = 0;
+  lastWrite = undefined;
   compactionCount = 0;
   compactedRecordCount = 0;
   lastCompaction = undefined;
@@ -652,6 +698,15 @@ function recordExchangeCompaction(fields: Exclude<typeof lastCompaction, undefin
   compactedRecordCount += fields.removed.totalRecords;
   lastCompaction = fields;
   log.info("runtime exchange compacted", "api", fields);
+}
+
+function recordExchangeWrite(fields: Exclude<typeof lastWrite, undefined>): void {
+  writeCount += 1;
+  if (fields.skipped) writeNoopCount += 1;
+  lastWrite = fields;
+  if (fields.writeDurationMs >= SLOW_EXCHANGE_READ_MS || fields.compacted) {
+    log.info("runtime exchange write", "api", fields);
+  }
 }
 
 function serializeRuntimeExchange(exchange: RuntimeExchange): string {
@@ -716,6 +771,10 @@ export class RuntimeExchangeStore {
   constructor(readonly path = getRuntimeExchangePath()) {}
 
   read(): RuntimeExchange {
+    return this.readWithRaw().exchange;
+  }
+
+  private readWithRaw(): { exchange: RuntimeExchange; text?: string } {
     readCount += 1;
     const startedAt = Date.now();
     let readDurationMs = 0;
@@ -735,7 +794,7 @@ export class RuntimeExchangeStore {
       // but could not be opened.
       if (MISSING_FILE_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? "")) {
         rawCache.delete(this.path);
-        return emptyRuntimeExchange();
+        return { exchange: emptyRuntimeExchange() };
       }
       throw error;
     }
@@ -744,6 +803,7 @@ export class RuntimeExchangeStore {
     const cacheHit = Boolean(cached && cached.text === text);
     compareDurationMs = Date.now() - compareStartedAt;
     if (cacheHit && cached) {
+      readCacheHitCount += 1;
       rawCache.delete(this.path);
       rawCache.set(this.path, cached);
       const cloneStartedAt = Date.now();
@@ -761,8 +821,9 @@ export class RuntimeExchangeStore {
           cloneDurationMs,
         });
       }
-      return exchange;
+      return { exchange, text };
     }
+    readCacheMissCount += 1;
     parseCount += 1;
     const parseStartedAt = Date.now();
     const raw = parse(text);
@@ -770,14 +831,7 @@ export class RuntimeExchangeStore {
     const coerceStartedAt = Date.now();
     const normalized = coerceRuntimeExchange(raw);
     coerceDurationMs = Date.now() - coerceStartedAt;
-    // Delete before set so re-inserting an existing path moves it to the tail; without
-    // it, a path whose contents change often would drift toward eviction while hottest.
-    rawCache.delete(this.path);
-    rawCache.set(this.path, { text, normalized });
-    if (rawCache.size > RAW_CACHE_MAX) {
-      const oldest = rawCache.keys().next().value;
-      if (oldest !== undefined) rawCache.delete(oldest);
-    }
+    rememberRawCache(this.path, text, normalized, { clone: false });
     const cloneStartedAt = Date.now();
     const exchange = structuredClone(normalized);
     cloneDurationMs = Date.now() - cloneStartedAt;
@@ -795,10 +849,13 @@ export class RuntimeExchangeStore {
         cloneDurationMs,
       });
     }
-    return exchange;
+    return { exchange, text };
   }
 
-  private writeCompacted(exchange: RuntimeExchange): {
+  private writeCompacted(
+    exchange: RuntimeExchange,
+    options: { trustedCurrentText?: string } = {},
+  ): {
     exchange: RuntimeExchange;
     result: RuntimeExchangeCompactWriteResult;
   } {
@@ -807,8 +864,33 @@ export class RuntimeExchangeStore {
     const compaction = compactRuntimeExchange(normalized);
     const retained = coerceRuntimeExchange(compaction.retained);
     const afterText = serializeRuntimeExchange(retained);
-    atomicWrite(this.path, afterText);
-    rawCache.delete(this.path);
+    const writeStartedAt = Date.now();
+    let compareDurationMs = 0;
+    let skipped = false;
+    let reason: Exclude<Exclude<typeof lastWrite, undefined>["reason"], "changed"> = "missing-file";
+    if (options.trustedCurrentText !== undefined) {
+      if (options.trustedCurrentText === afterText) {
+        skipped = true;
+        reason = "same-bytes";
+      }
+    } else {
+      try {
+        const compareStartedAt = Date.now();
+        const currentText = readFileSync(this.path, "utf-8");
+        compareDurationMs = Date.now() - compareStartedAt;
+        if (currentText === afterText) {
+          skipped = true;
+          reason = "same-bytes";
+        }
+      } catch (error) {
+        if (!MISSING_FILE_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      }
+    }
+    if (!skipped) {
+      atomicWrite(this.path, afterText);
+    }
+    const writeDurationMs = Date.now() - writeStartedAt;
+    rememberRawCache(this.path, afterText, retained);
     const result = {
       path: this.path,
       changed: compaction.changed,
@@ -820,12 +902,22 @@ export class RuntimeExchangeStore {
       byteCounts: compaction.bytes,
       retention: compaction.retention,
     };
+    recordExchangeWrite({
+      ts: new Date().toISOString(),
+      path: this.path,
+      skipped,
+      reason: skipped ? reason : "changed",
+      bytesBefore: result.bytesBefore,
+      bytesAfter: result.bytesAfter,
+      compacted: result.changed,
+      compareDurationMs,
+      writeDurationMs,
+    });
     if (result.changed) recordExchangeCompaction({ ts: new Date().toISOString(), ...result });
     return { exchange: retained, result };
   }
 
-  // Deliberately does not seed the cache: returned state belongs to the caller, so
-  // caching it would alias future reads. The next read validates through byte content.
+  // Write seeds a cloned cache entry; the returned state still belongs to the caller.
   write(exchange: RuntimeExchange): RuntimeExchange {
     return this.writeCompacted(exchange).exchange;
   }
@@ -833,7 +925,8 @@ export class RuntimeExchangeStore {
   compact(): RuntimeExchangeCompactWriteResult {
     const release = this.acquireUpdateLock();
     try {
-      return this.writeCompacted(this.read()).result;
+      const current = this.readWithRaw();
+      return this.writeCompacted(current.exchange, { trustedCurrentText: current.text }).result;
     } finally {
       release();
     }
@@ -891,7 +984,8 @@ export class RuntimeExchangeStore {
   update(mutator: (exchange: RuntimeExchange) => RuntimeExchange): RuntimeExchange {
     const release = this.acquireUpdateLock();
     try {
-      return this.write(mutator(this.read()));
+      const current = this.readWithRaw();
+      return this.writeCompacted(mutator(current.exchange), { trustedCurrentText: current.text }).exchange;
     } finally {
       release();
     }
