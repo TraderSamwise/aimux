@@ -79,6 +79,7 @@ import {
 } from "@/lib/api";
 import {
   attachmentsFromClipboardData,
+  clipboardDataHasFile,
   pickAttachment,
   type ClipboardFileSource,
   type PickedAttachment,
@@ -1528,10 +1529,7 @@ export default function ChatScreen() {
   }) {
     if (Platform.OS !== "web" || sendBusy || sendBusyRef.current || composerAwaitingAck) return;
     const clipboardData = event.clipboardData ?? event.nativeEvent?.clipboardData;
-    const hasFiles =
-      Array.from(clipboardData?.files ?? []).length > 0 ||
-      Array.from(clipboardData?.items ?? []).some((item) => item.kind === "file");
-    if (!hasFiles) return;
+    if (!clipboardDataHasFile(clipboardData)) return;
     event.preventDefault?.();
     setSendError(null);
     try {
@@ -1843,6 +1841,8 @@ export default function ChatScreen() {
         }
         onDropAttachments={handleDropAttachments}
         onDropRejected={setSendError}
+        onPasteAttachments={handleDropAttachments}
+        onPasteRejected={setSendError}
       >
         {({ dragging }) => (
           <ComposerFocusShell

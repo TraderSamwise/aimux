@@ -126,6 +126,10 @@ export async function attachmentsFromClipboardData(
   return [];
 }
 
+export function clipboardDataHasFile(_clipboardData?: ClipboardFileSource | null): boolean {
+  return false;
+}
+
 export async function imageAttachmentsFromFiles(
   files: Iterable<File>,
 ): Promise<PickedImageAttachment[]> {

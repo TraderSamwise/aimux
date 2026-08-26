@@ -9,6 +9,8 @@ export function AttachmentDropZone({
   disabled?: boolean;
   onDropAttachments: (attachments: PickedAttachment[]) => void;
   onDropRejected?: (message: string) => void;
+  onPasteAttachments?: (attachments: PickedAttachment[]) => void;
+  onPasteRejected?: (message: string) => void;
 }) {
   return <>{children({ dragging: false })}</>;
 }

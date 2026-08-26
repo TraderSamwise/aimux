@@ -154,6 +154,8 @@ export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
 });
 
 export const MANAGED_TMUX_TERMINAL_FEATURES = Object.freeze([
+  "xterm*:ccolour",
+  "xterm*:cstyle",
   "xterm*:RGB",
   "xterm*:extkeys",
   "xterm*:hyperlinks",

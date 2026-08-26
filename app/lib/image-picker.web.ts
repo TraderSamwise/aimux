@@ -75,6 +75,14 @@ export type ClipboardFileSource = {
     | null;
 };
 
+export function clipboardDataHasFile(
+  clipboardData: ClipboardFileSource | null | undefined,
+): boolean {
+  if (!clipboardData) return false;
+  if (Array.from(clipboardData.files ?? []).length > 0) return true;
+  return Array.from(clipboardData.items ?? []).some((item) => item.kind === "file");
+}
+
 export async function attachmentsFromClipboardData(
   clipboardData: ClipboardFileSource | null | undefined,
 ): Promise<PickedAttachment[]> {

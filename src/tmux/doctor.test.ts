@@ -61,6 +61,8 @@ describe("tmux doctor", () => {
     expect(report.managedSession.options.mouse.ok).toBe(true);
     expect(report.managedSession.options["window-size"]?.ok).toBe(true);
     expect(report.managedSession.options["history-limit"]?.ok).toBe(true);
+    expect(report.managedSession.terminalFeatures["xterm*:ccolour"]?.ok).toBe(true);
+    expect(report.managedSession.terminalFeatures["xterm*:cstyle"]?.ok).toBe(true);
     expect(report.managedSession.terminalFeatures["xterm*:RGB"]?.ok).toBe(true);
     expect(report.managedSession.terminalFeatures["xterm*:hyperlinks"]?.ok).toBe(true);
     expect(report.activeWindow?.tool).toBe("codex");
@@ -99,6 +101,8 @@ describe("tmux doctor", () => {
     expect(text).toContain("managed session exists: yes");
     expect(text).toContain("allow-passthrough: on");
     expect(text).toContain("aggressive-resize: on");
+    expect(text).toContain("xterm*:ccolour: present");
+    expect(text).toContain("xterm*:cstyle: present");
     expect(text).toContain("xterm*:RGB: present");
     expect(text).toContain("xterm*:hyperlinks: present");
     expect(text).toContain("statusline:");

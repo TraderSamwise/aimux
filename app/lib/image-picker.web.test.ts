@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { attachmentsFromClipboardData, isAcceptedImageFile } from "./image-picker.web";
+import {
+  attachmentsFromClipboardData,
+  clipboardDataHasFile,
+  isAcceptedImageFile,
+} from "./image-picker.web";
 
 describe("isAcceptedImageFile", () => {
   it("accepts supported image formats", () => {
@@ -54,5 +58,29 @@ describe("attachmentsFromClipboardData", () => {
         items: [{ kind: "string", getAsFile: () => null }],
       }),
     ).resolves.toEqual([]);
+  });
+});
+
+describe("clipboardDataHasFile", () => {
+  it("detects files exposed directly or through clipboard items", () => {
+    expect(
+      clipboardDataHasFile({
+        files: [new File(["hello"], "clip.png", { type: "image/png" })],
+      }),
+    ).toBe(true);
+    expect(
+      clipboardDataHasFile({
+        files: [],
+        items: [
+          { kind: "file", getAsFile: () => new File(["hello"], "item.png", { type: "image/png" }) },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      clipboardDataHasFile({
+        files: [],
+        items: [{ kind: "string", getAsFile: () => null }],
+      }),
+    ).toBe(false);
   });
 });

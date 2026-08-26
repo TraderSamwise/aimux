@@ -86,6 +86,17 @@ function buildCheck(expected: string, observed: string | null): TmuxDoctorCheck 
   return { expected, observed, ok: observed === expected };
 }
 
+function terminalFeaturePresent(featureSet: Set<string>, feature: string): boolean {
+  if (featureSet.has(feature)) return true;
+  const [selector, capability] = feature.split(":", 2);
+  if (!selector || !capability) return false;
+  for (const entry of featureSet) {
+    const [entrySelector, ...entryCapabilities] = entry.split(":");
+    if (entrySelector === selector && entryCapabilities.includes(capability)) return true;
+  }
+  return false;
+}
+
 function canonicalizeProjectRoot(projectRoot: string): string {
   try {
     return realpathSync(projectRoot);
@@ -194,10 +205,10 @@ export function buildTmuxDoctorReport(
       .filter(Boolean) ?? [],
   );
   const terminalFeatures = Object.fromEntries(
-    MANAGED_TMUX_TERMINAL_FEATURES.map((feature) => [
-      feature,
-      { expected: "present", observed: featureSet.has(feature) ? "present" : null, ok: featureSet.has(feature) },
-    ]),
+    MANAGED_TMUX_TERMINAL_FEATURES.map((feature) => {
+      const present = terminalFeaturePresent(featureSet, feature);
+      return [feature, { expected: "present", observed: present ? "present" : null, ok: present }];
+    }),
   );
 
   const activeWindow =
