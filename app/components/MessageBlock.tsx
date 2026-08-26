@@ -49,6 +49,7 @@ const MESSAGE_TEXT_STYLE: TextStyle = {
 
 export type TextSegment = { kind: "text" | "table"; text: string };
 type TextSegmentWithRange = TextSegment & { end: number; start: number };
+const BOX_TABLE_CHARS = /[╭╮╰╯┌┐└┘├┤┬┴┼─│═║╔╗╚╝╠╣╦╩╬]/;
 
 export function resolveImageUrl(
   part: HistoryImagePart | HistoryImageReferencePart | HistoryAttachmentReferencePart,
@@ -168,6 +169,29 @@ function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRang
       textEnd = textStart;
       continue;
     }
+    if (isTerminalBoxTableLine(lines[index] ?? "")) {
+      const tableStartIndex = index;
+      const tableStart = lineStarts[index] ?? 0;
+      const tableLines: string[] = [];
+      while (index < lines.length && isTerminalBoxTableLine(lines[index] ?? "")) {
+        tableLines.push(lines[index] ?? "");
+        index += 1;
+      }
+      if (tableLines.length >= 2) {
+        flushText();
+        const tableText = tableLines.join("\n");
+        segments.push({
+          kind: "table",
+          text: tableText,
+          start: tableStart,
+          end: tableStart + tableText.length,
+        });
+        textStart = lineStarts[index] ?? text.length;
+        textEnd = textStart;
+        continue;
+      }
+      index = tableStartIndex;
+    }
     if (textStart === textEnd) textStart = lineStarts[index] ?? textEnd;
     textEnd =
       (lineStarts[index] ?? 0) + (lines[index] ?? "").length + (index < lines.length - 1 ? 1 : 0);
@@ -176,6 +200,12 @@ function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRang
 
   flushText();
   return segments;
+}
+
+function isTerminalBoxTableLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length < 2) return false;
+  return BOX_TABLE_CHARS.test(trimmed);
 }
 
 export function canRenderRichText(

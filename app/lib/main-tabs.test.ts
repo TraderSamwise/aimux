@@ -18,6 +18,10 @@ import { buildMainTabHref, MAIN_TAB_ROUTES } from "./main-tabs";
 
 describe("main tab navigation", () => {
   it("uses internal grouped routes for imperative tab switches", () => {
+    expect(buildMainTabHref("project", "/Users/sam/cs/tealstreet-next")).toEqual({
+      pathname: "/(main)/(tabs)/project",
+      params: { project: "/Users/sam/cs/tealstreet-next" },
+    });
     expect(buildMainTabHref("threads", "/Users/sam/cs/aimux")).toEqual({
       pathname: "/(main)/(tabs)/threads",
       params: { project: "/Users/sam/cs/aimux" },

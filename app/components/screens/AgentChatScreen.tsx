@@ -90,6 +90,7 @@ import {
   shouldSubmitComposerKey,
 } from "@/lib/composer-protocol";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
+import { paneOutputSnapshotHasVisibleTranscript } from "@/lib/chat-loading";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
@@ -791,9 +792,9 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [endpointHost, endpointPort, stateProjectPath]);
 
-  const refreshOutputSnapshot = useCallback(async () => {
+  const refreshOutputSnapshot = useCallback(async (): Promise<boolean> => {
     if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
-      return;
+      return false;
     }
     const result = await getLivePaneOutput(
       { host: endpointHost, port: endpointPort },
@@ -808,7 +809,7 @@ export default function ChatScreen() {
       setLastError(
         "This aimux daemon is older than the app and does not send a transcript. Restart it to pick up the new build.",
       );
-      return;
+      return false;
     }
     applyOutputSnapshot({
       sessionId: result.sessionId,
@@ -819,6 +820,7 @@ export default function ChatScreen() {
       activityText: result.activityText,
       attention: result.attention,
     });
+    return paneOutputSnapshotHasVisibleTranscript(result);
   }, [
     applyOutputSnapshot,
     endpointHost,
@@ -853,9 +855,9 @@ export default function ChatScreen() {
       if (cancelled || inFlight) return;
       inFlight = true;
       try {
-        await refreshOutputSnapshot();
-        firstSnapshotLoaded = true;
-        if (!cancelled) {
+        const hasVisibleTranscript = await refreshOutputSnapshot();
+        if (hasVisibleTranscript) firstSnapshotLoaded = true;
+        if (!cancelled && hasVisibleTranscript) {
           setInitialTranscriptState((current) =>
             current.key === snapshotKey ? { key: snapshotKey, status: "idle" } : current,
           );

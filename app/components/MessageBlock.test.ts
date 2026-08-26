@@ -225,4 +225,35 @@ describe("MessageBlock table text", () => {
       },
     ]);
   });
+
+  it("splits terminal box tables into horizontally scrollable text segments", () => {
+    expect(
+      splitMarkdownTableSegments(
+        [
+          "Before",
+          "",
+          "╭──────────────┬────────╮",
+          "│ Assignment   │ Status │",
+          "├──────────────┼────────┤",
+          "│ questionnaire│ done   │",
+          "╰──────────────┴────────╯",
+          "",
+          "After",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "text", text: "Before" },
+      {
+        kind: "table",
+        text: [
+          "╭──────────────┬────────╮",
+          "│ Assignment   │ Status │",
+          "├──────────────┼────────┤",
+          "│ questionnaire│ done   │",
+          "╰──────────────┴────────╯",
+        ].join("\n"),
+      },
+      { kind: "text", text: "After" },
+    ]);
+  });
 });

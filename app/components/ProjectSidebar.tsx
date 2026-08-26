@@ -26,14 +26,13 @@ import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopState } from "@/lib/desktop-state";
-import { MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
+import { buildMainTabHref, MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
 import { filterProjectPickerProjects } from "@/lib/project-picker";
 import {
   buildViewHref,
   detailHrefForPath,
   parentViewHrefForPath,
   projectPathFromSearchOrLocation,
-  replaceBrowserViewPath,
   type SearchValue,
 } from "@/lib/view-location";
 import { cn } from "@/lib/utils";
@@ -550,12 +549,10 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   function handlePickProject(path: string) {
     blurWebActiveElement();
-    const href = buildViewHref("/project", { project: path });
-    if (Platform.OS === "web" && typeof href === "string") replaceBrowserViewPath(href);
     selectProject(path);
     setShowPicker(false);
     // Selecting a project always lands on the Project screen's Dashboard section.
-    router.replace(href);
+    router.replace(buildMainTabHref("project", path));
   }
 
   function handlePickSession(sessionId: string, sessionProjectPath = routeProjectPath) {
