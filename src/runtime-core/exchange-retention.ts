@@ -12,11 +12,11 @@ export const RUNTIME_EXCHANGE_RETENTION = {
   notificationThreads: 500,
   closedWorkflowThreads: 300,
   closedTasks: 500,
-  activeThreadMessages: 300,
-  closedThreadMessages: 50,
+  activeThreadMessages: 80,
+  closedThreadMessages: 20,
   notificationThreadMessages: 1,
-  deliveredMessageBodyBytes: 16 * 1024,
-  closedTaskTextBytes: 4 * 1024,
+  deliveredMessageBodyBytes: 4 * 1024,
+  closedTaskTextBytes: 2 * 1024,
 } as const;
 
 const MESSAGE_BODY_COMPACTED = "aimuxBodyCompacted";
@@ -219,7 +219,7 @@ function byUpdatedAtDesc<T extends { updatedAt?: string; createdAt?: string; ts?
 }
 
 function isNotificationThread(thread: RuntimeExchangeThread): boolean {
-  return thread.tags?.includes("notification") === true;
+  return thread.tags?.includes("notification") === true || thread.id.startsWith("notification-");
 }
 
 function isClosedThread(thread: RuntimeExchangeThread): boolean {
@@ -340,6 +340,9 @@ function selectRetainedMessages(
       ? RUNTIME_EXCHANGE_RETENTION.closedThreadMessages
       : RUNTIME_EXCHANGE_RETENTION.activeThreadMessages;
     for (const message of [...messages].sort(byUpdatedAtDesc).slice(0, limit)) {
+      selectedIds.add(message.id);
+    }
+    for (const message of messages.filter(hasPendingDelivery)) {
       selectedIds.add(message.id);
     }
     if (thread.lastMessageId) selectedIds.add(thread.lastMessageId);

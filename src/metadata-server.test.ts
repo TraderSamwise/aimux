@@ -304,6 +304,18 @@ describe("MetadataServer threads API", () => {
         exists: false,
         bytes: 0,
         counts: { totalRecords: 0 },
+        messageDelivery: {
+          pendingMessages: 0,
+          deliveredMessages: 0,
+          noRecipientMessages: 0,
+        },
+        retainedMessageDelivery: {
+          pendingMessages: 0,
+          deliveredMessages: 0,
+          noRecipientMessages: 0,
+        },
+        largestThreads: [],
+        largestRetainedThreads: [],
       },
     });
   });

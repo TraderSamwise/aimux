@@ -7,6 +7,7 @@ import {
   emptyRuntimeExchange,
   getExchangeStoreTelemetry,
   getExchangeStoreStats,
+  inspectRuntimeExchangeStore,
   resetExchangeStoreStats,
 } from "./exchange-store.js";
 import { RUNTIME_EXCHANGE_RETENTION, compactRuntimeExchange, countRuntimeExchangeBytes } from "./exchange-retention.js";
@@ -740,6 +741,7 @@ describe("RuntimeExchangeStore", () => {
       kind: "reply" as const,
       body: `closed message ${index}`,
     }));
+    const latestActiveMessageId = `active-${RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 9}`;
 
     const report = compactRuntimeExchange({
       ...emptyRuntimeExchange(now),
@@ -790,7 +792,7 @@ describe("RuntimeExchangeStore", () => {
         },
       ],
       attachmentRefs: [
-        { id: "attachment-active", path: "/active", messageId: "active-309", createdAt: now, updatedAt: now },
+        { id: "attachment-active", path: "/active", messageId: latestActiveMessageId, createdAt: now, updatedAt: now },
         { id: "attachment-pruned", path: "/pruned", messageId: "active-0", createdAt: old, updatedAt: old },
       ],
     });
@@ -805,7 +807,7 @@ describe("RuntimeExchangeStore", () => {
       RUNTIME_EXCHANGE_RETENTION.activeThreadMessages,
     );
     expect(report.retained.messages.some((message) => message.id === "active-0")).toBe(false);
-    expect(report.retained.messages.some((message) => message.id === "active-309")).toBe(true);
+    expect(report.retained.messages.some((message) => message.id === latestActiveMessageId)).toBe(true);
     expect(report.retained.waits.map((wait) => wait.id)).toEqual(["wait-active"]);
     expect(report.retained.attachmentRefs.map((ref) => ref.id)).toEqual(["attachment-active"]);
   });
@@ -854,6 +856,50 @@ describe("RuntimeExchangeStore", () => {
     expect(report.retained.messages).toHaveLength(RUNTIME_EXCHANGE_RETENTION.notificationThreads);
     expect(report.retained.threads.some((thread) => thread.id === "notification-0")).toBe(false);
     expect(report.retained.threads.some((thread) => thread.id === "notification-502")).toBe(true);
+    expect(report.retained.messages.every((message) => message.id.endsWith("-1"))).toBe(true);
+  });
+
+  it("treats notification thread ids as notification threads even without tags", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const notificationThreads = Array.from(
+      { length: RUNTIME_EXCHANGE_RETENTION.notificationThreads + 3 },
+      (_, index) => ({
+        id: `notification-untagged-${index}`,
+        title: `Notification ${index}`,
+        kind: "conversation" as const,
+        status: "open" as const,
+        createdAt: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+        updatedAt: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+        createdBy: "aimux",
+        participants: ["aimux", "project"],
+        lastMessageId: `notification-untagged-message-${index}-1`,
+      }),
+    );
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      threads: notificationThreads,
+      messages: notificationThreads.flatMap((thread, index) => [
+        {
+          id: `notification-untagged-message-${index}-0`,
+          threadId: thread.id,
+          ts: thread.createdAt,
+          from: "aimux",
+          kind: "note" as const,
+          body: "older",
+        },
+        {
+          id: `notification-untagged-message-${index}-1`,
+          threadId: thread.id,
+          ts: thread.updatedAt,
+          from: "aimux",
+          kind: "note" as const,
+          body: "latest",
+        },
+      ]),
+    });
+
+    expect(report.retained.threads).toHaveLength(RUNTIME_EXCHANGE_RETENTION.notificationThreads);
+    expect(report.retained.messages).toHaveLength(RUNTIME_EXCHANGE_RETENTION.notificationThreads);
     expect(report.retained.messages.every((message) => message.id.endsWith("-1"))).toBe(true);
   });
 
@@ -908,6 +954,52 @@ describe("RuntimeExchangeStore", () => {
     expect(report.bytes.removed.totalStoredTextBytes).toBeGreaterThan(0);
     expect(report.bytes.removed.compactedMessageBodies).toBe(1);
     expect(compactRuntimeExchange(report.retained).changed).toBe(false);
+  });
+
+  it("retains pending delivery messages even outside the active thread history window", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const messages = [
+      {
+        id: "msg-pending-old",
+        threadId: "thread-1",
+        ts: "2026-05-25T00:00:00.000Z",
+        from: "user",
+        to: ["codex-1"],
+        kind: "request" as const,
+        body: "deliver me",
+      },
+      ...Array.from({ length: RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 5 }, (_, index) => ({
+        id: `msg-new-${index}`,
+        threadId: "thread-1",
+        ts: `2026-05-25T00:${String(index + 1).padStart(2, "0")}:00.000Z`,
+        from: "codex-1",
+        to: ["user"],
+        deliveredTo: ["user"],
+        kind: "reply" as const,
+        body: `new ${index}`,
+      })),
+    ];
+    const report = compactRuntimeExchange({
+      ...emptyRuntimeExchange(now),
+      threads: [
+        {
+          id: "thread-1",
+          title: "Active thread",
+          kind: "conversation",
+          status: "open",
+          createdAt: now,
+          updatedAt: now,
+          createdBy: "user",
+          participants: ["user", "codex-1"],
+        },
+      ],
+      messages,
+    });
+
+    expect(report.retained.messages.some((message) => message.id === "msg-pending-old")).toBe(true);
+    expect(report.retained.messages.filter((message) => message.id.startsWith("msg-new-"))).toHaveLength(
+      RUNTIME_EXCHANGE_RETENTION.activeThreadMessages,
+    );
   });
 
   it("compacts closed task text while preserving active task text", () => {
@@ -1022,6 +1114,107 @@ describe("RuntimeExchangeStore", () => {
     expect(bytes.messageBodyBytes).toBeLessThan(bytes.messageBodyOriginalBytes);
     expect(bytes.compactedMessageBodies).toBe(1);
     expect(bytes.totalOriginalTextBytes).toBe(Buffer.byteLength(body));
+  });
+
+  it("reports message delivery bytes and largest retained threads in diagnostics", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const store = new RuntimeExchangeStore(path);
+      const now = "2026-05-25T00:00:00.000Z";
+      store.write({
+        ...emptyRuntimeExchange(now),
+        threads: [
+          {
+            id: "thread-large",
+            title: "Large thread",
+            kind: "conversation",
+            status: "open",
+            createdAt: now,
+            updatedAt: now,
+            createdBy: "user",
+            participants: ["user", "codex-1"],
+          },
+          {
+            id: "thread-small",
+            title: "Small thread",
+            kind: "conversation",
+            status: "open",
+            createdAt: now,
+            updatedAt: now,
+            createdBy: "user",
+            participants: ["user", "codex-1"],
+          },
+        ],
+        messages: [
+          {
+            id: "msg-pending",
+            threadId: "thread-large",
+            ts: now,
+            from: "user",
+            to: ["codex-1"],
+            kind: "request",
+            body: "p".repeat(32),
+          },
+          {
+            id: "msg-delivered",
+            threadId: "thread-large",
+            ts: now,
+            from: "codex-1",
+            to: ["user"],
+            deliveredTo: ["user"],
+            kind: "reply",
+            body: "d".repeat(24),
+          },
+          ...Array.from({ length: RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 5 }, (_, index) => ({
+            id: `msg-note-large-${index}`,
+            threadId: "thread-large",
+            ts: `2026-05-25T00:${String(index + 1).padStart(2, "0")}:00.000Z`,
+            from: "codex-1",
+            kind: "note" as const,
+            body: "x",
+          })),
+          {
+            id: "msg-note",
+            threadId: "thread-small",
+            ts: now,
+            from: "codex-1",
+            kind: "note",
+            body: "n".repeat(8),
+          },
+        ],
+      });
+
+      const diagnostics = inspectRuntimeExchangeStore(path);
+      const retainedLargeThreadNoteMessages = RUNTIME_EXCHANGE_RETENTION.activeThreadMessages;
+
+      expect(diagnostics.messageDelivery).toMatchObject({
+        pendingMessages: 1,
+        pendingMessageBodyBytes: 32,
+        deliveredMessages: 0,
+        deliveredMessageBodyBytes: 0,
+        noRecipientMessages: retainedLargeThreadNoteMessages + 1,
+        noRecipientMessageBodyBytes: retainedLargeThreadNoteMessages + 8,
+      });
+      expect(diagnostics.retainedMessageDelivery).toMatchObject({
+        pendingMessages: 1,
+        pendingMessageBodyBytes: 32,
+        deliveredMessages: 0,
+        deliveredMessageBodyBytes: 0,
+        noRecipientMessages: retainedLargeThreadNoteMessages + 1,
+        noRecipientMessageBodyBytes: retainedLargeThreadNoteMessages + 8,
+      });
+      expect(diagnostics.largestRetainedThreads[0]).toMatchObject({
+        id: "thread-large",
+        title: "Large thread",
+        messageCount: RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 1,
+        messageBodyBytes: 32 + retainedLargeThreadNoteMessages,
+        pendingMessageCount: 1,
+        pendingMessageBodyBytes: 32,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("preserves active tasks that reference a missing thread by clearing the dangling thread id", () => {

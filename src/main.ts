@@ -3954,6 +3954,10 @@ function printExchangeDiagnostics(diagnostics: any): void {
   const counts = exchange.counts ?? {};
   const byteCounts = exchange.byteCounts ?? {};
   const compactableByteCounts = exchange.compactableByteCounts ?? {};
+  const messageDelivery = exchange.messageDelivery ?? {};
+  const retainedCounts = exchange.retainedCounts ?? {};
+  const retainedByteCounts = exchange.retainedByteCounts ?? {};
+  const retainedMessageDelivery = exchange.retainedMessageDelivery ?? {};
   const telemetry = exchange.telemetry ?? {};
   console.log(`Project: ${diagnostics.projectRoot ?? "unknown"}`);
   console.log(`Path: ${exchange.path ?? "unknown"}`);
@@ -3971,6 +3975,31 @@ function printExchangeDiagnostics(diagnostics: any): void {
     } compactedMessages=${byteCounts.compactedMessageBodies ?? 0} compactedTasks=${byteCounts.compactedTasks ?? 0}`,
   );
   console.log(`Compactable text bytes: ${compactableByteCounts.totalStoredTextBytes ?? 0}`);
+  console.log(
+    `Retained records after compaction: total=${retainedCounts.totalRecords ?? 0} threads=${
+      retainedCounts.threads ?? 0
+    } messages=${retainedCounts.messages ?? 0} tasks=${retainedCounts.tasks ?? 0}`,
+  );
+  console.log(`Retained text bytes after compaction: ${retainedByteCounts.totalStoredTextBytes ?? 0}`);
+  console.log(
+    `Message delivery bytes: pending=${messageDelivery.pendingMessageBodyBytes ?? 0} delivered=${
+      messageDelivery.deliveredMessageBodyBytes ?? 0
+    } noRecipient=${messageDelivery.noRecipientMessageBodyBytes ?? 0}`,
+  );
+  console.log(
+    `Retained message delivery bytes: pending=${retainedMessageDelivery.pendingMessageBodyBytes ?? 0} delivered=${
+      retainedMessageDelivery.deliveredMessageBodyBytes ?? 0
+    } noRecipient=${retainedMessageDelivery.noRecipientMessageBodyBytes ?? 0}`,
+  );
+  for (const thread of Array.isArray(exchange.largestRetainedThreads)
+    ? exchange.largestRetainedThreads.slice(0, 5)
+    : []) {
+    console.log(
+      `Large retained thread: ${thread.id} ${thread.kind}/${thread.status} messages=${thread.messageCount} bytes=${
+        thread.messageBodyBytes
+      } pendingBytes=${thread.pendingMessageBodyBytes} title=${thread.title}`,
+    );
+  }
   console.log(
     `Store: reads=${telemetry.reads ?? 0} parses=${telemetry.parses ?? 0} compactions=${
       telemetry.compactions ?? 0

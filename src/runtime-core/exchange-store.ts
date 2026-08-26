@@ -767,6 +767,12 @@ export function inspectRuntimeExchangeStore(path = getRuntimeExchangePath()): {
   counts: RuntimeExchangeCounts;
   byteCounts: RuntimeExchangeByteCounts;
   compactableByteCounts: RuntimeExchangeCompactionReport["bytes"]["removed"];
+  messageDelivery: RuntimeExchangeMessageDeliveryTelemetry;
+  retainedCounts: RuntimeExchangeCounts;
+  retainedByteCounts: RuntimeExchangeByteCounts;
+  retainedMessageDelivery: RuntimeExchangeMessageDeliveryTelemetry;
+  largestThreads: RuntimeExchangeThreadTelemetry[];
+  largestRetainedThreads: RuntimeExchangeThreadTelemetry[];
   retention: RuntimeExchangeCompactionReport["retention"];
   telemetry: ReturnType<typeof getExchangeStoreTelemetry>;
   error?: string;
@@ -777,6 +783,8 @@ export function inspectRuntimeExchangeStore(path = getRuntimeExchangePath()): {
   try {
     const exchange = store.read();
     const report = compactRuntimeExchange(exchange);
+    const messageTelemetry = summarizeExchangeMessages(exchange);
+    const retainedMessageTelemetry = summarizeExchangeMessages(report.retained);
     return {
       path,
       exists,
@@ -784,17 +792,32 @@ export function inspectRuntimeExchangeStore(path = getRuntimeExchangePath()): {
       counts: countRuntimeExchangeRecords(exchange),
       byteCounts: countRuntimeExchangeBytes(exchange),
       compactableByteCounts: report.bytes.removed,
+      messageDelivery: messageTelemetry.delivery,
+      retainedCounts: report.after,
+      retainedByteCounts: report.bytes.after,
+      retainedMessageDelivery: retainedMessageTelemetry.delivery,
+      largestThreads: messageTelemetry.largestThreads,
+      largestRetainedThreads: retainedMessageTelemetry.largestThreads,
       retention: report.retention,
       telemetry: getExchangeStoreTelemetry(),
     };
   } catch (error) {
+    const emptyMessageTelemetry = summarizeExchangeMessages(emptyRuntimeExchange());
+    const emptyCounts = countRuntimeExchangeRecords(emptyRuntimeExchange());
+    const emptyByteCounts = countRuntimeExchangeBytes(emptyRuntimeExchange());
     return {
       path,
       exists,
       bytes,
-      counts: countRuntimeExchangeRecords(emptyRuntimeExchange()),
-      byteCounts: countRuntimeExchangeBytes(emptyRuntimeExchange()),
-      compactableByteCounts: countRuntimeExchangeBytes(emptyRuntimeExchange()),
+      counts: emptyCounts,
+      byteCounts: emptyByteCounts,
+      compactableByteCounts: emptyByteCounts,
+      messageDelivery: emptyMessageTelemetry.delivery,
+      retainedCounts: emptyCounts,
+      retainedByteCounts: emptyByteCounts,
+      retainedMessageDelivery: emptyMessageTelemetry.delivery,
+      largestThreads: emptyMessageTelemetry.largestThreads,
+      largestRetainedThreads: emptyMessageTelemetry.largestThreads,
       retention: RUNTIME_EXCHANGE_RETENTION,
       telemetry: getExchangeStoreTelemetry(),
       error: error instanceof Error ? error.message : String(error),
@@ -812,6 +835,100 @@ export interface RuntimeExchangeCompactWriteResult {
   removed: RuntimeExchangeCounts;
   byteCounts: RuntimeExchangeCompactionReport["bytes"];
   retention: RuntimeExchangeCompactionReport["retention"];
+}
+
+interface RuntimeExchangeMessageDeliveryTelemetry {
+  pendingMessages: number;
+  pendingMessageBodyBytes: number;
+  deliveredMessages: number;
+  deliveredMessageBodyBytes: number;
+  noRecipientMessages: number;
+  noRecipientMessageBodyBytes: number;
+}
+
+interface RuntimeExchangeThreadTelemetry {
+  id: string;
+  title: string;
+  kind: RuntimeExchangeThreadKind;
+  status: RuntimeExchangeThreadStatus;
+  updatedAt: string;
+  messageCount: number;
+  messageBodyBytes: number;
+  pendingMessageCount: number;
+  pendingMessageBodyBytes: number;
+}
+
+function exchangeTextBytes(value: string | undefined): number {
+  return Buffer.byteLength(value ?? "", "utf8");
+}
+
+function messageHasPendingDelivery(message: RuntimeExchangeMessage): boolean {
+  const recipients = message.to ?? [];
+  if (recipients.length === 0) return false;
+  const deliveredTo = new Set(message.deliveredTo ?? []);
+  return recipients.some((recipient) => !deliveredTo.has(recipient));
+}
+
+function summarizeExchangeMessages(exchange: RuntimeExchange): {
+  delivery: RuntimeExchangeMessageDeliveryTelemetry;
+  largestThreads: RuntimeExchangeThreadTelemetry[];
+} {
+  const delivery: RuntimeExchangeMessageDeliveryTelemetry = {
+    pendingMessages: 0,
+    pendingMessageBodyBytes: 0,
+    deliveredMessages: 0,
+    deliveredMessageBodyBytes: 0,
+    noRecipientMessages: 0,
+    noRecipientMessageBodyBytes: 0,
+  };
+  const threadTelemetry = new Map<
+    string,
+    Omit<RuntimeExchangeThreadTelemetry, "title" | "kind" | "status" | "updatedAt">
+  >();
+  for (const message of exchange.messages) {
+    const bodyBytes = exchangeTextBytes(message.body);
+    const recipients = message.to ?? [];
+    const pending = messageHasPendingDelivery(message);
+    if (pending) {
+      delivery.pendingMessages += 1;
+      delivery.pendingMessageBodyBytes += bodyBytes;
+    } else if (recipients.length > 0) {
+      delivery.deliveredMessages += 1;
+      delivery.deliveredMessageBodyBytes += bodyBytes;
+    } else {
+      delivery.noRecipientMessages += 1;
+      delivery.noRecipientMessageBodyBytes += bodyBytes;
+    }
+    const current = threadTelemetry.get(message.threadId) ?? {
+      id: message.threadId,
+      messageCount: 0,
+      messageBodyBytes: 0,
+      pendingMessageCount: 0,
+      pendingMessageBodyBytes: 0,
+    };
+    current.messageCount += 1;
+    current.messageBodyBytes += bodyBytes;
+    if (pending) {
+      current.pendingMessageCount += 1;
+      current.pendingMessageBodyBytes += bodyBytes;
+    }
+    threadTelemetry.set(message.threadId, current);
+  }
+  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread]));
+  const largestThreads = [...threadTelemetry.values()]
+    .map((entry) => {
+      const thread = threadById.get(entry.id);
+      return {
+        ...entry,
+        title: thread?.title ?? "",
+        kind: thread?.kind ?? "conversation",
+        status: thread?.status ?? "open",
+        updatedAt: thread?.updatedAt ?? "",
+      };
+    })
+    .sort((left, right) => right.messageBodyBytes - left.messageBodyBytes)
+    .slice(0, 8);
+  return { delivery, largestThreads };
 }
 
 export class RuntimeExchangeStore {
