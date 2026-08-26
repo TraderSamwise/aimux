@@ -66,6 +66,19 @@ describe("agent prompt delivery", () => {
         ["Dropped. Moving on.", "", "✶ Embellishing... (26s)", "", "❯ take the next branch"].join("\n"),
       ),
     ).toMatchObject({ marker: "claude", text: "take the next branch" });
+
+    expect(
+      detectVisiblePromptInputDraft(
+        [
+          "⏺ Ready",
+          "",
+          "❯",
+          "  [Image #71] unrelated. rename Booking",
+          "  to Artists on the sidebar",
+          "  claude · ~/cs/thegrand",
+        ].join("\n"),
+      ),
+    ).toMatchObject({ marker: "claude", text: "[Image #71] unrelated. rename Booking to Artists on the sidebar" });
   });
 
   it("ignores empty prompt input and older transcript prompt-looking lines", () => {
@@ -79,6 +92,12 @@ describe("agent prompt delivery", () => {
           "›",
           "  gpt-5.5 high · ~/cs/repo",
         ].join("\n"),
+      ),
+    ).toBeNull();
+
+    expect(
+      detectVisiblePromptInputDraft(
+        ["> quoted markdown", "  not a live prompt", "", "  claude · ~/cs/thegrand"].join("\n"),
       ),
     ).toBeNull();
   });
@@ -140,6 +159,68 @@ describe("agent prompt delivery", () => {
     expect(events).toEqual(["start", "change", "change", "force"]);
   });
 
+  it("waits through an initially empty prompt before writing if a Claude draft appears", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const captures = [
+      "❯\n  claude · ~/cs/thegrand",
+      "❯\n  claude · ~/cs/thegrand",
+      "❯ [Image #71] unrelat\n  claude · ~/cs/thegrand",
+      "❯ [Image #71] unrelat\n  claude · ~/cs/thegrand",
+      "❯ [Image #71] unrelat\n  claude · ~/cs/thegrand",
+    ];
+    const tmuxRuntimeManager = {
+      captureTarget: vi.fn(() => captures.shift() ?? "❯ [Image #71] unrelat\n  claude · ~/cs/thegrand"),
+      sendCarriageReturn: vi.fn(),
+      sendText: vi.fn(),
+    };
+
+    const idle = waitForVisiblePromptInputIdle({
+      tmuxRuntimeManager,
+      target,
+      isTargetCurrent: () => true,
+      noDraftStablePolls: 2,
+      stablePolls: 2,
+      pollMs: 1_000,
+      maxWaitMs: 10_000,
+      onEvent: (event) => events.push(event.kind),
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(idle).resolves.toMatchObject({ ok: true, reason: "idle", waitedMs: 3_000 });
+    expect(events).toContain("start");
+    expect(events.at(-1)).toBe("idle");
+  });
+
+  it("reports no draft after the empty prompt stays quiet", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const tmuxRuntimeManager = {
+      captureTarget: vi.fn(() => "❯\n  claude · ~/cs/thegrand"),
+      sendCarriageReturn: vi.fn(),
+      sendText: vi.fn(),
+    };
+
+    const idle = waitForVisiblePromptInputIdle({
+      tmuxRuntimeManager,
+      target,
+      isTargetCurrent: () => true,
+      noDraftStablePolls: 2,
+      pollMs: 1_000,
+      onEvent: (event) => events.push(event.kind),
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(idle).resolves.toMatchObject({ ok: true, reason: "no-draft", waitedMs: 2_000 });
+    expect(events).toEqual(["no-draft"]);
+  });
+
   it("submits after the draft has appeared and stabilized", () => {
     vi.useFakeTimers();
     const captures = [
@@ -167,6 +248,7 @@ describe("agent prompt delivery", () => {
     vi.advanceTimersByTime(200);
 
     expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
+    expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledTimes(1);
   });
 
   it("sends text and uses the shared submit path for submitted tmux prompts", async () => {
@@ -200,5 +282,28 @@ describe("agent prompt delivery", () => {
     await expect(delivered).resolves.toBe(true);
     expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "Review task details and respond through aimux.");
     expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
+    expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports failed submit confirmation when the injected draft stays visible after enter", async () => {
+    vi.useFakeTimers();
+    const tmuxRuntimeManager = {
+      captureTarget: vi.fn(() => "› [Pasted Content 3434 chars]"),
+      sendCarriageReturn: vi.fn(),
+      sendText: vi.fn(),
+    };
+
+    const delivered = deliverTmuxPrompt({
+      tmuxRuntimeManager,
+      target,
+      prompt: "Review task details and respond through aimux.",
+      submit: true,
+      isTargetCurrent: () => true,
+    });
+
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(delivered).resolves.toBe(false);
+    expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledTimes(1);
   });
 });

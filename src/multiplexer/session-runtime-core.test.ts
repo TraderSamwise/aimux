@@ -245,6 +245,8 @@ describe("session runtime prompt submission", () => {
       "› human draft\n  gpt-5.5 high",
       "› human draft\n  gpt-5.5 high",
       "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
+      "› human draft\n  gpt-5.5 high",
       "› aimux delivery",
       "› aimux delivery",
       "",
@@ -285,7 +287,10 @@ describe("session runtime prompt submission", () => {
       await vi.advanceTimersByTimeAsync(4_000);
       expect(tmuxRuntimeManager.sendText).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(tmuxRuntimeManager.sendText).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
       await expect(sent).resolves.toEqual({ sessionId: "codex-1", accepted: true });
       expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "aimux delivery");
     } finally {

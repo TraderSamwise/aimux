@@ -74,8 +74,9 @@ function readRecordingTail(path: string): string {
 type SessionRuntimeHost = any;
 const RESTORE_EXIT_BLOCK_MS = 30_000;
 const ACTIVE_PROMPT_INPUT_POLL_MS = 1_000;
-const ACTIVE_PROMPT_INPUT_STABLE_MS = 8_000;
-const ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS = 10_000;
+const ACTIVE_PROMPT_INPUT_STABLE_MS = 10_000;
+const ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS = 30_000;
+const ACTIVE_PROMPT_INPUT_EMPTY_QUIET_POLLS = 2;
 
 function projectRootFor(host: SessionRuntimeHost): string {
   const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
@@ -106,7 +107,24 @@ function logActivePromptInputBuffer(host: SessionRuntimeHost, sessionId: string,
     polls: event.polls,
     changes: event.changes,
     maxWaitMs: ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS,
+    stableMs: ACTIVE_PROMPT_INPUT_STABLE_MS,
+    emptyQuietMs: ACTIVE_PROMPT_INPUT_EMPTY_QUIET_POLLS * ACTIVE_PROMPT_INPUT_POLL_MS,
     ...activePromptDraftFields(event.draft),
+  });
+}
+
+function logAgentInputSubmitConfirmation(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  submitted: boolean,
+  waitForSubmit: boolean,
+): void {
+  const level = submitted ? logAlways.info : logAlways.warn;
+  level("agent input submit confirmation", "session", {
+    sessionId,
+    worktreePath: host.sessionWorktreePaths?.get?.(sessionId),
+    submitted,
+    waitForSubmit,
   });
 }
 
@@ -338,6 +356,7 @@ export async function sendAgentInput(
         isTargetCurrent: () => resolveLiveSessionTmuxTarget(host, sessionId, target)?.windowId === target.windowId,
         pollMs: ACTIVE_PROMPT_INPUT_POLL_MS,
         stablePolls: Math.ceil(ACTIVE_PROMPT_INPUT_STABLE_MS / ACTIVE_PROMPT_INPUT_POLL_MS),
+        noDraftStablePolls: ACTIVE_PROMPT_INPUT_EMPTY_QUIET_POLLS,
         maxWaitMs: ACTIVE_PROMPT_INPUT_MAX_BUFFER_MS,
         onEvent: (event) => logActivePromptInputBuffer(host, sessionId, event),
       });
@@ -352,8 +371,13 @@ export async function sendAgentInput(
     });
     // waitForTmuxPromptSubmit always resolves (never rejects), so backgrounding
     // it cannot produce an unhandled rejection.
-    if (waitForSubmit) await confirmSubmit;
-    else void confirmSubmit;
+    if (waitForSubmit) {
+      logAgentInputSubmitConfirmation(host, sessionId, await confirmSubmit, waitForSubmit);
+    } else {
+      void confirmSubmit.then((submitted) =>
+        logAgentInputSubmitConfirmation(host, sessionId, submitted, waitForSubmit),
+      );
+    }
   } else {
     session.write(text);
     session.write("\r");

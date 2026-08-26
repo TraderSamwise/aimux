@@ -21,7 +21,7 @@ export type PromptInputBufferEvent =
       draft: VisiblePromptInputDraft;
     }
   | {
-      kind: "idle" | "force" | "cleared" | "target-changed";
+      kind: "idle" | "force" | "cleared" | "target-changed" | "no-draft";
       waitedMs: number;
       polls: number;
       changes: number;
@@ -35,6 +35,19 @@ export interface PromptInputIdleResult {
   polls: number;
   changes: number;
   draft?: VisiblePromptInputDraft;
+}
+
+const CONTINUATION_STOP_PATTERNS = [
+  /^\s*(?:claude|gpt-|opus|sonnet)\b.*[·•]\s+~/i,
+  /^\s*[⏵▶].*bypass permissions/i,
+  /^\s*sam@.*\s+~/i,
+  /^\s*[─━]{6,}\s*$/,
+  /^\s*[✻✳✽]\s+/,
+  /^\s*[⏺•⎿]\s+/,
+];
+
+function stripAnsi(value: string): string {
+  return value.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
 }
 
 export function normalizeSubmittedPrompt(tool: string | undefined, data: string, submit: boolean): string {
@@ -80,20 +93,44 @@ export function detectVisiblePromptInputDraft(pane: string): VisiblePromptInputD
   const nonEmptyTail = pane
     .replace(/\r/g, "")
     .split("\n")
-    .map((line) => line.trimEnd())
+    .map((line) => stripAnsi(line).trimEnd())
     .filter((line) => line.trim().length > 0)
-    .slice(-8);
-  for (let index = nonEmptyTail.length - 1; index >= Math.max(0, nonEmptyTail.length - 3); index -= 1) {
+    .slice(-18);
+  for (let index = nonEmptyTail.length - 1; index >= 0; index -= 1) {
     const line = nonEmptyTail[index] ?? "";
-    const match = /^\s*([›❯])\s*(.*\S)\s*$/.exec(line);
+    const match = /^\s*([›❯])\s*(.*\S)?\s*$/.exec(line);
     if (!match) continue;
+    const continuation = [];
+    for (let nextIndex = index + 1; nextIndex < nonEmptyTail.length; nextIndex += 1) {
+      const nextLine = nonEmptyTail[nextIndex] ?? "";
+      if (/^\s*[›❯]\s*/.test(nextLine)) break;
+      if (CONTINUATION_STOP_PATTERNS.some((pattern) => pattern.test(nextLine))) break;
+      continuation.push(nextLine.trim());
+    }
+    const text = [match[2]?.trim(), ...continuation].filter(Boolean).join(" ").trim();
+    if (!text) return null;
     return {
       marker: match[1] === "❯" ? "claude" : "codex",
-      text: match[2].trim(),
+      text,
       line,
     };
   }
   return null;
+}
+
+function capturePromptInputTailSignature(tmuxRuntimeManager: PromptTmuxRuntime, target: TmuxTarget): string {
+  try {
+    const pane = tmuxRuntimeManager.captureTarget(target, { startLine: -12 });
+    return pane
+      .replace(/\r/g, "")
+      .split("\n")
+      .map((line) => stripAnsi(line).trimEnd())
+      .filter((line) => line.trim().length > 0)
+      .slice(-6)
+      .join("\n");
+  } catch {
+    return "";
+  }
 }
 
 export function captureVisiblePromptInputDraft(
@@ -112,17 +149,86 @@ export function waitForVisiblePromptInputIdle(opts: {
   target: TmuxTarget;
   isTargetCurrent: () => boolean;
   stablePolls?: number;
+  noDraftStablePolls?: number;
   pollMs?: number;
   maxWaitMs?: number;
   onEvent?: (event: PromptInputBufferEvent) => void;
 }): Promise<PromptInputIdleResult> {
   const { tmuxRuntimeManager, target, isTargetCurrent } = opts;
   const requiredStablePolls = Math.max(1, opts.stablePolls ?? 3);
+  const requiredNoDraftStablePolls = Math.max(0, opts.noDraftStablePolls ?? 0);
   const pollMs = Math.max(1, opts.pollMs ?? 1_000);
   const maxWaitMs = Math.max(pollMs, opts.maxWaitMs ?? 10_000);
   const initial = captureVisiblePromptInputDraft(tmuxRuntimeManager, target);
   if (!initial) {
-    return Promise.resolve({ ok: true, reason: "no-draft", waitedMs: 0, polls: 0, changes: 0 });
+    if (requiredNoDraftStablePolls <= 0) {
+      const result = { ok: true, reason: "no-draft" as const, waitedMs: 0, polls: 0, changes: 0 };
+      opts.onEvent?.({ kind: "no-draft", waitedMs: 0, polls: 0, changes: 0 });
+      return Promise.resolve(result);
+    }
+
+    return new Promise((resolve) => {
+      let polls = 0;
+      let changes = 0;
+      let stableNoDraftCount = 0;
+      let lastNoDraftSignature = capturePromptInputTailSignature(tmuxRuntimeManager, target);
+      const pollNoDraft = () => {
+        setTimeout(() => {
+          polls += 1;
+          const waitedMs = polls * pollMs;
+          try {
+            if (!isTargetCurrent()) {
+              const result = { ok: false, reason: "target-changed" as const, waitedMs, polls, changes };
+              opts.onEvent?.({ kind: "target-changed", waitedMs, polls, changes });
+              resolve(result);
+              return;
+            }
+            const draft = captureVisiblePromptInputDraft(tmuxRuntimeManager, target);
+            if (draft) {
+              waitForVisiblePromptInputIdle({
+                tmuxRuntimeManager,
+                target,
+                isTargetCurrent,
+                stablePolls: requiredStablePolls,
+                noDraftStablePolls: 0,
+                pollMs,
+                maxWaitMs: Math.max(pollMs, maxWaitMs - waitedMs),
+                onEvent: (event) => {
+                  opts.onEvent?.({ ...event, waitedMs: event.waitedMs + waitedMs, polls: event.polls + polls });
+                },
+              }).then((result) =>
+                resolve({ ...result, waitedMs: result.waitedMs + waitedMs, polls: result.polls + polls }),
+              );
+              return;
+            }
+            const signature = capturePromptInputTailSignature(tmuxRuntimeManager, target);
+            if (signature === lastNoDraftSignature) {
+              stableNoDraftCount += 1;
+            } else {
+              lastNoDraftSignature = signature;
+              stableNoDraftCount = 0;
+              changes += 1;
+            }
+            if (stableNoDraftCount >= requiredNoDraftStablePolls || waitedMs >= maxWaitMs) {
+              const result = { ok: true, reason: "no-draft" as const, waitedMs, polls, changes };
+              opts.onEvent?.({ kind: "no-draft", waitedMs, polls, changes });
+              resolve(result);
+              return;
+            }
+            pollNoDraft();
+          } catch {
+            if (waitedMs >= maxWaitMs) {
+              const result = { ok: true, reason: "no-draft" as const, waitedMs, polls, changes };
+              opts.onEvent?.({ kind: "no-draft", waitedMs, polls, changes });
+              resolve(result);
+              return;
+            }
+            pollNoDraft();
+          }
+        }, pollMs);
+      };
+      pollNoDraft();
+    });
   }
   opts.onEvent?.({ kind: "start", waitedMs: 0, polls: 0, changes: 0, draft: initial });
 
@@ -193,45 +299,30 @@ export function waitForTmuxPromptSubmit(opts: {
 }): Promise<boolean> {
   const { tmuxRuntimeManager, target, draft, isTargetCurrent } = opts;
   return new Promise((resolve) => {
-    const submitStep = (attempt = 1) => {
-      if (attempt > 4) {
-        resolve(false);
-        return;
-      }
-      setTimeout(
-        () => {
-          try {
-            if (!isTargetCurrent()) {
-              resolve(false);
-              return;
-            }
-            tmuxRuntimeManager.sendCarriageReturn(target);
-            if (attempt >= 4) {
-              resolve(true);
-              return;
-            }
-            setTimeout(() => {
-              try {
-                if (paneStillContainsPromptDraft(tmuxRuntimeManager, target, draft)) {
-                  submitStep(attempt + 1);
-                  return;
-                }
-              } catch {
-                // Treat capture failures after a submit attempt as non-fatal.
-              }
-              resolve(true);
-            }, 700);
-          } catch {
+    const submitStep = () => {
+      setTimeout(() => {
+        try {
+          if (!isTargetCurrent()) {
             resolve(false);
+            return;
           }
-        },
-        attempt === 1 ? 200 : 700,
-      );
+          tmuxRuntimeManager.sendCarriageReturn(target);
+          setTimeout(() => {
+            try {
+              resolve(!paneStillContainsPromptDraft(tmuxRuntimeManager, target, draft));
+            } catch {
+              resolve(true);
+            }
+          }, 700);
+        } catch {
+          resolve(false);
+        }
+      }, 200);
     };
 
     const waitForDraft = (attempt = 1, visibleCount = 0, lastSignature = "") => {
       if (attempt > 20) {
-        submitStep(1);
+        submitStep();
         return;
       }
       setTimeout(
@@ -246,7 +337,7 @@ export function waitForTmuxPromptSubmit(opts: {
             const nextVisibleCount =
               stillDraft && signature && signature === lastSignature ? visibleCount + 1 : stillDraft ? 1 : 0;
             if (nextVisibleCount >= 2) {
-              submitStep(1);
+              submitStep();
               return;
             }
             waitForDraft(attempt + 1, nextVisibleCount, signature);
