@@ -1,11 +1,15 @@
 import { basename, resolve as pathResolve } from "node:path";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
+import { parseRecencyTimestamp } from "../recency.js";
 import type { ExposeScopeItem, ExposeScopeView, ExposeSublabel } from "./expose-model.js";
 import { listWorktrees, type WorktreeInfo } from "../worktree.js";
 import { worktreeColorCode } from "../worktree-colors.js";
 
+export type ExposeSortMode = "default" | "recent-output";
+
 export interface ExposeOrderingOptions {
   worktreeOrderByProjectRoot?: Record<string, string[]>;
+  sortMode?: ExposeSortMode;
 }
 
 export interface ExposeTileContext {
@@ -31,6 +35,7 @@ export function orderExposeItems(
   projectRoot = "/",
   options: ExposeOrderingOptions = {},
 ): ExposeScopeItem[] {
+  if (options.sortMode === "recent-output") return orderExposeItemsByRecentOutput(view.items);
   if (view.sublabel === "none") return view.items;
   if (view.sublabel === "worktree") {
     const groups = groupItemsByWorktree(view.items, projectRoot, options);
@@ -47,6 +52,26 @@ export function orderExposeItems(
     const worktreeGroups = groupItemsByWorktree(project.items, root, options);
     return worktreeGroups.length < 2 ? project.items : worktreeGroups.flatMap((group) => group.items);
   });
+}
+
+function recencySortKey(item: ExposeScopeItem): { timestamp: number; recentRank: number } {
+  return {
+    timestamp: parseRecencyTimestamp(item.metadata.recencyAt) ?? Number.NEGATIVE_INFINITY,
+    recentRank: Number.isFinite(item.recentRank) ? item.recentRank : Number.MAX_SAFE_INTEGER,
+  };
+}
+
+export function orderExposeItemsByRecentOutput(items: ExposeScopeItem[]): ExposeScopeItem[] {
+  return items
+    .map((item, index) => ({ item, index, key: recencySortKey(item) }))
+    .sort((a, b) => {
+      const timestampDiff = b.key.timestamp - a.key.timestamp;
+      if (timestampDiff !== 0) return timestampDiff;
+      const rankDiff = a.key.recentRank - b.key.recentRank;
+      if (rankDiff !== 0) return rankDiff;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.item);
 }
 
 /** Ordered project groups, preserving first-seen project order and item order within one. */

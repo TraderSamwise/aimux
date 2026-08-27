@@ -8,13 +8,23 @@ import {
 } from "./expose-ordering.js";
 import type { ExposeScopeItem, ExposeScopeView } from "./expose-model.js";
 
-function item(id: string, options: { projectName?: string; projectRoot?: string; worktreePath?: string } = {}) {
+function item(
+  id: string,
+  options: {
+    projectName?: string;
+    projectRoot?: string;
+    recentRank?: number;
+    recencyAt?: string;
+    worktreePath?: string;
+  } = {},
+) {
   return {
     label: id,
     target: { windowId: id, windowName: id },
-    metadata: { worktreePath: options.worktreePath },
+    metadata: { recencyAt: options.recencyAt, worktreePath: options.worktreePath },
     projectName: options.projectName,
     projectRoot: options.projectRoot,
+    recentRank: options.recentRank ?? Number.MAX_SAFE_INTEGER,
   } as unknown as ExposeScopeItem;
 }
 
@@ -187,5 +197,27 @@ describe("orderExposeItems", () => {
     expect(orderExposeItems(view(singleWorktree, "worktree"), "/repo")).toBe(singleWorktree);
     const local = [item("custom-1", { worktreePath: "/repo/wt/custom" }), item("main-1", { worktreePath: "/repo" })];
     expect(orderExposeItems(view(local, "none"), "/repo")).toBe(local);
+  });
+
+  it("can sort all scopes by most recent output", () => {
+    const ordered = orderExposeItems(
+      view(
+        [
+          item("older", { recencyAt: "2026-08-27T10:00:00.000Z", recentRank: 2, worktreePath: "/repo" }),
+          item("missing-timestamp-newer-rank", { recentRank: 0, worktreePath: "/repo" }),
+          item("newer", { recencyAt: "2026-08-27T10:05:00.000Z", recentRank: 1, worktreePath: "/repo/wt/a" }),
+          item("missing-timestamp-older-rank", { recentRank: 3, worktreePath: "/repo/wt/b" }),
+        ],
+        "project-worktree",
+      ),
+      "/repo",
+      { sortMode: "recent-output" },
+    );
+    expect(ordered.map((i) => i.target.windowId)).toEqual([
+      "newer",
+      "older",
+      "missing-timestamp-newer-rank",
+      "missing-timestamp-older-rank",
+    ]);
   });
 });

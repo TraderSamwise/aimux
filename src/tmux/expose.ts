@@ -29,9 +29,11 @@ import {
   assignWorktreeTones,
   exposeTileContextForItem,
   orderExposeItems,
+  type ExposeSortMode,
   type ExposeTileContext,
 } from "./expose-ordering.js";
 import { readHotExposeScopeView, writeHotExposeScopeView, type HotExposeScopeKey } from "./expose-hot-snapshot.js";
+import { readExposeUiState, writeExposeUiState } from "./expose-ui-state.js";
 import { sanitizeExposePreviewOutput } from "./expose-preview-sanitize.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
 
@@ -419,7 +421,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   });
   const initialHotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
   let view = initialHotView ?? defaultExposeScopeView(scope);
-  let items = orderExposeItems(view, options.projectRoot);
+  let sortMode: ExposeSortMode = readExposeUiState(options.projectStateDir).sortMode;
+  const orderCurrentView = (nextView = view): ExposeScopeItem[] =>
+    orderExposeItems(nextView, options.projectRoot, { sortMode });
+  let items = orderCurrentView();
   let scopeLabel = view.scopeLabel;
   let sublabel: ExposeSublabel = view.sublabel;
   let loading = !initialHotView;
@@ -612,9 +617,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const hidden = items.length - visibleCount;
     const more = hidden > 0 ? `   +${hidden} more (use ^A s)` : "";
     const zoom = scope === "global" ? "" : " · g zoom out";
-    const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`, cols - 2);
+    const sortLabel = sortMode === "recent-output" ? "recent output" : "default order";
+    const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length}) · ${sortLabel}${RESET}`, cols - 2);
     const help = truncateAnsi(
-      `\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open · O overseer · ^A d dashboard${zoom} · q/Esc close${more}${RESET}`,
+      `\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open · r sort · O overseer · ^A d dashboard${zoom} · q/Esc close${more}${RESET}`,
       cols - 2,
     );
 
@@ -690,7 +696,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const selectedWindowId =
       selectionVersionAtStart === selectionVersion ? selectedWindowIdAtStart : items[index]?.target.windowId;
     view = nextView;
-    items = orderExposeItems(view, options.projectRoot);
+    items = orderCurrentView();
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
     loading = false;
@@ -753,7 +759,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       scope = next;
       const hotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
       view = hotView ?? defaultExposeScopeView(scope);
-      items = orderExposeItems(view, options.projectRoot);
+      items = orderCurrentView();
       scopeLabel = view.scopeLabel;
       sublabel = view.sublabel;
       loading = !hotView;
@@ -773,7 +779,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           if (finished) return;
           scope = previousScope;
           view = previousView;
-          items = orderExposeItems(view, options.projectRoot);
+          items = orderCurrentView();
           scopeLabel = view.scopeLabel;
           sublabel = view.sublabel;
           viewStale = previousViewStale;
@@ -869,6 +875,23 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         });
     };
 
+    const toggleSortMode = (): boolean => {
+      const selectedWindowId = items[index]?.target.windowId;
+      sortMode = sortMode === "recent-output" ? "default" : "recent-output";
+      try {
+        writeExposeUiState(options.projectStateDir, { sortMode });
+      } catch {
+        log.debug("expose ui state write failed", "tmux", { sortMode });
+      }
+      items = orderCurrentView();
+      const selectedIdx = selectedWindowId ? items.findIndex((item) => item.target.windowId === selectedWindowId) : -1;
+      index = selectedIdx >= 0 ? selectedIdx : Math.min(index, Math.max(0, items.length - 1));
+      selectionVersion += 1;
+      staticSize = "";
+      render(true);
+      return false;
+    };
+
     let leaderPending = false;
     function handleKey(key: string, ctrl = false, deferRender = false): boolean {
       if (key === "q" || key === "escape" || (ctrl && key === "c")) {
@@ -885,6 +908,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (ctrl && key === "a") {
         leaderPending = true;
         return false;
+      }
+      if (!ctrl && key === "r") {
+        return toggleSortMode();
       }
       if (loading) {
         pendingKeys.push({ key, ctrl });

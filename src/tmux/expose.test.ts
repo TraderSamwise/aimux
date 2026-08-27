@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OPEN_DASHBOARD_FROM_EXPOSE_EXIT, runTmuxExpose } from "./expose.js";
 import type { TmuxExposeTimingEvent } from "./expose.js";
 import { writeHotExposeScopeView } from "./expose-hot-snapshot.js";
+import { readExposeUiState } from "./expose-ui-state.js";
 
 const runtimeManagerMock = vi.hoisted(() => ({
   captureTarget: vi.fn(() => "agent output\n"),
@@ -149,6 +150,85 @@ describe("runTmuxExpose", () => {
     await expect(withTimeout(result, 1000)).resolves.toBe(OPEN_DASHBOARD_FROM_EXPOSE_EXIT);
     input.destroy();
     output.destroy();
+  });
+
+  it("toggles and persists popup sort mode with r", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-sort-key-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "older",
+              label: "older",
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "older" },
+              metadata: {
+                sessionId: "older",
+                command: "codex",
+                worktreePath: "/repo",
+                recencyAt: "2026-08-27T10:00:00.000Z",
+              },
+              recentRank: 1,
+            },
+            {
+              id: "newer",
+              label: "newer",
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "newer" },
+              metadata: {
+                sessionId: "newer",
+                command: "codex",
+                worktreePath: "/repo",
+                recencyAt: "2026-08-27T10:05:00.000Z",
+              },
+              recentRank: 0,
+            },
+          ],
+        });
+        return;
+      }
+      sendJson(res, { ok: true });
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 120;
+    output.rows = 30;
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "dashboard",
+        currentWindowId: "@0",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 120,
+        rows: 30,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "older");
+      expect(readExposeUiState(projectStateDir)).toEqual({ sortMode: "default" });
+
+      input.write("r");
+      await waitForOutput(output, "recent output");
+      expect(readExposeUiState(projectStateDir)).toEqual({ sortMode: "recent-output" });
+
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+    } finally {
+      input.destroy();
+      output.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("opens the overseer from uppercase O inside the popup", async () => {
