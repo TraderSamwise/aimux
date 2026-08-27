@@ -100,10 +100,6 @@ import {
   PROJECT_API_ROUTES,
   PROJECT_API_VIEW_INVALIDATIONS,
   type OrchestrationRouteOption,
-  type ProjectLifecycleTransition,
-  type ProjectLifecycleTransitionOperation,
-  type ProjectLifecycleTransitionPhase,
-  type ProjectLifecycleTransitionTargetKind,
   type ProjectApiView,
   type ExposePreviewSnapshot,
   projectApiMutationReasonForRoute,
@@ -215,89 +211,16 @@ import {
 import { readExposeSocketHeader, parsePositiveHeaderInteger } from "./metadata-server/expose-socket.js";
 import { summarizeInteractionForDisplay } from "./metadata-server/interaction-display.js";
 import { listLibraryDocuments } from "./metadata-server/library-documents.js";
-
-function buildLifecycleTransition(input: {
-  operation: ProjectLifecycleTransitionOperation;
-  targetKind: ProjectLifecycleTransitionTargetKind;
-  targetId?: string;
-  targetPath?: string;
-  phase?: ProjectLifecycleTransitionPhase;
-  error?: string;
-}): ProjectLifecycleTransition {
-  const now = new Date().toISOString();
-  const targetKey = input.targetId ?? input.targetPath ?? "unknown";
-  return {
-    operationId: `${input.operation}:${targetKey}:${randomUUID()}`,
-    operation: input.operation,
-    targetKind: input.targetKind,
-    phase: input.phase ?? "succeeded",
-    startedAt: now,
-    updatedAt: now,
-    ...(input.targetId ? { targetId: input.targetId } : {}),
-    ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-    ...(input.error ? { error: input.error } : {}),
-  };
-}
-
-function lifecycleOk<T extends object>(
-  result: T,
-  input: Parameters<typeof buildLifecycleTransition>[0],
-): { ok: true; transition: ProjectLifecycleTransition } & T {
-  return { ...result, ok: true, transition: buildLifecycleTransition(input) };
-}
-
-type LifecycleTransitionInput = Parameters<typeof buildLifecycleTransition>[0];
-type EarlyLifecycleResult<T> =
-  | { kind: "resolved"; result: T }
-  | { kind: "rejected"; error: unknown }
-  | { kind: "pending" };
-type LifecycleMutationTelemetry = {
-  enqueued: number;
-  started: number;
-  succeeded: number;
-  failed: number;
-  released: number;
-  rejectedConflicts: number;
-  rejectedQueueFull: number;
-  maxQueuedCount: number;
-  maxQueuedMs: number;
-  maxDurationMs: number;
-  lastStartedAt: string | null;
-  lastSettledAt: string | null;
-  lastError: string | null;
-};
-
-class LifecycleMutationConflictError extends Error {
-  readonly status = 409;
-
-  constructor(
-    readonly requested: LifecycleTransitionInput,
-    readonly active: LifecycleTransitionInput,
-  ) {
-    const target = requested.targetId ?? requested.targetPath ?? "unknown";
-    super(`lifecycle mutation already in progress for ${requested.targetKind} ${target}`);
-  }
-}
-
-class LifecycleMutationQueueFullError extends Error {
-  readonly status = 429;
-
-  constructor(
-    readonly requested: LifecycleTransitionInput,
-    readonly queuedCount: number,
-    readonly limit: number,
-  ) {
-    super(`lifecycle mutation queue is full (${queuedCount}/${limit}); wait for current operations to settle`);
-  }
-}
-
-function lifecycleTargetKey(input: LifecycleTransitionInput): string | undefined {
-  const target =
-    input.targetKind === "worktree"
-      ? input.targetPath?.trim() || input.targetId?.trim()
-      : input.targetId?.trim() || input.targetPath?.trim();
-  return target ? `${input.targetKind}:${target}` : `${input.targetKind}:${input.operation}:__project__`;
-}
+import {
+  buildLifecycleTransition,
+  lifecycleOk,
+  LifecycleMutationConflictError,
+  LifecycleMutationQueue,
+  LifecycleMutationQueueFullError,
+  notifyLifecycleSettled,
+  waitForEarlyLifecycleResult,
+  type LifecycleTransitionInput,
+} from "./metadata-server/lifecycle-mutation-queue.js";
 
 function safeWorktreeCreatePath(name: string, projectRoot: string): string {
   try {
@@ -305,18 +228,6 @@ function safeWorktreeCreatePath(name: string, projectRoot: string): string {
   } catch {
     return join(projectRoot, ".aimux", "worktrees", name);
   }
-}
-
-async function waitForEarlyLifecycleResult<T>(promise: Promise<T>, timeoutMs = 50): Promise<EarlyLifecycleResult<T>> {
-  return Promise.race([
-    promise.then(
-      (result) => ({ kind: "resolved" as const, result }),
-      (error) => ({ kind: "rejected" as const, error }),
-    ),
-    new Promise<{ kind: "pending" }>((resolve) => {
-      setTimeout(() => resolve({ kind: "pending" }), timeoutMs);
-    }),
-  ]);
 }
 
 function buildTopologyWorktreesFromDesktopState(state: {
@@ -1591,27 +1502,14 @@ export class MetadataServer {
   private worktreeCacheCleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private worktreeCacheCleanupRunning = false;
   private readonly promptContexts = new PromptContextStore();
-  private lifecycleMutationQueue: Promise<void> = Promise.resolve();
-  private readonly lifecycleMutationTargets = new Map<string, LifecycleTransitionInput>();
-  private lifecycleMutationQueuedCount = 0;
-  private readonly lifecycleMutationTelemetry: LifecycleMutationTelemetry = {
-    enqueued: 0,
-    started: 0,
-    succeeded: 0,
-    failed: 0,
-    released: 0,
-    rejectedConflicts: 0,
-    rejectedQueueFull: 0,
-    maxQueuedCount: 0,
-    maxQueuedMs: 0,
-    maxDurationMs: 0,
-    lastStartedAt: null,
-    lastSettledAt: null,
-    lastError: null,
-  };
+  private readonly lifecycleMutations: LifecycleMutationQueue;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
+    this.lifecycleMutations = new LifecycleMutationQueue({
+      queueLimit: options.lifecycleMutationQueueLimit,
+      projectRoot: () => this.currentProjectRoot(),
+    });
     const defaultExposePreviewCache = options.lifecycle?.readAgentOutput
       ? new ExposePreviewCache({
           projectRoot: this.currentProjectRoot(),
@@ -1635,162 +1533,8 @@ export class MetadataServer {
     });
   }
 
-  private enqueueLifecycleMutation<T>(action: () => Promise<T> | T, transition?: LifecycleTransitionInput): Promise<T> {
-    const targetKey = transition ? lifecycleTargetKey(transition) : undefined;
-    if (targetKey && transition && this.lifecycleMutationTargets.has(targetKey)) {
-      this.lifecycleMutationTelemetry.rejectedConflicts += 1;
-      throw new LifecycleMutationConflictError(transition, this.lifecycleMutationTargets.get(targetKey)!);
-    }
-    const queueLimit = this.options.lifecycleMutationQueueLimit ?? 32;
-    if (transition && this.lifecycleMutationQueuedCount >= queueLimit) {
-      this.lifecycleMutationTelemetry.rejectedQueueFull += 1;
-      throw new LifecycleMutationQueueFullError(transition, this.lifecycleMutationQueuedCount, queueLimit);
-    }
-    if (targetKey && transition) this.lifecycleMutationTargets.set(targetKey, transition);
-    const queueDepthAtEnqueue = this.lifecycleMutationQueuedCount;
-    const queueDepthAfterEnqueue = queueDepthAtEnqueue + 1;
-    this.lifecycleMutationTelemetry.enqueued += 1;
-    this.lifecycleMutationTelemetry.maxQueuedCount = Math.max(
-      this.lifecycleMutationTelemetry.maxQueuedCount,
-      queueDepthAfterEnqueue,
-    );
-    const operationId = transition
-      ? `${transition.operation}:${transition.targetId ?? transition.targetPath ?? "unknown"}:${randomUUID()}`
-      : undefined;
-    if (transition) {
-      log.info("lifecycle mutation enqueued", "api", {
-        operationId,
-        operation: transition.operation,
-        targetKind: transition.targetKind,
-        targetId: transition.targetId,
-        targetPath: transition.targetPath,
-        queueDepth: queueDepthAtEnqueue,
-        queueLimit,
-      });
-    }
-    this.lifecycleMutationQueuedCount += 1;
-    const queuedAt = Date.now();
-    const queued = this.lifecycleMutationQueue
-      .catch(() => undefined)
-      .then(async () => {
-        if (transition) {
-          const queuedMs = Date.now() - queuedAt;
-          this.lifecycleMutationTelemetry.started += 1;
-          this.lifecycleMutationTelemetry.maxQueuedMs = Math.max(this.lifecycleMutationTelemetry.maxQueuedMs, queuedMs);
-          this.lifecycleMutationTelemetry.lastStartedAt = new Date().toISOString();
-          log.info("lifecycle mutation started", "api", {
-            operationId,
-            operation: transition.operation,
-            targetKind: transition.targetKind,
-            targetId: transition.targetId,
-            targetPath: transition.targetPath,
-            queuedMs,
-            queueDepthAtStart: this.lifecycleMutationQueuedCount,
-          });
-        }
-        const startedAt = Date.now();
-        try {
-          const result = await action();
-          const durationMs = Date.now() - startedAt;
-          this.lifecycleMutationTelemetry.succeeded += 1;
-          this.lifecycleMutationTelemetry.maxDurationMs = Math.max(
-            this.lifecycleMutationTelemetry.maxDurationMs,
-            durationMs,
-          );
-          this.lifecycleMutationTelemetry.lastSettledAt = new Date().toISOString();
-          this.lifecycleMutationTelemetry.lastError = null;
-          if (transition) {
-            log.info("lifecycle mutation succeeded", "api", {
-              operationId,
-              operation: transition.operation,
-              targetKind: transition.targetKind,
-              targetId: transition.targetId,
-              targetPath: transition.targetPath,
-              durationMs,
-            });
-          }
-          return result;
-        } catch (error) {
-          const durationMs = Date.now() - startedAt;
-          this.lifecycleMutationTelemetry.failed += 1;
-          this.lifecycleMutationTelemetry.maxDurationMs = Math.max(
-            this.lifecycleMutationTelemetry.maxDurationMs,
-            durationMs,
-          );
-          this.lifecycleMutationTelemetry.lastSettledAt = new Date().toISOString();
-          this.lifecycleMutationTelemetry.lastError = userFacingErrorMessage(error);
-          if (transition) {
-            log.warn("lifecycle mutation failed", "api", {
-              operationId,
-              operation: transition.operation,
-              targetKind: transition.targetKind,
-              targetId: transition.targetId,
-              targetPath: transition.targetPath,
-              durationMs,
-              error: userFacingErrorMessage(error),
-            });
-          }
-          throw error;
-        }
-      });
-    const tracked = queued.finally(() => {
-      this.lifecycleMutationQueuedCount = Math.max(0, this.lifecycleMutationQueuedCount - 1);
-      this.lifecycleMutationTelemetry.released += 1;
-      if (targetKey && this.lifecycleMutationTargets.get(targetKey) === transition) {
-        this.lifecycleMutationTargets.delete(targetKey);
-      }
-      if (transition) {
-        log.info("lifecycle mutation released", "api", {
-          operationId,
-          operation: transition.operation,
-          targetKind: transition.targetKind,
-          targetId: transition.targetId,
-          targetPath: transition.targetPath,
-          queueDepth: this.lifecycleMutationQueuedCount,
-        });
-      }
-    });
-    this.lifecycleMutationQueue = tracked.then(
-      () => undefined,
-      () => undefined,
-    );
-    return tracked;
-  }
-
   private lifecycleDiagnostics() {
-    const queueLimit = this.options.lifecycleMutationQueueLimit ?? 32;
-    const activeTargets = [...this.lifecycleMutationTargets.entries()].map(([key, transition]) => ({
-      key,
-      operation: transition.operation,
-      targetKind: transition.targetKind,
-      targetId: transition.targetId,
-      targetPath: transition.targetPath,
-    }));
-    return {
-      ok: true,
-      pid: process.pid,
-      projectRoot: this.currentProjectRoot(),
-      queuedCount: this.lifecycleMutationQueuedCount,
-      queueLimit,
-      activeTargets,
-      telemetry: { ...this.lifecycleMutationTelemetry },
-    };
-  }
-
-  private notifyLifecycleSettled(
-    promise: Promise<unknown>,
-    notifyCurrentRouteChange: () => void,
-    action: string,
-  ): void {
-    void promise.then(
-      () => notifyCurrentRouteChange(),
-      (error: unknown) => {
-        log.warn(`${action} failed after async acceptance`, "api", {
-          error: userFacingErrorMessage(error),
-        });
-        notifyCurrentRouteChange();
-      },
-    );
+    return this.lifecycleMutations.diagnostics();
   }
 
   async start(): Promise<void> {
@@ -2259,7 +2003,7 @@ export class MetadataServer {
         operation: "worktree.cacheCleanup",
         targetKind: "worktree",
       };
-      const result = await this.enqueueLifecycleMutation(
+      const result = await this.lifecycleMutations.enqueue(
         () => this.options.desktop!.cleanupWorktreeCaches!({ dryRun, includeActive: false }),
         transitionInput,
       );
@@ -4084,7 +3828,7 @@ export class MetadataServer {
       actionName: string;
       acceptedStatus?: number;
     }): Promise<void> => {
-      const resultPromise = this.enqueueLifecycleMutation(
+      const resultPromise = this.lifecycleMutations.enqueue(
         () => runLifecycle(opts.transition, opts.action),
         opts.transition,
       );
@@ -4102,7 +3846,7 @@ export class MetadataServer {
         throw earlyResult.error;
       }
       notifyCurrentRouteChange();
-      this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, opts.actionName);
+      notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, opts.actionName);
       send(
         res,
         opts.acceptedStatus ?? 202,
@@ -5734,7 +5478,7 @@ export class MetadataServer {
           });
           return;
         }
-        const resultPromise = this.enqueueLifecycleMutation(
+        const resultPromise = this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => this.options.lifecycle!.spawnAgent!(body)),
           transitionInput,
         );
@@ -5881,7 +5625,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: body.sessionId,
         };
-        const result = await this.enqueueLifecycleMutation(
+        const result = await this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, createTeammate),
           transitionInput,
         );
@@ -5982,7 +5726,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: resolved.teammate.id,
         };
-        const resultPromise = this.enqueueLifecycleMutation(
+        const resultPromise = this.lifecycleMutations.enqueue(
           () =>
             runLifecycle(transitionInput, () =>
               this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id }),
@@ -6006,7 +5750,7 @@ export class MetadataServer {
           throw earlyResult.error;
         }
         notifyCurrentRouteChange();
-        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent stop teammate");
+        notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent stop teammate");
         send(
           res,
           202,
@@ -6077,7 +5821,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: resolved.teammate.id,
         };
-        const resultPromise = this.enqueueLifecycleMutation(
+        const resultPromise = this.lifecycleMutations.enqueue(
           () =>
             runLifecycle(transitionInput, () =>
               this.options.lifecycle!.killAgent!({
@@ -6104,7 +5848,7 @@ export class MetadataServer {
           throw earlyResult.error;
         }
         notifyCurrentRouteChange();
-        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent kill teammate");
+        notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent kill teammate");
         send(
           res,
           202,
@@ -6191,7 +5935,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: body.targetSessionId,
         };
-        const result = await this.enqueueLifecycleMutation(
+        const result = await this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => this.options.lifecycle!.forkAgent!(body)),
           transitionInput,
         );
@@ -6236,7 +5980,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: sessionId,
         };
-        const resultPromise = this.enqueueLifecycleMutation(
+        const resultPromise = this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => this.options.lifecycle!.stopAgent!({ sessionId })),
           transitionInput,
         );
@@ -6258,7 +6002,7 @@ export class MetadataServer {
           throw earlyResult.error;
         }
         notifyCurrentRouteChange();
-        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent stop");
+        notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent stop");
         send(
           res,
           202,
@@ -6341,7 +6085,7 @@ export class MetadataServer {
               targetId: sessionId,
             };
             try {
-              const result = await this.enqueueLifecycleMutation(
+              const result = await this.lifecycleMutations.enqueue(
                 () => runLifecycle(transitionInput, () => restoreAgent({ sessionId })),
                 transitionInput,
               );
@@ -6424,7 +6168,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: sessionId,
         };
-        const result = await this.enqueueLifecycleMutation(
+        const result = await this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => this.options.lifecycle!.interruptAgent!({ sessionId })),
           transitionInput,
         );
@@ -6474,7 +6218,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: body.sessionId,
         };
-        const result = await this.enqueueLifecycleMutation(
+        const result = await this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => this.options.lifecycle!.renameAgent!(body)),
           transitionInput,
         );
@@ -6523,7 +6267,7 @@ export class MetadataServer {
           targetKind: "agent",
           targetId: sessionId,
         };
-        const resultPromise = this.enqueueLifecycleMutation(
+        const resultPromise = this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => this.options.lifecycle!.killAgent!({ sessionId })),
           transitionInput,
         );
@@ -6549,7 +6293,7 @@ export class MetadataServer {
           throw earlyResult.error;
         }
         notifyCurrentRouteChange();
-        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent kill");
+        notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "agent kill");
         send(
           res,
           202,
@@ -7052,7 +6796,7 @@ export class MetadataServer {
           targetId: body.name,
           targetPath,
         };
-        const resultPromise = this.enqueueLifecycleMutation(
+        const resultPromise = this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => desktop.createWorktree!(body)),
           transitionInput,
         );
@@ -7101,7 +6845,7 @@ export class MetadataServer {
           return;
         }
         notifyCurrentRouteChange();
-        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "worktree create");
+        notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "worktree create");
         send(
           res,
           202,
@@ -7131,7 +6875,7 @@ export class MetadataServer {
           targetKind: "worktree",
           targetPath: body.path,
         };
-        const resultPromise = this.enqueueLifecycleMutation(
+        const resultPromise = this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => desktop.removeWorktree!(body)),
           transitionInput,
         );
@@ -7176,7 +6920,7 @@ export class MetadataServer {
           return;
         }
         notifyCurrentRouteChange();
-        this.notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "worktree remove");
+        notifyLifecycleSettled(resultPromise, notifyCurrentRouteChange, "worktree remove");
         send(
           res,
           202,
@@ -7213,7 +6957,7 @@ export class MetadataServer {
           operation: "worktree.cacheCleanup",
           targetKind: "worktree",
         };
-        const result = await this.enqueueLifecycleMutation(
+        const result = await this.lifecycleMutations.enqueue(
           () =>
             runLifecycle(transitionInput, () =>
               this.options.desktop!.cleanupWorktreeCaches!({
@@ -7253,7 +6997,7 @@ export class MetadataServer {
           targetKind: "service",
           targetId: body.serviceId,
         };
-        const result = await this.enqueueLifecycleMutation(
+        const result = await this.lifecycleMutations.enqueue(
           () => runLifecycle(transitionInput, () => this.options.desktop!.createService!(body)),
           transitionInput,
         );
@@ -7371,7 +7115,7 @@ export class MetadataServer {
           operation: "graveyard.cleanup",
           targetKind: "worktree",
         };
-        const result = await this.enqueueLifecycleMutation(
+        const result = await this.lifecycleMutations.enqueue(
           () =>
             runLifecycle(transitionInput, () =>
               this.options.desktop!.cleanupGraveyard!({ dryRun: body.dryRun === true }),
