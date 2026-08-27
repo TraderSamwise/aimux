@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { readFileSync, readdirSync } from "node:fs";
-import { basename, extname, resolve as pathResolve } from "node:path";
+import { resolve as pathResolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
@@ -17,7 +17,6 @@ import {
 } from "./paths.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { PROJECT_API_ROUTES, type AgentLoopInput } from "./project-api-contract.js";
-import { assertPublishableSource } from "./attachment-store.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { renderWorktreeCacheCleanupRunResult, type WorktreeCacheCleanupRunResult } from "./worktree-cache-cleanup.js";
@@ -77,7 +76,6 @@ import {
   renderDesktopNotifierDoctorReport,
   sendDesktopNotificationAndWait,
 } from "./desktop-notifier.js";
-import { requestJson } from "./http-client.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
 import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
@@ -113,6 +111,7 @@ import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
 import { registerExposeCommand } from "./popup-expose.js";
 import { MAX_AGENT_OUTPUT_CAPTURE_LINES } from "./agent-output-bounds.js";
 import { renderAgentsByWorktreeLines, renderAgentsFlatLines, type CliAgentListItem } from "./cli/agent-list.js";
+import { registerAttachmentCommand } from "./cli/attachment.js";
 import {
   coreProjectServicePid,
   ensureCoreProjectServiceForCliWithRepair,
@@ -1924,151 +1923,7 @@ program
     console.log(`delivered to ${sessionId}`);
   });
 
-const attachmentCmd = program.command("attachment").description("Publish local files as chat attachments");
-
-attachmentCmd
-  .command("publish <path>")
-  .description("Copy a local file into aimux attachments and print a transcript reference")
-  .requiredOption("--session <sessionId>", "Session that owns the attachment")
-  .option("--project <path>", "Project path")
-  .option("--name <filename>", "Display filename")
-  .option("--mime <mimeType>", "Attachment MIME type")
-  .option("--json", "Emit JSON")
-  .action(
-    async (
-      filePath: string,
-      opts: { session: string; project?: string; name?: string; mime?: string; json?: boolean },
-    ) => {
-      const sourcePath = pathResolve(filePath);
-      const projectRoot = opts.project ? await prepareProjectContext(opts.project) : await prepareProjectContext();
-      // Validated before the bytes go anywhere. Hosting uploads a copy to the
-      // relay, so leaving this to the project service would exfiltrate first
-      // and refuse afterwards.
-      let sourceRealPath: string;
-      try {
-        sourceRealPath = assertPublishableSource({
-          sourcePath,
-          projectRoot,
-          allowedRoots: listWorktrees(projectRoot).map((worktree) => worktree.path),
-        });
-      } catch (error) {
-        console.error(`aimux: ${error instanceof Error ? error.message : String(error)}`);
-        process.exit(1);
-      }
-      const hostedAttachment = await maybeHostPublishedAttachment({
-        sourcePath: sourceRealPath,
-        filename: opts.name || basename(sourcePath),
-        mimeType: opts.mime || mimeTypeForPublishedAttachment(sourcePath),
-        sessionId: opts.session,
-      });
-      const result = await postProjectServiceJson(
-        PROJECT_API_ROUTES.attachmentsPublish,
-        {
-          // The resolved path, so the service copies the same bytes the relay
-          // was handed rather than re-resolving the argument on its own.
-          path: sourceRealPath,
-          sessionId: opts.session,
-          filename: opts.name,
-          mimeType: opts.mime,
-          ...(hostedAttachment ? { hostedAttachment } : {}),
-        },
-        { projectRoot },
-      );
-      if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
-        return;
-      }
-      console.log(result.referenceText);
-    },
-  );
-
-interface HostedAttachmentForPublish {
-  contentUrl: string;
-  expiresAt: string;
-  sha256?: string;
-  sizeBytes?: number;
-}
-
-async function maybeHostPublishedAttachment(input: {
-  sourcePath: string;
-  filename: string;
-  mimeType: string;
-  sessionId: string;
-}): Promise<HostedAttachmentForPublish | undefined> {
-  const creds = loadCredentials();
-  if (!creds?.remoteEnabled) return undefined;
-  let relayBase: string;
-  try {
-    relayBase = relayHttpUrl(creds.relayUrl);
-  } catch {
-    return undefined;
-  }
-  try {
-    const bytes = readFileSync(input.sourcePath);
-    const response = await requestJson<{
-      ok?: boolean;
-      error?: string;
-      hostedAttachment?: HostedAttachmentForPublish;
-    }>(`${relayBase}/attachments/hosted`, {
-      method: "POST",
-      timeoutMs: 15_000,
-      headers: { authorization: `Bearer ${creds.token}` },
-      body: {
-        filename: input.filename,
-        mimeType: input.mimeType,
-        dataBase64: bytes.toString("base64"),
-        sessionId: input.sessionId,
-      },
-    });
-    if (response.status >= 400 || !response.json.ok || !response.json.hostedAttachment?.contentUrl) {
-      console.error(
-        `aimux: warning: relay attachment hosting failed${response.json.error ? `: ${response.json.error}` : ""}`,
-      );
-      return undefined;
-    }
-    return response.json.hostedAttachment;
-  } catch (error) {
-    console.error(
-      `aimux: warning: relay attachment hosting failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return undefined;
-  }
-}
-
-function relayHttpUrl(relayUrl: string): string {
-  const url = new URL(relayUrl);
-  if (url.protocol === "wss:") url.protocol = "https:";
-  if (url.protocol === "ws:") url.protocol = "http:";
-  return url.toString().replace(/\/+$/, "");
-}
-
-function mimeTypeForPublishedAttachment(filePath: string): string {
-  const extension = extname(filePath).toLowerCase();
-  const known = publishMimeTypes.get(extension);
-  return known ?? "application/octet-stream";
-}
-
-const publishMimeTypes = new Map([
-  [".aac", "audio/aac"],
-  [".csv", "text/csv"],
-  [".flac", "audio/flac"],
-  [".gif", "image/gif"],
-  [".jpeg", "image/jpeg"],
-  [".jpg", "image/jpeg"],
-  [".json", "application/json"],
-  [".m4a", "audio/m4a"],
-  [".md", "text/markdown"],
-  [".mov", "video/quicktime"],
-  [".mp3", "audio/mpeg"],
-  [".mp4", "video/mp4"],
-  [".ogg", "audio/ogg"],
-  [".pdf", "application/pdf"],
-  [".png", "image/png"],
-  [".txt", "text/plain"],
-  [".wav", "audio/wav"],
-  [".webm", "video/webm"],
-  [".webp", "image/webp"],
-]);
+registerAttachmentCommand(program, { prepareProjectContext, postProjectServiceJson, listWorktrees });
 
 program
   .command("ps")
