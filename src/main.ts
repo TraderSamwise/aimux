@@ -15,7 +15,6 @@ import {
   getProjectLogPath,
   getRuntimeTopologyPath,
 } from "./paths.js";
-import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { PROJECT_API_ROUTES, type AgentLoopInput } from "./project-api-contract.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
@@ -112,6 +111,7 @@ import { registerExposeCommand } from "./popup-expose.js";
 import { MAX_AGENT_OUTPUT_CAPTURE_LINES } from "./agent-output-bounds.js";
 import { renderAgentsByWorktreeLines, renderAgentsFlatLines, type CliAgentListItem } from "./cli/agent-list.js";
 import { registerAttachmentCommand } from "./cli/attachment.js";
+import { registerLogsCommand } from "./cli/logs.js";
 import {
   coreProjectServicePid,
   ensureCoreProjectServiceForCliWithRepair,
@@ -3138,44 +3138,7 @@ migrationCmd
     console.log(renderRuntimeMigrationRollbackResult(rollbackRuntimeMigration(pathResolve(manifest))));
   });
 
-const logsCmd = program.command("logs").description("Inspect persistent aimux logs");
-
-logsCmd
-  .command("path")
-  .description("Print the active log file path")
-  .option("--daemon", "Show the global daemon log path")
-  .option("--project <path>", "Project path")
-  .action((opts: { daemon?: boolean; project?: string }) => {
-    console.log(selectedLogPath(opts));
-  });
-
-logsCmd
-  .command("tail")
-  .description("Print recent log lines")
-  .option("--daemon", "Tail the global daemon log")
-  .option("--project <path>", "Project path")
-  .option("-n, --lines <number>", "Number of lines to print", "80")
-  .action((opts: { daemon?: boolean; project?: string; lines?: string }) => {
-    const path = selectedLogPath(opts);
-    const output = readLastLogLines(path, parseLineCount(opts.lines));
-    if (output) {
-      console.log(output);
-      return;
-    }
-    console.error(`No log entries at ${path}`);
-    process.exit(1);
-  });
-
-logsCmd
-  .command("clear")
-  .description("Clear the active log file")
-  .option("--daemon", "Clear the global daemon log")
-  .option("--project <path>", "Project path")
-  .action((opts: { daemon?: boolean; project?: string }) => {
-    const path = selectedLogPath(opts);
-    clearLogFile(path);
-    console.log(`Cleared ${path}`);
-  });
+registerLogsCommand(program);
 
 doctorCmd
   .command("versions")
