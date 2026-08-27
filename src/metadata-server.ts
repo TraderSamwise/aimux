@@ -5,7 +5,6 @@ import { createServer as createNetServer, type Server as NetServer, type Socket 
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve as pathResolve } from "node:path";
 import { PassThrough } from "node:stream";
-import type { Worker } from "node:worker_threads";
 import {
   getDashboardClientUiStatePath,
   getProjectId,
@@ -101,7 +100,6 @@ import {
   PROJECT_API_VIEW_INVALIDATIONS,
   type OrchestrationRouteOption,
   type ProjectApiView,
-  type ExposePreviewSnapshot,
   projectApiMutationReasonForRoute,
   projectApiViewsForMutationRoute,
 } from "./project-api-contract.js";
@@ -118,9 +116,7 @@ import {
 } from "./runtime-core/agent-restore-state.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
-import type { ParsedAgentOutput } from "./agent-output-parser.js";
 import { agentOutputCaptureWindow } from "./agent-output-bounds.js";
-import type { AgentTranscriptMessage } from "./agent-transcript.js";
 import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
   createPathAttachment,
@@ -179,11 +175,8 @@ import {
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
-import { ExposePreviewCache, type ExposePreviewCacheLike } from "./expose-preview-cache.js";
-import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
-import { VisualClientLeaseRegistry, parseVisualClientKind } from "./visual-client-leases.js";
-import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
-import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
+import type { ExposePreviewCacheLike } from "./expose-preview-cache.js";
+import type { ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from "./tmux/expose-ordering.js";
 import { agentStatusChip } from "./tui/render/agent-status.js";
@@ -203,11 +196,7 @@ import {
   type ClaudeHookPayload,
 } from "./claude-hooks.js";
 import type { CodexHookPayload } from "./codex-hooks.js";
-import {
-  getAgentOutputReadMetrics,
-  recordAgentOutputReadMetric,
-  type AgentOutputReadSource,
-} from "./agent-output-read-metrics.js";
+import { getAgentOutputReadMetrics, type AgentOutputReadSource } from "./agent-output-read-metrics.js";
 import { readExposeSocketHeader, parsePositiveHeaderInteger } from "./metadata-server/expose-socket.js";
 import { summarizeInteractionForDisplay } from "./metadata-server/interaction-display.js";
 import { listLibraryDocuments } from "./metadata-server/library-documents.js";
@@ -221,6 +210,13 @@ import {
   waitForEarlyLifecycleResult,
   type LifecycleTransitionInput,
 } from "./metadata-server/lifecycle-mutation-queue.js";
+import {
+  EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS,
+  EXPOSE_HOT_SNAPSHOT_INITIAL_MS,
+  type MetadataReadAgentOutput,
+  type MetadataReadAgentOutputResult,
+  ProjectOutputPreviewCoordinator,
+} from "./metadata-server/output-previews.js";
 
 function safeWorktreeCreatePath(name: string, projectRoot: string): string {
   try {
@@ -582,67 +578,13 @@ export interface MetadataServerOptions {
       waitForSubmit?: boolean;
       waitForActiveDraftIdle?: boolean;
     }) => Promise<{ sessionId: string; accepted: true }> | { sessionId: string; accepted: true };
-    readAgentOutput?: (input: { sessionId: string; startLine?: number }) =>
-      | Promise<{
-          sessionId: string;
-          output: string;
-          outputAnsi?: string;
-          startLine?: number;
-          requestedStartLine?: number;
-          endLine?: number;
-          captureLineLimit?: number;
-          outputTailOnly?: boolean;
-          outputStartLineClamped?: boolean;
-          parsed?: ParsedAgentOutput;
-          messages?: AgentTranscriptMessage[];
-          activity?: AgentActivityState;
-          activityText?: string;
-          attention?: AgentAttentionState;
-        }>
-      | {
-          sessionId: string;
-          output: string;
-          outputAnsi?: string;
-          startLine?: number;
-          requestedStartLine?: number;
-          endLine?: number;
-          captureLineLimit?: number;
-          outputTailOnly?: boolean;
-          outputStartLineClamped?: boolean;
-          parsed?: ParsedAgentOutput;
-          messages?: AgentTranscriptMessage[];
-          activity?: AgentActivityState;
-          activityText?: string;
-          attention?: AgentAttentionState;
-        };
+    readAgentOutput?: MetadataReadAgentOutput;
   };
   exposePreviewCache?: ExposePreviewCacheLike | false;
   exposePaneOutputTap?: ExposePaneOutputTapLike | false;
   exposeHotSnapshots?: boolean;
 }
 
-type MetadataReadAgentOutputResult = Awaited<
-  ReturnType<NonNullable<NonNullable<MetadataServerOptions["lifecycle"]>["readAgentOutput"]>>
->;
-type MetadataReadAgentOutputMeasurement = {
-  result: MetadataReadAgentOutputResult;
-  durationMs: number;
-  coalesced: boolean;
-};
-type AgentOutputReadCoalescerEntry = {
-  promise: Promise<MetadataReadAgentOutputResult>;
-  expiresAt: number;
-};
-type AgentChatPreviewCacheEntry = {
-  expiresAt: number;
-  preview: NonNullable<FastControlItem["chatPreview"]> | null;
-};
-
-const AGENT_OUTPUT_READ_COALESCE_MS = 150;
-const EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 1500;
-const EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS = 1500;
-const EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
-const DESKTOP_STATE_CHAT_PREVIEW_CACHE_MS = 1500;
 const WORKTREE_CACHE_CLEANUP_INITIAL_JITTER_MS = 300_000;
 function stableJitterMs(value: string, rangeMs: number): number {
   if (rangeMs <= 0) return 0;
@@ -803,56 +745,6 @@ const CORS_ALLOWED_ORIGINS = new Set([
 ]);
 const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
 const DESKTOP_STATE_STALE_REFRESH_DELAY_MS = 1_000;
-const DESKTOP_STATE_PREVIEW_MAX_CHARS = 8_192;
-const DESKTOP_STATE_CHAT_PREVIEW_START_LINE = -80;
-const DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES = 3;
-
-function mergeExposePreviewSnapshots(
-  captureSnapshot: ExposePreviewSnapshot | undefined,
-  tapSnapshot:
-    | {
-        output: string;
-        capturedAt: string;
-        source: "tap";
-        windowId: string;
-      }
-    | undefined,
-): ExposePreviewSnapshot | undefined {
-  if (!tapSnapshot) return captureSnapshot;
-  if (!captureSnapshot) {
-    return {
-      output: tapSnapshot.output,
-      capturedAt: tapSnapshot.capturedAt,
-      source: tapSnapshot.source,
-      windowId: tapSnapshot.windowId,
-    };
-  }
-  if (!tapSnapshot.output) return captureSnapshot;
-  if (!captureSnapshot.output) {
-    return {
-      output: tapSnapshot.output,
-      capturedAt: tapSnapshot.capturedAt,
-      source: tapSnapshot.source,
-      windowId: tapSnapshot.windowId,
-    };
-  }
-  if (captureSnapshot.output.endsWith(tapSnapshot.output)) return captureSnapshot;
-  if (tapSnapshot.output.startsWith(captureSnapshot.output)) {
-    return {
-      output: tapSnapshot.output,
-      capturedAt: tapSnapshot.capturedAt,
-      source: tapSnapshot.source,
-      windowId: tapSnapshot.windowId,
-    };
-  }
-  const separator = captureSnapshot.output.endsWith("\n") || tapSnapshot.output.startsWith("\n") ? "" : "\n";
-  return {
-    output: `${captureSnapshot.output}${separator}${tapSnapshot.output}`,
-    capturedAt: tapSnapshot.capturedAt,
-    source: tapSnapshot.source,
-    windowId: tapSnapshot.windowId,
-  };
-}
 
 /**
  * How long a forced rebuild answers for the forced rebuilds behind it.
@@ -1490,15 +1382,7 @@ export class MetadataServer {
   private shellStateFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeServer: NetServer | null = null;
   private exposeSocketPath: string | null = null;
-  private readonly exposePreviewCache: ExposePreviewCacheLike | null;
-  private readonly exposePaneOutputTap: ExposePaneOutputTapLike | null;
-  private readonly visualClientLeases = new VisualClientLeaseRegistry();
-  private readonly exposeHotSnapshotsEnabled: boolean;
-  private readonly agentOutputReadCoalescer = new Map<string, AgentOutputReadCoalescerEntry>();
-  private readonly agentChatPreviewCache = new Map<string, AgentChatPreviewCacheEntry>();
-  private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
-  private exposeHotSnapshotRefreshing = false;
-  private exposeHotSnapshotWorker: Worker | null = null;
+  private readonly outputPreviews: ProjectOutputPreviewCoordinator;
   private worktreeCacheCleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private worktreeCacheCleanupRunning = false;
   private readonly promptContexts = new PromptContextStore();
@@ -1510,21 +1394,15 @@ export class MetadataServer {
       queueLimit: options.lifecycleMutationQueueLimit,
       projectRoot: () => this.currentProjectRoot(),
     });
-    const defaultExposePreviewCache = options.lifecycle?.readAgentOutput
-      ? new ExposePreviewCache({
-          projectRoot: this.currentProjectRoot(),
-        })
-      : null;
-    const defaultExposePaneOutputTap = options.lifecycle?.readAgentOutput
-      ? new ExposePaneOutputTap({
-          projectStateDir: getProjectStateDirFor(this.currentProjectRoot()),
-        })
-      : null;
-    this.exposePreviewCache =
-      options.exposePreviewCache === false ? null : (options.exposePreviewCache ?? defaultExposePreviewCache);
-    this.exposePaneOutputTap =
-      options.exposePaneOutputTap === false ? null : (options.exposePaneOutputTap ?? defaultExposePaneOutputTap);
-    this.exposeHotSnapshotsEnabled = options.exposeHotSnapshots ?? Boolean(options.lifecycle?.readAgentOutput);
+    this.outputPreviews = new ProjectOutputPreviewCoordinator({
+      currentProjectRoot: () => this.currentProjectRoot(),
+      isServerRunning: () => Boolean(this.server),
+      readAgentOutput: options.lifecycle?.readAgentOutput,
+      exposePreviewCache: options.exposePreviewCache,
+      exposePaneOutputTap: options.exposePaneOutputTap,
+      exposeHotSnapshots: options.exposeHotSnapshots,
+      runInProjectContext: (fn) => this.runInProjectContext(fn),
+    });
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
@@ -1555,8 +1433,7 @@ export class MetadataServer {
         error: error instanceof Error ? error.message : String(error),
       });
     });
-    this.exposePreviewCache?.start();
-    this.exposePaneOutputTap?.start();
+    this.outputPreviews.start();
     const initialDelay =
       EXPOSE_HOT_SNAPSHOT_INITIAL_MS + stableJitterMs(this.currentProjectRoot(), EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS);
     this.scheduleExposeHotSnapshotRefresh(initialDelay);
@@ -1593,16 +1470,10 @@ export class MetadataServer {
     this.server?.close();
     this.server = null;
     this.stopExposeSocket();
-    this.exposePreviewCache?.stop();
-    this.exposePaneOutputTap?.stop();
-    if (this.exposeHotSnapshotTimer) clearTimeout(this.exposeHotSnapshotTimer);
-    this.exposeHotSnapshotTimer = null;
-    this.exposeHotSnapshotRefreshing = false;
+    this.outputPreviews.stop();
     if (this.worktreeCacheCleanupTimer) clearTimeout(this.worktreeCacheCleanupTimer);
     this.worktreeCacheCleanupTimer = null;
     this.worktreeCacheCleanupRunning = false;
-    this.exposeHotSnapshotWorker?.terminate().catch(() => {});
-    this.exposeHotSnapshotWorker = null;
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
     this.desktopStateRefreshTimer = null;
     if (this.shellStateFlushTimer) clearTimeout(this.shellStateFlushTimer);
@@ -1700,71 +1571,8 @@ export class MetadataServer {
   private async measureAgentOutputRead(
     source: AgentOutputReadSource,
     input: { sessionId: string; startLine?: number },
-  ): Promise<MetadataReadAgentOutputMeasurement> {
-    if (!this.options.lifecycle?.readAgentOutput) {
-      throw new Error("agent output not supported by this service");
-    }
-    const startedAt = performance.now();
-    const coalesceKey = `${input.sessionId}\0${input.startLine ?? ""}`;
-    const now = Date.now();
-    const existing = this.agentOutputReadCoalescer.get(coalesceKey);
-    if (existing && existing.expiresAt > now) {
-      try {
-        return {
-          result: await existing.promise,
-          durationMs: performance.now() - startedAt,
-          coalesced: true,
-        };
-      } catch (error) {
-        recordAgentOutputReadMetric({
-          source,
-          sessionId: input.sessionId,
-          requestedStartLine: input.startLine,
-          durationMs: performance.now() - startedAt,
-          coalesced: true,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-    }
-
-    const promise = Promise.resolve(this.options.lifecycle.readAgentOutput(input));
-    const entry: AgentOutputReadCoalescerEntry = {
-      promise,
-      expiresAt: Number.POSITIVE_INFINITY,
-    };
-    this.agentOutputReadCoalescer.set(coalesceKey, entry);
-    let retainSettledResult = false;
-
-    try {
-      const result = await promise;
-      retainSettledResult = true;
-      return { result, durationMs: performance.now() - startedAt, coalesced: false };
-    } catch (error) {
-      recordAgentOutputReadMetric({
-        source,
-        sessionId: input.sessionId,
-        requestedStartLine: input.startLine,
-        durationMs: performance.now() - startedAt,
-        coalesced: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    } finally {
-      if (!retainSettledResult) {
-        if (this.agentOutputReadCoalescer.get(coalesceKey) === entry) {
-          this.agentOutputReadCoalescer.delete(coalesceKey);
-        }
-      } else {
-        entry.expiresAt = Date.now() + AGENT_OUTPUT_READ_COALESCE_MS;
-        const cleanup = setTimeout(() => {
-          if (this.agentOutputReadCoalescer.get(coalesceKey) === entry) {
-            this.agentOutputReadCoalescer.delete(coalesceKey);
-          }
-        }, AGENT_OUTPUT_READ_COALESCE_MS);
-        cleanup.unref?.();
-      }
-    }
+  ): ReturnType<ProjectOutputPreviewCoordinator["measureAgentOutputRead"]> {
+    return this.outputPreviews.measureAgentOutputRead(source, input);
   }
 
   private recordAgentOutputRead(
@@ -1775,18 +1583,7 @@ export class MetadataServer {
     changed?: boolean,
     coalesced = false,
   ): void {
-    recordAgentOutputReadMetric({
-      source,
-      sessionId: input.sessionId,
-      requestedStartLine: input.startLine,
-      startLine: result.startLine,
-      endLine: result.endLine,
-      captureLineLimit: result.captureLineLimit,
-      outputBytes: Buffer.byteLength(result.output ?? "", "utf8"),
-      durationMs,
-      coalesced,
-      changed,
-    });
+    this.outputPreviews.recordAgentOutputRead(source, input, result, durationMs, changed, coalesced);
   }
 
   private currentProjectRoot(): string {
@@ -1803,178 +1600,35 @@ export class MetadataServer {
       defaultKind?: string;
     },
   ): boolean {
-    if (!input.requestedPreview && !input.requestedChatPreview) return false;
-    const kind = parseVisualClientKind(url.searchParams.get("clientKind") ?? input.defaultKind);
-    const remote = req.socket.remoteAddress?.replace(/^::ffff:/, "") || "local";
-    this.visualClientLeases.touch({
-      id: url.searchParams.get("clientId") || `${kind}:${remote}`,
-      kind,
-      surface: input.surface,
-      requestedPreview: input.requestedPreview,
-      requestedChatPreview: input.requestedChatPreview === true,
-      ttlMs: url.searchParams.get("clientTtlMs"),
-    });
-    return this.visualClientLeases.hasActivePreviewClients();
+    return this.outputPreviews.touchVisualClientLease(req, url, input);
   }
 
   private attachExposePreviewSnapshots(
     rawItems: FastControlItem[],
     options: { trackPaneOutput?: boolean; trackPreview?: boolean; maxOutputChars?: number } = {},
   ): FastControlItem[] {
-    const captureSnapshots = new Map<string, ReturnType<ExposePreviewCacheLike["get"]>>();
-    const tapSnapshots = new Map<string, ReturnType<ExposePaneOutputTapLike["read"]>>();
-    const trackPreview = options.trackPreview !== false;
-    if (trackPreview && options.trackPaneOutput !== false) this.exposePaneOutputTap?.trackItems(rawItems);
-    for (const item of rawItems) {
-      tapSnapshots.set(item.target.windowId, this.exposePaneOutputTap?.read(item.target.windowId));
-    }
-    if (trackPreview) this.exposePreviewCache?.trackItems(rawItems);
-    for (const item of rawItems) {
-      captureSnapshots.set(item.target.windowId, this.exposePreviewCache?.get(item.target.windowId));
-    }
-    return rawItems.map((item) => {
-      const tapSnapshot = tapSnapshots.get(item.target.windowId);
-      const captureSnapshot = captureSnapshots.get(item.target.windowId);
-      const previewSnapshot = mergeExposePreviewSnapshots(captureSnapshot, tapSnapshot);
-      if (!previewSnapshot) return item;
-      const output =
-        options.maxOutputChars && previewSnapshot.output.length > options.maxOutputChars
-          ? previewSnapshot.output.slice(-options.maxOutputChars)
-          : previewSnapshot.output;
-      return { ...item, previewSnapshot: { ...previewSnapshot, output } };
-    });
+    return this.outputPreviews.attachExposePreviewSnapshots(rawItems, options);
   }
 
   private async readAgentChatPreviews(
     sessionIds: readonly string[],
   ): Promise<Map<string, NonNullable<FastControlItem["chatPreview"]>>> {
-    const previewsBySessionId = new Map<string, NonNullable<FastControlItem["chatPreview"]>>();
-    if (!this.options.lifecycle?.readAgentOutput) return previewsBySessionId;
-    const uncachedSessionIds: string[] = [];
-    const now = Date.now();
-    for (const sessionId of new Set(sessionIds)) {
-      const cached = this.agentChatPreviewCache.get(sessionId);
-      if (cached && cached.expiresAt > now) {
-        if (cached.preview) previewsBySessionId.set(sessionId, cached.preview);
-        continue;
-      }
-      uncachedSessionIds.push(sessionId);
-    }
-    if (uncachedSessionIds.length === 0) return previewsBySessionId;
-
-    await Promise.all(
-      uncachedSessionIds.map(async (sessionId) => {
-        try {
-          const readInput = {
-            sessionId,
-            startLine: DESKTOP_STATE_CHAT_PREVIEW_START_LINE,
-          };
-          const { result, durationMs, coalesced } = await this.measureAgentOutputRead("chat-preview", readInput);
-          this.recordAgentOutputRead("chat-preview", readInput, result, durationMs, undefined, coalesced);
-          const messages = (result.messages ?? []).slice(-DESKTOP_STATE_CHAT_PREVIEW_MAX_MESSAGES);
-          const preview =
-            messages.length > 0
-              ? {
-                  messages,
-                  capturedAt: new Date().toISOString(),
-                  source: "readAgentOutput" as const,
-                }
-              : null;
-          this.agentChatPreviewCache.set(sessionId, {
-            preview,
-            expiresAt: Date.now() + DESKTOP_STATE_CHAT_PREVIEW_CACHE_MS,
-          });
-          if (preview) previewsBySessionId.set(sessionId, preview);
-        } catch (error) {
-          log.debug?.("agent chat preview failed", "api", {
-            sessionId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }),
-    );
-    return previewsBySessionId;
+    return this.outputPreviews.readAgentChatPreviews(sessionIds);
   }
 
   private async attachExposeChatPreviews(rawItems: FastControlItem[]): Promise<FastControlItem[]> {
-    const sessionIds = rawItems.map((item) => item.metadata.sessionId).filter((id): id is string => Boolean(id));
-    const chatPreviewsBySessionId = await this.readAgentChatPreviews(sessionIds);
-    if (chatPreviewsBySessionId.size === 0) return rawItems;
-    return rawItems.map((item) => {
-      const chatPreview = item.metadata.sessionId ? chatPreviewsBySessionId.get(item.metadata.sessionId) : undefined;
-      return chatPreview ? { ...item, chatPreview } : item;
-    });
+    return this.outputPreviews.attachExposeChatPreviews(rawItems);
   }
 
   private async attachDesktopStatePreviews(
     state: Record<string, unknown>,
     options: { includeChatPreview?: boolean; trackPreview?: boolean } = {},
   ): Promise<Record<string, unknown>> {
-    const sessions = Array.isArray((state as any).sessions) ? (state as any).sessions : [];
-    const previewItems: FastControlItem[] = sessions
-      .filter((session: any) => typeof session?.id === "string" && typeof session?.tmuxWindowId === "string")
-      .map((session: any) => ({
-        id: session.id,
-        target: {
-          windowId: session.tmuxWindowId,
-          windowIndex: typeof session.tmuxWindowIndex === "number" ? session.tmuxWindowIndex : 0,
-          windowName: session.label ?? session.id,
-          sessionName: "",
-        },
-        metadata: {
-          kind: "agent" as const,
-          sessionId: session.id,
-          command: session.command ?? "",
-          label: session.label,
-          worktreePath: session.worktreePath,
-          createdAt: session.createdAt,
-        },
-        label: session.label ?? session.command ?? session.id,
-        urgency: 0,
-        activity: 0,
-        lastUsedAt: session.lastUsedAt,
-        recentRank: Number.MAX_SAFE_INTEGER,
-      }));
-
-    const snapshotsBySessionId =
-      previewItems.length > 0
-        ? new Map(
-            this.attachExposePreviewSnapshots(previewItems, {
-              maxOutputChars: DESKTOP_STATE_PREVIEW_MAX_CHARS,
-              trackPreview: options.trackPreview,
-            })
-              .filter((item) => item.previewSnapshot)
-              .map((item) => [item.id, item.previewSnapshot] as const),
-          )
-        : new Map<string, FastControlItem["previewSnapshot"]>();
-
-    const chatPreviewsBySessionId = options.includeChatPreview
-      ? await this.readAgentChatPreviews(
-          sessions.map((session: any) => session?.id).filter((id: unknown): id is string => typeof id === "string"),
-        )
-      : new Map<string, NonNullable<FastControlItem["chatPreview"]>>();
-
-    if (snapshotsBySessionId.size === 0 && chatPreviewsBySessionId.size === 0) return state;
-
-    const attachSessionSnapshot = (session: any) => {
-      const previewSnapshot = typeof session?.id === "string" ? snapshotsBySessionId.get(session.id) : undefined;
-      const chatPreview = typeof session?.id === "string" ? chatPreviewsBySessionId.get(session.id) : undefined;
-      if (!previewSnapshot && !chatPreview) return session;
-      return { ...session, previewSnapshot, chatPreview };
-    };
-    return {
-      ...state,
-      sessions: sessions.map(attachSessionSnapshot),
-    };
+    return this.outputPreviews.attachDesktopStatePreviews(state, options);
   }
 
-  private scheduleExposeHotSnapshotRefresh(delayMs = EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
-    if (!this.exposeHotSnapshotsEnabled || this.exposeHotSnapshotTimer || !this.server) return;
-    this.exposeHotSnapshotTimer = setTimeout(() => {
-      this.exposeHotSnapshotTimer = null;
-      this.runInProjectContext(() => this.refreshExposeHotSnapshots());
-    }, delayMs);
-    this.exposeHotSnapshotTimer.unref?.();
+  private scheduleExposeHotSnapshotRefresh(delayMs?: number): void {
+    this.outputPreviews.scheduleExposeHotSnapshotRefresh(delayMs);
   }
 
   private scheduleWorktreeCacheCleanup(delayMs?: number): void {
@@ -2048,47 +1702,7 @@ export class MetadataServer {
   }
 
   private refreshExposeHotSnapshots(): void {
-    if (!this.exposeHotSnapshotsEnabled || !this.server) return;
-    pruneExpiredHotExposeSnapshots(getProjectStateDir());
-    if (this.exposeHotSnapshotRefreshing) {
-      this.scheduleExposeHotSnapshotRefresh();
-      return;
-    }
-    this.exposeHotSnapshotRefreshing = true;
-    const timeoutMs = 10_000;
-    try {
-      const worker = startExposeHotSnapshotWorker(
-        { kind: "project", projectRoot: this.currentProjectRoot() },
-        {
-          category: "api",
-          description: "expose hot snapshot refresh",
-          timeoutMs,
-        },
-      );
-      this.exposeHotSnapshotWorker = worker;
-      let finished = false;
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(fallback);
-        if (this.exposeHotSnapshotWorker === worker) this.exposeHotSnapshotWorker = null;
-        this.exposeHotSnapshotRefreshing = false;
-        if (this.server) this.scheduleExposeHotSnapshotRefresh();
-      };
-      const fallback = setTimeout(() => {
-        worker.terminate().catch(() => {});
-        finish();
-      }, timeoutMs + 1_000);
-      fallback.unref?.();
-      worker.once("exit", finish);
-    } catch (error) {
-      this.exposeHotSnapshotRefreshing = false;
-      log.debug("expose hot snapshot refresh failed", "api", {
-        projectRoot: this.currentProjectRoot(),
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.scheduleExposeHotSnapshotRefresh();
-    }
+    this.outputPreviews.refreshExposeHotSnapshots();
   }
 
   private readTeamConfigResponse(): { ok: true; config: ReturnType<typeof loadTeamConfig> } {
@@ -3291,11 +2905,7 @@ export class MetadataServer {
         resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
         recentSlowRequests: this.recentSlowRequests.slice(-10),
         plugins: this.options.diagnostics?.pluginStatuses?.() ?? [],
-        previews: {
-          clients: this.visualClientLeases.snapshot(),
-          cache: this.exposePreviewCache?.stats?.() ?? null,
-          taps: this.exposePaneOutputTap?.stats?.() ?? null,
-        },
+        previews: this.outputPreviews.diagnostics(),
         agentOutputReads: getAgentOutputReadMetrics(),
         runtimeExchange: inspectRuntimeExchangeStore(),
       });

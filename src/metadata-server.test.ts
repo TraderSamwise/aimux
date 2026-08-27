@@ -3231,10 +3231,10 @@ describe("MetadataServer threads API", () => {
     server = new MetadataServer({ exposeHotSnapshots: true, exposePreviewCache: false, exposePaneOutputTap: false });
     await server.start();
     const testServer = server as unknown as {
-      exposeHotSnapshotRefreshing: boolean;
+      outputPreviews: { exposeHotSnapshotRefreshing: boolean };
       refreshExposeHotSnapshots: () => void;
     };
-    testServer.exposeHotSnapshotRefreshing = true;
+    testServer.outputPreviews.exposeHotSnapshotRefreshing = true;
     testServer.refreshExposeHotSnapshots();
 
     const snapshotText = existsSync(path) ? readFileSync(path, "utf8") : "";
