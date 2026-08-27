@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve as pathResolve } from "node:path";
 import { PassThrough } from "node:stream";
 import {
-  getDashboardClientUiStatePath,
   getProjectId,
   getProjectStateDir,
   getProjectStateDirFor,
@@ -14,7 +13,6 @@ import {
   getRuntimeTopologyPath,
   withProjectPaths,
 } from "./paths.js";
-import { writeJsonAtomic } from "./atomic-write.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -94,7 +92,6 @@ import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
 import { buildProjectTopology } from "./project-topology.js";
 import {
-  type DashboardControlScreen,
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
   PROJECT_API_VIEW_INVALIDATIONS,
@@ -114,10 +111,8 @@ import {
   reconcileAgentRestoreOfferWithRestorableSessions,
   writeAgentRestoreRetryOffer,
 } from "./runtime-core/agent-restore-state.js";
-import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import { agentOutputCaptureWindow } from "./agent-output-bounds.js";
-import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
   createPathAttachment,
   createUploadedAttachment,
@@ -175,8 +170,6 @@ import {
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
-import type { ExposePreviewCacheLike } from "./expose-preview-cache.js";
-import type { ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from "./tmux/expose-ordering.js";
 import { agentStatusChip } from "./tui/render/agent-status.js";
@@ -213,10 +206,17 @@ import {
 import {
   EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS,
   EXPOSE_HOT_SNAPSHOT_INITIAL_MS,
-  type MetadataReadAgentOutput,
   type MetadataReadAgentOutputResult,
   ProjectOutputPreviewCoordinator,
 } from "./metadata-server/output-previews.js";
+import type { MetadataServerOptions } from "./metadata-server/options.js";
+export type { MetadataServerOptions } from "./metadata-server/options.js";
+import {
+  parseDashboardControlScreen,
+  persistDashboardClientPreference,
+  persistDashboardReturnSelection,
+} from "./metadata-server/dashboard-client-state.js";
+import type { LaunchOverride } from "./shell-args.js";
 
 function safeWorktreeCreatePath(name: string, projectRoot: string): string {
   try {
@@ -337,254 +337,6 @@ function metadataProjectRoot(): string | undefined {
   }
 }
 
-export interface MetadataServerOptions {
-  projectRoot?: string;
-  lifecycleMutationQueueLimit?: number;
-  onChange?: () => void;
-  events?: {
-    bus?: ProjectEventBus;
-  };
-  diagnostics?: {
-    pluginStatuses?: () => PluginRuntimePluginStatus[];
-  };
-  desktop?: {
-    getState?: () => Record<string, unknown>;
-    listWorktrees?: () => unknown[];
-    getSessionDisplayContext?: (sessionId: string) => SessionAlertDisplayContext | undefined;
-    refreshStatusline?: (input?: { sessionId?: string; force?: boolean }) => Promise<{ ok: true }> | { ok: true };
-    createWorktree?: (input: {
-      name: string;
-    }) => Promise<{ path: string; status?: string }> | { path: string; status?: string };
-    removeWorktree?: (input: { path: string }) => Promise<{ path: string }> | { path: string };
-    graveyardWorktree?: (input: {
-      path: string;
-    }) => Promise<{ path: string; status: "graveyarded" }> | { path: string; status: "graveyarded" };
-    listWorktreeGraveyard?: () => unknown[];
-    resurrectGraveyardWorktree?: (input: {
-      path: string;
-    }) => Promise<{ path: string; status: "active" }> | { path: string; status: "active" };
-    deleteGraveyardWorktree?: (input: {
-      path: string;
-    }) => Promise<{ path: string; status: "removed" }> | { path: string; status: "removed" };
-    cleanupGraveyard?: (input: { dryRun?: boolean }) => Promise<unknown> | unknown;
-    cleanupWorktreeCaches?: (input: { dryRun?: boolean; includeActive?: boolean }) => Promise<unknown> | unknown;
-    createService?: (input: {
-      command?: string;
-      worktreePath?: string;
-    }) => Promise<{ serviceId: string }> | { serviceId: string };
-    stopService?: (input: {
-      serviceId: string;
-    }) => Promise<{ serviceId: string; status: "stopped" }> | { serviceId: string; status: "stopped" };
-    resumeService?: (input: {
-      serviceId: string;
-    }) => Promise<{ serviceId: string; status: "running" }> | { serviceId: string; status: "running" };
-    removeService?: (input: {
-      serviceId: string;
-    }) => Promise<{ serviceId: string; status: "removed" }> | { serviceId: string; status: "removed" };
-    resumeAgent?: (input: {
-      sessionId: string;
-      session?: Record<string, unknown>;
-    }) =>
-      | Promise<{ sessionId: string; status: "running" | "offline" }>
-      | { sessionId: string; status: "running" | "offline" };
-    restoreAgent?: (input: {
-      sessionId: string;
-      session?: Record<string, unknown>;
-    }) =>
-      | Promise<{ sessionId: string; status: "running" | "offline" }>
-      | { sessionId: string; status: "running" | "offline" };
-    listGraveyard?: () => unknown[];
-    resurrectGraveyard?: (input: { sessionId: string }) =>
-      | Promise<{ sessionId: string; status: "offline" }>
-      | {
-          sessionId: string;
-          status: "offline";
-        };
-  };
-  threads?: {
-    sendMessage?: (input: {
-      threadId?: string;
-      from?: string;
-      to?: string[];
-      assignee?: string;
-      tool?: string;
-      worktreePath?: string;
-      kind?: MessageKind;
-      body: string;
-      title?: string;
-    }) => {
-      thread: unknown;
-      message: unknown;
-      deliveredTo?: string[];
-      threadCreated?: boolean;
-    };
-  };
-  actions?: {
-    sendHandoff?: (input: {
-      from?: string;
-      to?: string[];
-      assignee?: string;
-      tool?: string;
-      body: string;
-      title?: string;
-      worktreePath?: string;
-    }) => {
-      thread: unknown;
-      message: unknown;
-      deliveredTo?: string[];
-      threadCreated?: boolean;
-    };
-    acceptHandoff?: (input: { threadId: string; from?: string; body?: string }) => {
-      thread: unknown;
-      message: unknown;
-    };
-    completeHandoff?: (input: { threadId: string; from?: string; body?: string }) => {
-      thread: unknown;
-      message: unknown;
-    };
-    acceptTask?: (input: {
-      taskId: string;
-      from?: string;
-      body?: string;
-    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
-    blockTask?: (input: {
-      taskId: string;
-      from?: string;
-      body?: string;
-    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
-    completeTask?: (input: {
-      taskId: string;
-      from?: string;
-      body?: string;
-    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
-    approveReview?: (input: {
-      taskId: string;
-      from?: string;
-      body?: string;
-    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
-    requestTaskChanges?: (input: {
-      taskId: string;
-      from?: string;
-      body?: string;
-    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
-    reopenTask?: (input: {
-      taskId: string;
-      from?: string;
-      body?: string;
-    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
-  };
-  lifecycle?: {
-    spawnAgent?: (input: {
-      tool: string;
-      sessionId?: string;
-      worktreePath?: string;
-      open?: boolean;
-      launchOverride?: LaunchOverride;
-      overseer?: boolean;
-    }) => Promise<{ sessionId: string }> | { sessionId: string };
-    createTeammateAgent?: (input: {
-      parentSessionId: string;
-      role?: string;
-      label?: string;
-      tool?: string;
-      sessionId?: string;
-      worktreePath?: string;
-      open?: boolean;
-      extraArgs?: string[];
-      order?: number;
-    }) =>
-      | Promise<{
-          sessionId: string;
-          parentSessionId: string;
-          teamId: string;
-          role?: string;
-          label?: string;
-          reused?: true;
-        }>
-      | { sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string; reused?: true };
-    forkAgent?: (input: {
-      sourceSessionId: string;
-      tool: string;
-      targetSessionId?: string;
-      instruction?: string;
-      worktreePath?: string;
-      open?: boolean;
-      launchOverride?: LaunchOverride;
-    }) => Promise<{ sessionId: string; threadId: string }> | { sessionId: string; threadId: string };
-    switchAgentTool?: (input: {
-      sessionId: string;
-      tool: string;
-      instruction?: string;
-      launchOverride?: LaunchOverride;
-    }) =>
-      | Promise<{
-          sessionId: string;
-          tool: string;
-          status: "running";
-        }>
-      | {
-          sessionId: string;
-          tool: string;
-          status: "running";
-        };
-    stopAgent?: (input: { sessionId: string }) =>
-      | Promise<{ sessionId: string; status: "offline" }>
-      | {
-          sessionId: string;
-          status: "offline";
-        };
-    interruptAgent?: (input: { sessionId: string }) =>
-      | Promise<{ sessionId: string }>
-      | {
-          sessionId: string;
-        };
-    resizeAgentPane?: (input: {
-      sessionId: string;
-      cols: number;
-      rows: number;
-    }) =>
-      | Promise<{ sessionId: string; cols: number; rows: number }>
-      | { sessionId: string; cols: number; rows: number };
-    renameAgent?: (input: { sessionId: string; label?: string }) =>
-      | Promise<{ sessionId: string; label?: string }>
-      | {
-          sessionId: string;
-          label?: string;
-        };
-    migrateAgent?: (input: {
-      sessionId: string;
-      worktreePath: string;
-    }) => Promise<{ sessionId: string; worktreePath?: string }> | { sessionId: string; worktreePath?: string };
-    killAgent?: (input: { sessionId: string }) =>
-      | Promise<{
-          sessionId: string;
-          status: "graveyard";
-          previousStatus: "running" | "offline";
-        }>
-      | {
-          sessionId: string;
-          status: "graveyard";
-          previousStatus: "running" | "offline";
-        };
-    recordBackendSessionId?: (input: {
-      sessionId: string;
-      backendSessionId: string;
-    }) => Promise<{ sessionId: string; backendSessionId: string }> | { sessionId: string; backendSessionId: string };
-    sendAgentInput?: (input: {
-      sessionId: string;
-      text: string;
-      // When false, the call returns once the input is accepted and confirms the
-      // tmux submit in the background (output arrives via SSE, not this response).
-      waitForSubmit?: boolean;
-      waitForActiveDraftIdle?: boolean;
-    }) => Promise<{ sessionId: string; accepted: true }> | { sessionId: string; accepted: true };
-    readAgentOutput?: MetadataReadAgentOutput;
-  };
-  exposePreviewCache?: ExposePreviewCacheLike | false;
-  exposePaneOutputTap?: ExposePaneOutputTapLike | false;
-  exposeHotSnapshots?: boolean;
-}
-
 const WORKTREE_CACHE_CLEANUP_INITIAL_JITTER_MS = 300_000;
 function stableJitterMs(value: string, rangeMs: number): number {
   if (rangeMs <= 0) return 0;
@@ -593,66 +345,6 @@ function stableJitterMs(value: string, rangeMs: number): number {
     hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
   }
   return hash % rangeMs;
-}
-
-function dashboardClientKeyFromSession(sessionName: string): string {
-  return sessionName.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-function persistDashboardClientPreference(
-  clientSession: string,
-  update: (snapshot: Record<string, unknown>) => void,
-): void {
-  const path = getDashboardClientUiStatePath(dashboardClientKeyFromSession(clientSession));
-  let snapshot: Record<string, unknown> = {};
-  try {
-    snapshot = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-  } catch {}
-  update(snapshot);
-  writeJsonAtomic(path, snapshot);
-}
-
-function parseDashboardControlScreen(input: unknown): DashboardControlScreen | undefined {
-  if (typeof input !== "string") return undefined;
-  const screen = input.trim();
-  if (
-    screen === "dashboard" ||
-    screen === "coordination" ||
-    screen === "project" ||
-    screen === "library" ||
-    screen === "topology" ||
-    screen === "graveyard"
-  ) {
-    return screen;
-  }
-  return undefined;
-}
-
-function persistDashboardReturnSelection(
-  tmux: TmuxRuntimeManager,
-  projectRoot: string,
-  currentClientSession: string,
-  currentWindowId?: string,
-): void {
-  persistDashboardClientPreference(currentClientSession, (snapshot) => {
-    snapshot.screen = "dashboard";
-    if (!currentWindowId) return;
-    const match = tmux
-      .listProjectManagedWindows(projectRoot)
-      .find((entry) => entry.target.windowId === currentWindowId);
-    if (!match) return;
-    if (!tmux.isWindowAlive(match.target)) {
-      delete snapshot.focusedWorktreePath;
-      delete snapshot.level;
-      delete snapshot.selectedEntryKind;
-      delete snapshot.selectedEntryId;
-      return;
-    }
-    snapshot.focusedWorktreePath = match.metadata.worktreePath;
-    snapshot.level = "sessions";
-    snapshot.selectedEntryKind = match.metadata.kind === "service" ? "service" : "session";
-    snapshot.selectedEntryId = match.metadata.sessionId;
-  });
 }
 
 function markActiveWindowFocused(
