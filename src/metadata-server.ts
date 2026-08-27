@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve as pathResolve } from "node:path";
@@ -212,13 +212,9 @@ import {
   recordAgentOutputReadMetric,
   type AgentOutputReadSource,
 } from "./agent-output-read-metrics.js";
-
-const LIBRARY_DOC_ALLOWLIST = [
-  { path: "AGENTS.md", kind: "instructions", title: "AGENTS.md" },
-  { path: "CLAUDE.md", kind: "adapter", title: "CLAUDE.md" },
-  { path: "CODEX.md", kind: "adapter", title: "CODEX.md" },
-  { path: "README.md", kind: "project", title: "README.md" },
-] as const;
+import { readExposeSocketHeader, parsePositiveHeaderInteger } from "./metadata-server/expose-socket.js";
+import { summarizeInteractionForDisplay } from "./metadata-server/interaction-display.js";
+import { listLibraryDocuments } from "./metadata-server/library-documents.js";
 
 function buildLifecycleTransition(input: {
   operation: ProjectLifecycleTransitionOperation;
@@ -426,112 +422,12 @@ function buildOrchestrationRouteOptions(input: {
   return options;
 }
 
-function isLibraryPathExposed(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/").toLowerCase();
-  return !normalized.startsWith(".aimux/") && !normalized.endsWith("config.json");
-}
-
-function listLibraryDocuments(projectRoot = process.cwd()) {
-  return LIBRARY_DOC_ALLOWLIST.flatMap((entry) => {
-    if (!isLibraryPathExposed(entry.path)) return [];
-    try {
-      const fullPath = join(projectRoot, entry.path);
-      if (!existsSync(fullPath)) return [];
-      const stat = statSync(fullPath);
-      if (!stat.isFile()) return [];
-      const content = readFileSync(fullPath, "utf8");
-      return [
-        {
-          id: entry.path,
-          title: entry.title,
-          path: entry.path,
-          kind: entry.kind,
-          size: stat.size,
-          updatedAt: stat.mtime.toISOString(),
-          content: content.slice(0, 40_000),
-          truncated: content.length > 40_000,
-        },
-      ];
-    } catch {
-      return [];
-    }
-  });
-}
-
 function metadataProjectRoot(): string | undefined {
   try {
     return getRepoRoot();
   } catch {
     return undefined;
   }
-}
-
-const EXPOSE_SOCKET_HEADER_LINES = 15;
-const EXPOSE_SOCKET_HEADER_MAX_BYTES = 8192;
-const EXPOSE_SOCKET_HEADER_TIMEOUT_MS = 2000;
-
-function parsePositiveHeaderInteger(value: string | undefined): number | undefined {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function splitExposeHeader(buffer: Buffer): { header: string[]; rest: Buffer } | null {
-  let newlineCount = 0;
-  for (let index = 0; index < buffer.length; index += 1) {
-    if (buffer[index] !== 10) continue;
-    newlineCount += 1;
-    if (newlineCount !== EXPOSE_SOCKET_HEADER_LINES) continue;
-    const header = buffer
-      .subarray(0, index)
-      .toString("utf8")
-      .split("\n")
-      .map((line) => line.replace(/\r$/, ""));
-    return { header, rest: buffer.subarray(index + 1) };
-  }
-  return null;
-}
-
-async function readExposeSocketHeader(socket: Socket): Promise<{ header: string[]; rest: Buffer }> {
-  return await new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    const timer = setTimeout(() => {
-      cleanup();
-      socket.destroy();
-      reject(new Error("timed out reading expose socket launch header"));
-    }, EXPOSE_SOCKET_HEADER_TIMEOUT_MS);
-    const cleanup = () => {
-      clearTimeout(timer);
-      socket.off("data", onData);
-      socket.off("end", onEnd);
-      socket.off("error", onError);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onEnd = () => {
-      cleanup();
-      reject(new Error("expose socket closed before launch header"));
-    };
-    const onData = (chunk: Buffer) => {
-      chunks.push(chunk);
-      total += chunk.length;
-      if (total > EXPOSE_SOCKET_HEADER_MAX_BYTES) {
-        cleanup();
-        socket.destroy();
-        reject(new Error("expose socket launch header is too large"));
-        return;
-      }
-      const parsed = splitExposeHeader(Buffer.concat(chunks, total));
-      if (!parsed) return;
-      cleanup();
-      resolve(parsed);
-    };
-    socket.on("data", onData);
-    socket.once("end", onEnd);
-    socket.once("error", onError);
-  });
 }
 
 export interface MetadataServerOptions {
@@ -837,20 +733,6 @@ const EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS = 1500;
 const EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
 const DESKTOP_STATE_CHAT_PREVIEW_CACHE_MS = 1500;
 const WORKTREE_CACHE_CLEANUP_INITIAL_JITTER_MS = 300_000;
-type InteractionDisplay = {
-  title: string;
-  message: string;
-  summary?: string;
-};
-
-function trimmedString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function objectRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
 function stableJitterMs(value: string, rangeMs: number): number {
   if (rangeMs <= 0) return 0;
   let hash = 0;
@@ -858,78 +740,6 @@ function stableJitterMs(value: string, rangeMs: number): number {
     hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
   }
   return hash % rangeMs;
-}
-
-function parseObjectString(value: unknown): Record<string, unknown> | undefined {
-  const text = trimmedString(value);
-  if (!text || !text.startsWith("{")) return undefined;
-  try {
-    return objectRecord(JSON.parse(text));
-  } catch {
-    return undefined;
-  }
-}
-
-function questionRecordsFromSource(source: Record<string, unknown> | undefined): Record<string, unknown>[] {
-  const questions = Array.isArray(source?.questions) ? source.questions : undefined;
-  if (questions)
-    return questions.map(objectRecord).filter((question): question is Record<string, unknown> => Boolean(question));
-  const question = objectRecord(source);
-  return question ? [question] : [];
-}
-
-function questionRecords(payload: InteractionPayload, summary?: string): Record<string, unknown>[] {
-  const payloadQuestions = questionRecordsFromSource(objectRecord(payload)).filter((question) =>
-    trimmedString(question.question),
-  );
-  if (payloadQuestions.length > 0) return payloadQuestions;
-  return questionRecordsFromSource(parseObjectString(summary)).filter((question) => trimmedString(question.question));
-}
-
-function questionOptionLabels(question: Record<string, unknown>): string[] {
-  const options = Array.isArray(question.options) ? question.options : [];
-  return options
-    .map((option) => {
-      if (typeof option === "string") return option.trim();
-      return trimmedString(objectRecord(option)?.label);
-    })
-    .filter((label): label is string => Boolean(label));
-}
-
-function formatQuestionText(question: Record<string, unknown>, index: number, total: number): string {
-  const prompt = trimmedString(question.question) ?? "";
-  const prefix = total > 1 ? `${index + 1}. ` : "";
-  const labels = questionOptionLabels(question);
-  return labels.length > 0 ? `${prefix}${prompt}\nOptions: ${labels.join("; ")}` : `${prefix}${prompt}`;
-}
-
-function summarizeInteractionForDisplay(input: {
-  sessionId: string;
-  type: InteractionType;
-  payload: InteractionPayload;
-  summary?: string;
-}): InteractionDisplay {
-  if (input.type === "question") {
-    const questions = questionRecords(input.payload, input.summary);
-    if (questions.length > 0) {
-      const prompts = questions
-        .map((question) => trimmedString(question.question))
-        .filter((prompt): prompt is string => Boolean(prompt));
-      return {
-        title: "AskUserQuestion",
-        message: questions.map((question, index) => formatQuestionText(question, index, questions.length)).join("\n\n"),
-        summary: prompts.join("; "),
-      };
-    }
-  }
-
-  const summary = trimmedString(input.summary);
-  const readableSummary = parseObjectString(summary) ? undefined : summary;
-  return {
-    title: `${input.sessionId} needs a response`,
-    message: readableSummary ?? `Agent is waiting on a ${input.type} response.`,
-    summary: readableSummary,
-  };
 }
 
 function dashboardClientKeyFromSession(sessionName: string): string {
