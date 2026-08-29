@@ -58,6 +58,15 @@ describe("createSession", () => {
         "claude-1111111",
       ]),
     ).toBe("claude-11111111");
+    const backendSessionId = "1111111111111111111111111111111111111111";
+    const exhaustedPrefixIds = Array.from(
+      { length: 11 },
+      (_, index) => `codex-${backendSessionId.slice(0, index + 6)}`,
+    );
+    const hashFallback = deriveAimuxSessionIdFromBackendSessionId("codex", backendSessionId, exhaustedPrefixIds);
+    expect(
+      deriveAimuxSessionIdFromBackendSessionId("codex", backendSessionId, [...exhaustedPrefixIds, hashFallback]),
+    ).toBe(`${hashFallback}-2`);
   });
 
   it("inserts Codex developer instructions before subcommands", () => {
@@ -190,6 +199,70 @@ describe("createSession", () => {
     );
 
     expect(session.id).toBe("codex-111111");
+
+    session.destroy();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("reuses the topology session id for an existing backend session id", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-stable-id-existing-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      projectRoot: repoRoot,
+      sessions: [
+        {
+          id: "codex-native",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          status: "offline",
+          backendSessionId: "11111111-2222-3333-4444-555555555555",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+
+    const sessions: any[] = [];
+    const host: any = {
+      sessionBootstrap: {
+        ...realArgComposition(),
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn((session: any) => sessions.push(session)),
+      sessions,
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    const session = createSession(
+      host,
+      "codex",
+      [],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "11111111-2222-3333-4444-555555555555",
+    );
+
+    expect(session.id).toBe("codex-native");
 
     session.destroy();
     rmSync(repoRoot, { recursive: true, force: true });

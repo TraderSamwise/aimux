@@ -44,7 +44,8 @@ const DASHBOARD_VIEWPORT_POLL_MS = 250;
 const DERIVED_AIMUX_ID_MIN_CHARS = 6;
 const DERIVED_AIMUX_ID_MAX_CHARS = 16;
 
-function projectRootFor(host: SessionLaunchHost): string {
+function projectRootFor(host: SessionLaunchHost, worktreePath?: string): string {
+  if (worktreePath?.trim()) return worktreePath.trim();
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
 }
 
@@ -73,15 +74,35 @@ export function deriveAimuxSessionIdFromBackendSessionId(
     if (!taken.has(candidate)) return candidate;
   }
   const suffix = createHash("sha256").update(backendSessionId).digest("hex").slice(0, 8);
-  return `${commandExecutable}-${slug.slice(0, DERIVED_AIMUX_ID_MIN_CHARS)}-${suffix}`;
+  const fallbackBase = `${commandExecutable}-${slug.slice(0, DERIVED_AIMUX_ID_MIN_CHARS)}-${suffix}`;
+  if (!taken.has(fallbackBase)) return fallbackBase;
+  let counter = 2;
+  while (true) {
+    const candidate = `${fallbackBase}-${counter}`;
+    if (!taken.has(candidate)) return candidate;
+    counter += 1;
+  }
 }
 
-function generatedSessionIdForLaunch(host: SessionLaunchHost, command: string, backendSessionId?: string): string {
-  if (!backendSessionId) return `${basename(command) || command}-${Math.random().toString(36).slice(2, 8)}`;
-  const projectRoot = projectRootFor(host);
+function generatedSessionIdForLaunch(
+  host: SessionLaunchHost,
+  command: string,
+  backendSessionId?: string,
+  worktreePath?: string,
+): string {
+  const commandExecutable = basename(command) || command;
+  if (!backendSessionId) return `${commandExecutable}-${Math.random().toString(36).slice(2, 8)}`;
+  const projectRoot = projectRootFor(host, worktreePath);
+  const topologySessions = listTopologySessionStates({ projectRoot });
+  const matchingTopologySession = topologySessions.find(
+    (session) =>
+      session.backendSessionId === backendSessionId &&
+      (basename(session.command) || session.command) === commandExecutable,
+  );
+  if (matchingTopologySession?.id) return matchingTopologySession.id;
   const existingIds = [
     ...(Array.isArray(host.sessions) ? host.sessions.map((session: any) => session.id).filter(Boolean) : []),
-    ...listTopologySessionStates({ projectRoot }).map((session) => session.id),
+    ...topologySessions.map((session) => session.id),
   ];
   return deriveAimuxSessionIdFromBackendSessionId(command, backendSessionId, existingIds);
 }
@@ -745,7 +766,7 @@ export function createSession(
     explicitClaudeBackendSessionId ??
     explicitCodexBackendSessionId ??
     (effectiveSessionIdFlag ? randomUUID() : undefined);
-  const sessionId = sessionIdOverride ?? generatedSessionIdForLaunch(host, command, backendSessionId);
+  const sessionId = sessionIdOverride ?? generatedSessionIdForLaunch(host, command, backendSessionId, worktreePath);
   if (host.sessions.some((session: any) => session.id === sessionId)) {
     throw new Error(`Session "${sessionId}" already exists`);
   }
@@ -966,7 +987,7 @@ export async function createSessionAsync(
     explicitClaudeBackendSessionId ??
     explicitCodexBackendSessionId ??
     (effectiveSessionIdFlag ? randomUUID() : undefined);
-  const sessionId = sessionIdOverride ?? generatedSessionIdForLaunch(host, command, backendSessionId);
+  const sessionId = sessionIdOverride ?? generatedSessionIdForLaunch(host, command, backendSessionId, worktreePath);
   if (host.sessions.some((session: any) => session.id === sessionId)) {
     throw new Error(`Session "${sessionId}" already exists`);
   }
