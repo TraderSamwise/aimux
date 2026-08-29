@@ -1350,6 +1350,8 @@ describe("MetadataServer threads API", () => {
           sessionId,
           startLine: startLine ?? -120,
           output: `output for ${sessionId}`,
+          outputAnsi: `\x1b[32moutput for ${sessionId}`,
+          messages: [{ id: `m-${sessionId}`, role: "assistant" as const, text: `chat for ${sessionId}` }],
           parsed: { blocks: [{ type: "response", text: `output for ${sessionId}` }] },
         }),
         sendAgentInput: ({ sessionId, text }) => {
@@ -1376,6 +1378,25 @@ describe("MetadataServer threads API", () => {
     const output = (await outputRes.json()) as { ok: boolean; sessionId: string; startLine: number; output: string };
     expect(outputRes.ok).toBe(true);
     expect(output).toMatchObject({ ok: true, sessionId: "codex-1", startLine: -80, output: "output for codex-1" });
+
+    const chatOutputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=-80&mode=chat`);
+    const chatOutput = (await chatOutputRes.json()) as {
+      ok: boolean;
+      output?: string;
+      outputAnsi?: string;
+      parsed?: unknown;
+      outputAvailable?: boolean;
+      messages?: Array<{ id: string; text?: string }>;
+    };
+    expect(chatOutputRes.ok).toBe(true);
+    expect(chatOutput.output).toBeUndefined();
+    expect(chatOutput.outputAnsi).toBeUndefined();
+    expect(chatOutput.parsed).toBeUndefined();
+    expect(chatOutput.outputAvailable).toBe(true);
+    expect(chatOutput.messages).toEqual([{ id: "m-codex-1", role: "assistant", text: "chat for codex-1" }]);
+
+    const malformedModeRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&mode=compact`);
+    expect(malformedModeRes.status).toBe(400);
 
     const attachRes = await fetch(`${base}/live-pane/attach`, {
       method: "POST",
@@ -6872,6 +6893,18 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: false, error: "startLine must be an integer" });
   });
 
+  it("rejects malformed events stream mode values", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/events?sessionId=codex-1&mode=compact`);
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "mode must be full or chat" });
+  });
+
   it("streams project_update invalidations over SSE after API mutations", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
@@ -7193,6 +7226,57 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain("event: agent_output");
     expect(text).toContain('"sessionId":"codex-1"');
     expect(text).toContain('"output":"initial output"');
+  });
+
+  it("streams session chat-mode events without terminal or parser payloads", async () => {
+    server?.stop();
+    let reads = 0;
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => {
+          reads += 1;
+          return {
+            sessionId,
+            startLine: startLine ?? -120,
+            output: reads >= 2 ? "updated output" : "initial output",
+            outputAnsi: reads >= 2 ? "\x1b[32mupdated output" : "\x1b[32minitial output",
+            messages: [
+              {
+                id: "assistant:event",
+                role: "assistant" as const,
+                text: reads >= 2 ? "updated output" : "initial output",
+              },
+            ],
+            parsed: {
+              blocks: [{ type: "response", text: reads >= 2 ? "updated output" : "initial output" }],
+              parser: {
+                tool: "codex",
+                version: 1,
+                confidence: "heuristic" as const,
+              },
+            },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1&startLine=-50&intervalMs=100&mode=chat`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const text = await readSseUntil(streamRes.body!, (value) => value.includes("event: agent_output"));
+
+    expect(text).toContain("event: agent_output");
+    expect(text).toContain('"outputAvailable":true');
+    expect(text).toContain('"messages":[{"id":"assistant:event","role":"assistant","text":"initial output"}]');
+    expect(text).not.toContain('"output":"initial output"');
+    expect(text).not.toContain('"outputAnsi"');
+    expect(text).not.toContain('"parsed"');
   });
 
   it("maps legacy notify calls onto the alert SSE stream", async () => {
@@ -8014,6 +8098,60 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain(
       '"parsed":{"blocks":[{"type":"response","text":"updated output"}],"parser":{"tool":"codex","version":1,"confidence":"heuristic"}}',
     );
+  });
+
+  it("streams chat-mode agent output without terminal or parser payloads", async () => {
+    server?.stop();
+    let reads = 0;
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => {
+          reads += 1;
+          return {
+            sessionId,
+            startLine: startLine ?? -120,
+            output: reads >= 2 ? "updated output" : "initial output",
+            outputAnsi: reads >= 2 ? "\x1b[32mupdated output" : "\x1b[32minitial output",
+            messages: [
+              {
+                id: "assistant:updated",
+                role: "assistant" as const,
+                text: reads >= 2 ? "updated output" : "initial output",
+              },
+            ],
+            parsed: {
+              blocks: [{ type: "response", text: reads >= 2 ? "updated output" : "initial output" }],
+              parser: {
+                tool: "codex",
+                version: 1,
+                confidence: "heuristic" as const,
+              },
+            },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const res = await fetch(`${base}/agents/output/stream?sessionId=codex-1&startLine=-50&intervalMs=100&mode=chat`, {
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+
+    const text = await readSseUntil(res.body!, (value) => value.includes('"text":"updated output"'));
+    controller.abort();
+
+    expect(text).toContain("event: output");
+    expect(text).toContain('"outputAvailable":true');
+    expect(text).toContain('"messages":[{"id":"assistant:updated","role":"assistant","text":"updated output"}]');
+    expect(text).not.toContain('"output":"updated output"');
+    expect(text).not.toContain('"outputAnsi"');
+    expect(text).not.toContain('"parsed"');
   });
 
   it("marks clamped agent output stream windows", async () => {

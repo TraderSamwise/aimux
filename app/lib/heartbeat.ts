@@ -22,6 +22,7 @@ export interface HeartbeatOptions {
   sessionId: string | null;
   startLine?: number;
   intervalMs?: number;
+  mode?: "full" | "chat";
   token?: string | null;
   onEvent: (event: StreamEvent) => void;
   onError?: (error: Error) => void;
@@ -46,12 +47,14 @@ const SSE_EVENT_NAMES = [
 ] as const;
 
 export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
-  const { serviceEndpoint, sessionId, startLine, intervalMs, token, onEvent, onError } = options;
+  const { serviceEndpoint, sessionId, startLine, intervalMs, mode, token, onEvent, onError } =
+    options;
 
   const params = new URLSearchParams();
   if (sessionId) params.set("sessionId", sessionId);
   if (startLine !== undefined) params.set("startLine", String(startLine));
   if (intervalMs !== undefined) params.set("intervalMs", String(intervalMs));
+  if (mode) params.set("mode", mode);
   const qs = params.toString();
   const eventPath = `${PROJECT_API_ROUTES.events}${qs ? `?${qs}` : ""}`;
 

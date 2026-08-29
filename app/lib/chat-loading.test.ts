@@ -19,5 +19,8 @@ describe("paneOutputSnapshotHasVisibleTranscript", () => {
     expect(
       paneOutputSnapshotHasVisibleTranscript({ messages: [], outputAnsi: "\u001b[32mok" }),
     ).toBe(true);
+    expect(paneOutputSnapshotHasVisibleTranscript({ messages: [], outputAvailable: true })).toBe(
+      true,
+    );
   });
 });

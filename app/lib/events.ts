@@ -73,9 +73,10 @@ export interface ParsedAgentOutput {
 export interface AgentOutputEvent {
   type: "agent_output";
   sessionId: string;
-  output: string;
+  output?: string;
   /** The pane with tmux's colours still attached; absent from older services. */
   outputAnsi?: string;
+  outputAvailable?: boolean;
   startLine: number;
   requestedStartLine?: number;
   endLine?: number;

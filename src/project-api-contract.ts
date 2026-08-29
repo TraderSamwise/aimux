@@ -389,11 +389,12 @@ export interface LivePaneSessionInput {
 
 export interface LivePaneOutputInput extends LivePaneSessionInput {
   startLine?: number;
+  mode?: "full" | "chat";
 }
 
 export interface LivePaneOutputResponse extends ProjectApiOk {
   sessionId: string;
-  output: string;
+  output?: string;
   /**
    * The same pane with tmux's colours still attached, for a client rendering a
    * terminal view rather than the transcript.
@@ -403,6 +404,7 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
    * is what lets the parser go on taking exactly the text it always took.
    */
   outputAnsi?: string;
+  outputAvailable?: boolean;
   startLine?: number;
   requestedStartLine?: number;
   endLine?: number;
@@ -464,13 +466,14 @@ export interface AgentOutputStreamReadyData {
 
 export interface AgentOutputStreamOutputData {
   sessionId: string;
-  output: string;
+  output?: string;
   startLine: number;
   requestedStartLine?: number;
   endLine?: number;
   captureLineLimit?: number;
   outputTailOnly?: boolean;
   outputStartLineClamped?: boolean;
+  outputAvailable?: boolean;
   parsed?: unknown;
 }
 

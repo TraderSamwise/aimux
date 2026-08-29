@@ -490,10 +490,11 @@ export async function getLivePaneOutput(
   endpoint: ServiceEndpoint,
   sessionId: string,
   startLine?: number,
-  opts?: ApiOpts,
+  opts?: ApiOpts & { mode?: "full" | "chat" },
 ): Promise<AgentOutputResponse> {
   const params = new URLSearchParams({ sessionId });
   if (startLine !== undefined) params.set("startLine", String(startLine));
+  if (opts?.mode) params.set("mode", opts.mode);
   return callProjectJson<AgentOutputResponse>(
     endpoint,
     "GET",

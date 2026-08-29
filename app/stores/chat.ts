@@ -10,6 +10,7 @@ import type {
 // ─── Per-session base families ─────────────────────────────────────────────
 
 export const outputBufferFamily = atomFamily((_sessionId: string) => atom<string>(""));
+export const outputAvailableFamily = atomFamily((_sessionId: string) => atom<boolean>(false));
 /**
  * The same pane with tmux's colours still on it, for the terminal view.
  *
@@ -57,7 +58,7 @@ export const applyOutputSnapshotAtom = atom(
     set,
     snapshot: {
       sessionId: string;
-      output: string;
+      output?: string;
       /**
        * Required, though the value may be undefined: callers build this object
        * field by field, so an optional key is one a caller can simply forget —
@@ -66,15 +67,34 @@ export const applyOutputSnapshotAtom = atom(
        * silent fall back to the uncoloured text.
        */
       outputAnsi: string | undefined;
+      outputAvailable?: boolean;
       messages?: AgentTranscriptMessage[];
       activity?: AgentActivityState;
       activityText?: string;
       attention?: AgentAttentionState;
     },
   ) => {
-    set(outputBufferFamily(snapshot.sessionId), snapshot.output);
-    set(outputAnsiFamily(snapshot.sessionId), snapshot.outputAnsi ?? snapshot.output);
-    set(transcriptFamily(snapshot.sessionId), snapshot.messages ?? []);
+    if (snapshot.output !== undefined) {
+      set(outputBufferFamily(snapshot.sessionId), snapshot.output);
+      set(outputAnsiFamily(snapshot.sessionId), snapshot.outputAnsi ?? snapshot.output);
+      set(
+        outputAvailableFamily(snapshot.sessionId),
+        Boolean(snapshot.output.length || snapshot.outputAvailable),
+      );
+    } else if (snapshot.outputAnsi !== undefined) {
+      set(outputAnsiFamily(snapshot.sessionId), snapshot.outputAnsi);
+      set(
+        outputAvailableFamily(snapshot.sessionId),
+        Boolean(snapshot.outputAnsi.length || snapshot.outputAvailable),
+      );
+    } else if (snapshot.outputAvailable !== undefined) {
+      set(outputAvailableFamily(snapshot.sessionId), snapshot.outputAvailable);
+    }
+    if (snapshot.messages !== undefined) {
+      set(transcriptFamily(snapshot.sessionId), snapshot.messages);
+    } else if (snapshot.output !== undefined) {
+      set(transcriptFamily(snapshot.sessionId), []);
+    }
     set(activityFamily(snapshot.sessionId), snapshot.activity);
     set(activityTextFamily(snapshot.sessionId), snapshot.activityText ?? "");
     set(attentionFamily(snapshot.sessionId), snapshot.attention);
@@ -93,9 +113,27 @@ export const ingestEventAtom = atom(null, (_get, set, event: StreamEvent) => {
       }
       return;
     case "agent_output":
-      set(outputBufferFamily(event.sessionId), event.output);
-      set(outputAnsiFamily(event.sessionId), event.outputAnsi ?? event.output);
-      set(transcriptFamily(event.sessionId), event.messages ?? []);
+      if (event.output !== undefined) {
+        set(outputBufferFamily(event.sessionId), event.output);
+        set(outputAnsiFamily(event.sessionId), event.outputAnsi ?? event.output);
+        set(
+          outputAvailableFamily(event.sessionId),
+          Boolean(event.output.length || event.outputAvailable),
+        );
+      } else if (event.outputAnsi !== undefined) {
+        set(outputAnsiFamily(event.sessionId), event.outputAnsi);
+        set(
+          outputAvailableFamily(event.sessionId),
+          Boolean(event.outputAnsi.length || event.outputAvailable),
+        );
+      } else if (event.outputAvailable !== undefined) {
+        set(outputAvailableFamily(event.sessionId), event.outputAvailable);
+      }
+      if (event.messages !== undefined) {
+        set(transcriptFamily(event.sessionId), event.messages);
+      } else if (event.output !== undefined) {
+        set(transcriptFamily(event.sessionId), []);
+      }
       // Only overwrite when the service actually reported one. A stream that
       // stops carrying activity must leave the last known state standing rather
       // than blanking it, or the indicator flickers off between events.

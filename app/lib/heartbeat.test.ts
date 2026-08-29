@@ -129,11 +129,12 @@ describe("startHeartbeat relay transport", () => {
       sessionId: "session/a b",
       startLine: -50,
       intervalMs: 250,
+      mode: "chat",
       onEvent: (event) => events.push(event),
     });
 
     expect(subscribeProjectEvents).toHaveBeenCalledWith(
-      "/proxy/127.0.0.1/43210/events?sessionId=session%2Fa+b&startLine=-50&intervalMs=250",
+      "/proxy/127.0.0.1/43210/events?sessionId=session%2Fa+b&startLine=-50&intervalMs=250&mode=chat",
       {},
       expect.any(Function),
       expect.any(Function),

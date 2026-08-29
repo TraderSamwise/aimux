@@ -248,6 +248,7 @@ export class ProjectOutputPreviewCoordinator {
     durationMs: number,
     changed?: boolean,
     coalesced = false,
+    responseBytes?: number,
   ): void {
     recordAgentOutputReadMetric({
       source,
@@ -257,6 +258,7 @@ export class ProjectOutputPreviewCoordinator {
       endLine: result.endLine,
       captureLineLimit: result.captureLineLimit,
       outputBytes: Buffer.byteLength(result.output ?? "", "utf8"),
+      responseBytes,
       durationMs,
       coalesced,
       changed,

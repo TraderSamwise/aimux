@@ -19,6 +19,7 @@ describe("agent output read metrics", () => {
       startLine: -120,
       outputBytes: 42,
       durationMs: 5,
+      responseBytes: 21,
       changed: true,
     });
     recordAgentOutputReadMetric({
@@ -27,6 +28,7 @@ describe("agent output read metrics", () => {
       requestedStartLine: -120,
       startLine: -120,
       outputBytes: 42,
+      responseBytes: 11,
       durationMs: 7,
       coalesced: true,
       changed: false,
@@ -41,6 +43,8 @@ describe("agent output read metrics", () => {
       coalesced: 1,
       totalOutputBytes: 84,
       maxOutputBytes: 42,
+      totalResponseBytes: 32,
+      maxResponseBytes: 21,
     });
     expect(metrics.bySource["output-stream"]).toMatchObject({
       count: 2,

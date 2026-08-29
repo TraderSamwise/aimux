@@ -245,6 +245,68 @@ function safeWorktreeCreatePath(name: string, projectRoot: string): string {
   }
 }
 
+type AgentOutputResponseMode = "full" | "chat";
+
+type AgentOutputPayload = {
+  sessionId: string;
+  output?: string;
+  outputAnsi?: string;
+  outputAvailable?: boolean;
+  startLine: number;
+  requestedStartLine?: number;
+  endLine?: number;
+  captureLineLimit?: number;
+  outputTailOnly?: boolean;
+  outputStartLineClamped?: boolean;
+  parsed?: unknown;
+  messages?: MetadataReadAgentOutputResult["messages"];
+  activity?: MetadataReadAgentOutputResult["activity"];
+  activityText?: string;
+  attention?: MetadataReadAgentOutputResult["attention"];
+};
+
+function parseAgentOutputResponseMode(
+  raw: string | null,
+): { ok: true; value: AgentOutputResponseMode } | { ok: false; error: string } {
+  const normalized = raw?.trim() ?? "";
+  if (!normalized || normalized === "full") return { ok: true, value: "full" };
+  if (normalized === "chat") return { ok: true, value: "chat" };
+  return { ok: false, error: "mode must be full or chat" };
+}
+
+function projectAgentOutputPayload(
+  result: MetadataReadAgentOutputResult,
+  captureWindow: ReturnType<typeof agentOutputCaptureWindow>,
+  startLine: number,
+  mode: AgentOutputResponseMode,
+): AgentOutputPayload {
+  const base = {
+    sessionId: result.sessionId,
+    startLine: result.startLine ?? startLine,
+    requestedStartLine: result.requestedStartLine ?? captureWindow.requestedStartLine,
+    endLine: result.endLine ?? captureWindow.endLine,
+    captureLineLimit: result.captureLineLimit ?? captureWindow.maxLines,
+    outputTailOnly: result.outputTailOnly ?? captureWindow.tailOnly,
+    outputStartLineClamped: result.outputStartLineClamped ?? captureWindow.clamped,
+    outputAvailable: Boolean(result.output?.length || result.outputAnsi?.length),
+    messages: result.messages,
+    activity: result.activity,
+    activityText: result.activityText,
+    attention: result.attention,
+  };
+  if (mode === "chat") return base;
+  return {
+    ...base,
+    output: result.output,
+    outputAnsi: result.outputAnsi,
+    parsed: result.parsed,
+  };
+}
+
+function jsonPayloadBytes(payload: unknown): number {
+  return Buffer.byteLength(JSON.stringify(payload), "utf8");
+}
+
 function buildTopologyWorktreesFromDesktopState(state: {
   sessions?: any[];
   teammates?: any[];
@@ -1063,8 +1125,9 @@ export class MetadataServer {
     durationMs: number,
     changed?: boolean,
     coalesced = false,
+    responseBytes?: number,
   ): void {
-    this.outputPreviews.recordAgentOutputRead(source, input, result, durationMs, changed, coalesced);
+    this.outputPreviews.recordAgentOutputRead(source, input, result, durationMs, changed, coalesced, responseBytes);
   }
 
   private currentProjectRoot(): string {
@@ -2184,6 +2247,11 @@ export class MetadataServer {
       const sessionFilter = url.searchParams.get("sessionId")?.trim() || null;
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
+      const parsedMode = parseAgentOutputResponseMode(url.searchParams.get("mode"));
+      if (!parsedMode.ok) {
+        send(res, 400, { ok: false, error: parsedMode.error });
+        return;
+      }
       const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
       if (!parsedStartLine.ok) {
         send(res, 400, { ok: false, error: parsedStartLine.error });
@@ -2252,28 +2320,22 @@ export class MetadataServer {
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
           const changed = result.output !== lastOutput || liveness !== lastLiveness;
-          this.recordAgentOutputRead("events", readInput, result, durationMs, changed, coalesced);
+          const payload = changed
+            ? projectAgentOutputPayload(result, captureWindow, startLine, parsedMode.value)
+            : undefined;
+          this.recordAgentOutputRead(
+            "events",
+            readInput,
+            result,
+            durationMs,
+            changed,
+            coalesced,
+            payload ? jsonPayloadBytes(payload) : undefined,
+          );
           if (changed) {
             lastOutput = result.output;
             lastLiveness = liveness;
-            sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, {
-              sessionId: result.sessionId,
-              output: result.output,
-              outputAnsi: result.outputAnsi,
-              startLine: result.startLine ?? startLine,
-              requestedStartLine: result.requestedStartLine ?? captureWindow.requestedStartLine,
-              endLine: result.endLine ?? captureWindow.endLine,
-              captureLineLimit: result.captureLineLimit ?? captureWindow.maxLines,
-              outputTailOnly: result.outputTailOnly ?? captureWindow.tailOnly,
-              outputStartLineClamped: result.outputStartLineClamped ?? captureWindow.clamped,
-              parsed: result.parsed,
-              // Forwarded explicitly: this payload is hand-picked, so a field
-              // added to readAgentOutput does not reach a stream by itself.
-              messages: result.messages,
-              activity: result.activity,
-              activityText: result.activityText,
-              attention: result.attention,
-            });
+            sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, payload);
           }
         } catch (error) {
           sendSseEvent(res, PROJECT_API_EVENT_NAMES.error, {
@@ -2705,6 +2767,11 @@ export class MetadataServer {
       const sessionId = url.searchParams.get("sessionId")?.trim();
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
+      const parsedMode = parseAgentOutputResponseMode(url.searchParams.get("mode"));
+      if (!parsedMode.ok) {
+        send(res, 400, { ok: false, error: parsedMode.error });
+        return;
+      }
       if (!sessionId) {
         send(res, 400, { ok: false, error: "sessionId is required" });
         return;
@@ -2774,28 +2841,22 @@ export class MetadataServer {
           if (closed) return;
           const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
           const changed = result.output !== lastOutput || liveness !== lastLiveness;
-          this.recordAgentOutputRead("output-stream", readInput, result, durationMs, changed, coalesced);
+          const payload = changed
+            ? projectAgentOutputPayload(result, captureWindow, startLine, parsedMode.value)
+            : undefined;
+          this.recordAgentOutputRead(
+            "output-stream",
+            readInput,
+            result,
+            durationMs,
+            changed,
+            coalesced,
+            payload ? jsonPayloadBytes(payload) : undefined,
+          );
           if (changed) {
             lastOutput = result.output;
             lastLiveness = liveness;
-            sendSseEvent(res, outputEventName, {
-              sessionId: result.sessionId,
-              output: result.output,
-              outputAnsi: result.outputAnsi,
-              startLine: result.startLine ?? startLine,
-              requestedStartLine: result.requestedStartLine ?? captureWindow.requestedStartLine,
-              endLine: result.endLine ?? captureWindow.endLine,
-              captureLineLimit: result.captureLineLimit ?? captureWindow.maxLines,
-              outputTailOnly: result.outputTailOnly ?? captureWindow.tailOnly,
-              outputStartLineClamped: result.outputStartLineClamped ?? captureWindow.clamped,
-              parsed: result.parsed,
-              // Forwarded explicitly: this payload is hand-picked, so a field
-              // added to readAgentOutput does not reach a stream by itself.
-              messages: result.messages,
-              activity: result.activity,
-              activityText: result.activityText,
-              attention: result.attention,
-            });
+            sendSseEvent(res, outputEventName, payload);
           } else {
             res.write(": keepalive\n\n");
           }
@@ -5773,21 +5834,29 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: parsedStartLine.error });
           return;
         }
+        const parsedMode = parseAgentOutputResponseMode(url.searchParams.get("mode"));
+        if (!parsedMode.ok) {
+          send(res, 400, { ok: false, error: parsedMode.error });
+          return;
+        }
         const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
         const startLine = captureWindow.startLine;
         const readInput = { sessionId, startLine };
         const { result, durationMs, coalesced } = await this.measureAgentOutputRead("live-pane-output", readInput);
-        this.recordAgentOutputRead("live-pane-output", readInput, result, durationMs, undefined, coalesced);
-        send(res, 200, {
+        const payload = {
           ok: true,
-          ...result,
-          startLine: result.startLine ?? startLine,
-          requestedStartLine: result.requestedStartLine ?? captureWindow.requestedStartLine,
-          endLine: result.endLine ?? captureWindow.endLine,
-          captureLineLimit: result.captureLineLimit ?? captureWindow.maxLines,
-          outputTailOnly: result.outputTailOnly ?? captureWindow.tailOnly,
-          outputStartLineClamped: result.outputStartLineClamped ?? captureWindow.clamped,
-        });
+          ...projectAgentOutputPayload(result, captureWindow, startLine, parsedMode.value),
+        };
+        this.recordAgentOutputRead(
+          "live-pane-output",
+          readInput,
+          result,
+          durationMs,
+          undefined,
+          coalesced,
+          jsonPayloadBytes(payload),
+        );
+        send(res, 200, payload);
         return;
       }
 

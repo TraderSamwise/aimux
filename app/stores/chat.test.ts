@@ -7,6 +7,7 @@ import {
   transcriptFamily,
   lastErrorFamily,
   outputAnsiFamily,
+  outputAvailableFamily,
   outputBufferFamily,
 } from "@/stores/chat";
 
@@ -88,6 +89,25 @@ describe("the projected transcript", () => {
     expect(store.get(outputAnsiFamily("agent-1"))).toBe("plain");
   });
 
+  it("does not clear terminal buffers when a chat-only snapshot omits output", () => {
+    const store = createStore();
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      output: "plain",
+      outputAnsi: "\x1b[32mplain",
+    });
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      messages: [message],
+    });
+
+    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
+    expect(store.get(outputBufferFamily("agent-1"))).toBe("plain");
+    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[32mplain");
+    expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
+  });
+
   it("takes them from a stream event too", () => {
     const store = createStore();
     store.set(ingestEventAtom, {
@@ -101,5 +121,42 @@ describe("the projected transcript", () => {
 
     expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
     expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[32mPublished events: 21");
+  });
+
+  it("does not clear terminal buffers when a chat-only stream event omits output", () => {
+    const store = createStore();
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      output: "plain",
+      outputAnsi: "\x1b[32mplain",
+      startLine: -120,
+    });
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -120,
+      messages: [message],
+    });
+
+    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
+    expect(store.get(outputBufferFamily("agent-1"))).toBe("plain");
+    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[32mplain");
+    expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
+  });
+
+  it("records terminal availability from a chat-only stream event", () => {
+    const store = createStore();
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -120,
+      outputAvailable: true,
+      messages: [message],
+    });
+
+    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
+    expect(store.get(outputBufferFamily("agent-1"))).toBe("");
+    expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
   });
 });

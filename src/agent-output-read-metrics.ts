@@ -13,6 +13,7 @@ export interface AgentOutputReadMetricInput {
   endLine?: number;
   captureLineLimit?: number;
   outputBytes?: number;
+  responseBytes?: number;
   durationMs: number;
   coalesced?: boolean;
   changed?: boolean;
@@ -30,6 +31,8 @@ export interface AgentOutputReadSourceMetrics {
   maxMs: number;
   totalOutputBytes: number;
   maxOutputBytes: number;
+  totalResponseBytes: number;
+  maxResponseBytes: number;
   lastAt: string | null;
 }
 
@@ -57,6 +60,8 @@ function emptySourceMetrics(): AgentOutputReadSourceMetrics {
     maxMs: 0,
     totalOutputBytes: 0,
     maxOutputBytes: 0,
+    totalResponseBytes: 0,
+    maxResponseBytes: 0,
     lastAt: null,
   };
 }
@@ -77,6 +82,9 @@ function accumulate(target: AgentOutputReadSourceMetrics, input: AgentOutputRead
   const outputBytes = input.outputBytes ?? 0;
   target.totalOutputBytes += outputBytes;
   target.maxOutputBytes = Math.max(target.maxOutputBytes, outputBytes);
+  const responseBytes = input.responseBytes ?? 0;
+  target.totalResponseBytes += responseBytes;
+  target.maxResponseBytes = Math.max(target.maxResponseBytes, responseBytes);
   target.lastAt = at;
 }
 

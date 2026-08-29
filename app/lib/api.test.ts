@@ -133,12 +133,12 @@ describe("api relay routing", () => {
   it("uses direct project HTTP when no relay transport is connected", async () => {
     const fetchMock = installFetchMock({ sessionId: "session/a b", output: "" });
 
-    await getLivePaneOutput(endpoint, "session/a b", -25, { token: "local-token" });
+    await getLivePaneOutput(endpoint, "session/a b", -25, { token: "local-token", mode: "chat" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "http://127.0.0.1:43210/live-pane/output?sessionId=session%2Fa+b&startLine=-25",
+      "http://127.0.0.1:43210/live-pane/output?sessionId=session%2Fa+b&startLine=-25&mode=chat",
     );
     expect(init.method).toBe("GET");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
@@ -236,12 +236,12 @@ describe("api relay routing", () => {
     const fetchMock = installFetchMock();
     const request = installRelayMock({ sessionId: "s/1", output: "hello" });
 
-    await getAgentOutput(endpoint, "s/1", 7);
+    await getAgentOutput(endpoint, "s/1", 7, { mode: "chat" });
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenCalledWith(
       "GET",
-      "/proxy/127.0.0.1/43210/live-pane/output?sessionId=s%2F1&startLine=7",
+      "/proxy/127.0.0.1/43210/live-pane/output?sessionId=s%2F1&startLine=7&mode=chat",
       undefined,
     );
   });

@@ -512,6 +512,7 @@ export default function MainLayout() {
           serviceEndpoint: endpoint!,
           sessionId: activeShare?.sessionId ?? null,
           startLine: activeShare?.sessionId ? CHAT_OUTPUT_CAPTURE_START_LINE : undefined,
+          mode: activeShare?.sessionId ? "chat" : undefined,
           token,
           onEvent: (event) => {
             if (event.type === PROJECT_API_EVENT_NAMES.ready) {

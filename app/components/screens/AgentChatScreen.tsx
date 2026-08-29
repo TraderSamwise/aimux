@@ -117,6 +117,7 @@ import {
   applyOutputSnapshotAtom,
   lastErrorFamily,
   outputAnsiFamily,
+  outputAvailableFamily,
   outputBufferFamily,
   transcriptFamily,
 } from "@/stores/chat";
@@ -464,6 +465,7 @@ export default function ChatScreen() {
   const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
+  const outputAvailable = useAtomValue(outputAvailableFamily(sessionKey));
   const transcript = useAtomValue(transcriptFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
   const activityText = useAtomValue(activityTextFamily(sessionKey));
@@ -607,6 +609,7 @@ export default function ChatScreen() {
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
+  const terminalHydrationKeyRef = useRef<string | null>(null);
   const composerHiddenRef = useRef(false);
   const nativeChatUserTouchedRef = useRef(false);
   const nativeChatPinnedToEndRef = useRef(true);
@@ -801,7 +804,7 @@ export default function ChatScreen() {
       { host: endpointHost, port: endpointPort },
       sessionId,
       CHAT_OUTPUT_CAPTURE_START_LINE,
-      { token },
+      { token, mode: "chat" },
     );
     if (!serviceProjectsTranscript(result.messages)) {
       // Not an empty pane — a daemon older than this app, which does not
@@ -816,6 +819,7 @@ export default function ChatScreen() {
       sessionId: result.sessionId,
       output: result.output,
       outputAnsi: result.outputAnsi,
+      outputAvailable: result.outputAvailable,
       messages: result.messages,
       activity: result.activity,
       activityText: result.activityText,
@@ -931,7 +935,7 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [pendingComposerAck]);
 
-  const canShowTerminal = Boolean(output);
+  const canShowTerminal = outputAvailable || Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
   const keyboardVisible = useKeyboardVisible(usesNativeKeyboardController);
   const compactHeaderActionsWidth = canShowTerminal
@@ -948,6 +952,58 @@ export default function ChatScreen() {
     agentOutputViewMode === "split" && !canUseSplitView ? "chat" : agentOutputViewMode;
   const showSplit = canUseSplitView && canShowTerminal && agentOutputViewMode === "split";
   const showTerminalOnly = canShowTerminal && effectiveAgentOutputViewMode === "terminal";
+  const shouldHydrateTerminalOutput = (showSplit || showTerminalOnly) && outputAvailable && !output;
+  useEffect(() => {
+    if (
+      !shouldHydrateTerminalOutput ||
+      !endpointHost ||
+      !endpointPort ||
+      !sessionId ||
+      routeSessionMissing
+    ) {
+      return;
+    }
+    const hydrationKey = `${endpointHost}:${endpointPort}:${sessionId}`;
+    if (terminalHydrationKeyRef.current === hydrationKey) return;
+    terminalHydrationKeyRef.current = hydrationKey;
+    let cancelled = false;
+    void getLivePaneOutput(
+      { host: endpointHost, port: endpointPort },
+      sessionId,
+      CHAT_OUTPUT_CAPTURE_START_LINE,
+      { token, mode: "full" },
+    )
+      .then((result) => {
+        if (cancelled) return;
+        applyOutputSnapshot({
+          sessionId: result.sessionId,
+          output: result.output,
+          outputAnsi: result.outputAnsi,
+          outputAvailable: result.outputAvailable,
+          messages: result.messages,
+          activity: result.activity,
+          activityText: result.activityText,
+          attention: result.attention,
+        });
+      })
+      .catch(() => {
+        if (terminalHydrationKeyRef.current === hydrationKey)
+          terminalHydrationKeyRef.current = null;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    applyOutputSnapshot,
+    endpointHost,
+    endpointPort,
+    output,
+    outputAvailable,
+    routeSessionMissing,
+    sessionId,
+    shouldHydrateTerminalOutput,
+    token,
+  ]);
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const visibleComposerScrollReserve = composerHideDistance + COMPOSER_SCROLL_SAFETY_PADDING;
   const composerVisibilityStyle = useMemo(
