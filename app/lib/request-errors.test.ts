@@ -14,6 +14,13 @@ describe("isTransientRequestError", () => {
     expect(isTransientRequestError(new Error("Relay not connected"))).toBe(true);
   });
 
+  it("treats closed transport writes as transient", () => {
+    expect(isTransientRequestError(new Error("write EPIPE"))).toBe(true);
+    expect(
+      isTransientRequestError(Object.assign(new Error("socket closed"), { code: "ECONNRESET" })),
+    ).toBe(true);
+  });
+
   it("does not hide unexpected errors", () => {
     expect(isTransientRequestError(new Error("Route is not allowed for this shared chat"))).toBe(
       false,

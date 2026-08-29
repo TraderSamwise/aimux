@@ -1751,7 +1751,17 @@ export default function ChatScreen() {
       });
       void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
-      setPendingComposerAck(null);
+      setPendingComposerAck(
+        isTransientRequestError(err)
+          ? {
+              attachmentFilenames: attachments.map((attachment) => attachment.filename),
+              baselineUserMessageCount,
+              id: Date.now(),
+              text,
+              timedOut: true,
+            }
+          : null,
+      );
       setDraft(text);
       setPendingAttachments(attachments);
       setSendError(formatComposerSendFailure(err));
