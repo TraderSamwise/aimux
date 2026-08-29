@@ -9,6 +9,7 @@ import {
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
+  activityTextFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
 
@@ -159,6 +160,48 @@ describe("the projected transcript", () => {
     expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
     expect(store.get(outputBufferFamily("agent-1"))).toBe("");
     expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
+  });
+
+  it("keeps activity text when a sparse stream event omits it", () => {
+    const store = createStore();
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      output: "work",
+      outputAnsi: undefined,
+      startLine: -120,
+      activity: "running",
+      activityText: "Working... (3s)",
+    });
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -120,
+      messages: [message],
+    });
+
+    expect(store.get(activityTextFamily("agent-1"))).toBe("Working... (3s)");
+  });
+
+  it("clears activity text when a stream event explicitly sends empty text", () => {
+    const store = createStore();
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      output: "work",
+      outputAnsi: undefined,
+      startLine: -120,
+      activity: "running",
+      activityText: "Working... (3s)",
+    });
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -120,
+      activityText: "",
+    });
+
+    expect(store.get(activityTextFamily("agent-1"))).toBe("");
   });
 
   it("keeps an expanded transcript window when a smaller snapshot arrives", () => {

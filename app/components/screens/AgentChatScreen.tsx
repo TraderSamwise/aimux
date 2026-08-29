@@ -182,6 +182,17 @@ const FOOTER_LABEL_SHIMMER_COLORS = {
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
+const COMPOSER_WEB_INPUT_PROPS =
+  Platform.OS === "web"
+    ? ({
+        "data-1p-ignore": "true",
+        "data-form-type": "other",
+        "data-lpignore": "true",
+        "data-protonpass-ignore": "true",
+        name: "aimux-agent-message",
+        spellCheck: false,
+      } as unknown as Partial<React.ComponentProps<typeof TextInput>>)
+    : {};
 // Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
 const CONTROL_INK = "#fafafa";
 const CONTROL_ON_BRAND = "#18181b";
@@ -285,11 +296,34 @@ type ComposerDraftSnapshot = {
 type PendingComposerAck = {
   baselineUserMessageCount: number;
   id: number;
+  text: string;
+  attachmentFilenames: string[];
+  timedOut: boolean;
 };
 
 type InitialTranscriptStatus = "idle" | "loading" | "timed-out";
 
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
+
+function normalizeComposerAckText(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function userMessageAcknowledgesComposerSend(
+  messages: ChatMessage[],
+  pending: PendingComposerAck,
+): boolean {
+  const userMessages = messages.filter((message) => message.role === "user");
+  if (userMessages.length <= pending.baselineUserMessageCount) return false;
+  const sentText = normalizeComposerAckText(pending.text);
+  const newMessages = userMessages.slice(pending.baselineUserMessageCount);
+  return newMessages.some((message) => {
+    const messageText = normalizeComposerAckText(message.text ?? "");
+    if (sentText && messageText.includes(sentText)) return true;
+    if (pending.attachmentFilenames.length === 0) return false;
+    return pending.attachmentFilenames.every((filename) => messageText.includes(filename));
+  });
+}
 
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
   if (!key) return;
@@ -1014,29 +1048,45 @@ export default function ChatScreen() {
     () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
     [allMessages],
   );
+  const composerSendAcknowledged = pendingComposerAck
+    ? userMessageAcknowledgesComposerSend(allMessages, pendingComposerAck)
+    : false;
   const hasMoreTranscriptHistory =
     transcriptCaptureStartLine > CHAT_OUTPUT_MAX_CAPTURE_START_LINE && !olderTranscriptExhausted;
-  const composerAwaitingAck = pendingComposerAck !== null;
+  const composerAwaitingAck = pendingComposerAck !== null && !pendingComposerAck.timedOut;
 
   useEffect(() => {
     if (!pendingComposerAck) return;
-    if (userMessageCount <= pendingComposerAck.baselineUserMessageCount) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer clears once the server acknowledges the send
-    setDraft("");
-    setPendingAttachments([]);
-    setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
+    if (!composerSendAcknowledged) return;
+    const draftStillMatches = draft === pendingComposerAck.text;
+    const attachmentsStillMatch =
+      pendingAttachments.length === pendingComposerAck.attachmentFilenames.length &&
+      pendingAttachments.every(
+        (attachment, index) =>
+          attachment.filename === pendingComposerAck.attachmentFilenames[index],
+      );
+
+    if (draftStillMatches && attachmentsStillMatch) {
+      setDraft("");
+      setPendingAttachments([]);
+      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
+    }
+    setSendError(null);
     setPendingComposerAck(null);
-    if (composerDraftKey) composerDraftsByKey.delete(composerDraftKey);
-  }, [composerDraftKey, pendingComposerAck, userMessageCount]);
+    if (draftStillMatches && attachmentsStillMatch && composerDraftKey) {
+      composerDraftsByKey.delete(composerDraftKey);
+    }
+  }, [composerDraftKey, composerSendAcknowledged, draft, pendingAttachments, pendingComposerAck]);
 
   useEffect(() => {
     if (!pendingComposerAck) return;
+    if (pendingComposerAck.timedOut) return;
     const pendingId = pendingComposerAck.id;
     const timer = setTimeout(() => {
       setPendingComposerAck((current) => {
         if (current?.id !== pendingId) return current;
         setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
-        return null;
+        return { ...current, timedOut: true };
       });
     }, COMPOSER_SEND_ACK_TIMEOUT_MS);
     return () => clearTimeout(timer);
@@ -1264,9 +1314,8 @@ export default function ChatScreen() {
     !visibleLastError
       ? initialTranscriptStatus
       : "idle";
-  const showInitialTranscriptLoader = visibleInitialTranscriptStatus === "loading";
-  const visibleInitialTranscriptNoticeStatus =
-    visibleInitialTranscriptStatus === "timed-out" ? "timed-out" : "idle";
+  const showInitialTranscriptOverlay = visibleInitialTranscriptStatus !== "idle";
+  const visibleInitialTranscriptNoticeStatus = "idle";
   const chatListItems = buildChatListItems({
     initialTranscriptStatus: visibleInitialTranscriptNoticeStatus,
     messages: allMessages,
@@ -1648,16 +1697,13 @@ export default function ChatScreen() {
       !session ||
       ownerShareStatusPending ||
       sendBusyRef.current ||
-      pendingComposerAck ||
+      composerAwaitingAck ||
       (!text && attachments.length === 0)
     ) {
       return;
     }
     sendBusyRef.current = true;
-    setPendingComposerAck({
-      baselineUserMessageCount: userMessageCount,
-      id: Date.now(),
-    });
+    const baselineUserMessageCount = userMessageCount;
     setSendBusy(true);
     setSendError(null);
     try {
@@ -1686,6 +1732,13 @@ export default function ChatScreen() {
           .map((attachment) => attachment.uploadedAttachmentId)
           .filter((id): id is string => Boolean(id)),
         ...(sharedChatActor ? { sharedChatActor } : {}),
+      });
+      setPendingComposerAck({
+        attachmentFilenames: attachments.map((attachment) => attachment.filename),
+        baselineUserMessageCount,
+        id: Date.now(),
+        text,
+        timedOut: false,
       });
       void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
@@ -2053,13 +2106,16 @@ export default function ChatScreen() {
                   accessibilityLabel="Message the agent"
                   nativeID={CHAT_INPUT_NATIVE_ID}
                   autoComplete="off"
+                  autoCapitalize="sentences"
                   importantForAutofill="no"
+                  inputMode="text"
                   textContentType="none"
                   onFocus={onFocus}
                   onBlur={onBlur}
                   value={draft}
                   onChangeText={handleDraftChange}
                   onKeyPress={handleComposerKeyPress}
+                  {...COMPOSER_WEB_INPUT_PROPS}
                   {...composerPasteProps}
                   onContentSizeChange={handleComposerContentSizeChange}
                   placeholder="Ask the agent…"
@@ -2658,7 +2714,9 @@ export default function ChatScreen() {
                         style={{ position: "relative" }}
                       >
                         {chatScroller}
-                        {showInitialTranscriptLoader ? <InitialTranscriptLoadingOverlay /> : null}
+                        {showInitialTranscriptOverlay ? (
+                          <InitialTranscriptOverlay status={visibleInitialTranscriptStatus} />
+                        ) : null}
                       </View>
                     )}
                   </View>
@@ -3092,7 +3150,9 @@ function TranscriptHistoryLoadingRow() {
   );
 }
 
-function InitialTranscriptLoadingOverlay() {
+function InitialTranscriptOverlay({ status }: { status: InitialTranscriptStatus }) {
+  if (status === "idle") return null;
+  const loading = status === "loading";
   return (
     <View
       pointerEvents="none"
@@ -3100,8 +3160,12 @@ function InitialTranscriptLoadingOverlay() {
       style={{ zIndex: 1 }}
     >
       <View className="flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 shadow-sm">
-        <ActivityIndicator size="small" color="#a1a1aa" />
-        <Text className="text-sm text-muted-foreground">Loading transcript history...</Text>
+        {loading ? <ActivityIndicator size="small" color="#a1a1aa" /> : null}
+        <Text className="text-sm text-muted-foreground">
+          {loading
+            ? "Loading transcript history..."
+            : "Transcript history is still loading. New output will appear as it arrives."}
+        </Text>
       </View>
     </View>
   );

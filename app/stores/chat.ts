@@ -45,9 +45,8 @@ export const attentionFamily = atomFamily((_sessionId: string) =>
   atom<AgentAttentionState | undefined>(undefined),
 );
 /**
- * The tool's own progress line. Unlike `activity`, this is replaced on every
- * event rather than held when absent: it describes a turn in flight, so keeping
- * the last one would leave a frozen timer beside a finished agent.
+ * The tool's own progress line. Sparse events keep the last value so the footer
+ * does not flicker; explicit empty strings still clear finished turns.
  */
 export const activityTextFamily = atomFamily((_sessionId: string) => atom<string>(""));
 // Kept for future stream-token dedup; not wired up yet — see Task 3 deviation #6.
@@ -162,7 +161,9 @@ export const applyOutputSnapshotAtom = atom(
       set(transcriptStartLineFamily(snapshot.sessionId), snapshot.startLine);
     }
     set(activityFamily(snapshot.sessionId), snapshot.activity);
-    set(activityTextFamily(snapshot.sessionId), snapshot.activityText ?? "");
+    if (snapshot.activityText !== undefined) {
+      set(activityTextFamily(snapshot.sessionId), snapshot.activityText);
+    }
     set(attentionFamily(snapshot.sessionId), snapshot.attention);
     set(lastErrorFamily(snapshot.sessionId), null);
   },
@@ -206,7 +207,8 @@ export const ingestEventAtom = atom(null, (get, set, event: StreamEvent) => {
       // than blanking it, or the indicator flickers off between events.
       if (event.activity !== undefined) set(activityFamily(event.sessionId), event.activity);
       if (event.attention !== undefined) set(attentionFamily(event.sessionId), event.attention);
-      set(activityTextFamily(event.sessionId), event.activityText ?? "");
+      if (event.activityText !== undefined)
+        set(activityTextFamily(event.sessionId), event.activityText);
       set(streamingFamily(event.sessionId), true);
       return;
     case "alert":
