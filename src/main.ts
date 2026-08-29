@@ -83,6 +83,7 @@ import {
 } from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
+import { resolveAgentIdentity } from "./runtime-core/backend-session-ids.js";
 import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
@@ -1952,6 +1953,46 @@ program
       return;
     }
     renderAgentsByWorktreeLines(agents, projectRoot).forEach((line) => console.log(line));
+  });
+
+program
+  .command("id <sessionId>")
+  .description("Resolve an Aimux agent id to its canonical tool and native backend id")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (sessionId: string, opts: { project?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const identity = resolveAgentIdentity({ projectRoot, sessionId });
+    if (!identity.ok) {
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ ok: false, projectRoot, sessionId: identity.sessionId, error: identity.reason }, null, 2),
+        );
+      } else {
+        console.error(`Error: ${identity.reason}`);
+      }
+      process.exit(1);
+    }
+    const canonical = identity.toolConfigKey ?? identity.tool ?? identity.command ?? "?";
+    const payload = {
+      ok: true,
+      projectRoot,
+      canonical,
+      aimuxId: identity.sessionId,
+      backendSessionId: identity.backendSessionId,
+      source: identity.source,
+      status: identity.status,
+      worktreePath: identity.worktreePath,
+    };
+    if (opts.json) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    console.log(
+      `${payload.aimuxId}  canonical=${payload.canonical}  backend=${payload.backendSessionId}  ` +
+        `status=${payload.status ?? "?"}  source=${payload.source}`,
+    );
+    if (payload.worktreePath) console.log(`worktree: ${payload.worktreePath}`);
   });
 
 const loopCmd = program.command("loop").description("Manage agents in an overseer-managed loop");

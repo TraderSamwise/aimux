@@ -93,6 +93,20 @@ export type ResolvedBackendSessionId =
   | { ok: true; backendSessionId: string; source: "topology" | "discovered" }
   | { ok: false; reason: string };
 
+export type ResolvedAgentIdentity =
+  | {
+      ok: true;
+      sessionId: string;
+      backendSessionId: string;
+      source: "topology" | "discovered";
+      tool?: string;
+      toolConfigKey?: string;
+      command?: string;
+      status?: string;
+      worktreePath?: string;
+    }
+  | { ok: false; sessionId: string; reason: string };
+
 /**
  * The tool's own conversation id for an agent, for callers that can only act
  * natively \u2014 forking and moving both address the conversation by that id.
@@ -103,19 +117,40 @@ export type ResolvedBackendSessionId =
  * worktree: a wrong id here forks somebody else's conversation.
  */
 export function resolveBackendSessionId(input: ResolveBackendSessionIdInput): ResolvedBackendSessionId {
+  const identity = resolveAgentIdentity(input);
+  return identity.ok
+    ? { ok: true, backendSessionId: identity.backendSessionId, source: identity.source }
+    : { ok: false, reason: identity.reason };
+}
+
+export function resolveAgentIdentity(input: ResolveBackendSessionIdInput): ResolvedAgentIdentity {
   const sessionId = input.sessionId.trim();
-  if (!sessionId) return { ok: false, reason: "sessionId is required" };
+  if (!sessionId) return { ok: false, sessionId, reason: "sessionId is required" };
 
   if (input.projectRoot) {
-    return withProjectPaths(input.projectRoot, () => resolveBackendSessionId({ ...input, projectRoot: undefined }));
+    return withProjectPaths(input.projectRoot, () => resolveAgentIdentity({ ...input, projectRoot: undefined }));
   }
 
   const session = listTopologySessionStates().find((entry) => entry.id === sessionId);
   if (!session) {
-    return { ok: false, reason: `Agent "${sessionId}" is not managed in runtime topology` };
+    return {
+      ok: false,
+      sessionId,
+      reason: `Agent "${sessionId}" is not managed in runtime topology`,
+    };
   }
   if (session.backendSessionId) {
-    return { ok: true, backendSessionId: session.backendSessionId, source: "topology" };
+    return {
+      ok: true,
+      sessionId: session.id,
+      backendSessionId: session.backendSessionId,
+      source: "topology",
+      tool: session.tool,
+      toolConfigKey: session.toolConfigKey,
+      command: session.command,
+      status: session.status,
+      worktreePath: session.worktreePath,
+    };
   }
 
   // An agent in the main checkout has no worktreePath, and searching undefined
@@ -123,10 +158,23 @@ export function resolveBackendSessionId(input: ResolveBackendSessionIdInput): Re
   const toolKey = discoveryToolKeyForSession(session);
   const cwd = session.worktreePath ?? getRepoRoot();
   const discovered = discoverBackendSessionId(toolKey, cwd);
-  if (discovered) return { ok: true, backendSessionId: discovered, source: "discovered" };
+  if (discovered) {
+    return {
+      ok: true,
+      sessionId: session.id,
+      backendSessionId: discovered,
+      source: "discovered",
+      tool: session.tool,
+      toolConfigKey: session.toolConfigKey,
+      command: session.command,
+      status: session.status,
+      worktreePath: session.worktreePath,
+    };
+  }
 
   return {
     ok: false,
+    sessionId,
     reason:
       `Agent "${sessionId}" has no recorded ${toolKey ?? "tool"} session id, and ${cwd} holds no ` +
       `single transcript to recover one from. Agents started before aimux recorded backend ids ` +

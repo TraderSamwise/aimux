@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { initPaths } from "../paths.js";
-import { recordTopologyBackendSessionId, resolveBackendSessionId } from "./backend-session-ids.js";
+import {
+  recordTopologyBackendSessionId,
+  resolveAgentIdentity,
+  resolveBackendSessionId,
+} from "./backend-session-ids.js";
 import { listTopologySessionStates, upsertTopologySession } from "./topology-sessions.js";
 
 describe("recordTopologyBackendSessionId", () => {
@@ -188,6 +192,35 @@ describe("resolveBackendSessionId", () => {
       ok: true,
       backendSessionId: "0f0e2b1a-1111-2222-3333-444455556666",
       source: "topology",
+    });
+  });
+
+  it("resolves full identity for graveyarded agents", () => {
+    upsertTopologySession(
+      {
+        id: "claude-gone",
+        tool: "claude",
+        toolConfigKey: "claude",
+        command: "claude",
+        args: [],
+        lifecycle: "graveyard",
+        backendSessionId: "0f0e2b1a-1111-2222-3333-444455556666",
+        worktreePath: repoRoot,
+      },
+      "graveyard",
+      { projectRoot: repoRoot },
+    );
+
+    expect(resolveAgentIdentity({ projectRoot: repoRoot, sessionId: "claude-gone" })).toEqual({
+      ok: true,
+      sessionId: "claude-gone",
+      backendSessionId: "0f0e2b1a-1111-2222-3333-444455556666",
+      source: "topology",
+      tool: "claude",
+      toolConfigKey: "claude",
+      command: "claude",
+      status: "graveyard",
+      worktreePath: repoRoot,
     });
   });
 

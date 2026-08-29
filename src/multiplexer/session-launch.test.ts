@@ -18,6 +18,7 @@ function gitInit(cwd: string): void {
 import {
   createSession,
   createSessionAsync,
+  deriveAimuxSessionIdFromBackendSessionId,
   focusSession,
   injectCodexDeveloperInstructions,
   migrateAgent,
@@ -47,6 +48,18 @@ function realArgComposition() {
 }
 
 describe("createSession", () => {
+  it("derives stable Aimux ids from backend session ids", () => {
+    expect(deriveAimuxSessionIdFromBackendSessionId("codex", "11111111-2222-3333-4444-555555555555")).toBe(
+      "codex-111111",
+    );
+    expect(
+      deriveAimuxSessionIdFromBackendSessionId("claude", "11111111-2222-3333-4444-555555555555", [
+        "claude-111111",
+        "claude-1111111",
+      ]),
+    ).toBe("claude-11111111");
+  });
+
   it("inserts Codex developer instructions before subcommands", () => {
     expect(
       injectCodexDeveloperInstructions(["--model", "gpt-5", "resume", "abc"], "developer_instructions", "stand"),
@@ -129,6 +142,54 @@ describe("createSession", () => {
     );
 
     expect(buildSessionPreamble).not.toHaveBeenCalled();
+
+    session.destroy();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("uses a backend-derived session id when no Aimux id override is provided", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-stable-id-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    const sessions: any[] = [];
+    const host: any = {
+      sessionBootstrap: {
+        ...realArgComposition(),
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn((session: any) => sessions.push(session)),
+      sessions,
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    const session = createSession(
+      host,
+      "codex",
+      [],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "11111111-2222-3333-4444-555555555555",
+    );
+
+    expect(session.id).toBe("codex-111111");
 
     session.destroy();
     rmSync(repoRoot, { recursive: true, force: true });

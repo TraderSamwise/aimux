@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
 import { initProject, loadConfig } from "../config.js";
@@ -41,9 +41,49 @@ const CODEX_BACKEND_CAPTURE_INTERVAL_MS = 250;
 const STARTUP_INTERSTITIAL_INTERVAL_MS = 500;
 const STARTUP_INTERSTITIAL_WINDOW_MS = 30_000;
 const DASHBOARD_VIEWPORT_POLL_MS = 250;
+const DERIVED_AIMUX_ID_MIN_CHARS = 6;
+const DERIVED_AIMUX_ID_MAX_CHARS = 16;
 
 function projectRootFor(host: SessionLaunchHost): string {
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
+}
+
+function backendSessionIdSlug(backendSessionId: string): string {
+  const normalized = backendSessionId
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  return normalized || createHash("sha256").update(backendSessionId).digest("hex");
+}
+
+export function deriveAimuxSessionIdFromBackendSessionId(
+  command: string,
+  backendSessionId: string,
+  existingIds: Iterable<string> = [],
+): string {
+  const commandExecutable = basename(command) || command;
+  const slug = backendSessionIdSlug(backendSessionId);
+  const taken = new Set(existingIds);
+  for (
+    let length = Math.min(DERIVED_AIMUX_ID_MIN_CHARS, slug.length);
+    length <= Math.min(DERIVED_AIMUX_ID_MAX_CHARS, slug.length);
+    length += 1
+  ) {
+    const candidate = `${commandExecutable}-${slug.slice(0, length)}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  const suffix = createHash("sha256").update(backendSessionId).digest("hex").slice(0, 8);
+  return `${commandExecutable}-${slug.slice(0, DERIVED_AIMUX_ID_MIN_CHARS)}-${suffix}`;
+}
+
+function generatedSessionIdForLaunch(host: SessionLaunchHost, command: string, backendSessionId?: string): string {
+  if (!backendSessionId) return `${basename(command) || command}-${Math.random().toString(36).slice(2, 8)}`;
+  const projectRoot = projectRootFor(host);
+  const existingIds = [
+    ...(Array.isArray(host.sessions) ? host.sessions.map((session: any) => session.id).filter(Boolean) : []),
+    ...listTopologySessionStates({ projectRoot }).map((session) => session.id),
+  ];
+  return deriveAimuxSessionIdFromBackendSessionId(command, backendSessionId, existingIds);
 }
 
 function clearManagedAgentPaneHistory(host: SessionLaunchHost, sessionId: string, target: any): void {
@@ -684,10 +724,6 @@ export function createSession(
 ): any {
   const cols = process.stdout.columns ?? 80;
   const commandExecutable = basename(command) || command;
-  const sessionId = sessionIdOverride ?? `${commandExecutable}-${Math.random().toString(36).slice(2, 8)}`;
-  if (host.sessions.some((session: any) => session.id === sessionId)) {
-    throw new Error(`Session "${sessionId}" already exists`);
-  }
   const config = loadConfig();
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
   // A launch override may swap the binary; aimux flags/preamble only apply to the tool's own command.
@@ -709,6 +745,10 @@ export function createSession(
     explicitClaudeBackendSessionId ??
     explicitCodexBackendSessionId ??
     (effectiveSessionIdFlag ? randomUUID() : undefined);
+  const sessionId = sessionIdOverride ?? generatedSessionIdForLaunch(host, command, backendSessionId);
+  if (host.sessions.some((session: any) => session.id === sessionId)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
   const preamble = effectiveSuppressStartupPreamble
@@ -906,10 +946,6 @@ export async function createSessionAsync(
 ): Promise<any> {
   const cols = process.stdout.columns ?? 80;
   const commandExecutable = basename(command) || command;
-  const sessionId = sessionIdOverride ?? `${commandExecutable}-${Math.random().toString(36).slice(2, 8)}`;
-  if (host.sessions.some((session: any) => session.id === sessionId)) {
-    throw new Error(`Session "${sessionId}" already exists`);
-  }
   const config = loadConfig();
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
   const isConfiguredToolCommand = Boolean(toolCfg && toolCfg.command === command);
@@ -930,6 +966,10 @@ export async function createSessionAsync(
     explicitClaudeBackendSessionId ??
     explicitCodexBackendSessionId ??
     (effectiveSessionIdFlag ? randomUUID() : undefined);
+  const sessionId = sessionIdOverride ?? generatedSessionIdForLaunch(host, command, backendSessionId);
+  if (host.sessions.some((session: any) => session.id === sessionId)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
   const preamble = effectiveSuppressStartupPreamble
