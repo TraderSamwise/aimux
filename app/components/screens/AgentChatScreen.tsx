@@ -39,6 +39,7 @@ import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ArrowUp,
+  ChevronDown,
   ChevronLeft,
   CircleAlert,
   Columns2,
@@ -537,6 +538,7 @@ export default function ChatScreen() {
   const bottomInset = resolveChromeBottomInset(safeAreaInsets.bottom);
   const [token, setToken] = useState<string | null>(null);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
+  const [shareDetailsExpanded, setShareDetailsExpanded] = useState(false);
   const [managePanelOpen, setManagePanelOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -617,6 +619,8 @@ export default function ChatScreen() {
     () => shareSummary?.invites.filter((invite) => invite.status !== "accepted") ?? [],
     [shareSummary],
   );
+  const sharedChatDisplayName = currentShareParticipant?.displayName ?? userName ?? "guest";
+  const sharedChatParticipantCount = shareSummary?.participants.length;
   const currentUserIsShareOwner = Boolean(
     user?.id &&
     (shareSummary?.ownerUserId === user.id ||
@@ -810,6 +814,10 @@ export default function ChatScreen() {
     setManagePanelOpen(false);
     setSharePanelOpen(true);
   }, [isSharedSessionView]);
+
+  useEffect(() => {
+    setShareDetailsExpanded(false);
+  }, [activeShare?.shareId, sessionId]);
 
   /**
    * Driven by the runtime's own activity state, not by whether bytes arrived.
@@ -2536,44 +2544,53 @@ export default function ChatScreen() {
                 </ScrollView>
               </View>
             ) : null}
-            {activeShare ? (
+            {sharePanelOpen ? (
               <View
-                className="border-b border-border bg-card/70 px-4 py-2"
+                className={cn("border-b border-border bg-card px-4", activeShare ? "py-2" : "py-3")}
                 style={{ flexShrink: 0 }}
               >
-                <Text className="text-xs font-semibold uppercase tracking-widest text-foreground">
-                  Shared chat
-                </Text>
-                <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
-                  Replying as {currentShareParticipant?.displayName ?? userName ?? "guest"} in a
-                  shared session.
-                </Text>
-              </View>
-            ) : null}
-            {sharePanelOpen ? (
-              <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
                 {activeShare ? (
-                  <View className="flex-row items-center justify-between gap-3">
-                    <View className="flex-1">
-                      <Text className="text-sm font-medium text-foreground">Shared chat</Text>
-                      <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
-                        {currentUserIsShareOwner
-                          ? "Managing shared chat access as owner."
-                          : `Messages are identified as ${
-                              currentShareParticipant?.displayName ?? userName ?? "guest"
-                            }.`}
-                      </Text>
+                  <>
+                    <View className="flex-row items-center justify-between gap-3">
+                      <Pressable
+                        onPress={() => setShareDetailsExpanded((expanded) => !expanded)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Toggle shared chat details"
+                        accessibilityState={{ expanded: shareDetailsExpanded }}
+                        className="flex-1 flex-row items-center gap-2 active:opacity-70"
+                      >
+                        <ChevronDown
+                          size={16}
+                          color="#a1a1aa"
+                          style={{
+                            transform: [{ rotate: shareDetailsExpanded ? "0deg" : "-90deg" }],
+                          }}
+                        />
+                        <View className="flex-1">
+                          <Text className="text-xs font-semibold uppercase tracking-widest text-foreground">
+                            Shared chat
+                          </Text>
+                          <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+                            Replying as {sharedChatDisplayName}
+                            {sharedChatParticipantCount
+                              ? ` · ${sharedChatParticipantCount} participant${
+                                  sharedChatParticipantCount === 1 ? "" : "s"
+                                }`
+                              : ""}
+                          </Text>
+                        </View>
+                      </Pressable>
+                      {!currentUserIsShareOwner ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          label={shareAction ? "Leaving..." : "Leave"}
+                          disabled={!token || Boolean(shareAction)}
+                          onPress={handleLeaveShare}
+                        />
+                      ) : null}
                     </View>
-                    {!currentUserIsShareOwner ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        label={shareAction ? "Leaving..." : "Leave"}
-                        disabled={!token || Boolean(shareAction)}
-                        onPress={handleLeaveShare}
-                      />
-                    ) : null}
-                  </View>
+                  </>
                 ) : (
                   <View className="flex-row items-center gap-2">
                     <Input
@@ -2600,7 +2617,7 @@ export default function ChatScreen() {
                     />
                   </View>
                 )}
-                {shareSummary ? (
+                {shareSummary && (!activeShare || shareDetailsExpanded) ? (
                   <View className="mt-3 border-t border-border pt-3">
                     <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                       Participants
