@@ -9,6 +9,7 @@ import {
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
+  transcriptStartLineFamily,
 } from "@/stores/chat";
 
 describe("chat output store", () => {
@@ -158,5 +159,132 @@ describe("the projected transcript", () => {
     expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
     expect(store.get(outputBufferFamily("agent-1"))).toBe("");
     expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
+  });
+
+  it("keeps an expanded transcript window when a smaller snapshot arrives", () => {
+    const store = createStore();
+    const older = {
+      ...message,
+      id: "assistant:older",
+      text: "older message",
+      parts: [{ type: "text" as const, text: "older message" }],
+      latest: undefined,
+    };
+    const newer = {
+      ...message,
+      id: "assistant:newer",
+      text: "newer message",
+      parts: [{ type: "text" as const, text: "newer message" }],
+    };
+    const newest = {
+      ...message,
+      id: "assistant:newest",
+      text: "newest message",
+      parts: [{ type: "text" as const, text: "newest message" }],
+    };
+
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      outputAvailable: true,
+      startLine: -640,
+      messages: [older, newer],
+    });
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      outputAvailable: true,
+      startLine: -160,
+      messages: [newer, newest],
+    });
+
+    expect(store.get(transcriptStartLineFamily("agent-1"))).toBe(-640);
+    expect(store.get(transcriptFamily("agent-1")).map((item) => item.id)).toEqual([
+      "assistant:older",
+      "assistant:newer",
+      "assistant:newest",
+    ]);
+  });
+
+  it("merges smaller windows by sequence overlap when repeated-message ids shift", () => {
+    const store = createStore();
+    const repeatedA = {
+      ...message,
+      id: "assistant:same",
+      text: "same",
+      parts: [{ type: "text" as const, text: "same" }],
+      latest: undefined,
+    };
+    const repeatedB = {
+      ...message,
+      id: "assistant:same#2",
+      text: "same",
+      parts: [{ type: "text" as const, text: "same" }],
+    };
+    const smallerWindowRepeatedB = {
+      ...message,
+      id: "assistant:same",
+      text: "same",
+      parts: [{ type: "text" as const, text: "same" }],
+    };
+    const newest = {
+      ...message,
+      id: "assistant:newest",
+      text: "newest",
+      parts: [{ type: "text" as const, text: "newest" }],
+    };
+
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      outputAvailable: true,
+      startLine: -640,
+      messages: [repeatedA, repeatedB],
+    });
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      outputAvailable: true,
+      startLine: -160,
+      messages: [smallerWindowRepeatedB, newest],
+    });
+
+    expect(store.get(transcriptFamily("agent-1")).map((item) => item.id)).toEqual([
+      "assistant:same",
+      "assistant:same",
+      "assistant:newest",
+    ]);
+  });
+
+  it("replaces the transcript when a wider stream event arrives", () => {
+    const store = createStore();
+    const tailOnly = {
+      ...message,
+      id: "assistant:tail",
+      text: "tail",
+      parts: [{ type: "text" as const, text: "tail" }],
+    };
+    const wider = {
+      ...message,
+      id: "assistant:wider",
+      text: "wider",
+      parts: [{ type: "text" as const, text: "wider" }],
+    };
+
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -160,
+      messages: [tailOnly],
+    });
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -640,
+      messages: [wider],
+    });
+
+    expect(store.get(transcriptStartLineFamily("agent-1"))).toBe(-640);
+    expect(store.get(transcriptFamily("agent-1"))).toEqual([wider]);
   });
 });

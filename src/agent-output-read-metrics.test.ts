@@ -15,6 +15,8 @@ describe("agent output read metrics", () => {
     recordAgentOutputReadMetric({
       source: "output-stream",
       sessionId: "codex-1",
+      mode: "chat",
+      purpose: "initial",
       requestedStartLine: -120,
       startLine: -120,
       outputBytes: 42,
@@ -25,6 +27,8 @@ describe("agent output read metrics", () => {
     recordAgentOutputReadMetric({
       source: "output-stream",
       sessionId: "codex-1",
+      mode: "full",
+      purpose: "terminal",
       requestedStartLine: -120,
       startLine: -120,
       outputBytes: 42,
@@ -52,6 +56,26 @@ describe("agent output read metrics", () => {
       unchanged: 1,
       coalesced: 1,
       totalMs: 12,
+    });
+    expect(metrics.bySourceMode["output-stream:chat"]).toMatchObject({
+      count: 1,
+      totalResponseBytes: 21,
+      maxResponseBytes: 21,
+    });
+    expect(metrics.bySourceMode["output-stream:full"]).toMatchObject({
+      count: 1,
+      totalResponseBytes: 11,
+      maxResponseBytes: 11,
+    });
+    expect(metrics.bySourcePurpose["output-stream:initial"]).toMatchObject({
+      count: 1,
+      totalResponseBytes: 21,
+      maxResponseBytes: 21,
+    });
+    expect(metrics.bySourcePurpose["output-stream:terminal"]).toMatchObject({
+      count: 1,
+      totalResponseBytes: 11,
+      maxResponseBytes: 11,
     });
     expect(metrics.recent).toHaveLength(2);
     expect(JSON.stringify(metrics)).not.toContain("updated output");

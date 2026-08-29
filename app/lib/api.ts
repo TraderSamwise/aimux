@@ -46,6 +46,7 @@ import {
   type LivePaneAttachResponse,
   type LivePaneInputResponse,
   type LivePaneInterruptResponse,
+  type LivePaneOutputInput,
   type LivePaneOutputResponse,
   type LivePaneResizeResponse,
   type LibraryResponse,
@@ -490,11 +491,12 @@ export async function getLivePaneOutput(
   endpoint: ServiceEndpoint,
   sessionId: string,
   startLine?: number,
-  opts?: ApiOpts & { mode?: "full" | "chat" },
+  opts?: ApiOpts & { mode?: "full" | "chat"; purpose?: LivePaneOutputInput["purpose"] },
 ): Promise<AgentOutputResponse> {
   const params = new URLSearchParams({ sessionId });
   if (startLine !== undefined) params.set("startLine", String(startLine));
   if (opts?.mode) params.set("mode", opts.mode);
+  if (opts?.purpose) params.set("purpose", opts.purpose);
   return callProjectJson<AgentOutputResponse>(
     endpoint,
     "GET",
@@ -516,6 +518,8 @@ export function getAgentOutputStreamRoute(
       sessionId: input.sessionId,
       startLine: input.startLine,
       intervalMs: input.intervalMs,
+      mode: input.mode,
+      purpose: input.purpose,
     }),
     opts,
   );

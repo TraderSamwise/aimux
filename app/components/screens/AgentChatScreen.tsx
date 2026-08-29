@@ -90,7 +90,11 @@ import {
   getComposerSendText,
   shouldSubmitComposerKey,
 } from "@/lib/composer-protocol";
-import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
+import {
+  CHAT_OUTPUT_CAPTURE_START_LINE,
+  CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
+  nextChatOutputCaptureStartLine,
+} from "@/lib/chat-output-constants";
 import { paneOutputSnapshotHasVisibleTranscript } from "@/lib/chat-loading";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -152,6 +156,7 @@ const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 const CHAT_INITIAL_SNAPSHOT_TIMEOUT_MS = 12_000;
+const CHAT_HISTORY_LOAD_SCROLL_THRESHOLD = 120;
 const SCROLL_BOTTOM_EPSILON = 24;
 const SCROLL_BOTTOM_SETTLE_FRAMES = Platform.OS === "web" ? 3 : 1;
 const COMPOSER_INPUT_FONT_SIZE = 14;
@@ -329,6 +334,10 @@ type ChatListItem =
       key: string;
       status: InitialTranscriptStatus;
       type: "initial-transcript";
+    }
+  | {
+      key: string;
+      type: "history-loading";
     };
 
 type UserScrollState = {
@@ -401,20 +410,28 @@ function buildChatListItems({
   restoreBlockedReason,
   sendError,
   initialTranscriptStatus,
+  olderTranscriptLoading,
   visibleLastError,
 }: {
   messages: ChatMessage[];
   restoreBlockedReason: string | null;
   sendError: string | null;
   initialTranscriptStatus: InitialTranscriptStatus;
+  olderTranscriptLoading: boolean;
   visibleLastError: string | null;
 }): ChatListItem[] {
   const chronological: ChatListItem[] = messages.map((message, idx) => ({
-    key: message.id ?? message.clientMessageId ?? `idx-${idx}`,
+    key: `${message.id ?? message.clientMessageId ?? "message"}:${idx}`,
     message,
     type: "message",
   }));
 
+  if (olderTranscriptLoading && chronological.length > 0) {
+    chronological.unshift({
+      key: "history-loading",
+      type: "history-loading",
+    });
+  }
   if (initialTranscriptStatus === "timed-out") {
     chronological.push({
       key: "initial-transcript",
@@ -610,6 +627,13 @@ export default function ChatScreen() {
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const chatListRef = useRef<FlatList<ChatListItem> | null>(null);
   const terminalHydrationKeyRef = useRef<string | null>(null);
+  const transcriptCaptureStartLineRef = useRef(CHAT_OUTPUT_CAPTURE_START_LINE);
+  const olderTranscriptLoadingRef = useRef(false);
+  const [transcriptCaptureStartLine, setTranscriptCaptureStartLine] = useState(
+    CHAT_OUTPUT_CAPTURE_START_LINE,
+  );
+  const [olderTranscriptLoading, setOlderTranscriptLoading] = useState(false);
+  const [olderTranscriptExhausted, setOlderTranscriptExhausted] = useState(false);
   const composerHiddenRef = useRef(false);
   const nativeChatUserTouchedRef = useRef(false);
   const nativeChatPinnedToEndRef = useRef(true);
@@ -681,6 +705,16 @@ export default function ChatScreen() {
       pendingAttachments,
     };
   }, [composerInputContentHeight, draft, pendingAttachments]);
+
+  useEffect(() => {
+    transcriptCaptureStartLineRef.current = CHAT_OUTPUT_CAPTURE_START_LINE;
+    olderTranscriptLoadingRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the history window is scoped to the selected conversation
+    setTranscriptCaptureStartLine(CHAT_OUTPUT_CAPTURE_START_LINE);
+    setOlderTranscriptLoading(false);
+    setOlderTranscriptExhausted(false);
+    terminalHydrationKeyRef.current = null;
+  }, [sessionKey]);
 
   useEffect(() => {
     const previousKey = activeComposerDraftKeyRef.current;
@@ -796,46 +830,50 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [endpointHost, endpointPort, stateProjectPath]);
 
-  const refreshOutputSnapshot = useCallback(async (): Promise<boolean> => {
-    if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
-      return false;
-    }
-    const result = await getLivePaneOutput(
-      { host: endpointHost, port: endpointPort },
-      sessionId,
-      CHAT_OUTPUT_CAPTURE_START_LINE,
-      { token, mode: "chat" },
-    );
-    if (!serviceProjectsTranscript(result.messages)) {
-      // Not an empty pane — a daemon older than this app, which does not
-      // project the transcript at all. Rendering it as empty would look like a
-      // conversation that vanished.
-      setLastError(
-        "This aimux daemon is older than the app and does not send a transcript. Restart it to pick up the new build.",
+  const refreshOutputSnapshot = useCallback(
+    async (purpose: "initial" | "poll" = "poll"): Promise<boolean> => {
+      if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
+        return false;
+      }
+      const result = await getLivePaneOutput(
+        { host: endpointHost, port: endpointPort },
+        sessionId,
+        transcriptCaptureStartLineRef.current,
+        { token, mode: "chat", purpose },
       );
-      return false;
-    }
-    applyOutputSnapshot({
-      sessionId: result.sessionId,
-      output: result.output,
-      outputAnsi: result.outputAnsi,
-      outputAvailable: result.outputAvailable,
-      messages: result.messages,
-      activity: result.activity,
-      activityText: result.activityText,
-      attention: result.attention,
-    });
-    return paneOutputSnapshotHasVisibleTranscript(result);
-  }, [
-    applyOutputSnapshot,
-    endpointHost,
-    endpointPort,
-    heartbeatReady,
-    routeSessionMissing,
-    sessionId,
-    setLastError,
-    token,
-  ]);
+      if (!serviceProjectsTranscript(result.messages)) {
+        // Not an empty pane — a daemon older than this app, which does not
+        // project the transcript at all. Rendering it as empty would look like a
+        // conversation that vanished.
+        setLastError(
+          "This aimux daemon is older than the app and does not send a transcript. Restart it to pick up the new build.",
+        );
+        return false;
+      }
+      applyOutputSnapshot({
+        sessionId: result.sessionId,
+        output: result.output,
+        outputAnsi: result.outputAnsi,
+        outputAvailable: result.outputAvailable,
+        startLine: result.startLine,
+        messages: result.messages,
+        activity: result.activity,
+        activityText: result.activityText,
+        attention: result.attention,
+      });
+      return paneOutputSnapshotHasVisibleTranscript(result);
+    },
+    [
+      applyOutputSnapshot,
+      endpointHost,
+      endpointPort,
+      heartbeatReady,
+      routeSessionMissing,
+      sessionId,
+      setLastError,
+      token,
+    ],
+  );
 
   useEffect(() => {
     if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
@@ -860,7 +898,9 @@ export default function ChatScreen() {
       if (cancelled || inFlight) return;
       inFlight = true;
       try {
-        const hasVisibleTranscript = await refreshOutputSnapshot();
+        const hasVisibleTranscript = await refreshOutputSnapshot(
+          firstSnapshotLoaded ? "poll" : "initial",
+        );
         if (hasVisibleTranscript) firstSnapshotLoaded = true;
         if (!cancelled && hasVisibleTranscript) {
           setInitialTranscriptState((current) =>
@@ -905,10 +945,77 @@ export default function ChatScreen() {
   const allMessages = useMemo<ChatMessage[]>(() => {
     return parsedMessages;
   }, [parsedMessages]);
+
+  const loadOlderTranscriptHistory = useCallback(async () => {
+    if (
+      olderTranscriptLoadingRef.current ||
+      olderTranscriptExhausted ||
+      transcriptCaptureStartLineRef.current <= CHAT_OUTPUT_MAX_CAPTURE_START_LINE ||
+      !endpointHost ||
+      !endpointPort ||
+      !sessionId ||
+      !heartbeatReady ||
+      routeSessionMissing ||
+      allMessages.length === 0
+    ) {
+      return;
+    }
+    const previousStartLine = transcriptCaptureStartLineRef.current;
+    const nextStartLine = nextChatOutputCaptureStartLine(previousStartLine);
+    olderTranscriptLoadingRef.current = true;
+    setOlderTranscriptLoading(true);
+    transcriptCaptureStartLineRef.current = nextStartLine;
+    setTranscriptCaptureStartLine(nextStartLine);
+    try {
+      const result = await getLivePaneOutput(
+        { host: endpointHost, port: endpointPort },
+        sessionId,
+        nextStartLine,
+        { token, mode: "chat", purpose: "history" },
+      );
+      applyOutputSnapshot({
+        sessionId: result.sessionId,
+        output: result.output,
+        outputAnsi: result.outputAnsi,
+        outputAvailable: result.outputAvailable,
+        startLine: result.startLine,
+        messages: result.messages,
+        activity: result.activity,
+        activityText: result.activityText,
+        attention: result.attention,
+      });
+      if (
+        nextStartLine <= CHAT_OUTPUT_MAX_CAPTURE_START_LINE ||
+        result.outputStartLineClamped ||
+        result.startLine === previousStartLine
+      ) {
+        setOlderTranscriptExhausted(true);
+      }
+    } catch {
+      transcriptCaptureStartLineRef.current = previousStartLine;
+      setTranscriptCaptureStartLine(previousStartLine);
+    } finally {
+      olderTranscriptLoadingRef.current = false;
+      setOlderTranscriptLoading(false);
+    }
+  }, [
+    allMessages.length,
+    applyOutputSnapshot,
+    endpointHost,
+    endpointPort,
+    heartbeatReady,
+    olderTranscriptExhausted,
+    routeSessionMissing,
+    sessionId,
+    token,
+  ]);
+
   const userMessageCount = useMemo(
     () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
     [allMessages],
   );
+  const hasMoreTranscriptHistory =
+    transcriptCaptureStartLine > CHAT_OUTPUT_MAX_CAPTURE_START_LINE && !olderTranscriptExhausted;
   const composerAwaitingAck = pendingComposerAck !== null;
 
   useEffect(() => {
@@ -970,8 +1077,8 @@ export default function ChatScreen() {
     void getLivePaneOutput(
       { host: endpointHost, port: endpointPort },
       sessionId,
-      CHAT_OUTPUT_CAPTURE_START_LINE,
-      { token, mode: "full" },
+      transcriptCaptureStartLineRef.current,
+      { token, mode: "full", purpose: "terminal" },
     )
       .then((result) => {
         if (cancelled) return;
@@ -980,6 +1087,7 @@ export default function ChatScreen() {
           output: result.output,
           outputAnsi: result.outputAnsi,
           outputAvailable: result.outputAvailable,
+          startLine: result.startLine,
           messages: result.messages,
           activity: result.activity,
           activityText: result.activityText,
@@ -1064,10 +1172,24 @@ export default function ChatScreen() {
   const handleNativeChatScrollBegin = useCallback(() => {
     nativeChatUserTouchedRef.current = true;
   }, []);
-  const handleNativeChatScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    nativeChatPinnedToEndRef.current =
-      Math.max(0, event.nativeEvent.contentOffset.y) <= SCROLL_BOTTOM_EPSILON;
-  }, []);
+  const handleNativeChatScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
+      nativeChatPinnedToEndRef.current = offsetY <= SCROLL_BOTTOM_EPSILON;
+      const maxY = Math.max(
+        0,
+        event.nativeEvent.contentSize.height - event.nativeEvent.layoutMeasurement.height,
+      );
+      if (
+        hasMoreTranscriptHistory &&
+        nativeChatUserTouchedRef.current &&
+        maxY - offsetY <= CHAT_HISTORY_LOAD_SCROLL_THRESHOLD
+      ) {
+        void loadOlderTranscriptHistory();
+      }
+    },
+    [hasMoreTranscriptHistory, loadOlderTranscriptHistory],
+  );
   const handleNativeChatContentSizeChange = useCallback(() => {
     if (!nativeChatPinnedToEndRef.current) return;
     requestAnimationFrame(() => {
@@ -1148,6 +1270,7 @@ export default function ChatScreen() {
   const chatListItems = buildChatListItems({
     initialTranscriptStatus: visibleInitialTranscriptNoticeStatus,
     messages: allMessages,
+    olderTranscriptLoading,
     restoreBlockedReason,
     sendError,
     visibleLastError,
@@ -1378,6 +1501,14 @@ export default function ChatScreen() {
       metrics.pinnedToBottom = preservePendingPin || distanceFromBottom <= SCROLL_BOTTOM_EPSILON;
       metrics.ratio = preservePendingPin ? 1 : maxY <= 0 ? 1 : clampScrollRatio(offsetY / maxY);
       metrics.initialized = true;
+      if (
+        pane === "chat" &&
+        hasMoreTranscriptHistory &&
+        isUserScrollActive("chat") &&
+        offsetY <= CHAT_HISTORY_LOAD_SCROLL_THRESHOLD
+      ) {
+        void loadOlderTranscriptHistory();
+      }
 
       if (programmaticScrollRef.current[pane]) {
         programmaticScrollRef.current[pane] = false;
@@ -1387,7 +1518,12 @@ export default function ChatScreen() {
 
       if (isUserScrollActive(pane)) scheduleScrollIdleRelease(pane);
     },
-    [isUserScrollActive, scheduleScrollIdleRelease],
+    [
+      hasMoreTranscriptHistory,
+      isUserScrollActive,
+      loadOlderTranscriptHistory,
+      scheduleScrollIdleRelease,
+    ],
   );
 
   const handleScrollBeginDrag = useCallback(
@@ -2097,6 +2233,7 @@ export default function ChatScreen() {
           dividerWidth={chatDividerWidth}
           initialTranscriptStatus={visibleInitialTranscriptNoticeStatus}
           messages={allMessages}
+          olderTranscriptLoading={olderTranscriptLoading}
           restoreBlockedReason={restoreBlockedReason}
           sendError={sendError}
           serviceEndpoint={displayServiceEndpoint}
@@ -2812,6 +2949,9 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
       if (item.type === "initial-transcript") {
         return <InitialTranscriptNotice status={item.status} />;
       }
+      if (item.type === "history-loading") {
+        return <TranscriptHistoryLoadingRow />;
+      }
       if (item.type === "restore-blocked") {
         return (
           <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
@@ -2898,6 +3038,7 @@ const TranscriptContent = React.memo(function TranscriptContent({
   messages,
   dividerWidth,
   initialTranscriptStatus,
+  olderTranscriptLoading,
   restoreBlockedReason,
   sendError,
   serviceEndpoint,
@@ -2906,6 +3047,7 @@ const TranscriptContent = React.memo(function TranscriptContent({
   messages: ChatMessage[];
   dividerWidth: number;
   initialTranscriptStatus: InitialTranscriptStatus;
+  olderTranscriptLoading: boolean;
   restoreBlockedReason: string | null;
   sendError: string | null;
   serviceEndpoint: ServiceEndpoint;
@@ -2913,6 +3055,7 @@ const TranscriptContent = React.memo(function TranscriptContent({
 }) {
   return (
     <>
+      {olderTranscriptLoading && messages.length > 0 ? <TranscriptHistoryLoadingRow /> : null}
       {initialTranscriptStatus !== "idle" ? (
         <InitialTranscriptNotice status={initialTranscriptStatus} />
       ) : null}
@@ -2939,6 +3082,15 @@ const TranscriptContent = React.memo(function TranscriptContent({
     </>
   );
 });
+
+function TranscriptHistoryLoadingRow() {
+  return (
+    <View className="my-2 self-center flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+      <ActivityIndicator size="small" color="#a1a1aa" />
+      <Text className="text-xs text-muted-foreground">Loading older history...</Text>
+    </View>
+  );
+}
 
 function InitialTranscriptLoadingOverlay() {
   return (

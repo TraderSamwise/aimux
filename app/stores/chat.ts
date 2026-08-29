@@ -1,4 +1,4 @@
-import { atom } from "jotai";
+import { atom, type Getter, type Setter } from "jotai";
 import { atomFamily } from "jotai/utils";
 import type {
   AgentActivityState,
@@ -29,6 +29,9 @@ export const outputAnsiFamily = atomFamily((_sessionId: string) => atom<string>(
 export const transcriptFamily = atomFamily((_sessionId: string) =>
   atom<AgentTranscriptMessage[]>([]),
 );
+export const transcriptStartLineFamily = atomFamily((_sessionId: string) =>
+  atom<number | undefined>(undefined),
+);
 export const streamingFamily = atomFamily((_sessionId: string) => atom<boolean>(false));
 /**
  * What the runtime says the session is doing, as opposed to what arriving bytes
@@ -51,10 +54,71 @@ export const activityTextFamily = atomFamily((_sessionId: string) => atom<string
 export const streamTokenFamily = atomFamily((_sessionId: string) => atom<number>(0));
 export const lastErrorFamily = atomFamily((_sessionId: string) => atom<string | null>(null));
 
+function mergeTranscriptMessages(
+  existing: AgentTranscriptMessage[],
+  incoming: AgentTranscriptMessage[],
+): AgentTranscriptMessage[] {
+  const overlap = longestTranscriptOverlap(existing, incoming);
+  return [...stripLatestMarkers(existing.slice(0, existing.length - overlap)), ...incoming];
+}
+
+function stripLatestMarkers(messages: AgentTranscriptMessage[]): AgentTranscriptMessage[] {
+  return messages.map((message) => {
+    if (!message.latest) return message;
+    const { latest: _latest, ...rest } = message;
+    return rest;
+  });
+}
+
+function longestTranscriptOverlap(
+  existing: AgentTranscriptMessage[],
+  incoming: AgentTranscriptMessage[],
+): number {
+  const maxOverlap = Math.min(existing.length, incoming.length);
+  for (let length = maxOverlap; length > 0; length -= 1) {
+    let matches = true;
+    for (let index = 0; index < length; index += 1) {
+      if (
+        transcriptMessageSignature(existing[existing.length - length + index]) !==
+        transcriptMessageSignature(incoming[index])
+      ) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return length;
+  }
+  return 0;
+}
+
+function transcriptMessageSignature(message: AgentTranscriptMessage): string {
+  return `${message.role}\0${message.text}\0${JSON.stringify(message.parts)}`;
+}
+
+function applyTranscriptMessages(
+  get: Getter,
+  set: Setter,
+  sessionId: string,
+  messages: AgentTranscriptMessage[],
+  startLine: number | undefined,
+) {
+  const startLineAtom = transcriptStartLineFamily(sessionId);
+  const currentStartLine = get(startLineAtom);
+  if (startLine === undefined || currentStartLine === undefined || startLine <= currentStartLine) {
+    set(transcriptFamily(sessionId), messages);
+    set(startLineAtom, startLine);
+    return;
+  }
+  set(
+    transcriptFamily(sessionId),
+    mergeTranscriptMessages(get(transcriptFamily(sessionId)), messages),
+  );
+}
+
 export const applyOutputSnapshotAtom = atom(
   null,
   (
-    _get,
+    get,
     set,
     snapshot: {
       sessionId: string;
@@ -68,6 +132,7 @@ export const applyOutputSnapshotAtom = atom(
        */
       outputAnsi: string | undefined;
       outputAvailable?: boolean;
+      startLine?: number;
       messages?: AgentTranscriptMessage[];
       activity?: AgentActivityState;
       activityText?: string;
@@ -91,9 +156,10 @@ export const applyOutputSnapshotAtom = atom(
       set(outputAvailableFamily(snapshot.sessionId), snapshot.outputAvailable);
     }
     if (snapshot.messages !== undefined) {
-      set(transcriptFamily(snapshot.sessionId), snapshot.messages);
+      applyTranscriptMessages(get, set, snapshot.sessionId, snapshot.messages, snapshot.startLine);
     } else if (snapshot.output !== undefined) {
       set(transcriptFamily(snapshot.sessionId), []);
+      set(transcriptStartLineFamily(snapshot.sessionId), snapshot.startLine);
     }
     set(activityFamily(snapshot.sessionId), snapshot.activity);
     set(activityTextFamily(snapshot.sessionId), snapshot.activityText ?? "");
@@ -104,7 +170,7 @@ export const applyOutputSnapshotAtom = atom(
 
 // Route a single SSE event into the right per-session family slots.
 // Equivalent to the Zustand `ingestEvent` reducer.
-export const ingestEventAtom = atom(null, (_get, set, event: StreamEvent) => {
+export const ingestEventAtom = atom(null, (get, set, event: StreamEvent) => {
   switch (event.type) {
     case "ready":
       if (event.sessionId) {
@@ -130,9 +196,10 @@ export const ingestEventAtom = atom(null, (_get, set, event: StreamEvent) => {
         set(outputAvailableFamily(event.sessionId), event.outputAvailable);
       }
       if (event.messages !== undefined) {
-        set(transcriptFamily(event.sessionId), event.messages);
+        applyTranscriptMessages(get, set, event.sessionId, event.messages, event.startLine);
       } else if (event.output !== undefined) {
         set(transcriptFamily(event.sessionId), []);
+        set(transcriptStartLineFamily(event.sessionId), event.startLine);
       }
       // Only overwrite when the service actually reported one. A stream that
       // stops carrying activity must leave the last known state standing rather

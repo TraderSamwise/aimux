@@ -4,10 +4,13 @@ export type AgentOutputReadSource =
   | "live-pane-output"
   | "live-pane-attach"
   | "chat-preview";
+export type AgentOutputReadPurpose = "stream" | "initial" | "poll" | "history" | "terminal" | "attach" | "preview";
 
 export interface AgentOutputReadMetricInput {
   source: AgentOutputReadSource;
   sessionId: string;
+  mode?: "full" | "chat";
+  purpose?: AgentOutputReadPurpose;
   requestedStartLine?: number;
   startLine?: number;
   endLine?: number;
@@ -43,6 +46,8 @@ export interface AgentOutputReadRecentMetric extends AgentOutputReadMetricInput 
 export interface AgentOutputReadMetricsSnapshot {
   total: AgentOutputReadSourceMetrics;
   bySource: Record<string, AgentOutputReadSourceMetrics>;
+  bySourceMode: Record<string, AgentOutputReadSourceMetrics>;
+  bySourcePurpose: Record<string, AgentOutputReadSourceMetrics>;
   recent: AgentOutputReadRecentMetric[];
 }
 
@@ -68,6 +73,8 @@ function emptySourceMetrics(): AgentOutputReadSourceMetrics {
 
 let total = emptySourceMetrics();
 let bySource = new Map<string, AgentOutputReadSourceMetrics>();
+let bySourceMode = new Map<string, AgentOutputReadSourceMetrics>();
+let bySourcePurpose = new Map<string, AgentOutputReadSourceMetrics>();
 let recent: AgentOutputReadRecentMetric[] = [];
 
 function accumulate(target: AgentOutputReadSourceMetrics, input: AgentOutputReadMetricInput, at: string): void {
@@ -97,6 +104,24 @@ export function recordAgentOutputReadMetric(input: AgentOutputReadMetricInput): 
     bySource.set(input.source, source);
   }
   accumulate(source, input, at);
+  if (input.mode) {
+    const sourceModeKey = `${input.source}:${input.mode}`;
+    let sourceMode = bySourceMode.get(sourceModeKey);
+    if (!sourceMode) {
+      sourceMode = emptySourceMetrics();
+      bySourceMode.set(sourceModeKey, sourceMode);
+    }
+    accumulate(sourceMode, input, at);
+  }
+  if (input.purpose) {
+    const sourcePurposeKey = `${input.source}:${input.purpose}`;
+    let sourcePurpose = bySourcePurpose.get(sourcePurposeKey);
+    if (!sourcePurpose) {
+      sourcePurpose = emptySourceMetrics();
+      bySourcePurpose.set(sourcePurposeKey, sourcePurpose);
+    }
+    accumulate(sourcePurpose, input, at);
+  }
   recent.push({ ...input, at });
   if (recent.length > MAX_RECENT_AGENT_OUTPUT_READS) {
     recent = recent.slice(-MAX_RECENT_AGENT_OUTPUT_READS);
@@ -108,9 +133,19 @@ export function getAgentOutputReadMetrics(): AgentOutputReadMetricsSnapshot {
   for (const [key, value] of [...bySource.entries()].sort((a, b) => b[1].totalMs - a[1].totalMs)) {
     sourceRecord[key] = { ...value };
   }
+  const sourceModeRecord: Record<string, AgentOutputReadSourceMetrics> = {};
+  for (const [key, value] of [...bySourceMode.entries()].sort((a, b) => b[1].totalMs - a[1].totalMs)) {
+    sourceModeRecord[key] = { ...value };
+  }
+  const sourcePurposeRecord: Record<string, AgentOutputReadSourceMetrics> = {};
+  for (const [key, value] of [...bySourcePurpose.entries()].sort((a, b) => b[1].totalMs - a[1].totalMs)) {
+    sourcePurposeRecord[key] = { ...value };
+  }
   return {
     total: { ...total },
     bySource: sourceRecord,
+    bySourceMode: sourceModeRecord,
+    bySourcePurpose: sourcePurposeRecord,
     recent: recent.map((entry) => ({ ...entry })),
   };
 }
@@ -118,5 +153,7 @@ export function getAgentOutputReadMetrics(): AgentOutputReadMetricsSnapshot {
 export function resetAgentOutputReadMetrics(): void {
   total = emptySourceMetrics();
   bySource = new Map();
+  bySourceMode = new Map();
+  bySourcePurpose = new Map();
   recent = [];
 }

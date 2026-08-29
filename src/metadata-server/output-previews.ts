@@ -3,7 +3,11 @@ import { Buffer } from "node:buffer";
 import type { Worker } from "node:worker_threads";
 import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
 import type { ParsedAgentOutput } from "../agent-output-parser.js";
-import { recordAgentOutputReadMetric, type AgentOutputReadSource } from "../agent-output-read-metrics.js";
+import {
+  recordAgentOutputReadMetric,
+  type AgentOutputReadPurpose,
+  type AgentOutputReadSource,
+} from "../agent-output-read-metrics.js";
 import type { AgentTranscriptMessage } from "../agent-transcript.js";
 import { log } from "../debug.js";
 import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "../expose-pane-output-tap.js";
@@ -173,7 +177,12 @@ export class ProjectOutputPreviewCoordinator {
 
   async measureAgentOutputRead(
     source: AgentOutputReadSource,
-    input: { sessionId: string; startLine?: number },
+    input: {
+      sessionId: string;
+      startLine?: number;
+      mode?: "full" | "chat";
+      purpose?: AgentOutputReadPurpose;
+    },
   ): Promise<MetadataReadAgentOutputMeasurement> {
     if (!this.options.readAgentOutput) {
       throw new Error("agent output not supported by this service");
@@ -193,6 +202,8 @@ export class ProjectOutputPreviewCoordinator {
         recordAgentOutputReadMetric({
           source,
           sessionId: input.sessionId,
+          mode: input.mode,
+          purpose: input.purpose,
           requestedStartLine: input.startLine,
           durationMs: performance.now() - startedAt,
           coalesced: true,
@@ -218,6 +229,8 @@ export class ProjectOutputPreviewCoordinator {
       recordAgentOutputReadMetric({
         source,
         sessionId: input.sessionId,
+        mode: input.mode,
+        purpose: input.purpose,
         requestedStartLine: input.startLine,
         durationMs: performance.now() - startedAt,
         coalesced: false,
@@ -243,7 +256,12 @@ export class ProjectOutputPreviewCoordinator {
 
   recordAgentOutputRead(
     source: AgentOutputReadSource,
-    input: { sessionId: string; startLine?: number },
+    input: {
+      sessionId: string;
+      startLine?: number;
+      mode?: "full" | "chat";
+      purpose?: AgentOutputReadPurpose;
+    },
     result: MetadataReadAgentOutputResult,
     durationMs: number,
     changed?: boolean,
@@ -253,6 +271,8 @@ export class ProjectOutputPreviewCoordinator {
     recordAgentOutputReadMetric({
       source,
       sessionId: input.sessionId,
+      mode: input.mode,
+      purpose: input.purpose,
       requestedStartLine: input.startLine,
       startLine: result.startLine,
       endLine: result.endLine,
@@ -340,6 +360,8 @@ export class ProjectOutputPreviewCoordinator {
           const readInput = {
             sessionId,
             startLine: DESKTOP_STATE_CHAT_PREVIEW_START_LINE,
+            mode: "chat" as const,
+            purpose: "preview" as const,
           };
           const { result, durationMs, coalesced } = await this.measureAgentOutputRead("chat-preview", readInput);
           this.recordAgentOutputRead("chat-preview", readInput, result, durationMs, undefined, coalesced);

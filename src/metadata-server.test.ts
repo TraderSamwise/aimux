@@ -1398,6 +1398,9 @@ describe("MetadataServer threads API", () => {
     const malformedModeRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&mode=compact`);
     expect(malformedModeRes.status).toBe(400);
 
+    const malformedPurposeRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&purpose=forever`);
+    expect(malformedPurposeRes.status).toBe(400);
+
     const attachRes = await fetch(`${base}/live-pane/attach`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2914,7 +2917,12 @@ describe("MetadataServer threads API", () => {
     });
     expect(body.worktreeGroups[0]?.sessions[0]?.previewSnapshot).toBeUndefined();
     expect(body.worktreeGroups[0]?.sessions[0]?.chatPreview).toBeUndefined();
-    expect(readAgentOutput).toHaveBeenCalledWith({ sessionId: "agent-1", startLine: -80 });
+    expect(readAgentOutput).toHaveBeenCalledWith({
+      sessionId: "agent-1",
+      startLine: -80,
+      mode: "chat",
+      purpose: "preview",
+    });
 
     const cachedResponse = await fetch(`${base}?includePreview=1&includeChatPreview=1&force=1`);
     const cachedBody = (await cachedResponse.json()) as { sessions: any[] };
@@ -8177,7 +8185,12 @@ describe("MetadataServer threads API", () => {
     const text = await readSseUntil(res.body!, (value) => value.includes('"output":"bounded tail"'));
     controller.abort();
 
-    expect(readAgentOutput).toHaveBeenCalledWith({ sessionId: "codex-1", startLine: -999999 });
+    expect(readAgentOutput).toHaveBeenCalledWith({
+      sessionId: "codex-1",
+      startLine: -999999,
+      mode: "full",
+      purpose: "stream",
+    });
     expect(text).toContain('"requestedStartLine":-999999');
     expect(text).toContain('"startLine":-2000');
     expect(text).toContain('"captureLineLimit":2000');

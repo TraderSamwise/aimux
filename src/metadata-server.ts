@@ -194,7 +194,11 @@ import {
   type ClaudeHookPayload,
 } from "./claude-hooks.js";
 import type { CodexHookPayload } from "./codex-hooks.js";
-import { getAgentOutputReadMetrics, type AgentOutputReadSource } from "./agent-output-read-metrics.js";
+import {
+  getAgentOutputReadMetrics,
+  type AgentOutputReadPurpose,
+  type AgentOutputReadSource,
+} from "./agent-output-read-metrics.js";
 import { readExposeSocketHeader, parsePositiveHeaderInteger } from "./metadata-server/expose-socket.js";
 import { summarizeInteractionForDisplay } from "./metadata-server/interaction-display.js";
 import { listLibraryDocuments } from "./metadata-server/library-documents.js";
@@ -246,6 +250,15 @@ function safeWorktreeCreatePath(name: string, projectRoot: string): string {
 }
 
 type AgentOutputResponseMode = "full" | "chat";
+const AGENT_OUTPUT_READ_PURPOSES = new Set<AgentOutputReadPurpose>([
+  "stream",
+  "initial",
+  "poll",
+  "history",
+  "terminal",
+  "attach",
+  "preview",
+]);
 
 type AgentOutputPayload = {
   sessionId: string;
@@ -272,6 +285,17 @@ function parseAgentOutputResponseMode(
   if (!normalized || normalized === "full") return { ok: true, value: "full" };
   if (normalized === "chat") return { ok: true, value: "chat" };
   return { ok: false, error: "mode must be full or chat" };
+}
+
+function parseAgentOutputReadPurpose(
+  raw: string | null,
+): { ok: true; value?: AgentOutputReadPurpose } | { ok: false; error: string } {
+  const normalized = raw?.trim() ?? "";
+  if (!normalized) return { ok: true };
+  if (AGENT_OUTPUT_READ_PURPOSES.has(normalized as AgentOutputReadPurpose)) {
+    return { ok: true, value: normalized as AgentOutputReadPurpose };
+  }
+  return { ok: false, error: "purpose is invalid" };
 }
 
 function projectAgentOutputPayload(
@@ -303,8 +327,32 @@ function projectAgentOutputPayload(
   };
 }
 
-function jsonPayloadBytes(payload: unknown): number {
-  return Buffer.byteLength(JSON.stringify(payload), "utf8");
+function estimateJsonPayloadBytes(value: unknown): number {
+  if (value === undefined) return 0;
+  if (value === null) return 4;
+  if (typeof value === "string") return Buffer.byteLength(value, "utf8") + 2;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return Buffer.byteLength(String(value), "utf8");
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 2;
+    return 2 + (value.length - 1) + value.reduce((total, item) => total + estimateJsonPayloadBytes(item), 0);
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).filter(
+      ([, entryValue]) => entryValue !== undefined,
+    );
+    if (entries.length === 0) return 2;
+    return (
+      2 +
+      (entries.length - 1) +
+      entries.reduce(
+        (total, [key, entryValue]) => total + Buffer.byteLength(key, "utf8") + 3 + estimateJsonPayloadBytes(entryValue),
+        0,
+      )
+    );
+  }
+  return 0;
 }
 
 function buildTopologyWorktreesFromDesktopState(state: {
@@ -1113,14 +1161,24 @@ export class MetadataServer {
 
   private async measureAgentOutputRead(
     source: AgentOutputReadSource,
-    input: { sessionId: string; startLine?: number },
+    input: {
+      sessionId: string;
+      startLine?: number;
+      mode?: "full" | "chat";
+      purpose?: AgentOutputReadPurpose;
+    },
   ): ReturnType<ProjectOutputPreviewCoordinator["measureAgentOutputRead"]> {
     return this.outputPreviews.measureAgentOutputRead(source, input);
   }
 
   private recordAgentOutputRead(
     source: AgentOutputReadSource,
-    input: { sessionId: string; startLine?: number },
+    input: {
+      sessionId: string;
+      startLine?: number;
+      mode?: "full" | "chat";
+      purpose?: AgentOutputReadPurpose;
+    },
     result: MetadataReadAgentOutputResult,
     durationMs: number,
     changed?: boolean,
@@ -2315,6 +2373,8 @@ export class MetadataServer {
           const readInput = {
             sessionId: sessionFilter,
             startLine: parsedStartLine.value,
+            mode: parsedMode.value,
+            purpose: "stream" as const,
           };
           const { result, durationMs, coalesced } = await this.measureAgentOutputRead("events", readInput);
           if (closed) return;
@@ -2330,7 +2390,7 @@ export class MetadataServer {
             durationMs,
             changed,
             coalesced,
-            payload ? jsonPayloadBytes(payload) : undefined,
+            payload ? estimateJsonPayloadBytes(payload) : undefined,
           );
           if (changed) {
             lastOutput = result.output;
@@ -2836,6 +2896,8 @@ export class MetadataServer {
           const readInput = {
             sessionId,
             startLine: parsedStartLine.value,
+            mode: parsedMode.value,
+            purpose: "stream" as const,
           };
           const { result, durationMs, coalesced } = await this.measureAgentOutputRead("output-stream", readInput);
           if (closed) return;
@@ -2851,7 +2913,7 @@ export class MetadataServer {
             durationMs,
             changed,
             coalesced,
-            payload ? jsonPayloadBytes(payload) : undefined,
+            payload ? estimateJsonPayloadBytes(payload) : undefined,
           );
           if (changed) {
             lastOutput = result.output;
@@ -5839,9 +5901,24 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: parsedMode.error });
           return;
         }
+        const parsedPurpose = parseAgentOutputReadPurpose(url.searchParams.get("purpose"));
+        if (!parsedPurpose.ok) {
+          send(res, 400, { ok: false, error: parsedPurpose.error });
+          return;
+        }
         const captureWindow = agentOutputCaptureWindow(parsedStartLine.value);
         const startLine = captureWindow.startLine;
-        const readInput = { sessionId, startLine };
+        const readInput: {
+          sessionId: string;
+          startLine: number;
+          mode: AgentOutputResponseMode;
+          purpose?: AgentOutputReadPurpose;
+        } = {
+          sessionId,
+          startLine,
+          mode: parsedMode.value,
+        };
+        if (parsedPurpose.value) readInput.purpose = parsedPurpose.value;
         const { result, durationMs, coalesced } = await this.measureAgentOutputRead("live-pane-output", readInput);
         const payload = {
           ok: true,
@@ -5854,7 +5931,7 @@ export class MetadataServer {
           durationMs,
           undefined,
           coalesced,
-          jsonPayloadBytes(payload),
+          estimateJsonPayloadBytes(payload),
         );
         send(res, 200, payload);
         return;
@@ -5912,7 +5989,12 @@ export class MetadataServer {
           resize = { cols: result.cols, rows: result.rows };
         }
 
-        const readInput = { sessionId, startLine };
+        const readInput = {
+          sessionId,
+          startLine,
+          mode: "full" as const,
+          purpose: "attach" as const,
+        };
         const {
           result: output,
           durationMs,

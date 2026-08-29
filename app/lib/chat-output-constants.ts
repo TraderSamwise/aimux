@@ -1,1 +1,8 @@
-export const CHAT_OUTPUT_CAPTURE_START_LINE = -600;
+export const CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE = -160;
+export const CHAT_OUTPUT_HISTORY_PAGE_LINES = 320;
+export const CHAT_OUTPUT_MAX_CAPTURE_START_LINE = -2_000;
+export const CHAT_OUTPUT_CAPTURE_START_LINE = CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE;
+
+export function nextChatOutputCaptureStartLine(current: number): number {
+  return Math.max(CHAT_OUTPUT_MAX_CAPTURE_START_LINE, current - CHAT_OUTPUT_HISTORY_PAGE_LINES);
+}

@@ -390,6 +390,7 @@ export interface LivePaneSessionInput {
 export interface LivePaneOutputInput extends LivePaneSessionInput {
   startLine?: number;
   mode?: "full" | "chat";
+  purpose?: "stream" | "initial" | "poll" | "history" | "terminal" | "attach" | "preview";
 }
 
 export interface LivePaneOutputResponse extends ProjectApiOk {
