@@ -617,6 +617,15 @@ export default function ChatScreen() {
     () => shareSummary?.invites.filter((invite) => invite.status !== "accepted") ?? [],
     [shareSummary],
   );
+  const currentUserIsShareOwner = Boolean(
+    user?.id &&
+    (shareSummary?.ownerUserId === user.id ||
+      activeShareForRoute?.ownerUserId === user.id ||
+      (isCanonicalSharedRoute && routeOwnerUserId === user.id)),
+  );
+  const canManageShare = Boolean(
+    shareSummary?.ownerUserId && user?.id === shareSummary.ownerUserId,
+  );
   const shouldLoadShareSummary = Boolean(
     token &&
     sessionId &&
@@ -1957,7 +1966,7 @@ export default function ChatScreen() {
   }
 
   async function handleRemoveParticipant(participantUserId: string) {
-    if (activeShare || !token || !shareSummary || shareAction) return;
+    if (!canManageShare || !token || !shareSummary || shareAction) return;
     setShareAction(participantUserId);
     setInviteStatus(null);
     try {
@@ -1979,7 +1988,7 @@ export default function ChatScreen() {
   }
 
   async function handleRevokeInvite(inviteId: string, email: string) {
-    if (activeShare || !token || !shareSummary || shareAction) return;
+    if (!canManageShare || !token || !shareSummary || shareAction) return;
     const actionKey = `invite:${inviteId}`;
     setShareAction(actionKey);
     setInviteStatus(null);
@@ -2538,17 +2547,22 @@ export default function ChatScreen() {
                     <View className="flex-1">
                       <Text className="text-sm font-medium text-foreground">Shared chat</Text>
                       <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
-                        Messages are identified as{" "}
-                        {currentShareParticipant?.displayName ?? userName ?? "guest"}.
+                        {currentUserIsShareOwner
+                          ? "Managing shared chat access as owner."
+                          : `Messages are identified as ${
+                              currentShareParticipant?.displayName ?? userName ?? "guest"
+                            }.`}
                       </Text>
                     </View>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      label={shareAction ? "Leaving..." : "Leave"}
-                      disabled={!token || Boolean(shareAction)}
-                      onPress={handleLeaveShare}
-                    />
+                    {!currentUserIsShareOwner ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        label={shareAction ? "Leaving..." : "Leave"}
+                        disabled={!token || Boolean(shareAction)}
+                        onPress={handleLeaveShare}
+                      />
+                    ) : null}
                   </View>
                 ) : (
                   <View className="flex-row items-center gap-2">
@@ -2595,7 +2609,7 @@ export default function ChatScreen() {
                             {participant.email ? ` · ${participant.email}` : ""}
                           </Text>
                         </View>
-                        {!activeShare &&
+                        {canManageShare &&
                         participant.role !== "owner" &&
                         participant.status === "active" ? (
                           <Button
@@ -2608,7 +2622,7 @@ export default function ChatScreen() {
                         ) : null}
                       </View>
                     ))}
-                    {!activeShare && visibleShareInvites.length > 0 ? (
+                    {canManageShare && visibleShareInvites.length > 0 ? (
                       <View className="mt-3">
                         <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                           Invites
