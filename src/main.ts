@@ -104,6 +104,7 @@ import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./run
 import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
 import { registerExposeCommand } from "./popup-expose.js";
 import { MAX_AGENT_OUTPUT_CAPTURE_LINES } from "./agent-output-bounds.js";
+import { buildAgentIdentityErrorPayload, buildAgentIdentityPayload, renderAgentIdentityLines } from "./cli/agent-id.js";
 import { renderAgentsByWorktreeLines, renderAgentsFlatLines, type CliAgentListItem } from "./cli/agent-list.js";
 import { registerAttachmentCommand } from "./cli/attachment.js";
 import { registerLogsCommand } from "./cli/logs.js";
@@ -1965,34 +1966,18 @@ program
     const identity = resolveAgentIdentity({ projectRoot, sessionId });
     if (!identity.ok) {
       if (opts.json) {
-        console.log(
-          JSON.stringify({ ok: false, projectRoot, sessionId: identity.sessionId, error: identity.reason }, null, 2),
-        );
+        console.log(JSON.stringify(buildAgentIdentityErrorPayload(projectRoot, identity), null, 2));
       } else {
         console.error(`Error: ${identity.reason}`);
       }
       process.exit(1);
     }
-    const canonical = identity.toolConfigKey ?? identity.tool ?? identity.command ?? "?";
-    const payload = {
-      ok: true,
-      projectRoot,
-      canonical,
-      aimuxId: identity.sessionId,
-      backendSessionId: identity.backendSessionId,
-      source: identity.source,
-      status: identity.status,
-      worktreePath: identity.worktreePath,
-    };
+    const payload = buildAgentIdentityPayload(projectRoot, identity);
     if (opts.json) {
       console.log(JSON.stringify(payload, null, 2));
       return;
     }
-    console.log(
-      `${payload.aimuxId}  canonical=${payload.canonical}  backend=${payload.backendSessionId}  ` +
-        `status=${payload.status ?? "?"}  source=${payload.source}`,
-    );
-    if (payload.worktreePath) console.log(`worktree: ${payload.worktreePath}`);
+    renderAgentIdentityLines(payload).forEach((line) => console.log(line));
   });
 
 const loopCmd = program.command("loop").description("Manage agents in an overseer-managed loop");
