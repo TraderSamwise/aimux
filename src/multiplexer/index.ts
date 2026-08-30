@@ -14,6 +14,7 @@ import type { SessionTeamMetadata } from "../team.js";
 import { MetadataServer } from "../metadata-server.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { PluginRuntime } from "../plugin-runtime.js";
+import { ScribeWatcher } from "../scribe-watcher.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
@@ -278,6 +279,7 @@ export class Multiplexer {
   });
   private sessionTmuxTargets = new Map<string, TmuxTarget>();
   private metadataServer: MetadataServer | null = null;
+  private scribeWatcher: ScribeWatcher | null = null;
   private eventBus = new ProjectEventBus();
   private pluginRuntime: PluginRuntime | null = null;
   private lastRenderedFrame: string | null = null;

@@ -11,6 +11,7 @@ import { MetadataServer } from "../metadata-server.js";
 import { getRepoRoot } from "../paths.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { LoopWatcher } from "../loop-watcher.js";
+import { ScribeWatcher } from "../scribe-watcher.js";
 import { TranscriptReconciler } from "./transcript-reconciler.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo, withWorktreeMemo } from "../worktree.js";
@@ -1710,6 +1711,26 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       host.loopWatcher?.stop?.();
       host.loopWatcher = null;
     }
+    try {
+      host.scribeWatcher = new ScribeWatcher({
+        loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
+        loadMetadata: () => loadMetadataState(projectRoot),
+        readAgentOutput: (sessionId: string, startLine: number) => host.readAgentOutput(sessionId, startLine),
+        sendAgentInput: (sessionId: string, text: string) =>
+          host.sendAgentInput(sessionId, text, {
+            waitForSubmit: true,
+            waitForActiveDraftIdle: true,
+          }),
+      });
+      host.scribeWatcher.start();
+    } catch (error) {
+      log.warn("project service scribe watcher disabled after startup failure", "runtime", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      host.scribeWatcher?.stop?.();
+      host.scribeWatcher = null;
+    }
   }
   // The reconciler talks to host.metadataServer in-process, so it must start with
   // the project service regardless of whether the HTTP endpoint bound — it is not
@@ -1755,6 +1776,8 @@ export async function stopProjectServices(host: DashboardModelHost): Promise<voi
   }
   host.loopWatcher?.stop?.();
   host.loopWatcher = null;
+  host.scribeWatcher?.stop?.();
+  host.scribeWatcher = null;
   host.transcriptReconciler?.stop?.();
   host.transcriptReconciler = null;
   await host.pluginRuntime?.stop?.();
