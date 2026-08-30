@@ -71,6 +71,23 @@ describe("buildDashboardWorktreeGroups", () => {
           status: "running",
           active: false,
         },
+        {
+          index: 1,
+          id: "scribe-agent",
+          command: "claude",
+          status: "running",
+          active: false,
+          scribe: true,
+        },
+        {
+          index: 2,
+          id: "demoted-scribe",
+          command: "claude",
+          status: "running",
+          active: false,
+          scribe: false,
+          team: { teamId: "scribe", parentSessionId: "", role: "scribe" },
+        },
       ],
       [],
       [
@@ -96,7 +113,7 @@ describe("buildDashboardWorktreeGroups", () => {
       [undefined, "Main Checkout", "master"],
       ["/repo/.aimux/worktrees/feature-a", "feature-a", "feature-a"],
     ]);
-    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["main-agent"]);
+    expect(groups[0]?.sessions.map((session) => session.id).sort()).toEqual(["demoted-scribe", "main-agent"]);
   });
 
   it("places optimistic creating sessions into the correct worktree group", () => {

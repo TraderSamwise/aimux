@@ -2807,7 +2807,7 @@ overseerCmd
       initProject();
       const tool = opts.tool ?? loadConfig().defaultTool;
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await postLiveProjectServiceJson(projectRoot, "/agents/spawn", {
+      const result = await postLiveProjectServiceJson(projectRoot, PROJECT_API_ROUTES.agents.spawn, {
         tool,
         worktreePath: targetWorktreePath,
         open: opts.open,
@@ -2833,8 +2833,54 @@ overseerCmd
   .argument("<sessionId>", "Overseer session id")
   .action(async (sessionId: string) => {
     await initPaths();
-    await postProjectServiceJson("/agents/overseer", { sessionId, active: false });
+    await postProjectServiceJson(PROJECT_API_ROUTES.agents.overseer, { sessionId, active: false });
     console.log(`overseer cleared ${sessionId}`);
+  });
+
+const scribeCmd = program.command("scribe").description("Manage the project scribe (work outline maintainer)");
+
+scribeCmd
+  .command("start")
+  .description("Spawn a scribe agent that maintains the project work outline")
+  .option("--tool <toolKey>", "Configured tool key (defaults to the project default)")
+  .option("--project <path>", "Project path")
+  .option("--worktree <path>", "Target worktree path")
+  .option("--no-open", "Do not switch into the scribe window")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { tool?: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      initProject();
+      const tool = opts.tool ?? loadConfig().defaultTool;
+      const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
+      const result = await postLiveProjectServiceJson(projectRoot, PROJECT_API_ROUTES.agents.spawn, {
+        tool,
+        worktreePath: targetWorktreePath,
+        open: opts.open,
+        scribe: true,
+      });
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ ok: true, projectRoot, sessionId: result.sessionId, tool, scribe: true }, null, 2),
+        );
+        return;
+      }
+      console.log(`scribe ${result.sessionId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+scribeCmd
+  .command("clear")
+  .description("Demote a session from scribe (does not stop the agent)")
+  .argument("<sessionId>", "Scribe session id")
+  .action(async (sessionId: string) => {
+    await initPaths();
+    await postProjectServiceJson(PROJECT_API_ROUTES.agents.scribe, { sessionId, active: false });
+    console.log(`scribe cleared ${sessionId}`);
   });
 
 program

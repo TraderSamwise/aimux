@@ -23,6 +23,7 @@ const state: DesktopState = {
   sessions: [
     { id: "claude-1", status: "running", label: "Claude" },
     { id: "overseer-1", status: "running", label: "Overseer", overseer: true },
+    { id: "scribe-1", status: "running", label: "Scribe", scribe: true },
     { id: "dead-1", status: "exited", label: "Dead" },
   ],
   services: [],
@@ -30,7 +31,7 @@ const state: DesktopState = {
 };
 
 describe("monitor targets", () => {
-  it("lists only active non-overseer project sessions", () => {
+  it("lists only active non-control project sessions", () => {
     expect(monitorSessionTargetsForProject(project, state)).toEqual([
       {
         kind: "project-agent",

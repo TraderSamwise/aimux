@@ -63,8 +63,8 @@ import type { SessionRuntime } from "../session-runtime.js";
 import { loadConfig } from "../config.js";
 import { getRepoRoot } from "../paths.js";
 import type { LaunchOverride } from "../shell-args.js";
-import { OVERSEER_SESSION_TEAM, type SessionTeamMetadata } from "../team.js";
-import { setSessionOverseer } from "../metadata-store.js";
+import { OVERSEER_SESSION_TEAM, SCRIBE_SESSION_TEAM, type SessionTeamMetadata } from "../team.js";
+import { setSessionOverseer, setSessionScribe } from "../metadata-store.js";
 import { createSessionAsync } from "./session-launch.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { addDashboardOperationFailure, clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
@@ -291,6 +291,7 @@ type ScheduledSessionCreate = {
   label?: string;
   open?: boolean;
   overseer?: boolean;
+  scribe?: boolean;
   targetWorktreeReadyDeadlineMs?: number;
   pendingActionToken?: number;
 };
@@ -724,6 +725,9 @@ async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSess
     if (input.overseer) {
       setSessionOverseer(transport.id, true);
     }
+    if (input.scribe) {
+      setSessionScribe(transport.id, true);
+    }
     if (input.label) {
       host.applySessionLabel(transport.id, input.label);
     }
@@ -809,6 +813,7 @@ export type DashboardTailMethods = {
       open?: boolean;
       launchOverride?: LaunchOverride;
       overseer?: boolean;
+      scribe?: boolean;
     },
   ): Promise<{ sessionId: string }>;
   createTeammateAgent(
@@ -947,7 +952,11 @@ export const dashboardTailMethods: DashboardTailMethods = {
       throw new Error(`Unknown tool config: ${opts.toolConfigKey}`);
     }
     const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
-    const team: SessionTeamMetadata | undefined = opts.overseer ? OVERSEER_SESSION_TEAM : undefined;
+    const team: SessionTeamMetadata | undefined = opts.overseer
+      ? OVERSEER_SESSION_TEAM
+      : opts.scribe
+        ? SCRIBE_SESSION_TEAM
+        : undefined;
     const createInput: ScheduledSessionCreate = {
       command: opts.launchOverride?.command ?? tool.command,
       args: opts.launchOverride?.args ?? tool.args,
@@ -958,9 +967,14 @@ export const dashboardTailMethods: DashboardTailMethods = {
       sessionId,
       detached: !opts.open,
       team,
-      env: opts.overseer ? { ...(opts.launchOverride?.env ?? {}), AIMUX_OVERSEER: "1" } : opts.launchOverride?.env,
+      env: opts.overseer
+        ? { ...(opts.launchOverride?.env ?? {}), AIMUX_OVERSEER: "1" }
+        : opts.scribe
+          ? { ...(opts.launchOverride?.env ?? {}), AIMUX_SCRIBE: "1" }
+          : opts.launchOverride?.env,
       open: opts.open,
       overseer: opts.overseer,
+      scribe: opts.scribe,
     };
     assertSessionIdCanBeQueued(this, sessionId);
     recordStartingSession(this, createInput);

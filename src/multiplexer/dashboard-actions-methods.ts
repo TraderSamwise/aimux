@@ -248,7 +248,7 @@ export const dashboardActionMethods = {
   showToolPicker(
     this: any,
     sourceSessionId?: string,
-    opts?: { overseer?: boolean; mode?: "create" | "fork" | "switch-tool" },
+    opts?: { overseer?: boolean; scribe?: boolean; mode?: "create" | "fork" | "switch-tool" },
   ): void {
     showToolPickerImpl(this, sourceSessionId, opts);
   },

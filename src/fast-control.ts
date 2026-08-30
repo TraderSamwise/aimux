@@ -34,6 +34,7 @@ export interface FastControlItem {
   previewSnapshot?: ExposePreviewSnapshot;
   chatPreview?: ExposeChatPreview;
   overseer?: boolean;
+  scribe?: boolean;
 }
 
 type ManagedWindowEntry = { target: TmuxTarget; metadata: TmuxWindowMetadata };
@@ -142,10 +143,20 @@ function isOverseerWindow(metadataState: MetadataState, metadata: TmuxWindowMeta
   );
 }
 
-function currentWindowIsOverseer(context: FastControlContext, tmux: TmuxRuntimeManager): boolean {
+function isScribeWindow(metadataState: MetadataState, metadata: TmuxWindowMetadata): boolean {
+  const explicit = metadataState.sessions[metadata.sessionId]?.scribe ?? metadata.scribe;
+  if (explicit === false) return false;
+  return explicit === true || metadata.team?.role === "scribe";
+}
+
+function isProjectControlWindow(metadataState: MetadataState, metadata: TmuxWindowMetadata): boolean {
+  return isOverseerWindow(metadataState, metadata) || isScribeWindow(metadataState, metadata);
+}
+
+function currentWindowIsProjectControl(context: FastControlContext, tmux: TmuxRuntimeManager): boolean {
   const metadataState = loadMetadataState(context.projectRoot);
   const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, listManagedWindowEntries(context, tmux));
-  return Boolean(currentManagedWindow && isOverseerWindow(metadataState, currentManagedWindow.metadata));
+  return Boolean(currentManagedWindow && isProjectControlWindow(metadataState, currentManagedWindow.metadata));
 }
 
 function compareSwitchableWindows(
@@ -205,6 +216,7 @@ function buildSwitchableAgentItems(
       if (isDashboardWindowName(target.windowName)) return false;
       const alive = aliveByWindowId.get(target.windowId) ?? false;
       if (!alive && target.windowId !== currentManagedWindow?.target.windowId) return false;
+      if (isScribeWindow(metadataState, metadata)) return false;
       const overseer = isOverseerWindow(metadataState, metadata);
       if (!opts.includeOverseer && overseer) return false;
       if (opts.includeOverseer && overseer) {
@@ -237,6 +249,7 @@ function buildSwitchableAgentItems(
       lastUsedAt: getLastUsedAt(context.projectRoot, entry.metadata.sessionId),
       recentRank: recentRankMap.get(entry.metadata.sessionId) ?? Number.MAX_SAFE_INTEGER,
       overseer: isOverseerWindow(metadataState, entry.metadata),
+      scribe: isScribeWindow(metadataState, entry.metadata),
       alive: aliveByWindowId.get(entry.target.windowId) ?? false,
     }));
 
@@ -272,7 +285,7 @@ export function resolveCurrentAgentIndex(items: FastControlItem[], context: Fast
 }
 
 export function resolveNextAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
-  if (currentWindowIsOverseer(context, tmux)) return null;
+  if (currentWindowIsProjectControl(context, tmux)) return null;
   const items = buildSwitchableAgentItems(context, tmux);
   if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
@@ -285,7 +298,7 @@ export function resolveNextAgent(context: FastControlContext, tmux = new TmuxRun
 }
 
 export function resolvePrevAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
-  if (currentWindowIsOverseer(context, tmux)) return null;
+  if (currentWindowIsProjectControl(context, tmux)) return null;
   const items = buildSwitchableAgentItems(context, tmux);
   if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
@@ -328,6 +341,7 @@ export function serializeFastControlItem(item: FastControlItem) {
     previewSnapshot: item.previewSnapshot,
     chatPreview: item.chatPreview,
     overseer: item.overseer ?? false,
+    scribe: item.scribe ?? false,
   };
 }
 

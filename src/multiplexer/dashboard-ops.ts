@@ -25,7 +25,7 @@ import {
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { userFacingErrorLines } from "../error-display.js";
 import { isHttpTimeoutError } from "../http-client.js";
-import { OVERSEER_SESSION_TEAM } from "../team.js";
+import { OVERSEER_SESSION_TEAM, SCRIBE_SESSION_TEAM } from "../team.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -77,6 +77,7 @@ function buildPendingSessionSeed(input: {
   worktreePath?: string;
   pendingAction: PendingSessionCreateAction;
   overseer?: boolean;
+  scribe?: boolean;
 }): DashboardSession {
   return {
     index: -1,
@@ -87,11 +88,12 @@ function buildPendingSessionSeed(input: {
     status: "waiting",
     active: false,
     worktreePath: input.worktreePath,
-    // An overseer roots at the main repo but is never listed under a worktree.
+    // Control agents root at the main repo but are never listed under a worktree.
     // Classifying the seed the way the settled session is classified keeps it
     // out of the groups instead of inventing one for its path.
-    team: input.overseer ? OVERSEER_SESSION_TEAM : undefined,
+    team: input.overseer ? OVERSEER_SESSION_TEAM : input.scribe ? SCRIBE_SESSION_TEAM : undefined,
     overseer: input.overseer,
+    scribe: input.scribe,
     pendingAction: input.pendingAction,
     optimistic: true,
   };
@@ -984,6 +986,7 @@ export async function spawnDashboardAgentWithFeedback(
     worktreePath?: string;
     launchOverride?: LaunchOverride;
     overseer?: boolean;
+    scribe?: boolean;
   },
 ): Promise<void> {
   const sessionSeed = buildPendingSessionSeed({
@@ -992,15 +995,16 @@ export async function spawnDashboardAgentWithFeedback(
     worktreePath: input.worktreePath,
     pendingAction: "creating",
     overseer: input.overseer,
+    scribe: input.scribe,
   });
   await runDashboardSessionMutation(host, {
     sessionId: input.sessionId,
     pendingAction: "creating",
     sessionSeed,
     onBeforeRequest: () => {
-      // Nothing to select for an overseer, and its main-repo path would focus a
+      // Nothing to select for a control agent, and its main-repo path would focus a
       // worktree group that does not exist.
-      if (input.overseer) return;
+      if (input.overseer || input.scribe) return;
       host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath);
     },
     request: async () => {
@@ -1013,6 +1017,7 @@ export async function spawnDashboardAgentWithFeedback(
           worktreePath: input.worktreePath,
           launchOverride: input.launchOverride,
           overseer: input.overseer,
+          scribe: input.scribe,
           open: false,
         },
         { timeoutMs: 10_000 },

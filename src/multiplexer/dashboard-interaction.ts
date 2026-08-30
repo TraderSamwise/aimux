@@ -8,6 +8,7 @@ import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   getDefaultTeamConfig,
+  isProjectControlSession,
   isTeammateSession,
   isOverseerSession,
   loadTeamConfig,
@@ -311,7 +312,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
 function getVisibleDashboardSessions(host: any): DashboardSession[] {
   const sessions: DashboardSession[] = host
     .getDashboardSessions()
-    .filter((session: DashboardSession) => !isOverseerSession(session));
+    .filter((session: DashboardSession) => !isProjectControlSession(session));
   if (!host.dashboardState.hideOfflineAgents) return sessions;
   return sessions.filter((session) => !isDashboardSessionOffline(session));
 }
@@ -538,7 +539,7 @@ export const dashboardInteractionMethods = {
 
     const visibleDashboardModel = filterDashboardVisibleModel({
       hideOfflineAgents: this.dashboardState.hideOfflineAgents,
-      sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
+      sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isProjectControlSession(s)),
       services: this.dashboardServicesCache,
       worktreeGroups: this.dashboardWorktreeGroupsCache,
     });

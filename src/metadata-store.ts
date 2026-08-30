@@ -148,6 +148,8 @@ export interface SessionMetadata {
   derived?: SessionDerivedMetadata;
   /** This session is the project overseer (top-down orchestrator). */
   overseer?: boolean;
+  /** This session is the project scribe (work outline maintainer). */
+  scribe?: boolean;
   /** This session is in a managed loop the overseer keeps running. */
   loop?: SessionLoopMetadata;
   /** Last explicit loop membership mutation, retained after loop removal. */
@@ -458,6 +460,39 @@ export function setSessionOverseer(sessionId: string, value: boolean, projectRoo
 export function findOverseerSessionId(state: MetadataState): string | undefined {
   for (const [sessionId, session] of Object.entries(state.sessions)) {
     if (session.overseer) return sessionId;
+  }
+  return undefined;
+}
+
+export function setSessionScribe(sessionId: string, value: boolean, projectRoot?: string): MetadataState {
+  if (!value) {
+    return updateSessionMetadata(
+      sessionId,
+      (current) => {
+        const next = { ...current };
+        next.scribe = false;
+        return next;
+      },
+      projectRoot,
+    );
+  }
+  const state = loadMetadataState(projectRoot);
+  const now = new Date().toISOString();
+  for (const [id, session] of Object.entries(state.sessions)) {
+    if (session?.scribe && id !== sessionId) {
+      delete session.scribe;
+      session.updatedAt = now;
+    }
+  }
+  const current = state.sessions[sessionId] ?? { updatedAt: now };
+  state.sessions[sessionId] = { ...current, scribe: true, updatedAt: now };
+  saveMetadataState(state, projectRoot);
+  return state;
+}
+
+export function findScribeSessionId(state: MetadataState): string | undefined {
+  for (const [sessionId, session] of Object.entries(state.sessions)) {
+    if (session.scribe) return sessionId;
   }
   return undefined;
 }

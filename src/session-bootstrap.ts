@@ -7,7 +7,7 @@ import { readHistory } from "./context/history.js";
 import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
 import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
-import { type SessionTeamMetadata, buildOverseerPreamble } from "./team.js";
+import { type SessionTeamMetadata, buildOverseerPreamble, buildScribePreamble } from "./team.js";
 import {
   ensureDefaultPlan,
   getPlanAuthorityPath,
@@ -194,6 +194,9 @@ export class SessionBootstrapService {
 
     if (team?.role === "overseer") {
       preamble += (preamble ? "\n\n" : "") + buildOverseerPreamble();
+    }
+    if (team?.role === "scribe") {
+      preamble += (preamble ? "\n\n" : "") + buildScribePreamble();
     }
 
     if (extraPreamble) {

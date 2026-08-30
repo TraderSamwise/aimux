@@ -23,6 +23,8 @@ import {
   type AgentLoopResponse,
   type AgentOverseerInput,
   type AgentOverseerResponse,
+  type AgentScribeInput,
+  type AgentScribeResponse,
   type AgentOutputStreamInput,
   type AgentSessionInput,
   type ControlActionResponse,
@@ -705,6 +707,14 @@ export async function setAgentOverseer(
   opts?: ApiOpts,
 ): Promise<AgentOverseerResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.overseer, opts, input);
+}
+
+export async function setAgentScribe(
+  endpoint: ServiceEndpoint,
+  input: AgentScribeInput,
+  opts?: ApiOpts,
+): Promise<AgentScribeResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.scribe, opts, input);
 }
 
 function workOutlineQueryPath(query?: WorkOutlineQuery & { entryId?: string }): string {

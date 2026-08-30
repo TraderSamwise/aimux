@@ -21,7 +21,7 @@ import {
   stopService as stopServiceImpl,
 } from "./services.js";
 import { derivedStatusLabel } from "../dashboard/index.js";
-import { isOverseerSession } from "../team.js";
+import { isOverseerSession, isProjectControlSession, isScribeSession } from "../team.js";
 import { isDevelopmentRuntime } from "../connection-targets.js";
 import { AIMUX_VERSION } from "../version.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
@@ -148,7 +148,8 @@ export const dashboardViewMethods = {
       const { cols, rows } = this.getViewportSize();
       const allDashSessions = this.dashboardSessionsCache;
       const overseerSessions = allDashSessions.filter((session: any) => isOverseerSession(session));
-      const rawDashSessions = allDashSessions.filter((session: any) => !isOverseerSession(session));
+      const scribeSessions = allDashSessions.filter((session: any) => isScribeSession(session));
+      const rawDashSessions = allDashSessions.filter((session: any) => !isProjectControlSession(session));
       const dashTeammates = this.dashboardTeammatesCache ?? [];
       const visibleDashboardModel = filterDashboardVisibleModel({
         hideOfflineAgents: this.dashboardState.hideOfflineAgents,
@@ -187,6 +188,7 @@ export const dashboardViewMethods = {
       this.dashboard.update({
         sessions: dashSessions,
         overseerSessions,
+        scribeSessions,
         services: dashServices,
         worktreeGroups,
         hasWorktrees,

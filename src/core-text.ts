@@ -108,6 +108,7 @@ export interface CoreAgentSummaryTextPayload {
     attention?: unknown;
     loop?: unknown;
     overseer?: unknown;
+    scribe?: unknown;
     task?: unknown;
   }>;
 }
@@ -460,6 +461,7 @@ export function renderCoreAgentPsLines(payload: CoreAgentSummaryTextPayload): st
         : undefined;
     const tags = [
       agent.overseer === true ? "overseer" : null,
+      agent.scribe === true ? "scribe" : null,
       loop?.active === true ? `loop${typeof loop.goal === "string" ? `:${loop.goal}` : ""}` : null,
     ].filter(Boolean);
     const state = [activity, attention].filter(Boolean).join("/");

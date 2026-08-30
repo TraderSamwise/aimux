@@ -152,6 +152,7 @@ export interface MetadataServerOptions {
       open?: boolean;
       launchOverride?: LaunchOverride;
       overseer?: boolean;
+      scribe?: boolean;
     }) => Promise<{ sessionId: string }> | { sessionId: string };
     createTeammateAgent?: (input: {
       parentSessionId: string;

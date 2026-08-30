@@ -12,8 +12,8 @@ import {
   switchDashboardAgentToolWithFeedback,
 } from "./dashboard-ops.js";
 import { findMainRepo } from "../worktree.js";
-import { setSessionOverseer } from "../metadata-store.js";
-import { OVERSEER_SESSION_TEAM } from "../team.js";
+import { setSessionOverseer, setSessionScribe } from "../metadata-store.js";
+import { OVERSEER_SESSION_TEAM, SCRIBE_SESSION_TEAM } from "../team.js";
 
 type ToolPickerHost = any;
 type ToolEntry = [string, ToolConfig];
@@ -223,11 +223,13 @@ export function runSelectedTool(
   tool: ToolConfig,
   opts: { override?: LaunchOverride } = {},
 ): void {
-  // The overseer is project-wide: it ignores the focused worktree and roots at the main repo.
+  // Project-control agents ignore the focused worktree and root at the main repo.
   const overseer = host.toolPickerOverseer === true;
+  const scribe = host.toolPickerScribe === true;
   host.toolPickerOverseer = false;
+  host.toolPickerScribe = false;
   let wtPath: string | undefined;
-  if (overseer) {
+  if (overseer || scribe) {
     // findMainRepo shells out to git; never let a discovery failure abort agent creation.
     try {
       wtPath = findMainRepo();
@@ -306,6 +308,7 @@ export function runSelectedTool(
       worktreePath: wtPath,
       launchOverride: override,
       overseer,
+      scribe,
     });
     return;
   }
@@ -321,23 +324,27 @@ export function runSelectedTool(
     sessionId,
     false,
     false,
-    overseer ? OVERSEER_SESSION_TEAM : undefined,
+    overseer ? OVERSEER_SESSION_TEAM : scribe ? SCRIBE_SESSION_TEAM : undefined,
     override?.env,
   );
   if (overseer && transport?.id) {
     setSessionOverseer(transport.id, true);
+  }
+  if (scribe && transport?.id) {
+    setSessionScribe(transport.id, true);
   }
 }
 
 export function showToolPicker(
   host: ToolPickerHost,
   sourceSessionId?: string,
-  opts?: { overseer?: boolean; mode?: ToolPickerMode },
+  opts?: { overseer?: boolean; scribe?: boolean; mode?: ToolPickerMode },
 ): void {
   host.pickerMode = opts?.mode ?? (sourceSessionId ? "fork" : "create");
   host.forkSourceSessionId = host.pickerMode === "fork" ? (sourceSessionId ?? null) : null;
   host.switchToolSourceSessionId = host.pickerMode === "switch-tool" ? (sourceSessionId ?? null) : null;
   host.toolPickerOverseer = opts?.overseer === true;
+  host.toolPickerScribe = opts?.scribe === true;
   host.toolPickerIndex = 0;
   host.launchOptionsState = null;
 
@@ -360,6 +367,7 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
     host.forkSourceSessionId = null;
     host.switchToolSourceSessionId = null;
     host.toolPickerOverseer = false;
+    host.toolPickerScribe = false;
     host.launchOptionsState = null;
     host.restoreDashboardAfterOverlayDismiss();
     return;

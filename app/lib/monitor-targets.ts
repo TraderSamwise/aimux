@@ -40,7 +40,7 @@ export function monitorSessionTargetsForProject(
   if (!endpoint || !state) return [];
   return state.sessions
     .filter((session) => ACTIVE_SESSION_STATUSES.has(session.status))
-    .filter((session) => !session.overseer)
+    .filter((session) => !session.overseer && !session.scribe)
     .map((session) => ({
       kind: "project-agent",
       id: monitorProjectTargetId(project.path, session.id),

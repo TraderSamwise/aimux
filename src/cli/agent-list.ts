@@ -26,6 +26,7 @@ function renderAgentSummary(agent: CliAgentListItem): string {
   const tags = [
     agent.role ? `role=${agent.role}` : null,
     agent.overseer ? "overseer" : null,
+    agent.scribe ? "scribe" : null,
     agent.loop?.active ? `loop${agent.loop.goal ? `=${agent.loop.goal}` : ""}` : null,
   ].filter(Boolean);
   const state = [agent.activity, agent.attention].filter(Boolean).join("/");

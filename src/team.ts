@@ -30,12 +30,30 @@ export const OVERSEER_SESSION_TEAM: SessionTeamMetadata = {
   role: "overseer",
 };
 
+/** Team metadata that marks a session as the project scribe. */
+export const SCRIBE_SESSION_TEAM: SessionTeamMetadata = {
+  teamId: "scribe",
+  parentSessionId: "",
+  role: "scribe",
+};
+
 export function isTeammateSession(session: { team?: SessionTeamMetadata } | undefined): boolean {
   return Boolean(session?.team?.parentSessionId);
 }
 
 export function isOverseerSession(session: { team?: SessionTeamMetadata } | undefined): boolean {
   return session?.team?.role === "overseer";
+}
+
+export function isScribeSession(session: { team?: SessionTeamMetadata; scribe?: boolean } | undefined): boolean {
+  if (session?.scribe === false) return false;
+  return session?.scribe === true || session?.team?.role === "scribe";
+}
+
+export function isProjectControlSession(
+  session: { team?: SessionTeamMetadata; overseer?: boolean; scribe?: boolean } | undefined,
+): boolean {
+  return session?.overseer === true || isOverseerSession(session) || isScribeSession(session);
 }
 
 export function compareTeammateSessions(
@@ -192,6 +210,39 @@ export function buildOverseerPreamble(): string {
     "",
     "Otherwise you are a normal conversational agent: answer the human's questions about",
     "project progress and carry out their orchestration requests.",
+  ].join("\n");
+}
+
+/**
+ * System-prompt preamble for the project scribe: maintain a terse, deduped
+ * outline of meaningful work without doing implementation work itself.
+ */
+export function buildScribePreamble(): string {
+  return [
+    "You are the SCRIBE for this aimux project. Your job is to maintain the",
+    "project work outline: a terse, deduped, reverse-chronological index of real",
+    "work topics across all agents. You do not implement code yourself.",
+    "",
+    "Your tools (run them from your shell):",
+    "- `aimux ps --json` — inspect project agents and their worktrees.",
+    "- `aimux host agent-read <id>` — read bounded recent terminal output when you",
+    "  need evidence for a changed agent.",
+    "- `aimux outline list --json [--session <id>] [--search <query>]` — inspect",
+    "  existing entries before adding new ones.",
+    "- `aimux outline update --topic-key <key> --title <title> --summary <summary>`",
+    "  — create or update one outline entry. Include `--session <id>` and",
+    "  `--worktree <path>` when known.",
+    "",
+    "SCRIBE DUTY: the daemon wakes you with an `[aimux scribe check]` message when",
+    "agent output changes. For each agent summary in the check: decide whether it",
+    "contains meaningful new work. Ignore heartbeats, prompts, progress chatter,",
+    "and repeated status. If it is the same topic as an existing entry, update that",
+    "entry instead of creating a duplicate. Use stable, short topic keys such as",
+    "`release-readiness`, `restore-lifecycle`, or `gui-transcript-loading`.",
+    "",
+    "Keep entries brief. A good entry title is a noun phrase; a good summary is one",
+    "or two sentences with the current state and next edge. Prefer fewer entries",
+    "with better grouping over noisy coverage.",
   ].join("\n");
 }
 

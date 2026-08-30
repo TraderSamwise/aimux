@@ -53,6 +53,7 @@ export interface DashboardSession {
   loop?: SessionLoopMetadata;
   loopLastAction?: SessionLoopActionMetadata;
   overseer?: boolean;
+  scribe?: boolean;
   foregroundCommand?: string;
   pid?: number;
   previewLine?: string;
@@ -161,6 +162,8 @@ export interface DashboardViewModel {
   sessions: DashboardSession[];
   /** Project overseer sessions, addressable through explicit overseer actions. */
   overseerSessions: DashboardSession[];
+  /** Project scribe sessions, addressable through explicit scribe actions. */
+  scribeSessions: DashboardSession[];
   services: DashboardService[];
   worktreeGroups: WorktreeGroup[];
   hasWorktrees: boolean;
@@ -192,6 +195,7 @@ export class Dashboard {
   private viewModel: DashboardViewModel = {
     sessions: [],
     overseerSessions: [],
+    scribeSessions: [],
     services: [],
     worktreeGroups: [],
     hasWorktrees: false,

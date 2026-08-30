@@ -21,7 +21,7 @@ import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { isNotificationStale } from "../coordination-model.js";
 import type { SessionTeamMetadata } from "../team.js";
-import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
+import { isTeammateSession, isProjectControlSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { isDashboardWindowName, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
@@ -315,6 +315,8 @@ function buildMetadataPendingSessionSeed(input: {
   worktreePath?: string;
   pendingAction: Extract<PendingSessionActionKind, "creating" | "forking">;
   team?: SessionTeamMetadata;
+  overseer?: boolean;
+  scribe?: boolean;
 }): DashboardSession {
   return {
     index: -1,
@@ -329,6 +331,8 @@ function buildMetadataPendingSessionSeed(input: {
     pendingAction: input.pendingAction,
     optimistic: true,
     team: input.team,
+    overseer: input.overseer,
+    scribe: input.scribe,
   };
 }
 
@@ -682,8 +686,8 @@ export function buildDashboardWorktreeGroups(
   }>,
   mainRepoPath?: string,
 ): WorktreeGroup[] {
-  // Overseer sessions render on their own line above the worktrees, never inside a group.
-  const groupable = dashSessions.filter((s) => !isOverseerSession(s));
+  // Control sessions render through explicit role views, never inside worktree groups.
+  const groupable = dashSessions.filter((s) => !isProjectControlSession(s));
   const mainSessions = sortDashboardEntriesByCreatedAt(groupable.filter((s) => !s.worktreePath));
   const mainServices = sortDashboardEntriesByCreatedAt(dashServices.filter((s) => !s.worktreePath));
   const mainWorktree = mainRepoPath ? worktrees.find((wt) => !wt.isBare && wt.path === mainRepoPath) : undefined;
@@ -735,7 +739,7 @@ export function composeDashboardWorktreeGroups(
   return sortWorktreeGroups(
     worktreeGroups.map((group) => {
       const groupSessions = sortDashboardEntriesByCreatedAt(
-        dashSessions.filter((session) => !isOverseerSession(session) && session.worktreePath === group.path),
+        dashSessions.filter((session) => !isProjectControlSession(session) && session.worktreePath === group.path),
       );
       const groupServices = sortDashboardEntriesByCreatedAt(
         dashServices.filter((service) => service.worktreePath === group.path),
@@ -998,6 +1002,7 @@ export function computeDashboardSessions(
       loop: sessionMetadata?.loop,
       loopLastAction: sessionMetadata?.loopLastAction,
       overseer: sessionMetadata?.overseer ?? false,
+      scribe: sessionMetadata?.scribe ?? session.scribe ?? false,
       threadUnreadCount: stats?.unread ?? 0,
       threadWaitingCount: stats?.waiting ?? 0,
       threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
@@ -1544,6 +1549,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
               open: input.open ?? false,
               launchOverride: input.launchOverride,
               overseer: input.overseer ?? false,
+              scribe: input.scribe ?? false,
             }),
           input.sessionId
             ? buildMetadataPendingSessionSeed({
@@ -1551,6 +1557,8 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 tool: input.tool,
                 worktreePath: input.worktreePath,
                 pendingAction: "creating",
+                overseer: input.overseer ?? false,
+                scribe: input.scribe ?? false,
               })
             : undefined,
         ),

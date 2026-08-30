@@ -13,7 +13,7 @@ import { CORE_COMMAND_NAMES } from "../core-command-contract.js";
 import { resolveDashboardTarget } from "../dashboard/targets.js";
 import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
-import { isOverseerSession } from "../team.js";
+import { isProjectControlSession } from "../team.js";
 import { isDashboardSessionOffline } from "../dashboard/visibility.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { TmuxRuntimeManager, type TmuxClientInfo } from "../tmux/runtime-manager.js";
@@ -142,7 +142,7 @@ export function updateWorktreeSessions(host: DashboardControlHost): void {
   host.dashboardState.worktreeSessions = host.dashboardUiStateStore.orderSessionsForWorktree(
     sortDashboardEntriesByCreatedAt(
       allDash.filter((s: DashboardSession) => {
-        if (isOverseerSession(s)) return false;
+        if (isProjectControlSession(s)) return false;
         if (host.dashboardState.hideOfflineAgents && isDashboardSessionOffline(s)) return false;
         return (s.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
       }),

@@ -1227,6 +1227,41 @@ describe("MetadataServer threads API", () => {
     expect(list.agents.find((agent) => agent.id === "boss-2")?.overseer).toBe(true);
   });
 
+  it("sets the project scribe over HTTP and lists its flag", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    seedAgentTopology([
+      { id: "scribe-1", status: "running", team: { role: "scribe" } },
+      { id: "scribe-2", status: "running", team: { role: "scribe" } },
+    ]);
+
+    const firstRes = await fetch(`${base}/agents/scribe`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "scribe-1", active: true }),
+    });
+    expect(firstRes.ok).toBe(true);
+    expect(loadMetadataState(repoRoot).sessions["scribe-1"].scribe).toBe(true);
+
+    const switchRes = await fetch(`${base}/agents/scribe`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "scribe-2", active: true }),
+    });
+    expect(switchRes.ok).toBe(true);
+
+    const state = loadMetadataState(repoRoot);
+    expect(state.sessions["scribe-1"].scribe).toBeUndefined();
+    expect(state.sessions["scribe-2"].scribe).toBe(true);
+
+    const listRes = await fetch(`${base}/agents`);
+    const list = (await listRes.json()) as { agents: Array<{ id: string; scribe?: boolean }> };
+    expect(list.agents.find((agent) => agent.id === "scribe-1")?.scribe).toBe(false);
+    expect(list.agents.find((agent) => agent.id === "scribe-2")?.scribe).toBe(true);
+  });
+
   it("lists starting agents over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

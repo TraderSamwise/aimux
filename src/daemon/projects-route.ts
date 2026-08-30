@@ -21,6 +21,7 @@ type ProjectDesktopStateSession = {
   status?: unknown;
   pendingAction?: unknown;
   overseer?: unknown;
+  scribe?: unknown;
   team?: { role?: unknown } | null;
 };
 type ProjectDesktopStateGroup = { sessions?: unknown };
@@ -35,7 +36,12 @@ function isProjectDesktopStateSession(value: unknown): value is ProjectDesktopSt
 }
 
 function isDashboardHiddenProjectSession(session: ProjectDesktopStateSession): boolean {
-  return session.overseer === true || session.team?.role === "overseer";
+  return (
+    session.overseer === true ||
+    session.scribe === true ||
+    session.team?.role === "overseer" ||
+    (session.scribe !== false && session.team?.role === "scribe")
+  );
 }
 
 function isOnlineProjectSession(session: ProjectDesktopStateSession): boolean {

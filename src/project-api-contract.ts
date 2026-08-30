@@ -60,6 +60,7 @@ export const PROJECT_API_ROUTES = {
     recordBackendSession: "/agents/record-backend-session",
     loop: "/agents/loop",
     overseer: "/agents/overseer",
+    scribe: "/agents/scribe",
     teammates: "/agents/teammates",
     createTeammate: "/agents/teammates/create",
     createTeammateTask: "/agents/teammates/tasks",
@@ -305,6 +306,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.recordBackendSession:
     case PROJECT_API_ROUTES.agents.loop:
     case PROJECT_API_ROUTES.agents.overseer:
+    case PROJECT_API_ROUTES.agents.scribe:
     case PROJECT_API_ROUTES.livePane.interrupt:
     case PROJECT_API_ROUTES.agents.createTeammate:
     case PROJECT_API_ROUTES.agents.stopTeammate:
@@ -1183,6 +1185,7 @@ export interface AgentListItem {
   loop?: unknown;
   loopLastAction?: unknown;
   overseer?: boolean;
+  scribe?: boolean;
   task?: { id: string; description?: string; status?: string };
   [k: string]: unknown;
 }
@@ -1198,6 +1201,7 @@ export interface SpawnAgentInput {
   open?: boolean;
   launchOverride?: unknown;
   overseer?: boolean;
+  scribe?: boolean;
 }
 
 export interface SpawnAgentResponse extends ProjectLifecycleTransitionResponse {
@@ -1277,6 +1281,15 @@ export interface AgentOverseerInput extends AgentSessionInput {
 export interface AgentOverseerResponse extends ProjectApiOk {
   sessionId: string;
   overseer: boolean;
+}
+
+export interface AgentScribeInput extends AgentSessionInput {
+  active: boolean;
+}
+
+export interface AgentScribeResponse extends ProjectApiOk {
+  sessionId: string;
+  scribe: boolean;
 }
 
 export type WorkOutlineStatus = "active" | "done" | "superseded" | "stale";
@@ -1438,6 +1451,7 @@ export interface SwitchableAgentItem extends Record<string, unknown> {
     label: string;
   };
   overseer?: boolean;
+  scribe?: boolean;
 }
 
 export interface SwitchableAgentsResponse extends ProjectApiOk {

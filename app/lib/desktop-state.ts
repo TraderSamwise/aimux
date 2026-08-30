@@ -44,6 +44,7 @@ export interface DesktopSession {
   pendingAction?: string;
   loop?: { active?: boolean; goal?: string; since?: string } | null;
   overseer?: boolean;
+  scribe?: boolean;
   team?: { role?: string };
   previewSnapshot?: ExposePreviewSnapshot;
   chatPreview?: ExposeChatPreview;
@@ -137,7 +138,12 @@ export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): Wor
 }
 
 function isDashboardHiddenSession(session: DesktopSession): boolean {
-  return session.overseer === true || session.team?.role === "overseer";
+  return (
+    session.overseer === true ||
+    session.scribe === true ||
+    session.team?.role === "overseer" ||
+    (session.scribe !== false && session.team?.role === "scribe")
+  );
 }
 
 function bucketFromServerGroup(group: DesktopWorktreeGroup): WorktreeBucket {

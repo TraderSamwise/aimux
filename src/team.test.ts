@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectOrphanTeammates } from "./team.js";
+import { isProjectControlSession, selectOrphanTeammates } from "./team.js";
 
 describe("selectOrphanTeammates", () => {
   it("returns only teammate sessions whose parent id is not known", () => {
@@ -31,5 +31,14 @@ describe("selectOrphanTeammates", () => {
       "ordered-orphan",
       "orphan",
     ]);
+  });
+});
+
+describe("project control sessions", () => {
+  it("allows an explicit scribe demotion to override stale team role metadata", () => {
+    expect(isProjectControlSession({ team: { teamId: "scribe", parentSessionId: "", role: "scribe" } })).toBe(true);
+    expect(
+      isProjectControlSession({ scribe: false, team: { teamId: "scribe", parentSessionId: "", role: "scribe" } }),
+    ).toBe(false);
   });
 });

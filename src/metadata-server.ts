@@ -23,6 +23,7 @@ import {
   setSessionLoop,
   clearSessionLoop,
   setSessionOverseer,
+  setSessionScribe,
   type SessionLogEntry,
   type SessionContextMetadata,
   type SessionLoopAction,
@@ -2735,6 +2736,7 @@ export class MetadataServer {
           loop: meta?.loop,
           loopLastAction: meta?.loopLastAction,
           overseer: meta?.overseer ?? false,
+          scribe: meta?.scribe ?? false,
           task: task ? { id: task.id, description: task.description, status: task.status } : undefined,
         };
       });
@@ -4710,6 +4712,7 @@ export class MetadataServer {
           open?: boolean;
           launchOverride?: LaunchOverride;
           overseer?: boolean;
+          scribe?: boolean;
         };
         if (!this.options.lifecycle?.spawnAgent) {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
@@ -5744,6 +5747,23 @@ export class MetadataServer {
         setSessionOverseer(sessionId, body.active);
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, sessionId, overseer: body.active });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.scribe) {
+        const body = (await readJson(req)) as { sessionId?: string; active?: boolean };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (typeof body.active !== "boolean") {
+          send(res, 400, { ok: false, error: "active (boolean) is required" });
+          return;
+        }
+        setSessionScribe(sessionId, body.active);
+        notifyCurrentRouteChange();
+        send(res, 200, { ok: true, sessionId, scribe: body.active });
         return;
       }
 

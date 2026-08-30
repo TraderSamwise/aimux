@@ -66,7 +66,10 @@ export default function LoopsScreen() {
   const watched = useMemo(
     () =>
       entries.filter(
-        (entry) => entry.session.loop?.active === true && entry.session.overseer !== true,
+        (entry) =>
+          entry.session.loop?.active === true &&
+          entry.session.overseer !== true &&
+          entry.session.scribe !== true,
       ),
     [entries],
   );
@@ -77,14 +80,20 @@ export default function LoopsScreen() {
   const watchCandidates = useMemo(
     () =>
       activeCandidates.filter(
-        (entry) => entry.session.overseer !== true && entry.session.loop?.active !== true,
+        (entry) =>
+          entry.session.overseer !== true &&
+          entry.session.scribe !== true &&
+          entry.session.loop?.active !== true,
       ),
     [activeCandidates],
   );
   const overseerCandidates = useMemo(
     () =>
       activeCandidates.filter(
-        (entry) => entry.session.overseer !== true && entry.session.loop?.active !== true,
+        (entry) =>
+          entry.session.overseer !== true &&
+          entry.session.scribe !== true &&
+          entry.session.loop?.active !== true,
       ),
     [activeCandidates],
   );
@@ -488,6 +497,7 @@ function sessionLabel(session: DesktopSession): string {
 
 function statusTone(session: DesktopSession): string {
   if (session.overseer) return "#38bdf8";
+  if (session.scribe) return "#f59e0b";
   if (session.loop?.active) return "#a78bfa";
   if (session.status === "offline") return "#71717a";
   if (session.status === "waiting") return "#f59e0b";

@@ -74,6 +74,7 @@ import {
   resumeService,
   setAgentLoop,
   setAgentOverseer,
+  setAgentScribe,
   showWorkOutlineEntry,
   sendHandoff,
   sendAgentInput,
@@ -694,6 +695,7 @@ describe("api relay routing", () => {
     await migrateAgent(endpoint, { sessionId: "agent-1", worktreePath: "/repo/b" });
     await setAgentLoop(endpoint, { sessionId: "agent-1", active: true, goal: "ship" });
     await setAgentOverseer(endpoint, { sessionId: "agent-1", active: false });
+    await setAgentScribe(endpoint, { sessionId: "agent-1", active: true });
     await listWorkOutline(endpoint, { sessionId: "agent-1", q: "release", limit: 20 });
     await showWorkOutlineEntry(endpoint, "outline-1");
     await updateWorkOutline(endpoint, {
@@ -771,6 +773,11 @@ describe("api relay routing", () => {
         method: "POST",
         path: "/proxy/127.0.0.1/43210/agents/overseer",
         payload: { sessionId: "agent-1", active: false },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/scribe",
+        payload: { sessionId: "agent-1", active: true },
       },
       {
         method: "GET",

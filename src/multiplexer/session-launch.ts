@@ -19,7 +19,7 @@ import { capLaunchPreambleForArgv } from "../session-bootstrap.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
 import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
-import { isOverseerSession, type SessionTeamMetadata } from "../team.js";
+import { isProjectControlSession, type SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
@@ -934,9 +934,9 @@ export function createSession(
     host.invalidateDesktopStateSnapshot();
     host.refreshLocalDashboardModel();
     host.updateWorktreeSessions();
-    // An overseer is not listed under a worktree, so steering the dashboard at
-    // its main-repo path would focus a group that does not exist.
-    if (!isOverseerSession({ team })) {
+    // Project-control sessions are not listed under worktrees, so selecting
+    // their main-repo path would focus a group that does not exist.
+    if (!isProjectControlSession({ team })) {
       host.preferDashboardEntrySelection("session", sessionId, worktreePath);
     }
     host.renderCurrentDashboardView();
@@ -1208,9 +1208,9 @@ export async function createSessionAsync(
     host.invalidateDesktopStateSnapshot();
     host.refreshLocalDashboardModel();
     host.updateWorktreeSessions();
-    // An overseer is not listed under a worktree, so steering the dashboard at
-    // its main-repo path would focus a group that does not exist.
-    if (!isOverseerSession({ team })) {
+    // Project-control sessions are not listed under worktrees, so selecting
+    // their main-repo path would focus a group that does not exist.
+    if (!isProjectControlSession({ team })) {
       host.preferDashboardEntrySelection("session", sessionId, worktreePath);
     }
     host.renderCurrentDashboardView();

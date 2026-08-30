@@ -114,6 +114,7 @@ export interface TmuxWindowMetadata {
   backendSessionId?: string;
   team?: SessionTeamMetadata;
   overseer?: boolean;
+  scribe?: boolean;
   worktreePath?: string;
   label?: string;
   launchCommandLine?: string;

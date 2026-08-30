@@ -11,6 +11,8 @@ import {
   clearSessionLoop,
   setSessionOverseer,
   findOverseerSessionId,
+  setSessionScribe,
+  findScribeSessionId,
   updateSessionMetadata,
   putStatuslineSegment,
   dropStatuslineSegment,
@@ -173,6 +175,37 @@ describe("metadata store", () => {
     expect(state.sessions["boss-1"].overseer).toBeUndefined();
     expect(state.sessions["boss-2"].overseer).toBe(true);
     expect(findOverseerSessionId(state)).toBe("boss-2");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("enforces a single scribe: setting a new one clears the previous flag", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-store-scribe1-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    setSessionScribe("scribe-1", true, repoRoot);
+    setSessionScribe("scribe-2", true, repoRoot);
+
+    const state = loadMetadataState(repoRoot);
+    expect(state.sessions["scribe-1"].scribe).toBeUndefined();
+    expect(state.sessions["scribe-2"].scribe).toBe(true);
+    expect(findScribeSessionId(state)).toBe("scribe-2");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("records explicit scribe demotion so stale team metadata does not keep hiding the session", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-store-scribe-clear-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    setSessionScribe("scribe-1", true, repoRoot);
+    setSessionScribe("scribe-1", false, repoRoot);
+
+    const state = loadMetadataState(repoRoot);
+    expect(state.sessions["scribe-1"].scribe).toBe(false);
+    expect(findScribeSessionId(state)).toBeUndefined();
 
     rmSync(repoRoot, { recursive: true, force: true });
   });
