@@ -816,6 +816,7 @@ export default function ChatScreen() {
   }, [isSharedSessionView]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset expansion when switching shares
     setShareDetailsExpanded(false);
   }, [activeShare?.shareId, sessionId]);
 
@@ -1084,6 +1085,7 @@ export default function ChatScreen() {
       );
 
     if (draftStillMatches && attachmentsStillMatch) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- terminal transcript ack clears only the matched pending send
       setDraft("");
       setPendingAttachments([]);
       setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
