@@ -5,7 +5,7 @@ import {
   type WorktreeCacheCleanupRunResult,
 } from "../../worktree-cache-cleanup.js";
 import { renderOverlayBox } from "../render/box.js";
-import { keycap, keycapHint, style } from "../render/theme.js";
+import { keycap, keycapHint, padVisible, style, visibleWidth } from "../render/theme.js";
 
 /** Render footer-style key hints as keycaps: hints([["Enter","create"],["Esc","cancel"]]). */
 export function hints(pairs: [string, string][]): string {
@@ -321,6 +321,78 @@ function watchedDashboardSessions(ctx: any): any[] {
   return [...byId.values()];
 }
 
+function outlineEntrySessionSuffix(entry: any): string {
+  const sessionIds = Array.isArray(entry?.sessionIds) ? entry.sessionIds.filter(Boolean) : [];
+  if (sessionIds.length === 0) return "";
+  const shown = sessionIds.slice(0, 2).join(", ");
+  const more = sessionIds.length > 2 ? `, +${sessionIds.length - 2}` : "";
+  return ` sessions=${shown}${more}`;
+}
+
+function outlineEntryWorktree(entry: any): string {
+  if (typeof entry?.worktreePath !== "string" || !entry.worktreePath.trim()) return "";
+  const marker = "/.aimux/worktrees/";
+  if (entry.worktreePath.includes(marker)) {
+    return entry.worktreePath.slice(entry.worktreePath.indexOf(marker) + marker.length).split("/")[0] ?? "";
+  }
+  return "main";
+}
+
+export function buildWorkOutlineOverlayOutput(ctx: any, cols: number, rows: number): string {
+  const entries = Array.isArray(ctx.workOutlineOverlayEntries) ? ctx.workOutlineOverlayEntries : [];
+  const offset = Math.max(0, Math.min(ctx.workOutlineOverlayOffset ?? 0, Math.max(0, entries.length - 1)));
+  const maxRows = Math.max(2, rows - 12 - (ctx.workOutlineOverlaySessionId ? 2 : 0));
+  const rowWidth = Math.max(24, Math.min(120, cols - 12));
+  const truncate = (value: string, reserve = 0): string => padVisible(value, Math.max(8, rowWidth - reserve)).trimEnd();
+  const bodyRows: string[] = [];
+  const visibleEntries = entries.slice(offset);
+  let renderedCount = 0;
+  for (const entry of visibleEntries) {
+    const entryRows: string[] = [];
+    const status = entry.status ? style(entry.status, entry.status === "done" ? "done" : "accent") : "";
+    const worktree = outlineEntryWorktree(entry);
+    const meta = [
+      status,
+      entry.source ? style(entry.source, "muted") : undefined,
+      worktree ? style(`worktree=${worktree}`, "muted") : undefined,
+      entry.updatedAt ? style(`updated=${entry.updatedAt.slice(0, 16).replace("T", " ")}`, "muted") : undefined,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const metaSuffix = meta ? ` ${meta}` : "";
+    entryRows.push(
+      `  ${style(truncate(entry.title ?? entry.topicKey ?? entry.entryId, visibleWidth(metaSuffix)), "strong")}${metaSuffix}`,
+    );
+    if (entry.summary) entryRows.push(`    ${style(truncate(entry.summary, 4), "muted")}`);
+    const suffix = outlineEntrySessionSuffix(entry);
+    if (suffix) entryRows.push(`    ${style(truncate(`${entry.topicKey ?? entry.entryId}${suffix}`, 4), "muted")}`);
+    entryRows.push("");
+    if (bodyRows.length + entryRows.length > maxRows) break;
+    bodyRows.push(...entryRows);
+    renderedCount += 1;
+  }
+
+  if (entries.length === 0) {
+    bodyRows.push(`  ${style("No work outline entries yet.", "muted")}`, "");
+  } else if (visibleEntries.length > renderedCount) {
+    bodyRows.push(`  ${style(`${visibleEntries.length - renderedCount} more entries`, "muted")}`);
+  }
+
+  const scope = ctx.workOutlineOverlaySessionId
+    ? `  ${style(`Session: ${ctx.workOutlineOverlaySessionId}`, "muted")}`
+    : "";
+  const body = [
+    ...(scope ? [scope, ""] : []),
+    ...bodyRows,
+    hints([
+      ["↑↓/jk", "scroll"],
+      ["r", "reload"],
+      ["Esc/q", "back"],
+    ]),
+  ];
+  return renderOverlayBox({ title: "Work outline", body, cols, rows });
+}
+
 export function buildOverseerOverlayOutput(ctx: any, cols: number, rows: number): string {
   const overseers = dashboardOverseerSessions(ctx);
   const liveOverseer = overseers.find(isLiveSession);
@@ -388,6 +460,7 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  s  send message",
     "  H  handoff",
     "  T  task",
+    "  P  work outline",
     "  o  open thread",
     "  R  reply",
     "  r  name agent",

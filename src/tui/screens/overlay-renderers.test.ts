@@ -4,6 +4,7 @@ import {
   buildAgentRestoreConfirmOverlayOutput,
   buildHelpOverlayOutput,
   buildOverseerOverlayOutput,
+  buildWorkOutlineOverlayOutput,
   buildWorktreeCacheCleanupConfirmOverlayOutput,
   buildWorktreeListOverlayOutput,
 } from "./overlay-renderers.js";
@@ -100,6 +101,83 @@ describe("buildWorktreeCacheCleanupConfirmOverlayOutput", () => {
   });
 });
 
+describe("buildWorkOutlineOverlayOutput", () => {
+  it("renders an empty work outline state", () => {
+    const output = plain(
+      buildWorkOutlineOverlayOutput(
+        {
+          workOutlineOverlayEntries: [],
+        },
+        100,
+        30,
+      ),
+    );
+
+    expect(output).toContain("WORK OUTLINE");
+    expect(output).toContain("No work outline entries yet.");
+    expect(output).toContain("r  reload");
+    expect(output).toContain("Esc/q  back");
+  });
+
+  it("renders scoped outline entries with bounded omitted counts", () => {
+    const output = plain(
+      buildWorkOutlineOverlayOutput(
+        {
+          workOutlineOverlaySessionId: "codex-1",
+          workOutlineOverlayOffset: 0,
+          workOutlineOverlayEntries: [
+            {
+              entryId: "outline-1",
+              topicKey: "runtime-stability",
+              title: "Harden lifecycle retries",
+              summary: "Added bounded repair retry telemetry and skipped duplicate restarts.",
+              status: "active",
+              source: "scribe",
+              worktreePath: "/repo/.aimux/worktrees/lifecycle",
+              sessionIds: ["codex-1", "claude-2", "codex-3"],
+              updatedAt: "2026-08-30T04:12:30.000Z",
+            },
+            {
+              entryId: "outline-2",
+              topicKey: "scrollback",
+              title: "Audit scrollback gaps",
+              summary: "Checked transcript window bounds.",
+              status: "done",
+              source: "manual",
+              worktreePath: "/repo",
+              sessionIds: ["claude-4"],
+              updatedAt: "2026-08-30T04:10:00.000Z",
+            },
+            {
+              entryId: "outline-3",
+              topicKey: "hidden",
+              title: "Hidden due row budget",
+              summary: "This should not fit in the small overlay.",
+              status: "done",
+              source: "scribe",
+              worktreePath: "/repo",
+              sessionIds: ["codex-5"],
+              updatedAt: "2026-08-30T04:09:00.000Z",
+            },
+          ],
+        },
+        120,
+        22,
+      ),
+    );
+
+    expect(output).toContain("Session: codex-1");
+    expect(output).toContain("Harden lifecycle retries");
+    expect(output).toContain("worktree=lifecycle");
+    expect(output).toContain("updated=2026-08-30 04:12");
+    expect(output).toContain("runtime-stability sessions=codex-1, claude-2, +1");
+    expect(output).toContain("Audit scrollback gaps");
+    expect(output).toContain("worktree=main");
+    expect(output).toContain("1 more entries");
+    expect(output).not.toContain("Hidden due row budget");
+  });
+});
+
 describe("buildAgentRestoreConfirmOverlayOutput", () => {
   it("renders restore and cancel as modal choices", () => {
     const output = plain(
@@ -143,6 +221,7 @@ describe("buildHelpOverlayOutput", () => {
     expect(output).toContain("?  show help");
     expect(output).toContain("n  new agent");
     expect(output).toContain("v  new service");
+    expect(output).toContain("P  work outline");
     expect(output).toContain("x  stop or remove selected item");
     expect(output).not.toContain("Ctrl+A c  new agent");
     expect(output).not.toContain("Ctrl+A v  request review");

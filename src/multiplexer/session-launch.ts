@@ -1571,6 +1571,10 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
     case "worktree-list":
       host.showWorktreeList();
       break;
+    case "work-outline":
+      host.openTmuxDashboardTarget();
+      host.showWorkOutlineOverlay?.(host.sessions?.[host.activeIndex]?.id);
+      break;
     case "review":
       void host.handleReviewRequest();
       break;

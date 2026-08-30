@@ -39,6 +39,7 @@ import {
   buildServiceInputOverlayOutput,
   buildSwitcherOverlayOutput,
   buildTeammatePickerOverlayOutput,
+  buildWorkOutlineOverlayOutput,
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
   hints,
@@ -919,6 +920,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "overseer":
       host.handleOverseerOverlayKey(data);
       return true;
+    case "work-outline":
+      host.handleWorkOutlineOverlayKey(data);
+      return true;
     case "worktree-remove-confirm":
       host.handleWorktreeRemoveConfirmKey(data);
       return true;
@@ -1128,6 +1132,9 @@ export function buildActiveDashboardOverlayOutput(
   }
   if (host.dashboardOverlayState.kind === "overseer") {
     return buildOverseerOverlayOutput(host, cols, rows);
+  }
+  if (host.dashboardOverlayState.kind === "work-outline") {
+    return buildWorkOutlineOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "thread-reply") {
     return buildThreadReplyOverlayOutput(host, cols, rows);

@@ -12,6 +12,7 @@ export type HotkeyAction =
   | { type: "prev" }
   | { type: "create" }
   | { type: "create-overseer" }
+  | { type: "work-outline" }
   | { type: "kill" }
   | { type: "switcher" }
   | { type: "worktree-create" }
@@ -76,6 +77,11 @@ export class HotkeyHandler {
 
     if (key === "W") {
       this.onAction({ type: "worktree-list" });
+      return null;
+    }
+
+    if (key === "P") {
+      this.onAction({ type: "work-outline" });
       return null;
     }
 

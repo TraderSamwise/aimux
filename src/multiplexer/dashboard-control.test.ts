@@ -2704,6 +2704,22 @@ describe("agent restore confirm overlay", () => {
   });
 });
 
+describe("work outline overlay routing", () => {
+  it("routes active overlay keys to the work outline handler", async () => {
+    const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+    const host = {
+      dashboardBusyState: null,
+      dashboardErrorState: null,
+      dashboardOverlayState: { kind: "work-outline" },
+      handleWorkOutlineOverlayKey: vi.fn(),
+    };
+
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("j"))).toBe(true);
+
+    expect(host.handleWorkOutlineOverlayKey).toHaveBeenCalledWith(Buffer.from("j"));
+  });
+});
+
 describe("handleDashboardSubscreenNavigationKey", () => {
   function makeHost() {
     return {

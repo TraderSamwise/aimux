@@ -2035,6 +2035,26 @@ describe("resumeSessions", () => {
   });
 });
 
+describe("handleAction", () => {
+  it("opens the dashboard before showing the current agent work outline", async () => {
+    const { handleAction } = await import("./session-launch.js");
+    const host = {
+      sessions: [{ id: "codex-1" }],
+      activeIndex: 0,
+      openTmuxDashboardTarget: vi.fn(),
+      showWorkOutlineOverlay: vi.fn(),
+    };
+
+    handleAction(host as any, { type: "work-outline" });
+
+    expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
+    expect(host.showWorkOutlineOverlay).toHaveBeenCalledWith("codex-1");
+    expect(host.openTmuxDashboardTarget.mock.invocationCallOrder[0]).toBeLessThan(
+      host.showWorkOutlineOverlay.mock.invocationCallOrder[0],
+    );
+  });
+});
+
 describe("startProjectServiceHost", () => {
   it("adopts live topology before exposing the project service", async () => {
     const host: any = {

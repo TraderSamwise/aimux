@@ -6,6 +6,7 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { commandKey, isShiftedLetterCommand, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import { buildWorkOutlineOverlayOutput } from "../tui/screens/overlay-renderers.js";
 import {
   getDefaultTeamConfig,
   isProjectControlSession,
@@ -14,6 +15,7 @@ import {
   loadTeamConfig,
   type TeamConfig,
 } from "../team.js";
+import { listWorkOutlineEntries } from "../work-outline.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -696,6 +698,11 @@ export const dashboardInteractionMethods = {
       this.showOverseerOverlay();
       return;
     }
+    if (isShiftedCommand(event, key, "p")) {
+      const selected = this.getSelectedDashboardSessionForActions?.();
+      this.showWorkOutlineOverlay(selected?.id);
+      return;
+    }
     // The failure banner is a card, not a row, so there is nothing to focus and
     // press x on. Without this the only way past a failure nobody intends to
     // retry was to wait it out.
@@ -1187,6 +1194,74 @@ export const dashboardInteractionMethods = {
 
   renderOverseerOverlay(this: any): void {
     this.redrawDashboardWithOverlay();
+  },
+
+  loadWorkOutlineOverlayEntries(this: any): boolean {
+    try {
+      this.workOutlineOverlayEntries = listWorkOutlineEntries(
+        { limit: 80, ...(this.workOutlineOverlaySessionId ? { sessionId: this.workOutlineOverlaySessionId } : {}) },
+        this.projectRoot,
+      );
+      return true;
+    } catch (error) {
+      this.workOutlineOverlayEntries = [];
+      this.workOutlineOverlayOffset = 0;
+      this.clearDashboardOverlay();
+      this.showDashboardError?.("Failed to load work outline", [
+        error instanceof Error ? error.message : String(error),
+      ]);
+      return false;
+    }
+  },
+
+  showWorkOutlineOverlay(this: any, sessionId?: string): void {
+    this.workOutlineOverlaySessionId = sessionId;
+    this.workOutlineOverlayOffset = 0;
+    if (!this.loadWorkOutlineOverlayEntries()) return;
+    this.openDashboardOverlay("work-outline");
+    this.renderWorkOutlineOverlay();
+  },
+
+  renderWorkOutlineOverlay(this: any): void {
+    if (this.mode === "dashboard" && typeof this.redrawDashboardWithOverlay === "function") {
+      this.redrawDashboardWithOverlay();
+      return;
+    }
+    const { cols, rows } = this.getViewportSize();
+    process.stdout.write(buildWorkOutlineOverlayOutput(this, cols, rows));
+  },
+
+  handleWorkOutlineOverlayKey(this: any, data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = commandKey(events[0]);
+
+    if (key === "escape" || key === "q" || key === "enter" || key === "return") {
+      this.clearDashboardOverlay();
+      this.restoreDashboardAfterOverlayDismiss?.();
+      return;
+    }
+    if (key === "r") {
+      if (!this.loadWorkOutlineOverlayEntries()) return;
+      this.workOutlineOverlayOffset = Math.min(
+        this.workOutlineOverlayOffset ?? 0,
+        Math.max(0, this.workOutlineOverlayEntries.length - 1),
+      );
+      this.renderWorkOutlineOverlay();
+      return;
+    }
+
+    const maxOffset = Math.max(0, (this.workOutlineOverlayEntries?.length ?? 0) - 1);
+    if (key === "down" || key === "j") {
+      this.workOutlineOverlayOffset = Math.min(maxOffset, (this.workOutlineOverlayOffset ?? 0) + 1);
+      this.renderWorkOutlineOverlay();
+      return;
+    }
+    if (key === "up" || key === "k") {
+      this.workOutlineOverlayOffset = Math.max(0, (this.workOutlineOverlayOffset ?? 0) - 1);
+      this.renderWorkOutlineOverlay();
+      return;
+    }
   },
 
   handleOverseerOverlayKey(this: any, data: Buffer): void {

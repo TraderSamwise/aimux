@@ -16,6 +16,7 @@ import { loadMetadataState } from "../metadata-store.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { ScribeWatcher } from "../scribe-watcher.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
+import type { WorkOutlineEntry } from "../work-outline.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
 import type { CoreCommandName, CoreCommandOk, CoreCommandPayloadByName } from "../core-command-contract.js";
@@ -294,6 +295,9 @@ export class Multiplexer {
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
   private dashboardAgentRestoreOfferCache: unknown = null;
+  private workOutlineOverlayEntries: WorkOutlineEntry[] = [];
+  private workOutlineOverlayOffset = 0;
+  private workOutlineOverlaySessionId: string | undefined = undefined;
   private agentRestoreConfirmSelection: "restore" | "cancel" = "restore";
   private agentRestoreConfirmOpenedAt = 0;
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };

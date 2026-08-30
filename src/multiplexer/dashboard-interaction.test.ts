@@ -11,6 +11,9 @@ const dashboardApiClientMock = vi.hoisted(() => ({
   mutateDashboardApi: vi.fn(),
   refreshDashboardModelThroughApi: vi.fn(),
 }));
+const workOutlineMock = vi.hoisted(() => ({
+  listWorkOutlineEntries: vi.fn(),
+}));
 
 vi.mock("./dashboard-api-client.js", async () => {
   const actual = await vi.importActual<typeof import("./dashboard-api-client.js")>("./dashboard-api-client.js");
@@ -28,6 +31,14 @@ vi.mock("../team.js", async () => {
   return {
     ...actual,
     loadTeamConfig: vi.fn(() => actual.getDefaultTeamConfig()),
+  };
+});
+
+vi.mock("../work-outline.js", async () => {
+  const actual = await vi.importActual<typeof import("../work-outline.js")>("../work-outline.js");
+  return {
+    ...actual,
+    listWorkOutlineEntries: workOutlineMock.listWorkOutlineEntries,
   };
 });
 
@@ -49,6 +60,8 @@ describe("dashboardInteractionMethods", () => {
   beforeEach(() => {
     dashboardApiClientMock.mutateDashboardApi.mockClear();
     dashboardApiClientMock.refreshDashboardModelThroughApi.mockClear();
+    workOutlineMock.listWorkOutlineEntries.mockReset();
+    workOutlineMock.listWorkOutlineEntries.mockReturnValue([]);
   });
 
   it("toggles hidden offline agents from the dashboard", () => {
@@ -2255,6 +2268,7 @@ describe("dashboardInteractionMethods", () => {
       showLibrary: vi.fn(),
       showWorktreeList: vi.fn(),
       showOverseerOverlay: vi.fn(),
+      showWorkOutlineOverlay: vi.fn(),
       showToolPicker: vi.fn(),
       handleAction: vi.fn(),
       getSelectedDashboardSessionForActions: vi.fn(() => selected),
@@ -2266,6 +2280,7 @@ describe("dashboardInteractionMethods", () => {
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("T"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("W"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("O"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("P"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("R"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("S"));
 
@@ -2274,9 +2289,78 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showLibrary).toHaveBeenCalledOnce();
     expect(host.showWorktreeList).toHaveBeenCalledOnce();
     expect(host.showOverseerOverlay).toHaveBeenCalledOnce();
+    expect(host.showWorkOutlineOverlay).toHaveBeenCalledWith("codex-1");
     expect(host.showToolPicker).toHaveBeenCalledWith("codex-1", { mode: "switch-tool" });
     expect(host.handleAction).not.toHaveBeenCalledWith({ type: "create-overseer" });
     expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
+  });
+
+  it("opens, scrolls, reloads, and dismisses the work outline overlay", () => {
+    const entries = [
+      { entryId: "outline-1", title: "First", updatedAt: "2026-08-30T01:00:00.000Z" },
+      { entryId: "outline-2", title: "Second", updatedAt: "2026-08-30T00:00:00.000Z" },
+    ];
+    const reloaded = [{ entryId: "outline-3", title: "Reloaded", updatedAt: "2026-08-30T02:00:00.000Z" }];
+    workOutlineMock.listWorkOutlineEntries.mockReturnValueOnce(entries).mockReturnValueOnce(reloaded);
+    const host: any = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardOverlayState: { kind: "none" },
+      openDashboardOverlay: vi.fn((kind: string) => {
+        host.dashboardOverlayState = { kind };
+      }),
+      clearDashboardOverlay: vi.fn(() => {
+        host.dashboardOverlayState = { kind: "none" };
+      }),
+      redrawDashboardWithOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+    };
+    Object.assign(host, dashboardInteractionMethods);
+
+    host.showWorkOutlineOverlay("codex-1");
+    host.handleWorkOutlineOverlayKey(Buffer.from("j"));
+    host.handleWorkOutlineOverlayKey(Buffer.from("r"));
+    host.handleWorkOutlineOverlayKey(Buffer.from("\x1b"));
+
+    expect(workOutlineMock.listWorkOutlineEntries).toHaveBeenNthCalledWith(
+      1,
+      { limit: 80, sessionId: "codex-1" },
+      "/repo",
+    );
+    expect(workOutlineMock.listWorkOutlineEntries).toHaveBeenNthCalledWith(
+      2,
+      { limit: 80, sessionId: "codex-1" },
+      "/repo",
+    );
+    expect(host.openDashboardOverlay).toHaveBeenCalledWith("work-outline");
+    expect(host.workOutlineOverlayOffset).toBe(0);
+    expect(host.workOutlineOverlayEntries).toBe(reloaded);
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+    expect(host.restoreDashboardAfterOverlayDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("shows a dashboard error when work outline load fails", () => {
+    workOutlineMock.listWorkOutlineEntries.mockImplementation(() => {
+      throw new Error("bad outline json");
+    });
+    const host: any = {
+      projectRoot: "/repo",
+      workOutlineOverlayEntries: [{ entryId: "stale" }],
+      workOutlineOverlayOffset: 3,
+      clearDashboardOverlay: vi.fn(),
+      showDashboardError: vi.fn(),
+      openDashboardOverlay: vi.fn(),
+      redrawDashboardWithOverlay: vi.fn(),
+    };
+    Object.assign(host, dashboardInteractionMethods);
+
+    host.showWorkOutlineOverlay("codex-1");
+
+    expect(host.workOutlineOverlayEntries).toEqual([]);
+    expect(host.workOutlineOverlayOffset).toBe(0);
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to load work outline", ["bad outline json"]);
+    expect(host.openDashboardOverlay).not.toHaveBeenCalled();
   });
 
   it("blocks dashboard forks from offline agent rows before opening the tool picker", () => {
