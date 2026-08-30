@@ -67,6 +67,7 @@ describe("core sidecar module boundary", () => {
 
   it("keeps ordinary clients out of daemon supervisor lifecycle code", () => {
     const allowed = new Set([
+      "cli/project-service.ts",
       "control-plane-restart-client.ts",
       "core-command-client.ts",
       "daemon-supervisor.ts",

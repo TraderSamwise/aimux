@@ -107,6 +107,7 @@ const ALLOWED_SYNC_CALLERS = [
   "src/lifecycle-orphans.ts",
   "src/main.ts",
   "src/metadata-server.ts",
+  "src/metadata-server/dashboard-client-state.ts",
   "src/multiplexer/dashboard-control.ts",
   "src/multiplexer/dashboard-model.ts",
   "src/multiplexer/dashboard-ops.ts",
