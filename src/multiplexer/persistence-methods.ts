@@ -1187,8 +1187,14 @@ export const persistenceMethods = {
           child.stderr.on("data", (chunk: Buffer) => {
             const text = chunk.toString();
             stderr += text;
-            if (this.worktreeRemovalJob?.path === path) {
-              this.worktreeRemovalJob.stderr = stderr;
+            const worktreeRemovalJob =
+              this.worktreeRemovalJobs instanceof Map
+                ? this.worktreeRemovalJobs.get(path)
+                : this.worktreeRemovalJob?.path === path
+                  ? this.worktreeRemovalJob
+                  : null;
+            if (worktreeRemovalJob) {
+              worktreeRemovalJob.stderr = stderr;
               if (this.mode === "dashboard") {
                 this.renderDashboard();
               }

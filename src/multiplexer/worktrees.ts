@@ -26,10 +26,51 @@ import {
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type WorktreeHost = any;
+interface WorktreeRemovalJob {
+  path: string;
+  name: string;
+  startedAt: number;
+  oldIdx: number;
+  stderr: string;
+}
+
 type DashboardWorktreeCreateSettleResult =
   | { status: "settled" }
   | { status: "pending" }
   | { status: "failed"; error: Error };
+
+function getWorktreeRemovalJobs(host: WorktreeHost): Map<string, WorktreeRemovalJob> {
+  if (!(host.worktreeRemovalJobs instanceof Map)) {
+    host.worktreeRemovalJobs = new Map<string, WorktreeRemovalJob>();
+  }
+  if (host.worktreeRemovalJob && !host.worktreeRemovalJobs.has(host.worktreeRemovalJob.path)) {
+    host.worktreeRemovalJobs.set(host.worktreeRemovalJob.path, host.worktreeRemovalJob);
+  }
+  return host.worktreeRemovalJobs;
+}
+
+function setCurrentWorktreeRemovalJob(host: WorktreeHost): void {
+  const jobs = getWorktreeRemovalJobs(host);
+  host.worktreeRemovalJob = [...jobs.values()].at(-1) ?? null;
+}
+
+function startWorktreeRemovalJob(host: WorktreeHost, job: WorktreeRemovalJob): void {
+  getWorktreeRemovalJobs(host).set(job.path, job);
+  host.worktreeRemovalJob = job;
+}
+
+function getWorktreeRemovalJob(host: WorktreeHost, path: string): WorktreeRemovalJob | null {
+  return getWorktreeRemovalJobs(host).get(path) ?? null;
+}
+
+function clearWorktreeRemovalJob(host: WorktreeHost, path: string): void {
+  const wasCurrent = host.worktreeRemovalJob?.path === path;
+  getWorktreeRemovalJobs(host).delete(path);
+  if (wasCurrent) {
+    host.worktreeRemovalJob = null;
+    setCurrentWorktreeRemovalJob(host);
+  }
+}
 
 function postWorktreeMutation(
   host: WorktreeHost,
@@ -732,28 +773,28 @@ function applyWorktreeCacheCleanup(host: WorktreeHost, preview: WorktreeCacheCle
 }
 
 export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: string, oldIdx: number): void {
-  if (host.worktreeRemovalJob?.path === path) return;
-  if (host.worktreeRemovalJob && host.worktreeRemovalJob.path !== path) {
-    const inFlightName = host.worktreeRemovalJob.name;
-    host.footerFlash = `Already graveyarding ${inFlightName}`;
+  const activeJobs = getWorktreeRemovalJobs(host);
+  if (activeJobs.has(path)) {
+    host.footerFlash = `Already graveyarding ${name}`;
     host.footerFlashTicks = 4;
     host.showDashboardError("Worktree graveyard already in progress", [
-      `Finish graveyarding "${inFlightName}" before graveyarding "${name}".`,
+      `Finish graveyarding "${name}" before starting it again.`,
     ]);
     host.renderDashboard();
     return;
   }
-  debug(`begin worktree graveyard: name=${name} path=${path}`, "worktree");
-  host.worktreeRemovalJob = {
+  debug(`begin worktree graveyard: name=${name} path=${path} active=${activeJobs.size + 1}`, "worktree");
+  const removalJob: WorktreeRemovalJob = {
     path,
     name,
     startedAt: Date.now(),
     oldIdx,
     stderr: "",
   };
+  startWorktreeRemovalJob(host, removalJob);
   if (host.mode !== "dashboard") {
-    host.worktreeRemovalJob.stderr = "Worktree graveyard requires the project service.";
-    finishWorktreeRemoval(host, 1);
+    removalJob.stderr = "Worktree graveyard requires the project service.";
+    finishWorktreeRemoval(host, path, 1);
     return;
   }
   const uiLifecycle = captureDashboardLifecycle(host);
@@ -774,45 +815,40 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
       ),
     onSuccess: () => {
       debug(`graveyardDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
-      finishWorktreeRemoval(host, 0);
+      finishWorktreeRemoval(host, path, 0);
     },
     onError: (err) => {
-      if (host.worktreeRemovalJob) {
-        host.worktreeRemovalJob.stderr += `\n${err instanceof Error ? err.message : String(err)}`;
+      const job = getWorktreeRemovalJob(host, path);
+      if (job) {
+        job.stderr += `\n${err instanceof Error ? err.message : String(err)}`;
       }
       debug(
         `graveyardDesktopWorktree failed: name=${name} path=${path} error=${err instanceof Error ? err.message : String(err)}`,
         "worktree",
       );
-      finishWorktreeRemoval(host, 1);
+      finishWorktreeRemoval(host, path, 1);
     },
     onStaleProgress: () => {
-      if (host.worktreeRemovalJob?.path === path) {
-        host.worktreeRemovalJob = null;
-      }
+      clearWorktreeRemovalJob(host, path);
     },
     onStaleSuccess: () => {
-      if (host.worktreeRemovalJob?.path === path) {
-        host.worktreeRemovalJob = null;
-      }
+      clearWorktreeRemovalJob(host, path);
     },
     onStaleError: () => {
-      if (host.worktreeRemovalJob?.path === path) {
-        host.worktreeRemovalJob = null;
-      }
+      clearWorktreeRemovalJob(host, path);
     },
   }).finally(() => {
-    if (!isDashboardLifecycleCurrent(host, uiLifecycle) && host.worktreeRemovalJob?.path === path) {
-      host.worktreeRemovalJob = null;
+    if (!isDashboardLifecycleCurrent(host, uiLifecycle)) {
+      clearWorktreeRemovalJob(host, path);
     }
   });
 }
 
-export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
-  const job = host.worktreeRemovalJob;
+export function finishWorktreeRemoval(host: WorktreeHost, path: string, code: number): void {
+  const job = getWorktreeRemovalJob(host, path);
   if (!job) return;
 
-  host.worktreeRemovalJob = null;
+  clearWorktreeRemovalJob(host, path);
   const details = job.stderr
     .split("\n")
     .map((line: string) => line.trim())
@@ -821,16 +857,21 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
   if (code === 0) {
     host.footerFlash = `Graveyarded: ${job.name}`;
     host.footerFlashTicks = 3;
-    debug(`graveyarded worktree: ${job.name}`, "worktree");
+    debug(`graveyarded worktree: ${job.name} active=${getWorktreeRemovalJobs(host).size}`, "worktree");
 
     host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
-    if (job.oldIdx >= 0 && job.oldIdx < host.dashboardState.worktreeNavOrder.length) {
-      host.dashboardState.focusedWorktreePath = host.dashboardState.worktreeNavOrder[job.oldIdx];
-    } else if (host.dashboardState.worktreeNavOrder.length > 0) {
-      host.dashboardState.focusedWorktreePath =
-        host.dashboardState.worktreeNavOrder[host.dashboardState.worktreeNavOrder.length - 1];
-    } else {
-      host.dashboardState.focusedWorktreePath = undefined;
+    if (
+      !host.dashboardState.focusedWorktreePath ||
+      sameWorktreePath(host.dashboardState.focusedWorktreePath, job.path)
+    ) {
+      if (job.oldIdx >= 0 && job.oldIdx < host.dashboardState.worktreeNavOrder.length) {
+        host.dashboardState.focusedWorktreePath = host.dashboardState.worktreeNavOrder[job.oldIdx];
+      } else if (host.dashboardState.worktreeNavOrder.length > 0) {
+        host.dashboardState.focusedWorktreePath =
+          host.dashboardState.worktreeNavOrder[host.dashboardState.worktreeNavOrder.length - 1];
+      } else {
+        host.dashboardState.focusedWorktreePath = undefined;
+      }
     }
   } else {
     const message = details[0] ?? `worktree graveyard failed with code ${code}`;

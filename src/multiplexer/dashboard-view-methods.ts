@@ -176,6 +176,13 @@ export const dashboardViewMethods = {
       const selectedSessionEntry = selectedSession
         ? dashSessions.find((session: any) => session.id === selectedSession)
         : undefined;
+      const worktreeRemovalJobs =
+        this.worktreeRemovalJobs instanceof Map
+          ? [...this.worktreeRemovalJobs.values()]
+          : this.worktreeRemovalJob
+            ? [this.worktreeRemovalJob]
+            : [];
+      const latestWorktreeRemovalJob = worktreeRemovalJobs.at(-1);
 
       this.dashboard.update({
         sessions: dashSessions,
@@ -198,14 +205,20 @@ export const dashboardViewMethods = {
         hiddenOfflineAgentCount: this.dashboardState.hideOfflineAgents
           ? rawDashSessions.filter((session: any) => isDashboardSessionOffline(session)).length
           : 0,
-        worktreeRemoval: this.worktreeRemovalJob
+        worktreeRemoval: latestWorktreeRemovalJob
           ? {
-              path: this.worktreeRemovalJob.path,
-              name: this.worktreeRemovalJob.name,
-              startedAt: this.worktreeRemovalJob.startedAt,
-              stderr: this.worktreeRemovalJob.stderr,
+              path: latestWorktreeRemovalJob.path,
+              name: latestWorktreeRemovalJob.name,
+              startedAt: latestWorktreeRemovalJob.startedAt,
+              stderr: latestWorktreeRemovalJob.stderr,
             }
           : undefined,
+        worktreeRemovals: worktreeRemovalJobs.map((job: any) => ({
+          path: job.path,
+          name: job.name,
+          startedAt: job.startedAt,
+          stderr: job.stderr,
+        })),
         derivedStatusLabel,
       });
       if (
@@ -314,7 +327,10 @@ export const dashboardViewMethods = {
   },
 
   finishWorktreeRemoval(this: any, code: number): void {
-    finishWorktreeRemovalImpl(this, code);
+    const path = this.worktreeRemovalJob?.path;
+    if (path) {
+      finishWorktreeRemovalImpl(this, path, code);
+    }
   },
 
   handleWorktreeRemoveConfirmKey(this: any, data: Buffer): void {

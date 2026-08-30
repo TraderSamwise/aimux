@@ -675,7 +675,8 @@ export function renderDashboardFrame(
       const activeSessions = focusedSessions.filter((session) => !isSessionOffline(session));
       const runningServices = focusedServices.filter((service) => service.status === "running");
       const activeWorktreeRemoval =
-        state.worktreeRemoval?.path === focusedWorktreePath ? state.worktreeRemoval : undefined;
+        state.worktreeRemovals?.find((job) => job.path === focusedWorktreePath) ??
+        (state.worktreeRemoval?.path === focusedWorktreePath ? state.worktreeRemoval : undefined);
       if (activeWorktreeRemoval) {
         const elapsedSeconds = Math.max(0, Math.floor((Date.now() - activeWorktreeRemoval.startedAt) / 1000));
         lines.push(...wrapKeyValue("Status", "removing", width));

@@ -205,6 +205,61 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).not.toContain("Progress:");
   });
 
+  it("shows removal details for the focused worktree when several removals are active", () => {
+    const firstPath = "/repo/.aimux/worktrees/first";
+    const secondPath = "/repo/.aimux/worktrees/second";
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        focusedWorktreePath: firstPath,
+        worktreeGroups: [
+          {
+            name: "first",
+            branch: "first",
+            path: firstPath,
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+          {
+            name: "second",
+            branch: "second",
+            path: secondPath,
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+        ],
+        worktreeRemoval: {
+          path: secondPath,
+          name: "second",
+          startedAt: Date.now(),
+          stderr: "second progress",
+        },
+        worktreeRemovals: [
+          {
+            path: firstPath,
+            name: "first",
+            startedAt: Date.now(),
+            stderr: "first progress",
+          },
+          {
+            path: secondPath,
+            name: "second",
+            startedAt: Date.now(),
+            stderr: "second progress",
+          },
+        ],
+      }),
+      120,
+      40,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("Status: removing");
+    expect(plain).toContain("Progress: first progress");
+    expect(plain).not.toContain("Progress: second progress");
+  });
+
   it("does not render overseers as an unreachable dashboard band", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({

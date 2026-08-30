@@ -1181,6 +1181,69 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("starts independent worktree removals without serializing through one dashboard job", async () => {
+    postToProjectService.mockClear();
+    const resolvers: Array<() => void> = [];
+    const holdRemoval = () =>
+      new Promise<void>((resolve) => {
+        resolvers.push(resolve);
+      });
+    postToProjectService.mockImplementationOnce(holdRemoval).mockImplementationOnce(holdRemoval);
+    const pending = createPendingActionsStore();
+    const firstPath = "/repo/.aimux/worktrees/first";
+    const secondPath = "/repo/.aimux/worktrees/second";
+    const first = { name: "first", branch: "first", path: firstPath, sessions: [], services: [] };
+    const second = { name: "second", branch: "second", path: secondPath, sessions: [], services: [] };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeRemovalJob: null,
+      worktreeRemovalJobs: new Map(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [first, second],
+      dashboardRawWorktreeGroupsCache: [first, second],
+      dashboardState: { worktreeNavOrder: [firstPath, secondPath], focusedWorktreePath: firstPath },
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardWorktreeGroupsCache = [];
+        host.dashboardRawWorktreeGroupsCache = [];
+        return true;
+      }),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    beginWorktreeRemoval(host, firstPath, "first", 0);
+    beginWorktreeRemoval(host, secondPath, "second", 1);
+
+    await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalledTimes(2));
+    expect(postToProjectService).toHaveBeenNthCalledWith(
+      1,
+      host,
+      "/worktrees/graveyard",
+      { path: firstPath },
+      { timeoutMs: 180_000 },
+    );
+    expect(postToProjectService).toHaveBeenNthCalledWith(
+      2,
+      host,
+      "/worktrees/graveyard",
+      { path: secondPath },
+      { timeoutMs: 180_000 },
+    );
+    expect(host.worktreeRemovalJobs.size).toBe(2);
+    expect(pending.state.get(`worktree:${firstPath}`)).toBe("graveyarding");
+    expect(pending.state.get(`worktree:${secondPath}`)).toBe("graveyarding");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+
+    resolvers.forEach((resolve) => resolve());
+    await vi.waitFor(() => expect(host.worktreeRemovalJobs.size).toBe(0));
+    expect(pending.state.get(`worktree:${firstPath}`)).toBeNull();
+    expect(pending.state.get(`worktree:${secondPath}`)).toBeNull();
+  });
+
   it("ignores stale background worktree removal settlement after a newer same-path pending action", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();

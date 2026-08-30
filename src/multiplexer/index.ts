@@ -182,6 +182,7 @@ export class Multiplexer {
   private worktreeCacheCleanupConfirm: any | null = null;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
+  private worktreeRemovalJobs = new Map<string, WorktreeRemovalJob>();
   private worktreeCreateJob: WorktreeCreateJob | null = null;
   private pendingWorktreeRemovals = new Map<string, Promise<{ path: string; status: "removing" | "removed" }>>();
   private pendingWorktreeCreates = new Map<string, Promise<{ path: string; status: "creating" | "created" }>>();

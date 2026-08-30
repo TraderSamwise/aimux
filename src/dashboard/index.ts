@@ -174,6 +174,7 @@ export interface DashboardViewModel {
   version?: string;
   mainCheckout: MainCheckoutInfo;
   worktreeRemoval?: DashboardWorktreeRemovalInfo;
+  worktreeRemovals?: DashboardWorktreeRemovalInfo[];
   operationFailures: DashboardOperationFailure[];
   agentRestoreOffer?: DashboardAgentRestoreOffer | null;
   hideOfflineAgents?: boolean;
@@ -204,6 +205,7 @@ export class Dashboard {
     version: undefined,
     mainCheckout: { name: "Main Checkout", branch: "" },
     worktreeRemoval: undefined,
+    worktreeRemovals: [],
     operationFailures: [],
     agentRestoreOffer: null,
     hideOfflineAgents: false,
