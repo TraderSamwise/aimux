@@ -61,6 +61,8 @@ export const WORK_OUTLINE_MAX_LIMIT = 200;
 export const WORK_OUTLINE_TITLE_MAX_CHARS = 160;
 export const WORK_OUTLINE_SUMMARY_MAX_CHARS = 1200;
 export const WORK_OUTLINE_TOPIC_KEY_MAX_CHARS = 180;
+export const WORK_OUTLINE_MAX_SESSION_IDS = 32;
+export const WORK_OUTLINE_SESSION_ID_MAX_CHARS = 120;
 
 function workOutlinePath(projectRoot?: string): string {
   return join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "work-outline.json");
@@ -99,13 +101,15 @@ function normalizeSource(value: unknown): WorkOutlineSource {
 
 function normalizeSessionIds(input: WorkOutlineUpdateInput): string[] {
   const ids = new Set<string>();
-  if (typeof input.sessionId === "string" && input.sessionId.trim()) ids.add(input.sessionId.trim());
+  if (typeof input.sessionId === "string" && input.sessionId.trim()) {
+    ids.add(truncateText(input.sessionId, WORK_OUTLINE_SESSION_ID_MAX_CHARS));
+  }
   if (Array.isArray(input.sessionIds)) {
     for (const id of input.sessionIds) {
-      if (typeof id === "string" && id.trim()) ids.add(id.trim());
+      if (typeof id === "string" && id.trim()) ids.add(truncateText(id, WORK_OUTLINE_SESSION_ID_MAX_CHARS));
     }
   }
-  return [...ids].sort();
+  return [...ids].sort().slice(0, WORK_OUTLINE_MAX_SESSION_IDS);
 }
 
 function normalizeLine(value: unknown): number | undefined {
@@ -149,11 +153,9 @@ function normalizeState(value: unknown): WorkOutlineState {
     const title = normalizeOptionalText(entry.title, WORK_OUTLINE_TITLE_MAX_CHARS);
     const summary = normalizeOptionalText(entry.summary, WORK_OUTLINE_SUMMARY_MAX_CHARS);
     if (!topicKey || !title || !summary) continue;
-    const sessionIds = Array.isArray(entry.sessionIds)
-      ? entry.sessionIds
-          .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
-          .map((id) => id.trim())
-      : [];
+    const sessionIds = normalizeSessionIds({
+      sessionIds: Array.isArray(entry.sessionIds) ? entry.sessionIds : [],
+    });
     const worktreePath = normalizeOptionalText(entry.worktreePath, 1000);
     const evidence = normalizeEvidence(entry.evidence);
     const createdAt = normalizeOptionalText(entry.createdAt, 40) ?? new Date(0).toISOString();
@@ -166,7 +168,7 @@ function normalizeState(value: unknown): WorkOutlineState {
       summary,
       status: normalizeStatus(entry.status),
       source: normalizeSource(entry.source),
-      sessionIds: [...new Set(sessionIds)].sort(),
+      sessionIds,
       ...(worktreePath ? { worktreePath } : {}),
       ...(evidence ? { evidence } : {}),
       createdAt,
@@ -223,7 +225,9 @@ export function updateWorkOutlineEntry(
       : entryIdentity(entry.topicKey, entry.worktreePath) === entryIdentity(topicKey, worktreePath),
   );
   const existing = existingIndex >= 0 ? state.entries[existingIndex] : undefined;
-  const sessionIds = [...new Set([...(existing?.sessionIds ?? []), ...normalizeSessionIds(input)])].sort();
+  const sessionIds = normalizeSessionIds({
+    sessionIds: [...(existing?.sessionIds ?? []), ...normalizeSessionIds(input)],
+  });
   const next: WorkOutlineEntry = {
     entryId: existing?.entryId ?? requestedEntryId ?? generatedEntryId(topicKey, worktreePath),
     topicKey,

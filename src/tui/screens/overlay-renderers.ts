@@ -304,11 +304,15 @@ function sessionLabel(entry: any): string {
 }
 
 function isLiveSession(entry: any): boolean {
-  return Boolean(entry && entry.status !== "offline" && entry.status !== "exited");
+  return Boolean(entry && entry.status !== "offline" && entry.status !== "exited" && entry.status !== "graveyard");
 }
 
 function dashboardOverseerSessions(ctx: any): any[] {
   return ctx.dashboardOverseerSessionsCache ?? ctx.dashboard?.viewModel?.overseerSessions ?? [];
+}
+
+function dashboardScribeSessions(ctx: any): any[] {
+  return ctx.dashboardScribeSessionsCache ?? ctx.dashboard?.viewModel?.scribeSessions ?? [];
 }
 
 function watchedDashboardSessions(ctx: any): any[] {
@@ -340,8 +344,14 @@ function outlineEntryWorktree(entry: any): string {
 
 export function buildWorkOutlineOverlayOutput(ctx: any, cols: number, rows: number): string {
   const entries = Array.isArray(ctx.workOutlineOverlayEntries) ? ctx.workOutlineOverlayEntries : [];
+  const scribes = dashboardScribeSessions(ctx);
+  const liveScribe = scribes.find(isLiveSession);
+  const scribe = liveScribe ?? scribes[0];
+  const scribeLine = scribe
+    ? `${style(sessionLabel(scribe), "strong")} ${style(scribe.status ?? "active", liveScribe ? "done" : "muted")}`
+    : style("none", "muted");
   const offset = Math.max(0, Math.min(ctx.workOutlineOverlayOffset ?? 0, Math.max(0, entries.length - 1)));
-  const maxRows = Math.max(2, rows - 12 - (ctx.workOutlineOverlaySessionId ? 2 : 0));
+  const maxRows = Math.max(2, rows - 14 - (ctx.workOutlineOverlaySessionId ? 2 : 0));
   const rowWidth = Math.max(24, Math.min(120, cols - 12));
   const truncate = (value: string, reserve = 0): string => padVisible(value, Math.max(8, rowWidth - reserve)).trimEnd();
   const bodyRows: string[] = [];
@@ -382,11 +392,15 @@ export function buildWorkOutlineOverlayOutput(ctx: any, cols: number, rows: numb
     ? `  ${style(`Session: ${ctx.workOutlineOverlaySessionId}`, "muted")}`
     : "";
   const body = [
+    `  ${style("Scribe:", "muted")} ${scribeLine}`,
+    "",
     ...(scope ? [scope, ""] : []),
     ...bodyRows,
     hints([
+      ["Enter", liveScribe ? "focus scribe" : "start scribe"],
       ["↑↓/jk", "scroll"],
       ["r", "reload"],
+      ...(scribe ? ([["x", "clear scribe"]] as [string, string][]) : []),
       ["Esc/q", "back"],
     ]),
   ];

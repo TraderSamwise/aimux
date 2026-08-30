@@ -10,6 +10,7 @@ export const SCRIBE_WATCHER_MAX_SCAN_CANDIDATES = 50;
 export const SCRIBE_WATCHER_OUTPUT_START_LINE = -160;
 export const SCRIBE_WATCHER_MAX_OUTPUT_CHARS = 12_000;
 export const SCRIBE_WATCHER_MAX_SEEN_FINGERPRINTS_PER_SESSION = 5;
+export const SCRIBE_WATCHER_MAX_SEEN_SESSIONS = SCRIBE_WATCHER_MAX_SCAN_CANDIDATES + SCRIBE_WATCHER_MAX_CANDIDATES + 4;
 
 export interface ScribeWatcherSession {
   id: string;
@@ -167,6 +168,17 @@ export class ScribeWatcher {
     this.seenFingerprints.clear();
   }
 
+  private pruneSeenFingerprints(activeSessionIds: Set<string>): void {
+    for (const sessionId of this.seenFingerprints.keys()) {
+      if (!activeSessionIds.has(sessionId)) this.seenFingerprints.delete(sessionId);
+    }
+    if (this.seenFingerprints.size <= SCRIBE_WATCHER_MAX_SEEN_SESSIONS) return;
+    const overflow = this.seenFingerprints.size - SCRIBE_WATCHER_MAX_SEEN_SESSIONS;
+    for (const sessionId of [...this.seenFingerprints.keys()].slice(0, overflow)) {
+      this.seenFingerprints.delete(sessionId);
+    }
+  }
+
   async scan(): Promise<void> {
     if (this.scanning) return;
     this.scanning = true;
@@ -187,6 +199,7 @@ export class ScribeWatcher {
         scribeId,
         this.deps.maxScanCandidates ?? SCRIBE_WATCHER_MAX_SCAN_CANDIDATES,
       );
+      this.pruneSeenFingerprints(new Set([scribeId, ...candidates.map((candidate) => candidate.id)]));
       if (candidates.length === 0) return;
 
       const briefingCandidates: ScribeBriefingCandidate[] = [];

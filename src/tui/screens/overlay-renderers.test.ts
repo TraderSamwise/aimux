@@ -114,9 +114,32 @@ describe("buildWorkOutlineOverlayOutput", () => {
     );
 
     expect(output).toContain("WORK OUTLINE");
+    expect(output).toContain("Scribe: none");
     expect(output).toContain("No work outline entries yet.");
+    expect(output).toContain("Enter  start scribe");
     expect(output).toContain("r  reload");
     expect(output).toContain("Esc/q  back");
+  });
+
+  it("renders live scribe status and controls", () => {
+    const output = plain(
+      buildWorkOutlineOverlayOutput(
+        {
+          dashboard: {
+            viewModel: {
+              scribeSessions: [{ id: "claude-scribe", command: "claude", status: "ready", scribe: true }],
+            },
+          },
+          workOutlineOverlayEntries: [],
+        },
+        100,
+        30,
+      ),
+    );
+
+    expect(output).toContain("Scribe: claude ready");
+    expect(output).toContain("Enter  focus scribe");
+    expect(output).toContain("x  clear scribe");
   });
 
   it("renders scoped outline entries with bounded omitted counts", () => {
@@ -162,7 +185,7 @@ describe("buildWorkOutlineOverlayOutput", () => {
           ],
         },
         120,
-        22,
+        26,
       ),
     );
 

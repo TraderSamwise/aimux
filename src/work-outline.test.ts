@@ -10,6 +10,8 @@ import {
   readWorkOutlineState,
   updateWorkOutlineEntry,
   WORK_OUTLINE_MAX_ENTRIES,
+  WORK_OUTLINE_MAX_SESSION_IDS,
+  WORK_OUTLINE_SESSION_ID_MAX_CHARS,
   WORK_OUTLINE_SUMMARY_MAX_CHARS,
   WORK_OUTLINE_TITLE_MAX_CHARS,
 } from "./work-outline.js";
@@ -122,6 +124,34 @@ describe("work outline store", () => {
     expect(state.entries[0].title.endsWith("...")).toBe(true);
     expect(state.entries[0].summary).toHaveLength(WORK_OUTLINE_SUMMARY_MAX_CHARS);
     expect(getWorkOutlineEntry("outline-missing", repoRoot)).toBeUndefined();
+  });
+
+  it("bounds and truncates session ids on new and existing entries", () => {
+    const longId = `codex-${"x".repeat(WORK_OUTLINE_SESSION_ID_MAX_CHARS + 20)}`;
+    const manyIds = Array.from({ length: WORK_OUTLINE_MAX_SESSION_IDS + 20 }, (_, index) => `codex-${index}`);
+    const first = updateWorkOutlineEntry(
+      {
+        topicKey: "session bound",
+        title: "Session bound",
+        summary: "Keep persisted session id arrays bounded.",
+        sessionIds: [longId, ...manyIds],
+      },
+      { projectRoot: repoRoot, now: "2026-08-30T00:00:00.000Z" },
+    );
+    const second = updateWorkOutlineEntry(
+      {
+        topicKey: "session bound",
+        title: "Session bound",
+        summary: "Keep persisted session id arrays bounded after updates.",
+        sessionIds: Array.from({ length: 20 }, (_, index) => `claude-${index}`),
+      },
+      { projectRoot: repoRoot, now: "2026-08-30T00:01:00.000Z" },
+    );
+
+    expect(first.sessionIds).toHaveLength(WORK_OUTLINE_MAX_SESSION_IDS);
+    expect(second.sessionIds).toHaveLength(WORK_OUTLINE_MAX_SESSION_IDS);
+    expect(second.sessionIds.every((id) => id.length <= WORK_OUTLINE_SESSION_ID_MAX_CHARS)).toBe(true);
+    expect(readWorkOutlineState(repoRoot).entries[0]?.sessionIds).toHaveLength(WORK_OUTLINE_MAX_SESSION_IDS);
   });
 
   it("quarantines corrupt JSON instead of throwing or reparsing forever", () => {

@@ -2363,6 +2363,76 @@ describe("dashboardInteractionMethods", () => {
     expect(host.openDashboardOverlay).not.toHaveBeenCalled();
   });
 
+  it("focuses the live scribe from the work outline overlay", () => {
+    const host: any = {
+      dashboard: {
+        viewModel: {
+          scribeSessions: [{ id: "claude-scribe", command: "claude", status: "ready", backendSessionId: "native-1" }],
+        },
+      },
+      clearDashboardOverlay: vi.fn(),
+      openLiveTmuxWindowForEntry: vi.fn(() => "opened"),
+      showToolPicker: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleWorkOutlineOverlayKey.call(host, Buffer.from("\r"));
+
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+    expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
+      id: "claude-scribe",
+      backendSessionId: "native-1",
+    });
+    expect(host.showToolPicker).not.toHaveBeenCalled();
+  });
+
+  it("starts a scribe from the work outline overlay when no live scribe exists", () => {
+    const host: any = {
+      dashboard: { viewModel: { scribeSessions: [] } },
+      clearDashboardOverlay: vi.fn(),
+      showToolPicker: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleWorkOutlineOverlayKey.call(host, Buffer.from("\r"));
+
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+    expect(host.showToolPicker).toHaveBeenCalledWith(undefined, { scribe: true });
+  });
+
+  it("clears scribe assignment from the work outline overlay through the project API", async () => {
+    dashboardApiClientMock.mutateDashboardApi.mockResolvedValue({
+      ok: true,
+      sessionId: "claude-scribe",
+      scribe: false,
+    });
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValue(true);
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboard: {
+        viewModel: {
+          scribeSessions: [{ id: "claude-scribe", command: "claude", status: "ready", scribe: true }],
+        },
+      },
+      renderWorkOutlineOverlay: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleWorkOutlineOverlayKey.call(host, Buffer.from("x"));
+
+    await vi.waitFor(() => {
+      expect(host.footerFlash).toBe("claude cleared as scribe");
+    });
+    expect(dashboardApiClientMock.mutateDashboardApi).toHaveBeenCalledWith(host, "/agents/scribe", {
+      sessionId: "claude-scribe",
+      active: false,
+    });
+    expect(dashboardApiClientMock.refreshDashboardModelThroughApi).toHaveBeenCalledWith(host, {
+      force: true,
+      lifecycle: expect.anything(),
+    });
+    expect(host.footerFlash).toBe("claude cleared as scribe");
+    expect(host.renderWorkOutlineOverlay).toHaveBeenCalledOnce();
+  });
+
   it("blocks dashboard forks from offline agent rows before opening the tool picker", () => {
     const selected = { id: "codex-1", command: "codex", status: "offline" };
     const host: any = {

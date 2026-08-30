@@ -318,4 +318,38 @@ describe("ScribeWatcher", () => {
 
     expect(sendAgentInput).not.toHaveBeenCalled();
   });
+
+  it("forgets fingerprints for sessions that leave the active candidate set", async () => {
+    let now = 10_000;
+    let agentId = "agent-1";
+    const readAgentOutput = vi.fn(async () => "same output");
+    const sendAgentInput = vi.fn(async () => undefined);
+    const watcher = new ScribeWatcher({
+      loadSessions: () => [makeSession("scribe"), makeSession(agentId)],
+      loadMetadata: () =>
+        metadata({
+          scribe: {
+            scribe: true,
+            derived: { activity: "idle", attention: "normal" },
+            updatedAt: "2026-08-30T00:00:00.000Z",
+          },
+          [agentId]: { derived: { activity: "idle", attention: "normal" }, updatedAt: "2026-08-30T00:00:00.000Z" },
+        } as any),
+      readAgentOutput,
+      sendAgentInput,
+      now: () => now,
+      cooldownMs: 1,
+    });
+
+    await watcher.scan();
+    now += 2;
+    agentId = "agent-2";
+    await watcher.scan();
+    now += 2;
+    agentId = "agent-1";
+    await watcher.scan();
+
+    expect(sendAgentInput).toHaveBeenCalledTimes(3);
+    expect(sendAgentInput.mock.calls[2][1]).toContain("id=agent-1");
+  });
 });

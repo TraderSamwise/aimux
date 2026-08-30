@@ -10,6 +10,7 @@ import { buildWorkOutlineOverlayOutput } from "../tui/screens/overlay-renderers.
 import {
   getDefaultTeamConfig,
   isProjectControlSession,
+  isScribeSession,
   isTeammateSession,
   isOverseerSession,
   loadTeamConfig,
@@ -414,6 +415,24 @@ function dashboardOverseerEntries(host: any): DashboardSession[] {
     if (entry?.id) byId.set(entry.id, entry);
   }
   return [...byId.values()];
+}
+
+function dashboardScribeEntries(host: any): DashboardSession[] {
+  const entries = [
+    ...(host.dashboardScribeSessionsCache ?? []),
+    ...(host.dashboard?.viewModel?.scribeSessions ?? []),
+    ...((host.dashboardSessionsCache ?? []).filter(isScribeSession) as DashboardSession[]),
+  ];
+  const byId = new Map<string, DashboardSession>();
+  for (const entry of entries) {
+    if (entry?.id) byId.set(entry.id, entry);
+  }
+  return [...byId.values()];
+}
+
+function isLiveDashboardControlSession(entry: DashboardSession): boolean {
+  const status = String(entry.status ?? "");
+  return status !== "offline" && status !== "exited" && status !== "graveyard";
 }
 
 function teammateParentSession(host: any): DashboardSession | undefined {
@@ -1236,9 +1255,27 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
     const key = commandKey(events[0]);
 
-    if (key === "escape" || key === "q" || key === "enter" || key === "return") {
+    if (key === "escape" || key === "q") {
       this.clearDashboardOverlay();
       this.restoreDashboardAfterOverlayDismiss?.();
+      return;
+    }
+    if (key === "enter" || key === "return") {
+      const liveScribe = dashboardScribeEntries(this).find(isLiveDashboardControlSession);
+      if (liveScribe && typeof this.openLiveTmuxWindowForEntry === "function") {
+        this.clearDashboardOverlay();
+        const result = this.openLiveTmuxWindowForEntry({
+          id: liveScribe.id,
+          backendSessionId: liveScribe.backendSessionId,
+        });
+        if (result !== "missing") return;
+      }
+      this.clearDashboardOverlay();
+      if (typeof this.showToolPicker === "function") {
+        this.showToolPicker(undefined, { scribe: true });
+      } else {
+        this.restoreDashboardAfterOverlayDismiss?.();
+      }
       return;
     }
     if (key === "r") {
@@ -1260,6 +1297,34 @@ export const dashboardInteractionMethods = {
     if (key === "up" || key === "k") {
       this.workOutlineOverlayOffset = Math.max(0, (this.workOutlineOverlayOffset ?? 0) - 1);
       this.renderWorkOutlineOverlay();
+      return;
+    }
+    if (key === "x") {
+      const scribe = dashboardScribeEntries(this)[0];
+      if (!scribe) {
+        this.footerFlash = "No scribe configured";
+        this.footerFlashTicks = 2;
+        this.renderWorkOutlineOverlay();
+        return;
+      }
+      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+      void mutateDashboardApi(this, PROJECT_API_ROUTES.agents.scribe, {
+        sessionId: scribe.id,
+        active: false,
+      })
+        .then(() => refreshDashboardModelThroughApi(this, { force: true, lifecycle }))
+        .then(() => {
+          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+          this.footerFlash = `${dashboardSessionLabel(scribe)} cleared as scribe`;
+          this.footerFlashTicks = 2;
+          this.renderWorkOutlineOverlay();
+        })
+        .catch((error: unknown) => {
+          if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+          this.footerFlash = `Scribe update failed: ${error instanceof Error ? error.message : String(error)}`;
+          this.footerFlashTicks = 3;
+          this.renderWorkOutlineOverlay();
+        });
       return;
     }
   },
