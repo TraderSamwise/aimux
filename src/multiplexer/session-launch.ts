@@ -744,7 +744,6 @@ export function createSession(
   persistArgs?: string[],
 ): any {
   const cols = process.stdout.columns ?? 80;
-  const commandExecutable = basename(command) || command;
   const config = loadConfig();
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
   // A launch override may swap the binary; aimux flags/preamble only apply to the tool's own command.
@@ -966,7 +965,6 @@ export async function createSessionAsync(
   persistArgs?: string[],
 ): Promise<any> {
   const cols = process.stdout.columns ?? 80;
-  const commandExecutable = basename(command) || command;
   const config = loadConfig();
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
   const isConfiguredToolCommand = Boolean(toolCfg && toolCfg.command === command);
