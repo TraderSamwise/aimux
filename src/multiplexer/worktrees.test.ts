@@ -1054,6 +1054,43 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears worktree graveyard pending state when the project service rejects the request", async () => {
+    postToProjectService.mockClear();
+    postToProjectService.mockRejectedValueOnce(
+      Object.assign(new Error('Cannot graveyard "demo" while agent "codex-1" is attached'), {
+        status: 500,
+        tuiApiRecoverable: false,
+      }),
+    );
+    const pending = createPendingActionsStore();
+    const path = "/repo/.aimux/worktrees/demo";
+    const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeRemovalJob: null,
+      dashboardPendingActions: pending,
+      dashboardRawWorktreeGroupsCache: [worktree],
+      dashboardWorktreeGroupsCache: [worktree],
+      dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
+      refreshDashboardModelFromService: vi.fn(),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    beginWorktreeRemoval(host, path, "demo", 0);
+
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled());
+
+    expect(pending.state.get(`worktree:${path}`)).toBeNull();
+    expect(host.worktreeRemovalJob).toBeNull();
+    expect(host.footerFlash).toBe('Failed: Cannot graveyard "demo" while agent "codex-1" is attached');
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+  });
+
   it("keeps waiting for worktree removal when an API refresh reports an unchanged snapshot", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();

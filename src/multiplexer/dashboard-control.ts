@@ -99,7 +99,7 @@ export class DashboardProjectServiceHttpError extends Error {
   ) {
     super(message);
     this.name = "DashboardProjectServiceHttpError";
-    this.tuiApiRecoverable = isProjectServiceRetryableStatus(status) || status >= 500;
+    this.tuiApiRecoverable = isProjectServiceRetryableStatus(status);
   }
 }
 

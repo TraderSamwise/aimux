@@ -234,6 +234,28 @@ describe("postToProjectService", () => {
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 
+  it("does not mark semantic 500 responses recoverable", async () => {
+    mocks.requestJson
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockResolvedValueOnce({ status: 500, json: { ok: false, error: "agent is attached" } });
+    const { postToProjectService } = await import("./dashboard-control.js");
+
+    let caught: any;
+    await postToProjectService({ dashboardServiceRecovery: null }, "/worktrees/graveyard", {
+      path: "/repo/.aimux/worktrees/demo",
+    }).catch((error) => {
+      caught = error;
+    });
+
+    expect(caught).toMatchObject({
+      status: 500,
+      tuiApiRecoverable: false,
+      message: "agent is attached",
+    });
+    expectNoCoreProjectLifecycleCommand();
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+  });
+
   it("validates GET routes once and reuses the endpoint health cache", async () => {
     mocks.requestJson
       .mockResolvedValueOnce(healthyServiceResponse())
