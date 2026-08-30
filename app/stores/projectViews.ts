@@ -22,6 +22,7 @@ export const APP_PROJECT_API_VIEW_REGISTRY = {
   tasks: { projectApiViews: true, desktopState: false, notificationFeed: false },
   threads: { projectApiViews: true, desktopState: false, notificationFeed: false },
   topology: { projectApiViews: true, desktopState: false, notificationFeed: false },
+  "work-outline": { projectApiViews: true, desktopState: false, notificationFeed: false },
   worktrees: { projectApiViews: true, desktopState: true, notificationFeed: false },
 } satisfies Record<ProjectApiView, AppProjectApiViewRefresh>;
 
@@ -65,6 +66,7 @@ const APP_PROJECT_API_VIEW_DEPENDENCIES = {
   tasks: ["coordination-worklist", "project-observability", "tasks", "threads"],
   threads: ["coordination-worklist", "project-observability", "threads"],
   topology: ["project-observability", "topology"],
+  "work-outline": ["work-outline"],
   worktrees: ["agents", "graveyard", "library", "project-observability", "topology", "worktrees"],
 } satisfies Record<ProjectApiView, readonly ProjectApiView[]>;
 

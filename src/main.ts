@@ -109,6 +109,7 @@ import { renderAgentsByWorktreeLines, renderAgentsFlatLines, type CliAgentListIt
 import { registerAttachmentCommand } from "./cli/attachment.js";
 import { registerLogsCommand } from "./cli/logs.js";
 import { registerMetadataCommand } from "./cli/metadata.js";
+import { registerWorkOutlineCommand } from "./cli/work-outline.js";
 import {
   coreProjectServicePid,
   ensureCoreProjectServiceForCliWithRepair,
@@ -3478,6 +3479,7 @@ repairCmd
   });
 
 registerMetadataCommand(program, { getProjectServiceEndpoint, postProjectServiceJson });
+registerWorkOutlineCommand(program, { prepareProjectContext, getProjectServiceJson, postProjectServiceJson });
 
 program
   .command("notify")

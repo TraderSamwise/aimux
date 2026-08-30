@@ -48,6 +48,7 @@ import {
   listSwitchableAgents,
   listTasks,
   listThreads,
+  listWorkOutline,
   markThreadSeen,
   markNotificationsRead,
   markActiveWindow,
@@ -73,6 +74,7 @@ import {
   resumeService,
   setAgentLoop,
   setAgentOverseer,
+  showWorkOutlineEntry,
   sendHandoff,
   sendAgentInput,
   sendLivePaneInput,
@@ -86,6 +88,7 @@ import {
   switchAttentionAgent,
   switchNextAgent,
   switchPrevAgent,
+  updateWorkOutline,
   updateThreadStatus,
   uploadAttachment,
   uploadImageAttachment,
@@ -691,6 +694,14 @@ describe("api relay routing", () => {
     await migrateAgent(endpoint, { sessionId: "agent-1", worktreePath: "/repo/b" });
     await setAgentLoop(endpoint, { sessionId: "agent-1", active: true, goal: "ship" });
     await setAgentOverseer(endpoint, { sessionId: "agent-1", active: false });
+    await listWorkOutline(endpoint, { sessionId: "agent-1", q: "release", limit: 20 });
+    await showWorkOutlineEntry(endpoint, "outline-1");
+    await updateWorkOutline(endpoint, {
+      topicKey: "release",
+      title: "Release",
+      summary: "Cut a release.",
+      sessionId: "agent-1",
+    });
     await listSwitchableAgents(endpoint, {
       currentClientSession: "client-1",
       currentWindowId: "@7",
@@ -760,6 +771,26 @@ describe("api relay routing", () => {
         method: "POST",
         path: "/proxy/127.0.0.1/43210/agents/overseer",
         payload: { sessionId: "agent-1", active: false },
+      },
+      {
+        method: "GET",
+        path: "/proxy/127.0.0.1/43210/work-outline?q=release&sessionId=agent-1&limit=20",
+        payload: undefined,
+      },
+      {
+        method: "GET",
+        path: "/proxy/127.0.0.1/43210/work-outline?entryId=outline-1",
+        payload: undefined,
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/work-outline/update",
+        payload: {
+          topicKey: "release",
+          title: "Release",
+          summary: "Cut a release.",
+          sessionId: "agent-1",
+        },
       },
       {
         method: "GET",

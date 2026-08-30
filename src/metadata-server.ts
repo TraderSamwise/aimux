@@ -128,6 +128,14 @@ import {
   hostedAttachmentFromBody,
 } from "./metadata-server/agent-input.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
+import {
+  getWorkOutlineEntry,
+  listWorkOutlineEntries,
+  updateWorkOutlineEntry,
+  WORK_OUTLINE_DEFAULT_LIMIT,
+  WORK_OUTLINE_MAX_LIMIT,
+  type WorkOutlineStatus,
+} from "./work-outline.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
 import {
@@ -259,6 +267,7 @@ const AGENT_OUTPUT_READ_PURPOSES = new Set<AgentOutputReadPurpose>([
   "attach",
   "preview",
 ]);
+const WORK_OUTLINE_STATUSES = new Set<WorkOutlineStatus>(["active", "done", "superseded", "stale"]);
 
 type AgentOutputPayload = {
   sessionId: string;
@@ -285,6 +294,13 @@ function parseAgentOutputResponseMode(
   if (!normalized || normalized === "full") return { ok: true, value: "full" };
   if (normalized === "chat") return { ok: true, value: "chat" };
   return { ok: false, error: "mode must be full or chat" };
+}
+
+function parseWorkOutlineStatus(raw: string | null): WorkOutlineStatus | undefined {
+  const normalized = raw?.trim();
+  return normalized && WORK_OUTLINE_STATUSES.has(normalized as WorkOutlineStatus)
+    ? (normalized as WorkOutlineStatus)
+    : undefined;
 }
 
 function parseAgentOutputReadPurpose(
@@ -2665,6 +2681,33 @@ export class MetadataServer {
           lastUsedById: loadLastUsedState(this.currentProjectRoot()).items,
         }),
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.workOutline.list) {
+      const parsedLimit = parseBoundedLimit(url.searchParams.get("limit"), "limit", {
+        defaultValue: WORK_OUTLINE_DEFAULT_LIMIT,
+        maxValue: WORK_OUTLINE_MAX_LIMIT,
+      });
+      if (!parsedLimit.ok) {
+        send(res, 400, { ok: false, error: parsedLimit.error });
+        return;
+      }
+      const entryId = url.searchParams.get("entryId")?.trim();
+      if (entryId) {
+        send(res, 200, { ok: true, entry: getWorkOutlineEntry(entryId, this.currentProjectRoot()) ?? null });
+        return;
+      }
+      const entries = listWorkOutlineEntries(
+        {
+          q: url.searchParams.get("q")?.trim() || undefined,
+          sessionId: url.searchParams.get("sessionId")?.trim() || undefined,
+          worktreePath: url.searchParams.get("worktreePath")?.trim() || undefined,
+          status: parseWorkOutlineStatus(url.searchParams.get("status")),
+          limit: parsedLimit.value,
+        },
+        this.currentProjectRoot(),
+      );
+      send(res, 200, { ok: true, entries });
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.list) {
@@ -5701,6 +5744,18 @@ export class MetadataServer {
         setSessionOverseer(sessionId, body.active);
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, sessionId, overseer: body.active });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.workOutline.update) {
+        try {
+          const body = (await readJson(req)) as Record<string, unknown>;
+          const entry = updateWorkOutlineEntry(body, { projectRoot: this.currentProjectRoot() });
+          notifyCurrentRouteChange();
+          send(res, 200, { ok: true, entry });
+        } catch (error) {
+          send(res, 400, { ok: false, error: error instanceof Error ? error.message : "invalid work outline entry" });
+        }
         return;
       }
 

@@ -12,6 +12,10 @@ export const PROJECT_API_ROUTES = {
   projectObservability: "/project-observability",
   topology: "/topology",
   library: "/library",
+  workOutline: {
+    list: "/work-outline",
+    update: "/work-outline/update",
+  },
   worktrees: "/worktrees",
   graveyard: "/graveyard",
   team: {
@@ -179,6 +183,7 @@ export const PROJECT_API_VIEWS = [
   "tasks",
   "threads",
   "topology",
+  "work-outline",
   "worktrees",
 ] as const;
 
@@ -216,6 +221,7 @@ export const PROJECT_API_VIEW_INVALIDATIONS = {
   team: projectViews("coordination-worklist", "project-observability", "tasks", "team", "threads"),
   library: projectViews("library"),
   plans: projectViews("plans"),
+  workOutline: projectViews("work-outline"),
   runtime: projectViews(
     "agents",
     "coordination-worklist",
@@ -284,6 +290,9 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.reviews.requestChanges:
     case PROJECT_API_ROUTES.agents.createTeammateTask:
       return [...PROJECT_API_VIEW_INVALIDATIONS.workflow];
+
+    case PROJECT_API_ROUTES.workOutline.update:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.workOutline];
 
     case PROJECT_API_ROUTES.agents.spawn:
     case PROJECT_API_ROUTES.agents.fork:
@@ -1268,6 +1277,64 @@ export interface AgentOverseerInput extends AgentSessionInput {
 export interface AgentOverseerResponse extends ProjectApiOk {
   sessionId: string;
   overseer: boolean;
+}
+
+export type WorkOutlineStatus = "active" | "done" | "superseded" | "stale";
+export type WorkOutlineSource = "agent" | "scribe" | "system" | "human";
+
+export interface WorkOutlineEvidenceRange {
+  source?: string;
+  startLine?: number;
+  endLine?: number;
+  capturedAt?: string;
+}
+
+export interface WorkOutlineEntry {
+  entryId: string;
+  topicKey: string;
+  title: string;
+  summary: string;
+  status: WorkOutlineStatus;
+  source: WorkOutlineSource;
+  sessionIds: string[];
+  worktreePath?: string;
+  evidence?: WorkOutlineEvidenceRange;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt: string;
+}
+
+export interface WorkOutlineQuery {
+  q?: string;
+  sessionId?: string;
+  worktreePath?: string;
+  status?: WorkOutlineStatus;
+  limit?: number;
+}
+
+export interface WorkOutlineListResponse extends ProjectApiOk {
+  entries: WorkOutlineEntry[];
+}
+
+export interface WorkOutlineShowResponse extends ProjectApiOk {
+  entry: WorkOutlineEntry | null;
+}
+
+export interface WorkOutlineUpdateInput {
+  entryId?: string;
+  topicKey?: string;
+  title?: string;
+  summary?: string;
+  status?: WorkOutlineStatus;
+  source?: WorkOutlineSource;
+  sessionId?: string;
+  sessionIds?: string[];
+  worktreePath?: string;
+  evidence?: WorkOutlineEvidenceRange;
+}
+
+export interface WorkOutlineUpdateResponse extends ProjectApiOk {
+  entry: WorkOutlineEntry;
 }
 
 export interface TeammateTaskBody {

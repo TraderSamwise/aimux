@@ -20,6 +20,8 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/project-observability": "client-api",
   "/topology": "client-api",
   "/library": "client-api",
+  "/work-outline": "client-api",
+  "/work-outline/update": "client-api",
   "/worktrees": "client-api",
   "/graveyard": "client-api",
   "/team/config": "client-api",

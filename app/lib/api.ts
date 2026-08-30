@@ -109,6 +109,11 @@ import {
   type ThreadStatusInput,
   type ThreadStatusResponse,
   type ThreadSummaryResponse,
+  type WorkOutlineListResponse,
+  type WorkOutlineQuery,
+  type WorkOutlineShowResponse,
+  type WorkOutlineUpdateInput,
+  type WorkOutlineUpdateResponse,
   type WorkflowMutationResponse,
   type WorktreesResponse,
   type WorktreePathInput,
@@ -700,6 +705,45 @@ export async function setAgentOverseer(
   opts?: ApiOpts,
 ): Promise<AgentOverseerResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.overseer, opts, input);
+}
+
+function workOutlineQueryPath(query?: WorkOutlineQuery & { entryId?: string }): string {
+  if (!query) return PROJECT_API_ROUTES.workOutline.list;
+  const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.sessionId) params.set("sessionId", query.sessionId);
+  if (query.worktreePath) params.set("worktreePath", query.worktreePath);
+  if (query.status) params.set("status", query.status);
+  if (query.limit) params.set("limit", String(query.limit));
+  if (query.entryId) params.set("entryId", query.entryId);
+  const rendered = params.toString();
+  return rendered
+    ? `${PROJECT_API_ROUTES.workOutline.list}?${rendered}`
+    : PROJECT_API_ROUTES.workOutline.list;
+}
+
+export async function listWorkOutline(
+  endpoint: ServiceEndpoint,
+  query?: WorkOutlineQuery,
+  opts?: ApiOpts,
+): Promise<WorkOutlineListResponse> {
+  return callProjectJson(endpoint, "GET", workOutlineQueryPath(query), opts);
+}
+
+export async function showWorkOutlineEntry(
+  endpoint: ServiceEndpoint,
+  entryId: string,
+  opts?: ApiOpts,
+): Promise<WorkOutlineShowResponse> {
+  return callProjectJson(endpoint, "GET", workOutlineQueryPath({ entryId }), opts);
+}
+
+export async function updateWorkOutline(
+  endpoint: ServiceEndpoint,
+  input: WorkOutlineUpdateInput,
+  opts?: ApiOpts,
+): Promise<WorkOutlineUpdateResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.workOutline.update, opts, input);
 }
 
 export async function listTeammates(

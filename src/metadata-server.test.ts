@@ -161,6 +161,49 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("serves bounded work-outline list, show, and update routes", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://127.0.0.1:${endpoint!.port}`;
+
+    const updateRes = await fetch(`${base}${PROJECT_API_ROUTES.workOutline.update}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        topicKey: "release",
+        title: "Release",
+        summary: "Cut the release.",
+        sessionId: "codex-a",
+        source: "scribe",
+      }),
+    });
+    const updateBody = (await updateRes.json()) as { ok: boolean; entry: { entryId: string; sessionIds: string[] } };
+    expect(updateBody).toMatchObject({
+      ok: true,
+      entry: { sessionIds: ["codex-a"] },
+    });
+
+    const listRes = await fetch(`${base}${PROJECT_API_ROUTES.workOutline.list}?q=release&sessionId=codex-a&limit=1`);
+    const listBody = (await listRes.json()) as { ok: boolean; entries: Array<{ entryId: string; title: string }> };
+    expect(listBody).toMatchObject({
+      ok: true,
+      entries: [{ entryId: updateBody.entry.entryId, title: "Release" }],
+    });
+
+    const showRes = await fetch(
+      `${base}${PROJECT_API_ROUTES.workOutline.list}?entryId=${encodeURIComponent(updateBody.entry.entryId)}`,
+    );
+    const showBody = (await showRes.json()) as { ok: boolean; entry: { entryId: string } | null };
+    expect(showBody).toMatchObject({ ok: true, entry: { entryId: updateBody.entry.entryId } });
+
+    const invalidRes = await fetch(`${base}${PROJECT_API_ROUTES.workOutline.update}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Missing summary" }),
+    });
+    expect(invalidRes.status).toBe(400);
+  });
+
   it("bounds hot list and detail endpoints by default", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

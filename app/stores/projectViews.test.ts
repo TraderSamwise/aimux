@@ -41,6 +41,7 @@ describe("project API view refresh registry", () => {
         "team",
         "threads",
         "topology",
+        "work-outline",
         "worktrees",
       ]
     `);
