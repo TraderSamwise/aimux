@@ -25,6 +25,7 @@ module.exports = {
       },
     },
     android: {
+      package: "app.aimux.mobile",
       adaptiveIcon: {
         foregroundImage: "./assets/images/adaptive-icon.png",
         backgroundColor: "#0a0a0c",

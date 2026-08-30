@@ -36,6 +36,15 @@
       "distribution": "store",
       "autoIncrement": false,
       "channel": "production"
+    },
+    "testflight-android": {
+      "extends": "testflight",
+      "android": {
+        "buildType": "apk"
+      },
+      "distribution": "internal",
+      "channel": "testflight",
+      "autoIncrement": false
     }
   },
   "submit": {

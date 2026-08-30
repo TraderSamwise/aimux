@@ -4,6 +4,9 @@
     "ios": {
       "infoPlist": "ios/aimux/Info.plist",
       "pbxproj": "ios/aimux.xcodeproj/project.pbxproj"
+    },
+    "android": {
+      "buildGradle": "android/app/build.gradle"
     }
   },
   "eas": {
@@ -13,9 +16,15 @@
     "productionChannel": "production",
     "testflightEnvironment": "production",
     "productionEnvironment": "production",
-    "defaultBuildPlatform": "ios",
-    "defaultUpdatePlatform": "ios",
-    "autoSubmit": true
+    "defaultBuildPlatform": "all",
+    "defaultUpdatePlatform": "all",
+    "autoSubmit": true,
+    "platformProfiles": {
+      "testflight": {
+        "android": "testflight-android"
+      }
+    },
+    "parallelBuilds": true
   },
   "commands": {
     "checkReleaseEnv": "./scripts/check-release-env.js {target}"
