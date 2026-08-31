@@ -1878,6 +1878,37 @@ describe("dashboardInteractionMethods", () => {
     expect(host.footerFlash).toBe("Assigned task to reviewer");
   });
 
+  it("submits routed dashboard tasks from the selected source agent", async () => {
+    const host: any = {
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      clearDashboardOverlay: vi.fn(),
+      footerFlash: "",
+      renderDashboard: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.submitDashboardOrchestrationAction.call(
+      host,
+      "task",
+      {
+        label: "Tool: codex",
+        sourceSessionId: "claude-1",
+        tool: "codex",
+        worktreePath: "/repo/.aimux/worktrees/demo",
+        recipientIds: ["codex-1"],
+      },
+      "Review this diff",
+    );
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/assign", {
+      from: "claude-1",
+      to: undefined,
+      assignee: undefined,
+      tool: "codex",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+      description: "Review this diff",
+    });
+  });
+
   it("persists preferred service selection before opening a service", async () => {
     const service = {
       id: "service-1",

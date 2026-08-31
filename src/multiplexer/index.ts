@@ -141,6 +141,7 @@ interface WorktreeCreateJob {
 
 interface DashboardOrchestrationTarget {
   label: string;
+  sourceSessionId?: string;
   sessionId?: string;
   assignee?: string;
   tool?: string;

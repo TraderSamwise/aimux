@@ -95,7 +95,7 @@ export function buildAimuxAgentInstructions(
     "## Aimux Inventory And Coordination\n" +
     "- `aimux ps [--project <path>] [--json]` is the authoritative inventory for Aimux-managed agents in a project, across worktrees.\n" +
     "- `aimux host agent-read <session-id> [--project <path>]` reads another Aimux agent's recent terminal output.\n" +
-    '- `aimux task assign "<description>" --to <session-id> --prompt "<instructions>" [--project <path>]` creates a durable task.\n' +
+    '- `aimux task assign "<description>" --from <your-session-id> --to <session-id> --prompt "<instructions>" [--project <path>]` creates a durable task.\n' +
     '- `aimux task complete <task-id> --from <your-session-id> --body "<result>" [--project <path>]` completes a task. `--result` is accepted as an alias for `--body`.\n' +
     '- `aimux handoff send "<context>" --to <session-id> [--project <path>]` opens an explicit handoff thread.\n' +
     '- `aimux message send "<message>" --to <session-id> [--project <path>]` sends a directed coordination message.\n' +

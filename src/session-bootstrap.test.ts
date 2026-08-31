@@ -44,7 +44,7 @@ describe("buildAimuxAgentInstructions", () => {
     expect(instructions).toContain("messages prefixed like `[name]`");
     expect(instructions).toContain("`aimux ps [--project <path>] [--json]` is the authoritative inventory");
     expect(instructions).toContain("`aimux host agent-read <session-id> [--project <path>]`");
-    expect(instructions).toContain('`aimux task assign "<description>" --to <session-id>');
+    expect(instructions).toContain('`aimux task assign "<description>" --from <your-session-id> --to <session-id>');
     expect(instructions).toContain("`aimux task complete <task-id> --from <your-session-id> --body");
     expect(instructions).toContain("`--result` is accepted as an alias for `--body`");
     expect(instructions).toContain('`aimux handoff send "<context>" --to <session-id>');

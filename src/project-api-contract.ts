@@ -814,6 +814,7 @@ export type OrchestrationRouteMode = "message" | "handoff" | "task";
 
 export interface OrchestrationRouteOption {
   label: string;
+  sourceSessionId?: string;
   sessionId?: string;
   assignee?: string;
   tool?: string;

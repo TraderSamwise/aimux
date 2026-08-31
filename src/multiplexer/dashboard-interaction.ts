@@ -1545,7 +1545,7 @@ export const dashboardInteractionMethods = {
     try {
       let successFlash = "";
       const requestBody = {
-        from: "user",
+        from: target.sourceSessionId ?? "user",
         to: target.sessionId ? [target.sessionId] : undefined,
         assignee: target.assignee,
         tool: target.tool,

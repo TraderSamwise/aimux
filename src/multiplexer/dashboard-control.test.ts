@@ -1286,6 +1286,7 @@ describe("showOrchestrationRoutePicker", () => {
     expect(host.orchestrationRouteOptions).toEqual([
       {
         label: "Role: reviewer [1: codex-1]",
+        sourceSessionId: undefined,
         assignee: "reviewer",
         worktreePath: "/repo/.aimux/worktrees/demo",
         recipientIds: ["codex-1"],

@@ -3450,6 +3450,68 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("preserves the selected source agent for routed orchestration options", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [
+            {
+              id: "claude-1",
+              command: "claude",
+              label: "Claude",
+              worktreePath: "/repo/wt",
+              semantic: {
+                user: { label: "idle" },
+                runtime: { canReceiveInput: true, isAlive: true },
+              },
+            },
+            {
+              id: "codex-1",
+              command: "codex",
+              tool: "codex",
+              worktreePath: "/repo/wt",
+              semantic: {
+                user: { label: "idle" },
+                runtime: { canReceiveInput: true, isAlive: true },
+              },
+            },
+          ],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/orchestration/routes?selectedSessionId=claude-1&worktreePath=/repo/wt`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      options: Array<{
+        label: string;
+        sourceSessionId?: string;
+        sessionId?: string;
+        tool?: string;
+        recipientIds?: string[];
+      }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.options).toContainEqual({
+      label: "Tool: codex [1: codex-1]",
+      sourceSessionId: "claude-1",
+      tool: "codex",
+      worktreePath: "/repo/wt",
+      recipientIds: ["codex-1"],
+    });
+    expect(body.options.find((option) => option.sessionId === "claude-1")?.sourceSessionId).toBeUndefined();
+  });
+
   it("clears dashboard operation failures over HTTP", async () => {
     const failure = addDashboardOperationFailure({
       targetKind: "worktree",

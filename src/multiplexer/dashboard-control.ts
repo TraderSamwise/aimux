@@ -1498,7 +1498,11 @@ function applyOrchestrationRouteOptions(
 function validOrchestrationRouteOption(value: unknown): value is DashboardOrchestrationTarget {
   if (!value || typeof value !== "object") return false;
   const option = value as DashboardOrchestrationTarget;
-  return typeof option.label === "string" && (!option.recipientIds || Array.isArray(option.recipientIds));
+  return (
+    typeof option.label === "string" &&
+    (!option.sourceSessionId || typeof option.sourceSessionId === "string") &&
+    (!option.recipientIds || Array.isArray(option.recipientIds))
+  );
 }
 
 async function showOrchestrationRoutePickerFromService(

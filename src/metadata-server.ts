@@ -403,6 +403,12 @@ function formatRoutePreview(recipientIds: string[]): string {
   return ` [${recipientIds.length}: ${preview}${remainder}]`;
 }
 
+function routeSourceSessionId(selectedSessionId: string | undefined, recipientIds: string[]): string | undefined {
+  const selected = selectedSessionId?.trim();
+  if (!selected || recipientIds.includes(selected)) return undefined;
+  return selected;
+}
+
 function orchestrationCandidateFromSession(session: any): RoutingCandidate {
   const status = session.semantic?.user?.label ?? session.status;
   const runtime = session.semantic?.runtime;
@@ -450,6 +456,7 @@ function buildOrchestrationRouteOptions(input: {
     if (recipientIds.length === 0) continue;
     options.push({
       label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${formatRoutePreview(recipientIds)}`,
+      sourceSessionId: routeSourceSessionId(selected?.id, recipientIds),
       assignee: role,
       worktreePath: input.worktreePath,
       recipientIds,
@@ -467,6 +474,7 @@ function buildOrchestrationRouteOptions(input: {
     if (recipientIds.length === 0) continue;
     options.push({
       label: `Tool: ${toolKey}${formatRoutePreview(recipientIds)}`,
+      sourceSessionId: routeSourceSessionId(selected?.id, recipientIds),
       tool: toolKey,
       worktreePath: input.worktreePath,
       recipientIds,
