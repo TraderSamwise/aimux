@@ -306,7 +306,7 @@ function renderBottomLine(
   width?: number,
 ): string {
   if (!data) return "";
-  const maxWidth = Math.max(24, (width ?? 120) - 2);
+  const maxWidth = typeof width === "number" ? Math.max(24, width - 2) : Number.POSITIVE_INFINITY;
   if (currentWindow && isDashboardWindowName(currentWindow)) {
     const separator = "  ·  ";
     const chosen: string[] = [];

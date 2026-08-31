@@ -182,6 +182,36 @@ describe("renderTmuxStatusline", () => {
     expect(rendered.length).toBeLessThanOrEqual(68);
   });
 
+  it("does not apply a fake width cap to precomputed bottom-line agent chips", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          { id: "a", tool: "claude", label: "alpha", tmuxWindowId: "@1", tmuxWindowIndex: 1, status: "running" },
+          { id: "b", tool: "codex", label: "bravo", tmuxWindowId: "@2", tmuxWindowIndex: 2, status: "running" },
+          { id: "c", tool: "codex", label: "charlie", tmuxWindowId: "@3", tmuxWindowIndex: 3, status: "running" },
+          { id: "d", tool: "claude", label: "delta", tmuxWindowId: "@4", tmuxWindowIndex: 4, status: "running" },
+          { id: "e", tool: "claude", label: "echo", tmuxWindowId: "@5", tmuxWindowIndex: 5, status: "running" },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@5",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+    });
+
+    expect(rendered).toContain("alpha");
+    expect(rendered).toContain("bravo");
+    expect(rendered).toContain("charlie");
+    expect(rendered).toContain("delta");
+    expect(rendered).toContain("echo");
+  });
+
   it("renders bottom-line scoped agents and headline data", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
