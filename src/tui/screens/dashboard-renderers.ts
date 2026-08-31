@@ -501,8 +501,7 @@ export function renderDashboardFrame(
   const indexCell = (digit?: number): string => (digit ? style(`[${digit}]`, "muted") : "");
 
   const agentRow = (session: DashboardSession, selected: boolean, digit?: number): string => {
-    const role = session.role ? ` ${style(session.role, "muted")}` : "";
-    const identity = `${style(session.label ?? session.command, "strong")}${role}`;
+    const identity = style(session.id || session.label || session.command, "strong");
     const grid = gridCols([
       { content: selected ? `${style("▸", "accent")} ` : "  ", width: COL_SELECT },
       { content: `${sessionStatusDot(session)} `, width: COL_DOT },

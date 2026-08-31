@@ -357,6 +357,10 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(plain).toContain("WORKING");
     expect(plain).toContain("Ready");
     expect(plain).toContain("1 unread");
+    expect(plain).toContain("claude-1");
+    expect(plain).toContain("codex-1");
+    expect(plain).not.toContain("claude coder");
+    expect(plain).not.toContain("codex coder");
     expect(frame).toContain("\x1b[1;33;7m NEEDS INPUT \x1b[0m");
     expect(frame).toContain("\x1b[36;7m WORKING \x1b[0m");
   });
@@ -929,7 +933,7 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(titleIdx).toBeGreaterThanOrEqual(0);
     // The focused card's third agent and bottom border must both be visible.
     const after = left.slice(titleIdx).join("\n");
-    expect(after).toMatch(/\[3\]\s+claude/);
+    expect(after).toMatch(/\[3\]\s+s11_0/);
     expect(after).toContain("╰");
   });
 
