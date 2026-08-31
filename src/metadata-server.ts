@@ -405,8 +405,14 @@ function formatRoutePreview(recipientIds: string[]): string {
 
 function routeSourceSessionId(selectedSessionId: string | undefined, recipientIds: string[]): string | undefined {
   const selected = selectedSessionId?.trim();
-  if (!selected || recipientIds.includes(selected)) return undefined;
+  if (!selected || recipientIds.length === 0) return undefined;
   return selected;
+}
+
+function routeRecipientIdsFromSource(selectedSessionId: string | undefined, recipientIds: string[]): string[] {
+  const selected = selectedSessionId?.trim();
+  if (!selected) return recipientIds;
+  return recipientIds.filter((recipient) => recipient !== selected);
 }
 
 function orchestrationCandidateFromSession(session: any): RoutingCandidate {
@@ -448,11 +454,14 @@ function buildOrchestrationRouteOptions(input: {
 
   const team = loadTeamConfig();
   for (const [role, cfg] of Object.entries(team.roles as Record<string, { description?: string }>)) {
-    const recipientIds = resolveOrchestrationRecipients({
-      candidates,
-      assignee: role,
-      worktreePath: input.worktreePath,
-    });
+    const recipientIds = routeRecipientIdsFromSource(
+      selected?.id,
+      resolveOrchestrationRecipients({
+        candidates,
+        assignee: role,
+        worktreePath: input.worktreePath,
+      }),
+    );
     if (recipientIds.length === 0) continue;
     options.push({
       label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${formatRoutePreview(recipientIds)}`,
@@ -466,11 +475,14 @@ function buildOrchestrationRouteOptions(input: {
   const config = loadConfig();
   for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
     if (!toolCfg.enabled) continue;
-    const recipientIds = resolveOrchestrationRecipients({
-      candidates,
-      tool: toolKey,
-      worktreePath: input.worktreePath,
-    });
+    const recipientIds = routeRecipientIdsFromSource(
+      selected?.id,
+      resolveOrchestrationRecipients({
+        candidates,
+        tool: toolKey,
+        worktreePath: input.worktreePath,
+      }),
+    );
     if (recipientIds.length === 0) continue;
     options.push({
       label: `Tool: ${toolKey}${formatRoutePreview(recipientIds)}`,

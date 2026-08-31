@@ -3437,17 +3437,13 @@ describe("MetadataServer threads API", () => {
     const res = await fetch(`${base}/orchestration/routes?selectedSessionId=codex-1`);
     const body = (await res.json()) as {
       ok: boolean;
-      options: Array<{ label: string; sessionId?: string }>;
+      options: Array<{ label: string; sessionId?: string; tool?: string }>;
     };
 
     expect(res.ok).toBe(true);
     expect(body.ok).toBe(true);
     expect(body.options[0]).toEqual({ label: "Reviewer (codex-1)", sessionId: "codex-1" });
-    expect(body.options).toContainEqual({
-      label: "Tool: codex [1: codex-1]",
-      tool: "codex",
-      recipientIds: ["codex-1"],
-    });
+    expect(body.options.some((option) => option.tool === "codex")).toBe(false);
   });
 
   it("preserves the selected source agent for routed orchestration options", async () => {
