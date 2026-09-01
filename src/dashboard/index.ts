@@ -4,7 +4,9 @@ import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "../p
 import type { ExposePreviewSnapshot } from "../project-api-contract.js";
 import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
+import type { WorkOutlineEntry } from "../work-outline.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
+import type { DashboardPreviewSource } from "./state.js";
 import { sessionDisplayStatusLabel } from "../session-semantics.js";
 import { renderDashboardFrame } from "../tui/screens/dashboard-renderers.js";
 
@@ -182,6 +184,8 @@ export interface DashboardViewModel {
   agentRestoreOffer?: DashboardAgentRestoreOffer | null;
   hideOfflineAgents?: boolean;
   hiddenOfflineAgentCount?: number;
+  previewSource: DashboardPreviewSource;
+  scribePreviewEntries: WorkOutlineEntry[];
   detailsPaneVisible: boolean;
   scrollOffset: number;
   derivedStatusLabel: typeof derivedStatusLabel;
@@ -214,6 +218,8 @@ export class Dashboard {
     agentRestoreOffer: null,
     hideOfflineAgents: false,
     hiddenOfflineAgentCount: 0,
+    previewSource: "output",
+    scribePreviewEntries: [],
     detailsPaneVisible: true,
     scrollOffset: 0,
     derivedStatusLabel,

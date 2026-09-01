@@ -299,6 +299,8 @@ export class Multiplexer {
   private workOutlineOverlayEntries: WorkOutlineEntry[] = [];
   private workOutlineOverlayOffset = 0;
   private workOutlineOverlaySessionId: string | undefined = undefined;
+  private dashboardScribePreviewEntriesCache: WorkOutlineEntry[] = [];
+  private dashboardScribePreviewSessionId: string | undefined = undefined;
   private agentRestoreConfirmSelection: "restore" | "cancel" = "restore";
   private agentRestoreConfirmOpenedAt = 0;
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };

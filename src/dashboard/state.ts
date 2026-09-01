@@ -2,6 +2,7 @@ import type { DashboardSession, DashboardWorktreeEntry } from "./index.js";
 
 export type DashboardScreen = "dashboard" | "coordination" | "project" | "library" | "topology" | "graveyard" | "help";
 export type DashboardLevel = "worktrees" | "sessions";
+export type DashboardPreviewSource = "output" | "scribe";
 export type DashboardOverlayKind =
   | "none"
   | "tool-picker"
@@ -33,6 +34,7 @@ export class DashboardState {
   worktreeEntries: DashboardWorktreeEntry[] = [];
   quickJumpDigits = "";
   hideOfflineAgents = false;
+  previewSource: DashboardPreviewSource = "output";
 
   isScreen(screen: DashboardScreen): boolean {
     return this.screen === screen;
@@ -66,6 +68,7 @@ export class DashboardState {
       `entries:${this.worktreeEntries.length}`,
       `quick:${this.quickJumpDigits}`,
       `hideOffline:${this.hideOfflineAgents ? 1 : 0}`,
+      `preview:${this.previewSource}`,
     ].join("|");
   }
 }

@@ -76,6 +76,64 @@ describe("dashboardViewMethods.renderDashboard", () => {
     expect(host.persistDashboardUiState).not.toHaveBeenCalled();
   });
 
+  it("renders cached scribe preview entries without reading work-outline state", () => {
+    const entry = {
+      entryId: "outline-1",
+      topicKey: "topic",
+      title: "Topic",
+      summary: "Summary",
+      status: "active",
+      source: "scribe",
+      sessionIds: ["codex-1"],
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      lastSeenAt: "2026-09-01T00:00:00.000Z",
+    };
+    const dashboardUpdate = vi.fn();
+    const host: any = {
+      dashboardRenderOptions: null,
+      writeStatuslineFile: vi.fn(),
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      projectRoot: "/repo",
+      dashboardSessionsCache: [
+        { id: "codex-1", command: "codex", worktreePath: "/wt", status: "running" },
+        { id: "claude-scribe", command: "claude", status: "running", scribe: true },
+      ],
+      dashboardScribePreviewEntriesCache: [entry],
+      dashboardScribePreviewSessionId: "codex-1",
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [{ path: "/wt", sessions: [], services: [] }],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+      dashboardState: {
+        previewSource: "scribe",
+        hideOfflineAgents: false,
+        focusedWorktreePath: "/wt",
+        level: "sessions",
+        worktreeEntries: [{ kind: "session", id: "codex-1" }],
+        worktreeSessions: [{ id: "codex-1", command: "codex", worktreePath: "/wt", status: "running" }],
+        sessionIndex: 0,
+      },
+      dashboard: {
+        update: dashboardUpdate,
+        render: vi.fn(() => "frame"),
+      },
+      syncTuiNotificationContext: vi.fn(),
+      writeFrame: vi.fn(),
+      dashboardBusyState: null,
+      dashboardErrorState: null,
+    };
+
+    dashboardViewMethods.renderDashboard.call(host);
+
+    expect(dashboardUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previewSource: "scribe",
+        scribePreviewEntries: [entry],
+      }),
+    );
+  });
+
   it("composes the active dashboard overlay through writeFrame instead of a second overlay write", () => {
     const host: any = {
       dashboardRenderOptions: null,

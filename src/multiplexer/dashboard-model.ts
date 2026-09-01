@@ -808,6 +808,18 @@ export function applyDashboardModel(
   host.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
   host.dashboardModelVersion = (host.dashboardModelVersion ?? 0) + 1;
   host.dashboardModelRefreshedAt = Date.now();
+  if (host.dashboardState?.previewSource === "scribe") {
+    const selected = host.getSelectedDashboardSessionForActions?.();
+    if (
+      !selected ||
+      host.dashboardScribePreviewSessionId !== selected.id ||
+      !Array.isArray(host.dashboardScribePreviewEntriesCache)
+    ) {
+      host.refreshDashboardScribePreviewEntries?.(selected);
+    }
+  } else {
+    host.refreshDashboardScribePreviewEntries?.();
+  }
   host.dashboardUiStateStore.markSelectionDirty();
   return true;
 }

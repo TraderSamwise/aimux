@@ -89,6 +89,90 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("toggles dashboard preview source with Shift+V only when a scribe is live", () => {
+    const entry = {
+      entryId: "outline-1",
+      topicKey: "topic",
+      title: "Topic",
+      summary: "Summary",
+      status: "active",
+      source: "scribe",
+      sessionIds: ["codex-1"],
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      lastSeenAt: "2026-09-01T00:00:00.000Z",
+    };
+    workOutlineMock.listWorkOutlineEntries.mockReturnValue([entry]);
+    const host: any = {
+      projectRoot: "/repo",
+      dashboardState: {
+        previewSource: "output",
+        quickJumpDigits: "",
+        hasWorktrees: () => true,
+        level: "sessions",
+        worktreeEntries: [{ kind: "session", id: "codex-1" }],
+        sessionIndex: 0,
+      },
+      dashboardScribeSessionsCache: [
+        { id: "claude-scribe", command: "claude", status: "running", active: true, scribe: true },
+      ],
+      dashboardSessionsCache: [{ id: "codex-1", command: "codex", status: "running", worktreePath: "/wt" }],
+      dashboard: { viewModel: { scribeSessions: [] } },
+      getDashboardSessions: vi.fn(() => host.dashboardSessionsCache),
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      refreshDashboardScribePreviewEntries: dashboardInteractionMethods.refreshDashboardScribePreviewEntries,
+      persistDashboardUiState: vi.fn(),
+      renderDashboard: vi.fn(),
+      clearDashboardQuickJump: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("V"));
+
+    expect(host.dashboardState.previewSource).toBe("scribe");
+    expect(workOutlineMock.listWorkOutlineEntries).toHaveBeenCalledWith({ sessionId: "codex-1", limit: 6 }, "/repo");
+    expect(host.dashboardScribePreviewSessionId).toBe("codex-1");
+    expect(host.dashboardScribePreviewEntriesCache).toEqual([entry]);
+    expect(host.persistDashboardUiState).toHaveBeenCalledOnce();
+    expect(host.footerFlash).toBe("Previewing scribe summaries");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("V"));
+
+    expect(host.dashboardState.previewSource).toBe("output");
+    expect(host.dashboardScribePreviewEntriesCache).toEqual([]);
+    expect(host.persistDashboardUiState).toHaveBeenCalledTimes(2);
+    expect(host.footerFlash).toBe("Previewing output");
+  });
+
+  it("ignores Shift+V without a live scribe", () => {
+    const host: any = {
+      dashboardState: {
+        previewSource: "output",
+        quickJumpDigits: "",
+        hasWorktrees: () => true,
+      },
+      dashboardScribeSessionsCache: [
+        { id: "claude-scribe", command: "claude", status: "offline", active: false, scribe: true },
+      ],
+      dashboardSessionsCache: [],
+      dashboard: { viewModel: { scribeSessions: [] } },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      persistDashboardUiState: vi.fn(),
+      renderDashboard: vi.fn(),
+      clearDashboardQuickJump: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("V"));
+
+    expect(host.dashboardState.previewSource).toBe("output");
+    expect(host.persistDashboardUiState).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
   it("opens worktree cache cleanup from Shift+D on the dashboard", () => {
     const host: any = {
       mode: "dashboard",

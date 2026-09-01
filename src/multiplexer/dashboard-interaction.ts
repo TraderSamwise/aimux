@@ -16,7 +16,7 @@ import {
   loadTeamConfig,
   type TeamConfig,
 } from "../team.js";
-import { listWorkOutlineEntries } from "../work-outline.js";
+import { listWorkOutlineEntries, type WorkOutlineEntry } from "../work-outline.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -211,6 +211,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       case "j":
         if (totalCount > 1) {
           host.activeIndex = (host.activeIndex + 1) % totalCount;
+          host.refreshDashboardScribePreviewEntries?.();
           host.renderDashboard();
         }
         return true;
@@ -218,6 +219,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       case "k":
         if (totalCount > 1) {
           host.activeIndex = (host.activeIndex - 1 + totalCount) % totalCount;
+          host.refreshDashboardScribePreviewEntries?.();
           host.renderDashboard();
         }
         return true;
@@ -284,6 +286,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
         host.dashboardState.sessionIndex =
           (host.dashboardState.sessionIndex + 1) % host.dashboardState.worktreeEntries.length;
         host.dashboardUiStateStore?.rememberCurrentEntrySelection?.(host.dashboardState);
+        host.refreshDashboardScribePreviewEntries?.();
         host.renderDashboard();
       }
       return true;
@@ -294,6 +297,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
           (host.dashboardState.sessionIndex - 1 + host.dashboardState.worktreeEntries.length) %
           host.dashboardState.worktreeEntries.length;
         host.dashboardUiStateStore?.rememberCurrentEntrySelection?.(host.dashboardState);
+        host.refreshDashboardScribePreviewEntries?.();
         host.renderDashboard();
       }
       return true;
@@ -435,6 +439,21 @@ function isLiveDashboardControlSession(entry: DashboardSession): boolean {
   return status !== "offline" && status !== "exited" && status !== "graveyard";
 }
 
+function hasLiveDashboardScribe(host: any): boolean {
+  return dashboardScribeEntries(host).some(isLiveDashboardControlSession);
+}
+
+function clearDashboardScribePreviewCache(host: any, selectedSessionId?: string): void {
+  host.dashboardScribePreviewEntriesCache = [];
+  host.dashboardScribePreviewSessionId = selectedSessionId;
+}
+
+function loadDashboardScribePreviewEntries(host: any, selectedSession: DashboardSession): WorkOutlineEntry[] {
+  const directEntries = listWorkOutlineEntries({ sessionId: selectedSession.id, limit: 6 }, host.projectRoot);
+  if (directEntries.length > 0 || !selectedSession.worktreePath) return directEntries;
+  return listWorkOutlineEntries({ worktreePath: selectedSession.worktreePath, limit: 6 }, host.projectRoot);
+}
+
 function teammateParentSession(host: any): DashboardSession | undefined {
   const parentId = host.teammatePickerState?.parentSessionId;
   const selected = selectedDashboardSession(host);
@@ -517,7 +536,26 @@ export const dashboardInteractionMethods = {
       this.persistDashboardUiState();
     }
     if (opts?.render !== false) {
+      this.refreshDashboardScribePreviewEntries?.();
       this.renderDashboard();
+    }
+  },
+
+  refreshDashboardScribePreviewEntries(this: any, selectedSession?: DashboardSession): void {
+    const selected = selectedSession ?? selectedDashboardSession(this);
+    if (this.dashboardState?.previewSource !== "scribe") {
+      clearDashboardScribePreviewCache(this, selected?.id);
+      return;
+    }
+    if (!selected || !hasLiveDashboardScribe(this)) {
+      clearDashboardScribePreviewCache(this, selected?.id);
+      return;
+    }
+    try {
+      this.dashboardScribePreviewEntriesCache = loadDashboardScribePreviewEntries(this, selected);
+      this.dashboardScribePreviewSessionId = selected.id;
+    } catch {
+      clearDashboardScribePreviewCache(this, selected.id);
     }
   },
 
@@ -720,6 +758,17 @@ export const dashboardInteractionMethods = {
     if (isShiftedCommand(event, key, "p")) {
       const selected = this.getSelectedDashboardSessionForActions?.();
       this.showWorkOutlineOverlay(selected?.id);
+      return;
+    }
+    if (this.isDashboardScreen("dashboard") && isShiftedCommand(event, key, "v")) {
+      if (!hasLiveDashboardScribe(this)) return;
+      this.dashboardState.previewSource = this.dashboardState.previewSource === "scribe" ? "output" : "scribe";
+      this.refreshDashboardScribePreviewEntries?.();
+      this.persistDashboardUiState?.();
+      this.footerFlash =
+        this.dashboardState.previewSource === "scribe" ? "Previewing scribe summaries" : "Previewing output";
+      this.footerFlashTicks = 2;
+      this.renderDashboard();
       return;
     }
     // The failure banner is a card, not a row, so there is nothing to focus and

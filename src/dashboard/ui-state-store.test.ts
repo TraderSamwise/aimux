@@ -35,7 +35,7 @@ describe("DashboardUiStateStore", () => {
     const shared = JSON.parse(readFileSync(getDashboardUiStatePath(), "utf-8"));
     const client = JSON.parse(readFileSync(getDashboardClientUiStatePath("client-a"), "utf-8"));
 
-    expect(shared).toEqual({ detailsSidebarVisible: false });
+    expect(shared).toEqual({ detailsSidebarVisible: false, previewSource: "output" });
     expect(client).toMatchObject({
       screen: "activity",
       focusedWorktreePath: "/repo/wt",
@@ -85,6 +85,32 @@ describe("DashboardUiStateStore", () => {
     expect(state.screen).toBe("coordination");
     expect(state.focusedWorktreePath).toBe("/repo/wt-b");
     expect(state.level).toBe("sessions");
+    expect(state.previewSource).toBe("output");
+  });
+
+  it("persists and loads the shared dashboard preview source", () => {
+    const writer = new DashboardUiStateStore();
+    const persisted = new DashboardState();
+    persisted.previewSource = "scribe";
+    writer.persist("dashboard", "client-a", persisted, 0, []);
+
+    const state = new DashboardState();
+    const reader = new DashboardUiStateStore();
+    reader.loadSharedState(state);
+
+    expect(state.previewSource).toBe("scribe");
+  });
+
+  it("normalizes an invalid persisted preview source to output", () => {
+    const writer = new DashboardUiStateStore();
+    writer.persist("dashboard", "client-a", Object.assign(new DashboardState(), { previewSource: "bogus" }), 0, []);
+
+    const state = new DashboardState();
+    state.previewSource = "scribe";
+    const reader = new DashboardUiStateStore();
+    reader.loadSharedState(state);
+
+    expect(state.previewSource).toBe("output");
   });
 
   it("migrates a pre-merge persisted screen (workflow/threads/notifications) onto coordination", () => {

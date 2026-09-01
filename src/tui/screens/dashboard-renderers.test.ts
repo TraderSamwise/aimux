@@ -8,6 +8,7 @@ function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): Dashboa
   return {
     sessions: [],
     overseerSessions: [],
+    scribeSessions: [],
     services: [],
     worktreeGroups: [],
     hasWorktrees: true,
@@ -21,6 +22,8 @@ function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): Dashboa
     worktreeRemoval: undefined,
     operationFailures: [],
     hideOfflineAgents: false,
+    previewSource: "output",
+    scribePreviewEntries: [],
     detailsPaneVisible: true,
     scrollOffset: 0,
     derivedStatusLabel,
@@ -173,6 +176,32 @@ describe("buildDashboardFooterHints", () => {
     expect(
       buildDashboardFooterHints(baseDashboardViewModel({ hideOfflineAgents: true })).find((h) => h[0] === "a"),
     ).toEqual(["a", "show offline"]);
+  });
+
+  it("advertises the preview toggle only while a scribe is live", () => {
+    expect(buildDashboardFooterHints(baseDashboardViewModel({})).find((h) => h[0] === "V")).toBeUndefined();
+    expect(
+      buildDashboardFooterHints(
+        baseDashboardViewModel({
+          scribeSessions: [{ id: "claude-scribe", command: "claude", status: "offline", active: false, scribe: true }],
+        }),
+      ).find((h) => h[0] === "V"),
+    ).toBeUndefined();
+    expect(
+      buildDashboardFooterHints(
+        baseDashboardViewModel({
+          scribeSessions: [{ id: "claude-scribe", command: "claude", status: "running", active: true, scribe: true }],
+        }),
+      ).find((h) => h[0] === "V"),
+    ).toEqual(["V", "preview scribe"]);
+    expect(
+      buildDashboardFooterHints(
+        baseDashboardViewModel({
+          previewSource: "scribe",
+          scribeSessions: [{ id: "claude-scribe", command: "claude", status: "running", active: true, scribe: true }],
+        }),
+      ).find((h) => h[0] === "V"),
+    ).toEqual(["V", "preview output"]);
   });
 });
 
@@ -1028,6 +1057,55 @@ describe("renderDashboardFrame worktree progress", () => {
     const previewTopIndex = lines.findIndex((line) => line.includes("PREVIEW"));
     expect(previewTopIndex).toBeGreaterThan(0);
     expect(lines[previewTopIndex - 1]).toContain("╰");
+  });
+
+  it("renders selected agent scribe summary when scribe preview is selected", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "codex-1",
+        previewSource: "scribe",
+        scribeSessions: [{ id: "claude-scribe", command: "claude", status: "running", active: true, scribe: true }],
+        scribePreviewEntries: [
+          {
+            entryId: "outline-1",
+            topicKey: "dashboard-preview-toggle",
+            title: "Dashboard preview toggle",
+            summary: "Added a dashboard-only toggle that swaps the details preview between output and scribe summary.",
+            status: "active",
+            source: "scribe",
+            sessionIds: ["codex-1"],
+            createdAt: "2026-09-01T00:00:00.000Z",
+            updatedAt: "2026-09-01T00:00:00.000Z",
+            lastSeenAt: "2026-09-01T00:00:00.000Z",
+          },
+        ],
+        sessions: [
+          {
+            index: 0,
+            id: "codex-1",
+            command: "codex",
+            toolConfigKey: "codex",
+            status: "running",
+            active: true,
+            previewSnapshot: {
+              output: "tmux output should not render",
+              capturedAt: "2026-09-01T00:00:00.000Z",
+              source: "tap",
+            },
+          },
+        ],
+      }),
+      140,
+      34,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("SCRIBE");
+    expect(plain).toContain("Dashboard preview toggle");
+    expect(plain).toContain("Added a dashboard-only toggle that swaps the");
+    expect(plain).toContain("details preview between output and scribe summary");
+    expect(plain).not.toContain("tmux output should not render");
   });
 
   it("renders selected agent overseer and loop state in details", () => {

@@ -11,11 +11,12 @@ import {
   type DashboardOrderKind,
   type DashboardOrderState,
 } from "./order.js";
-import { type DashboardScreen, type DashboardState } from "./state.js";
+import { type DashboardPreviewSource, type DashboardScreen, type DashboardState } from "./state.js";
 import { getDashboardClientUiStatePath, getDashboardUiStatePath } from "../paths.js";
 
 interface DashboardUiSharedSnapshot {
   detailsSidebarVisible?: boolean;
+  previewSource?: DashboardPreviewSource;
   agentOrderByWorktreeKey?: Record<string, string[]>;
   serviceOrderByWorktreeKey?: Record<string, string[]>;
 }
@@ -49,6 +50,9 @@ export class DashboardUiStateStore {
       const snapshot = JSON.parse(raw) as DashboardUiSharedSnapshot;
       if (state && typeof snapshot.detailsSidebarVisible === "boolean") {
         state.detailsSidebarVisible = snapshot.detailsSidebarVisible;
+      }
+      if (state) {
+        state.previewSource = normalizePreviewSource(snapshot.previewSource);
       }
       this.orderState = {
         agentOrderByWorktreeKey: sanitizeOrderMap(snapshot.agentOrderByWorktreeKey),
@@ -96,6 +100,7 @@ export class DashboardUiStateStore {
     if (mode !== "dashboard") return;
     const sharedSnapshot: DashboardUiSharedSnapshot = {
       detailsSidebarVisible: state.detailsSidebarVisible,
+      previewSource: normalizePreviewSource(state.previewSource),
       ...(hasOrderEntries(this.orderState.agentOrderByWorktreeKey)
         ? { agentOrderByWorktreeKey: this.orderState.agentOrderByWorktreeKey }
         : {}),
@@ -270,6 +275,10 @@ function normalizePersistedScreen(screen: string): DashboardScreen {
   if (screen === "notifications" || screen === "threads" || screen === "workflow") return "coordination";
   if (screen === "plans") return "library";
   return "dashboard";
+}
+
+function normalizePreviewSource(value: unknown): DashboardPreviewSource {
+  return value === "scribe" ? "scribe" : "output";
 }
 
 function sanitizeOrderMap(value: unknown): Record<string, string[]> {

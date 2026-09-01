@@ -177,6 +177,12 @@ export const dashboardViewMethods = {
       const selectedSessionEntry = selectedSession
         ? dashSessions.find((session: any) => session.id === selectedSession)
         : undefined;
+      const scribePreviewEntries =
+        this.dashboardState.previewSource === "scribe" &&
+        selectedSessionEntry &&
+        this.dashboardScribePreviewSessionId === selectedSessionEntry.id
+          ? (this.dashboardScribePreviewEntriesCache ?? [])
+          : [];
       const worktreeRemovalJobs =
         this.worktreeRemovalJobs instanceof Map
           ? [...this.worktreeRemovalJobs.values()]
@@ -207,6 +213,8 @@ export const dashboardViewMethods = {
         hiddenOfflineAgentCount: this.dashboardState.hideOfflineAgents
           ? rawDashSessions.filter((session: any) => isDashboardSessionOffline(session)).length
           : 0,
+        previewSource: this.dashboardState.previewSource,
+        scribePreviewEntries,
         worktreeRemoval: latestWorktreeRemovalJob
           ? {
               path: latestWorktreeRemovalJob.path,

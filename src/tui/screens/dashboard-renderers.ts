@@ -4,9 +4,10 @@ import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "..
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionRecencyAnchor } from "../../session-recency.js";
 import { sanitizeExposePreviewOutput } from "../../tmux/expose-preview-sanitize.js";
+import type { WorkOutlineEntry } from "../../work-outline.js";
 import { worktreeColorAnsi } from "../../worktree-colors.js";
 import { composeScreenFrame } from "../render/screen-frame.js";
-import { center, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
+import { center, truncate, truncateAnsi, wrapKeyValue, wrapText } from "../render/text.js";
 import {
   card,
   chip,
@@ -60,6 +61,33 @@ function previewSnapshotRows(session: DashboardSession, width: number, maxRows: 
     .filter(Boolean)
     .slice(-maxRows)
     .map((line) => truncateAnsi(line, width));
+}
+
+function hasLiveScribe(state: DashboardViewModel): boolean {
+  return (state.scribeSessions ?? []).some((session) => !isSessionOffline(session));
+}
+
+function scribePreviewRows(entries: WorkOutlineEntry[], width: number, maxRows: number): string[] {
+  if (maxRows <= 0) return [];
+  if (entries.length === 0) return [style("No scribe summary for this agent yet.", "muted")];
+  const rows: string[] = [];
+  for (const entry of entries) {
+    const statusTone: Tone = entry.status === "done" ? "done" : entry.status === "stale" ? "muted" : "accent";
+    const status = style(entry.status, statusTone);
+    const age = formatRelativeRecency(entry.updatedAt);
+    const title = `${style(truncate(entry.title, Math.max(8, width - 18)), "strong")} ${status}${age ? style(` · ${age}`, "muted") : ""}`;
+    rows.push(truncateAnsi(title, width));
+    if (rows.length >= maxRows) break;
+    for (const summaryLine of wrapText(entry.summary, width).slice(0, Math.max(1, maxRows - rows.length))) {
+      rows.push(truncateAnsi(style(summaryLine, "muted"), width));
+      if (rows.length >= maxRows) break;
+    }
+    if (rows.length >= maxRows) break;
+    rows.push("");
+    if (rows.length >= maxRows) break;
+  }
+  while (rows.at(-1) === "") rows.pop();
+  return rows.slice(0, maxRows);
 }
 
 // Status cells render as attention pills; the rest use plain colored/dim text.
@@ -395,6 +423,9 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     ["R", "reply"],
   ];
   if (selectedSession && state.selectedTeammates.length > 0) talk.push(["e", "team"]);
+  const preview: FooterHint[] = hasLiveScribe(state)
+    ? [["V", state.previewSource === "scribe" ? "preview output" : "preview scribe"]]
+    : [];
   const system: FooterHint[] = [
     ["?", "help"],
     ["q", "quit"],
@@ -416,6 +447,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["1-9", "entry"],
       ["Enter/→/l", enterVerb],
       ["Tab", "details"],
+      ...preview,
       ["u", "attention"],
       ["Esc/h", "back"],
       ["⇧↑↓", "reorder"],
@@ -438,6 +470,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["1-9", "worktree"],
       ["Enter/→/l", "step in"],
       ["Tab", "details"],
+      ...preview,
       ["u", "attention"],
       ["n", "agent"],
       ["v", "service"],
@@ -458,6 +491,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["↑↓/jk", "select"],
       ["Enter/→/l", enterVerb],
       ["Tab", "details"],
+      ...preview,
       ["u", "attention"],
       ["n", "agent"],
       ["v", "service"],
@@ -475,6 +509,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   // No sessions and no worktrees: nothing to navigate.
   return [
     ["Tab", "details"],
+    ...preview,
     ["u", "attention"],
     ["n", "agent"],
     ["v", "service"],
@@ -613,13 +648,13 @@ export function renderDashboardFrame(
     };
     const finish = (titleText: string, tone: Tone, rows: string[]): string[] =>
       renderPanelCard(titleText, tone, rows, height);
-    const finishWithPreview = (detailsRows: string[], previewRows: string[]): string[] => {
+    const finishWithPreview = (detailsRows: string[], previewRows: string[], previewTitle = "PREVIEW"): string[] => {
       if (previewRows.length === 0 || height < 10) return finish("DETAILS", "info", detailsRows);
       const previewHeight = Math.min(Math.max(5, previewRows.length + 2), Math.max(5, Math.floor(height * 0.45)));
       const detailsHeight = Math.min(Math.max(3, detailsRows.length + 2), Math.max(3, height - previewHeight));
       return [
         ...renderPanelCard("DETAILS", "info", detailsRows, detailsHeight),
-        ...renderPanelCard("PREVIEW", "muted", previewRows, height - detailsHeight),
+        ...renderPanelCard(previewTitle, "muted", previewRows, height - detailsHeight),
       ].slice(0, height);
     };
     const selectedSession = state.selectedSessionId
@@ -883,7 +918,11 @@ export function renderDashboardFrame(
         lines.push(...wrapKeyValue("-", `${state.selectedTeammates.length - 5} more`, width));
       }
     }
-    return finishWithPreview(lines, previewSnapshotRows(selected, width, Math.max(0, height - 2)));
+    const showingScribePreview = state.previewSource === "scribe" && hasLiveScribe(state);
+    const previewRows = showingScribePreview
+      ? scribePreviewRows(state.scribePreviewEntries, width, Math.max(0, height - 2))
+      : previewSnapshotRows(selected, width, Math.max(0, height - 2));
+    return finishWithPreview(lines, previewRows, showingScribePreview ? "SCRIBE" : "PREVIEW");
   };
 
   const devBadge = state.isDevRuntime ? "\x1b[1;30;43m DEV \x1b[0m " : "";
