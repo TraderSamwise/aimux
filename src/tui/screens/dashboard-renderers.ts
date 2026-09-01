@@ -413,19 +413,20 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
         ? "stop"
         : "";
 
+  const preview: FooterHint[] = hasLiveScribe(state)
+    ? [["V", state.previewSource === "scribe" ? "preview output" : "preview scribe"]]
+    : [];
+  const scribeControls: FooterHint[] = [["P", "scribe"], ...preview];
   const talk: FooterHint[] = [
     ["s", "msg"],
     ["H", "handoff"],
     ["T", "task"],
     ["o", "thread"],
     ["O", "overseer"],
-    ["P", "outline"],
+    ...scribeControls,
     ["R", "reply"],
   ];
   if (selectedSession && state.selectedTeammates.length > 0) talk.push(["e", "team"]);
-  const preview: FooterHint[] = hasLiveScribe(state)
-    ? [["V", state.previewSource === "scribe" ? "preview output" : "preview scribe"]]
-    : [];
   const system: FooterHint[] = [
     ["?", "help"],
     ["q", "quit"],
@@ -447,7 +448,6 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["1-9", "entry"],
       ["Enter/→/l", enterVerb],
       ["Tab", "details"],
-      ...preview,
       ["u", "attention"],
       ["Esc/h", "back"],
       ["⇧↑↓", "reorder"],
@@ -470,7 +470,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["1-9", "worktree"],
       ["Enter/→/l", "step in"],
       ["Tab", "details"],
-      ...preview,
+      ...scribeControls,
       ["u", "attention"],
       ["n", "agent"],
       ["v", "service"],
@@ -491,7 +491,6 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["↑↓/jk", "select"],
       ["Enter/→/l", enterVerb],
       ["Tab", "details"],
-      ...preview,
       ["u", "attention"],
       ["n", "agent"],
       ["v", "service"],
@@ -509,7 +508,6 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   // No sessions and no worktrees: nothing to navigate.
   return [
     ["Tab", "details"],
-    ...preview,
     ["u", "attention"],
     ["n", "agent"],
     ["v", "service"],

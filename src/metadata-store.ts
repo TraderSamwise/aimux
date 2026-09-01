@@ -148,7 +148,7 @@ export interface SessionMetadata {
   derived?: SessionDerivedMetadata;
   /** This session is the project overseer (top-down orchestrator). */
   overseer?: boolean;
-  /** This session is the project scribe (work outline maintainer). */
+  /** This session is the project scribe. */
   scribe?: boolean;
   /** This session is in a managed loop the overseer keeps running. */
   loop?: SessionLoopMetadata;

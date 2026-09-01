@@ -2837,11 +2837,11 @@ overseerCmd
     console.log(`overseer cleared ${sessionId}`);
   });
 
-const scribeCmd = program.command("scribe").description("Manage the project scribe (work outline maintainer)");
+const scribeCmd = program.command("scribe").description("Manage the project scribe");
 
 scribeCmd
   .command("start")
-  .description("Spawn a scribe agent that maintains the project work outline")
+  .description("Spawn a scribe agent that maintains project scribe notes")
   .option("--tool <toolKey>", "Configured tool key (defaults to the project default)")
   .option("--project <path>", "Project path")
   .option("--worktree <path>", "Target worktree path")

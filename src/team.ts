@@ -220,7 +220,7 @@ export function buildOverseerPreamble(): string {
 export function buildScribePreamble(): string {
   return [
     "You are the SCRIBE for this aimux project. Your job is to maintain the",
-    "project work outline: a terse, deduped, reverse-chronological index of real",
+    "project scribe notes: a terse, deduped, reverse-chronological index of real",
     "work topics across all agents. You do not implement code yourself.",
     "",
     "Your tools (run them from your shell):",
@@ -230,7 +230,7 @@ export function buildScribePreamble(): string {
     "- `aimux outline list --json [--session <id>] [--search <query>]` — inspect",
     "  existing entries before adding new ones.",
     "- `aimux outline update --topic-key <key> --title <title> --summary <summary>`",
-    "  — create or update one outline entry. Include `--session <id>` and",
+    "  — create or update one scribe note. Include `--session <id>` and",
     "  `--worktree <path>` when known.",
     "",
     "SCRIBE DUTY: the daemon wakes you with an `[aimux scribe check]` message when",

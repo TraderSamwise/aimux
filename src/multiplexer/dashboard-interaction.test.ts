@@ -2410,7 +2410,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
   });
 
-  it("opens, scrolls, reloads, and dismisses the work outline overlay", () => {
+  it("opens, scrolls, reloads, and dismisses the scribe overlay", () => {
     const entries = [
       { entryId: "outline-1", title: "First", updatedAt: "2026-08-30T01:00:00.000Z" },
       { entryId: "outline-2", title: "Second", updatedAt: "2026-08-30T00:00:00.000Z" },
@@ -2454,7 +2454,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.restoreDashboardAfterOverlayDismiss).toHaveBeenCalledOnce();
   });
 
-  it("shows a dashboard error when work outline load fails", () => {
+  it("shows a dashboard error when scribe notes load fails", () => {
     workOutlineMock.listWorkOutlineEntries.mockImplementation(() => {
       throw new Error("bad outline json");
     });
@@ -2474,11 +2474,11 @@ describe("dashboardInteractionMethods", () => {
     expect(host.workOutlineOverlayEntries).toEqual([]);
     expect(host.workOutlineOverlayOffset).toBe(0);
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
-    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to load work outline", ["bad outline json"]);
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to load scribe notes", ["bad outline json"]);
     expect(host.openDashboardOverlay).not.toHaveBeenCalled();
   });
 
-  it("focuses the live scribe from the work outline overlay", () => {
+  it("focuses the live scribe from the scribe overlay", () => {
     const host: any = {
       dashboard: {
         viewModel: {
@@ -2500,7 +2500,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showToolPicker).not.toHaveBeenCalled();
   });
 
-  it("starts a scribe from the work outline overlay when no live scribe exists", () => {
+  it("starts a scribe from the scribe overlay when no live scribe exists", () => {
     const host: any = {
       dashboard: { viewModel: { scribeSessions: [] } },
       clearDashboardOverlay: vi.fn(),
@@ -2513,7 +2513,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showToolPicker).toHaveBeenCalledWith(undefined, { scribe: true });
   });
 
-  it("unsets scribe assignment from the work outline overlay through the project API", async () => {
+  it("unsets scribe assignment from the scribe overlay through the project API", async () => {
     dashboardApiClientMock.mutateDashboardApi.mockResolvedValue({
       ok: true,
       sessionId: "claude-scribe",
@@ -2548,7 +2548,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderWorkOutlineOverlay).toHaveBeenCalledOnce();
   });
 
-  it("stops the live scribe from the work outline overlay", () => {
+  it("stops the live scribe from the scribe overlay", () => {
     const scribe = { id: "claude-scribe", command: "claude", status: "working", scribe: true };
     const host: any = {
       dashboard: { viewModel: { scribeSessions: [scribe] } },

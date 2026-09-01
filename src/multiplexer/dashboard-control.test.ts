@@ -2705,8 +2705,8 @@ describe("agent restore confirm overlay", () => {
   });
 });
 
-describe("work outline overlay routing", () => {
-  it("routes active overlay keys to the work outline handler", async () => {
+describe("scribe overlay routing", () => {
+  it("routes active overlay keys to the scribe handler", async () => {
     const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
     const host = {
       dashboardBusyState: null,

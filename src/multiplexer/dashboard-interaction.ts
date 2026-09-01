@@ -1275,7 +1275,7 @@ export const dashboardInteractionMethods = {
       this.workOutlineOverlayEntries = [];
       this.workOutlineOverlayOffset = 0;
       this.clearDashboardOverlay();
-      this.showDashboardError?.("Failed to load work outline", [
+      this.showDashboardError?.("Failed to load scribe notes", [
         error instanceof Error ? error.message : String(error),
       ]);
       return false;

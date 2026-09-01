@@ -33,13 +33,13 @@ function programWithDeps(deps: {
   return program;
 }
 
-describe("work outline CLI", () => {
+describe("scribe notes CLI", () => {
   it("renders compact human-readable entries", () => {
     expect(renderWorkOutlineEntries([entry])).toEqual([
       "outline-1 [active] Release · codex-a · /repo/main",
       "  Cut the release.",
     ]);
-    expect(renderWorkOutlineEntries([])).toEqual(["No work outline entries."]);
+    expect(renderWorkOutlineEntries([])).toEqual(["No scribe notes."]);
   });
 
   it("lists through the project service with filters", async () => {

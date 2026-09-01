@@ -25,7 +25,7 @@ function outlineQueryPath(query: WorkOutlineQuery & { entryId?: string }): strin
 }
 
 export function renderWorkOutlineEntries(entries: WorkOutlineEntry[]): string[] {
-  if (entries.length === 0) return ["No work outline entries."];
+  if (entries.length === 0) return ["No scribe notes."];
   const lines: string[] = [];
   for (const entry of entries) {
     const sessionText = entry.sessionIds.length > 0 ? ` · ${entry.sessionIds.join(",")}` : "";
@@ -47,11 +47,11 @@ function parseStatus(value?: string): WorkOutlineStatus | undefined {
 }
 
 export function registerWorkOutlineCommand(program: Command, deps: RegisterWorkOutlineCommandDeps): void {
-  const outlineCmd = program.command("outline").description("Manage the project work outline");
+  const outlineCmd = program.command("outline").description("Manage project scribe notes");
 
   outlineCmd
     .command("list")
-    .description("List work outline entries")
+    .description("List scribe notes")
     .option("--project <path>", "Project path")
     .option("--session <sessionId>", "Filter by Aimux session id")
     .option("--worktree <path>", "Filter by worktree path")
@@ -90,7 +90,7 @@ export function registerWorkOutlineCommand(program: Command, deps: RegisterWorkO
 
   outlineCmd
     .command("show <entryId>")
-    .description("Show one work outline entry")
+    .description("Show one scribe note")
     .option("--project <path>", "Project path")
     .option("--json", "Emit JSON")
     .action(async (entryId: string, opts: { project?: string; json?: boolean }) => {
@@ -105,7 +105,7 @@ export function registerWorkOutlineCommand(program: Command, deps: RegisterWorkO
 
   outlineCmd
     .command("update")
-    .description("Create or update a work outline entry")
+    .description("Create or update a scribe note")
     .requiredOption("--title <title>", "Entry title")
     .requiredOption("--summary <summary>", "Short entry summary")
     .option("--project <path>", "Project path")

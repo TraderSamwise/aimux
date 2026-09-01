@@ -2036,7 +2036,7 @@ describe("resumeSessions", () => {
 });
 
 describe("handleAction", () => {
-  it("opens the dashboard before showing the current agent work outline", async () => {
+  it("opens the dashboard before showing the current agent scribe notes", async () => {
     const { handleAction } = await import("./session-launch.js");
     const host = {
       sessions: [{ id: "codex-1" }],

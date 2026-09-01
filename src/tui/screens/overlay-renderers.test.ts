@@ -102,7 +102,7 @@ describe("buildWorktreeCacheCleanupConfirmOverlayOutput", () => {
 });
 
 describe("buildWorkOutlineOverlayOutput", () => {
-  it("renders an empty work outline state", () => {
+  it("renders an empty scribe state", () => {
     const output = plain(
       buildWorkOutlineOverlayOutput(
         {
@@ -113,9 +113,9 @@ describe("buildWorkOutlineOverlayOutput", () => {
       ),
     );
 
-    expect(output).toContain("WORK OUTLINE");
+    expect(output).toContain("SCRIBE");
     expect(output).toContain("Scribe: none");
-    expect(output).toContain("No work outline entries yet.");
+    expect(output).toContain("No scribe notes yet.");
     expect(output).toContain("Enter  start scribe");
     expect(output).toContain("r  reload");
     expect(output).toContain("Esc/q  back");
@@ -245,7 +245,7 @@ describe("buildHelpOverlayOutput", () => {
     expect(output).toContain("?  show help");
     expect(output).toContain("n  new agent");
     expect(output).toContain("v  new service");
-    expect(output).toContain("P  work outline");
+    expect(output).toContain("P  scribe");
     expect(output).toContain("x  stop or remove selected item");
     expect(output).not.toContain("Ctrl+A c  new agent");
     expect(output).not.toContain("Ctrl+A v  request review");

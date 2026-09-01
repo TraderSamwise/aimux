@@ -383,7 +383,7 @@ export function buildWorkOutlineOverlayOutput(ctx: any, cols: number, rows: numb
   }
 
   if (entries.length === 0) {
-    bodyRows.push(`  ${style("No work outline entries yet.", "muted")}`, "");
+    bodyRows.push(`  ${style("No scribe notes yet.", "muted")}`, "");
   } else if (visibleEntries.length > renderedCount) {
     bodyRows.push(`  ${style(`${visibleEntries.length - renderedCount} more entries`, "muted")}`);
   }
@@ -405,7 +405,7 @@ export function buildWorkOutlineOverlayOutput(ctx: any, cols: number, rows: numb
       ["Esc/q", "back"],
     ]),
   ];
-  return renderOverlayBox({ title: "Work outline", body, cols, rows });
+  return renderOverlayBox({ title: "Scribe", body, cols, rows });
 }
 
 export function buildOverseerOverlayOutput(ctx: any, cols: number, rows: number): string {
@@ -475,7 +475,7 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  s  send message",
     "  H  handoff",
     "  T  task",
-    "  P  work outline",
+    "  P  scribe",
     "  o  open thread",
     "  R  reply",
     "  r  name agent",

@@ -152,7 +152,7 @@ function describeCandidate(candidate: ScribeBriefingCandidate): string {
 
 export function buildScribeBriefing(candidates: ScribeBriefingCandidate[]): string {
   return [
-    "[aimux scribe check] Review these changed bounded agent tails and update the work outline only for meaningful distinct work.",
+    "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.",
     "Use `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.",
     "Ignore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.",
     "",

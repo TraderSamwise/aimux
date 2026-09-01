@@ -99,7 +99,7 @@ describe("buildDashboardFooterHints", () => {
     );
     // worktree level
     expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
-      new Set(["↑↓/jk", "1-9", "Enter/→/l", "u", "Tab", "n", "v", "f", "D", "w", "a", "?", "q"]),
+      new Set(["↑↓/jk", "1-9", "Enter/→/l", "u", "Tab", "P", "n", "v", "f", "D", "w", "a", "?", "q"]),
     );
     // session level with worktrees + a selected session + a teammate
     expect(
@@ -202,6 +202,21 @@ describe("buildDashboardFooterHints", () => {
         }),
       ).find((h) => h[0] === "V"),
     ).toEqual(["V", "preview output"]);
+  });
+
+  it("keeps the scribe preview toggle next to the scribe shortcut", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({
+        selectedSessionId: "codex-1",
+        scribeSessions: [{ id: "claude-scribe", command: "claude", status: "running", active: true, scribe: true }],
+      }),
+    );
+    const pIndex = hints.findIndex((hint) => hint[0] === "P");
+    const vIndex = hints.findIndex((hint) => hint[0] === "V");
+
+    expect(hints[pIndex]).toEqual(["P", "scribe"]);
+    expect(hints[vIndex]).toEqual(["V", "preview scribe"]);
+    expect(vIndex).toBe(pIndex + 1);
   });
 });
 
