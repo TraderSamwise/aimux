@@ -2036,6 +2036,23 @@ describe("resumeSessions", () => {
 });
 
 describe("handleAction", () => {
+  it("scopes interactive navigation to human agents", async () => {
+    const { getScopedSessionEntries } = await import("./session-launch.js");
+    const host = {
+      sessions: [
+        { id: "codex-1" },
+        { id: "claude-scribe", team: { role: "scribe" } },
+        { id: "claude-overseer", team: { role: "overseer" } },
+        { id: "claude-2" },
+      ],
+    };
+
+    expect(getScopedSessionEntries(host as any).map(({ session, index }) => [session.id, index])).toEqual([
+      ["codex-1", 0],
+      ["claude-2", 3],
+    ]);
+  });
+
   it("opens the dashboard before showing the current agent scribe notes", async () => {
     const { handleAction } = await import("./session-launch.js");
     const host = {
@@ -2052,6 +2069,64 @@ describe("handleAction", () => {
     expect(host.openTmuxDashboardTarget.mock.invocationCallOrder[0]).toBeLessThan(
       host.showWorkOutlineOverlay.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not scope scribe notes to a project-control agent", async () => {
+    const { handleAction } = await import("./session-launch.js");
+    const host = {
+      sessions: [{ id: "claude-scribe", team: { role: "scribe" } }],
+      activeIndex: 0,
+      openTmuxDashboardTarget: vi.fn(),
+      showWorkOutlineOverlay: vi.fn(),
+    };
+
+    handleAction(host as any, { type: "work-outline" });
+
+    expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
+    expect(host.showWorkOutlineOverlay).toHaveBeenCalledWith(undefined);
+  });
+
+  it("keeps project-control agents out of leader navigation", async () => {
+    const { handleAction } = await import("./session-launch.js");
+    const { getScopedSessionEntries } = await import("./session-launch.js");
+    const host = {
+      sessions: [
+        { id: "codex-1" },
+        { id: "claude-scribe", team: { role: "scribe" } },
+        { id: "claude-overseer", team: { role: "overseer" } },
+        { id: "claude-2" },
+      ],
+      activeIndex: 0,
+      focusSession: vi.fn(),
+      getScopedSessionEntries() {
+        return getScopedSessionEntries(this as any);
+      },
+    };
+
+    handleAction(host as any, { type: "next" });
+    expect(host.focusSession).toHaveBeenLastCalledWith(3);
+
+    host.activeIndex = 3;
+    handleAction(host as any, { type: "prev" });
+    expect(host.focusSession).toHaveBeenLastCalledWith(0);
+  });
+
+  it("does not navigate out of a focused project-control agent", async () => {
+    const { handleAction } = await import("./session-launch.js");
+    const { getScopedSessionEntries } = await import("./session-launch.js");
+    const host = {
+      sessions: [{ id: "codex-1" }, { id: "claude-scribe", team: { role: "scribe" } }, { id: "claude-2" }],
+      activeIndex: 1,
+      focusSession: vi.fn(),
+      getScopedSessionEntries() {
+        return getScopedSessionEntries(this as any);
+      },
+    };
+
+    handleAction(host as any, { type: "next" });
+    handleAction(host as any, { type: "prev" });
+
+    expect(host.focusSession).not.toHaveBeenCalled();
   });
 });
 

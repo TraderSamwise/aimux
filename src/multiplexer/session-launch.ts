@@ -1457,7 +1457,15 @@ export function getSessionsByWorktree(host: SessionLaunchHost): Map<string | und
 }
 
 export function getScopedSessionEntries(host: SessionLaunchHost): Array<{ session: any; index: number }> {
-  return host.sessions.map((session: any, index: number) => ({ session, index }));
+  return host.sessions
+    .map((session: any, index: number) => ({ session, index }))
+    .filter(({ session }: { session: any }) => !isProjectControlSession(session));
+}
+
+function activeHumanSessionId(host: SessionLaunchHost): string | undefined {
+  const session = host.sessions?.[host.activeIndex];
+  if (!session || isProjectControlSession(session)) return undefined;
+  return session.id;
 }
 
 function markFocusedSession(host: SessionLaunchHost, index: number, sessionId: string): void {
@@ -1573,7 +1581,7 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
       break;
     case "work-outline":
       host.openTmuxDashboardTarget();
-      host.showWorkOutlineOverlay?.(host.sessions?.[host.activeIndex]?.id);
+      host.showWorkOutlineOverlay?.(activeHumanSessionId(host));
       break;
     case "review":
       void host.handleReviewRequest();
