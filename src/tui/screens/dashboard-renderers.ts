@@ -500,8 +500,17 @@ export function renderDashboardFrame(
 
   const indexCell = (digit?: number): string => (digit ? style(`[${digit}]`, "muted") : "");
 
+  const agentIdentity = (session: DashboardSession): string => {
+    const label = session.label ?? session.command;
+    const id = session.id?.trim();
+    const prefix = `${session.command}-`;
+    const shortId = id?.startsWith(prefix) ? id.slice(prefix.length) : id;
+    const suffix = shortId && shortId !== label ? ` ${style(`(${shortId})`, "muted")}` : "";
+    return `${style(label, "strong")}${suffix}`;
+  };
+
   const agentRow = (session: DashboardSession, selected: boolean, digit?: number): string => {
-    const identity = style(session.id || session.label || session.command, "strong");
+    const identity = agentIdentity(session);
     const grid = gridCols([
       { content: selected ? `${style("▸", "accent")} ` : "  ", width: COL_SELECT },
       { content: `${sessionStatusDot(session)} `, width: COL_DOT },

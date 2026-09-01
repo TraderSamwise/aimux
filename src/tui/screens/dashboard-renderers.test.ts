@@ -297,11 +297,11 @@ describe("renderDashboardFrame worktree progress", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({
         navLevel: "sessions",
-        selectedSessionId: "claude-1",
+        selectedSessionId: "claude-0i6o04",
         sessions: [
           {
             index: 0,
-            id: "claude-1",
+            id: "claude-0i6o04",
             command: "claude",
             status: "running",
             active: true,
@@ -315,7 +315,7 @@ describe("renderDashboardFrame worktree progress", () => {
           },
           {
             index: 1,
-            id: "codex-1",
+            id: "codex-zr6mbk",
             command: "codex",
             status: "running",
             active: false,
@@ -357,10 +357,11 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(plain).toContain("WORKING");
     expect(plain).toContain("Ready");
     expect(plain).toContain("1 unread");
-    expect(plain).toContain("claude-1");
-    expect(plain).toContain("codex-1");
+    expect(plain).toContain("claude (0i6o04)");
+    expect(plain).toContain("codex (zr6mbk)");
     expect(plain).not.toContain("claude coder");
     expect(plain).not.toContain("codex coder");
+    expect(frame).toContain("\x1b[2m(0i6o04)\x1b[0m");
     expect(frame).toContain("\x1b[1;33;7m NEEDS INPUT \x1b[0m");
     expect(frame).toContain("\x1b[36;7m WORKING \x1b[0m");
   });
@@ -933,7 +934,7 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(titleIdx).toBeGreaterThanOrEqual(0);
     // The focused card's third agent and bottom border must both be visible.
     const after = left.slice(titleIdx).join("\n");
-    expect(after).toMatch(/\[3\]\s+s11_0/);
+    expect(after).toMatch(/\[3\]\s+claude \(s11_0\)/);
     expect(after).toContain("╰");
   });
 
