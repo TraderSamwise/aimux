@@ -1349,6 +1349,19 @@ export const dashboardInteractionMethods = {
       return;
     }
     if (key === "x") {
+      const liveScribe = dashboardScribeEntries(this).find(isLiveDashboardControlSession);
+      if (!liveScribe) {
+        this.footerFlash = "No running scribe";
+        this.footerFlashTicks = 2;
+        this.renderWorkOutlineOverlay();
+        return;
+      }
+      const runtimeSession = this.sessions?.find((session: DashboardSession) => session.id === liveScribe.id);
+      this.stopSessionToOfflineWithFeedback(runtimeSession ?? liveScribe);
+      this.renderWorkOutlineOverlay();
+      return;
+    }
+    if (key === "d") {
       const scribe = dashboardScribeEntries(this)[0];
       if (!scribe) {
         this.footerFlash = "No scribe configured";
@@ -1364,7 +1377,7 @@ export const dashboardInteractionMethods = {
         .then(() => refreshDashboardModelThroughApi(this, { force: true, lifecycle }))
         .then(() => {
           if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
-          this.footerFlash = `${dashboardSessionLabel(scribe)} cleared as scribe`;
+          this.footerFlash = `${dashboardSessionLabel(scribe)} unset as scribe`;
           this.footerFlashTicks = 2;
           this.renderWorkOutlineOverlay();
         })

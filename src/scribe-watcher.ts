@@ -71,16 +71,33 @@ function readyScribeExists(
   metadata: MetadataState,
   scribeId: string | undefined,
 ): scribeId is string {
-  if (!scribeId) return false;
-  return sessions.some((session) => {
-    if (session.id !== scribeId) return false;
-    if (session.status === "offline" || session.status === "graveyard" || session.status === "starting") return false;
-    const meta = metadata.sessions[scribeId];
-    const activity = meta?.derived?.activity;
-    if (activity !== "idle" && activity !== "done") return false;
-    const attention = meta?.derived?.attention ?? "normal";
-    return attention === "normal";
-  });
+  return scribeReadiness(sessions, metadata, scribeId).ready;
+}
+
+function scribeReadiness(
+  sessions: ScribeWatcherSession[],
+  metadata: MetadataState,
+  scribeId: string | undefined,
+):
+  | { ready: true; scribeId: string }
+  | { ready: false; reason: string; scribeId?: string; status?: string; activity?: string; attention?: string } {
+  if (!scribeId) return { ready: false, reason: "no-scribe" };
+  const session = sessions.find((entry) => entry.id === scribeId);
+  if (!session) return { ready: false, reason: "missing-session", scribeId };
+  const status = session.status ?? "running";
+  if (status === "offline" || status === "graveyard" || status === "starting") {
+    return { ready: false, reason: "lifecycle", scribeId, status };
+  }
+  const meta = metadata.sessions[scribeId];
+  const activity = meta?.derived?.activity;
+  if (activity !== "idle" && activity !== "done") {
+    return { ready: false, reason: "activity", scribeId, status, activity };
+  }
+  const attention = meta?.derived?.attention ?? "normal";
+  if (attention !== "normal") {
+    return { ready: false, reason: "attention", scribeId, status, activity, attention };
+  }
+  return { ready: true, scribeId };
 }
 
 export function findScribeCandidates(
@@ -157,6 +174,11 @@ export class ScribeWatcher {
     this.stopped = false;
     this.timer = setInterval(() => void this.scan(), this.deps.scanIntervalMs ?? SCRIBE_WATCHER_SCAN_INTERVAL_MS);
     (this.timer as { unref?: () => void }).unref?.();
+    log.info("scribe watcher started", "scribe", {
+      scanIntervalMs: this.deps.scanIntervalMs ?? SCRIBE_WATCHER_SCAN_INTERVAL_MS,
+      cooldownMs: this.deps.cooldownMs ?? SCRIBE_WATCHER_COOLDOWN_MS,
+    });
+    void this.scan();
   }
 
   stop(): void {
@@ -187,20 +209,39 @@ export class ScribeWatcher {
       const metadata = this.deps.loadMetadata();
       const scribeId = findScribeSessionId(metadata);
       const sessions = this.deps.loadSessions();
-      if (!readyScribeExists(sessions, metadata, scribeId)) return;
+      const readiness = scribeReadiness(sessions, metadata, scribeId);
+      if (!readiness.ready) {
+        log.debug("scribe watcher scan skipped", "scribe", readiness);
+        return;
+      }
+      const readyScribeId = readiness.scribeId;
 
       const now = (this.deps.now ?? Date.now)();
       const cooldownMs = this.deps.cooldownMs ?? SCRIBE_WATCHER_COOLDOWN_MS;
-      if (this.lastBriefingAt > 0 && now - this.lastBriefingAt < cooldownMs) return;
+      if (this.lastBriefingAt > 0 && now - this.lastBriefingAt < cooldownMs) {
+        log.debug("scribe watcher scan skipped", "scribe", {
+          reason: "cooldown",
+          scribeId: readyScribeId,
+          remainingMs: cooldownMs - (now - this.lastBriefingAt),
+        });
+        return;
+      }
 
       const candidates = findScribeCandidates(
         sessions,
         metadata,
-        scribeId,
+        readyScribeId,
         this.deps.maxScanCandidates ?? SCRIBE_WATCHER_MAX_SCAN_CANDIDATES,
       );
-      this.pruneSeenFingerprints(new Set([scribeId, ...candidates.map((candidate) => candidate.id)]));
-      if (candidates.length === 0) return;
+      this.pruneSeenFingerprints(new Set([readyScribeId, ...candidates.map((candidate) => candidate.id)]));
+      if (candidates.length === 0) {
+        log.debug("scribe watcher scan skipped", "scribe", {
+          reason: "no-candidates",
+          scribeId: readyScribeId,
+          sessionCount: sessions.length,
+        });
+        return;
+      }
 
       const briefingCandidates: ScribeBriefingCandidate[] = [];
       let readCount = 0;
@@ -244,7 +285,7 @@ export class ScribeWatcher {
       if (briefingCandidates.length === 0) {
         log.debug("scribe watcher scan skipped", "scribe", {
           reason: "unchanged-or-empty",
-          scribeId,
+          scribeId: readyScribeId,
           candidateCount: candidates.length,
           readCount,
           skippedUnchanged,
@@ -254,7 +295,7 @@ export class ScribeWatcher {
       }
 
       if (this.stopped) return;
-      await this.deps.sendAgentInput(scribeId, buildScribeBriefing(briefingCandidates));
+      await this.deps.sendAgentInput(readyScribeId, buildScribeBriefing(briefingCandidates));
       if (this.stopped) return;
       this.lastBriefingAt = now;
       for (const candidate of briefingCandidates) {
@@ -268,7 +309,7 @@ export class ScribeWatcher {
         );
       }
       log.info("scribe watcher delivered briefing", "scribe", {
-        scribeId,
+        scribeId: readyScribeId,
         candidateCount: briefingCandidates.length,
         sessionIds: briefingCandidates.map((candidate) => candidate.id),
         readCount,

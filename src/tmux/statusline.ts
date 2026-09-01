@@ -22,6 +22,7 @@ import {
   resolveExactCurrentSessionId,
   resolveExactSessionMetadata,
   resolveFocusedOverseer,
+  resolveFocusedScribe,
   resolveFocusedTeammateGroup,
   resolveFocusedTeammate,
   resolveScopedSessions,
@@ -292,6 +293,12 @@ function renderOverseerSegment(session: NonNullable<ReturnType<typeof resolveFoc
   return detail ? `${tmuxStyle("overseer", "work")}  ${detail}` : tmuxStyle("overseer", "work");
 }
 
+function renderScribeSegment(session: NonNullable<ReturnType<typeof resolveFocusedScribe>>): string {
+  const hint = renderSessionCompactHint(session) ?? session.semantic?.presentation.statusLabel ?? session.status;
+  const detail = trim([compactSessionTitle(session), hint].filter(Boolean).join(" "), 28);
+  return detail ? `${tmuxStyle("scribe", "work")}  ${detail}` : tmuxStyle("scribe", "work");
+}
+
 function visibleSegmentLength(segment: string): number {
   return segment.replace(/#\[[^\]]*]/g, "").length;
 }
@@ -331,14 +338,20 @@ function renderBottomLine(
   const focusedOverseer = focusedTeammate
     ? null
     : resolveFocusedOverseer(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
+  const focusedScribe =
+    focusedTeammate || focusedOverseer
+      ? null
+      : resolveFocusedScribe(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const teammateChips = focusedTeammate
     ? resolveFocusedTeammateGroup(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath)
     : [];
   const chips = focusedOverseer
     ? [focusedOverseer]
-    : focusedTeammate
-      ? teammateChips
-      : resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
+    : focusedScribe
+      ? [focusedScribe]
+      : focusedTeammate
+        ? teammateChips
+        : resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const headline = renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const teammateSegment = focusedTeammate
     ? tmuxStyle("team plane", "work")
@@ -361,7 +374,9 @@ function renderBottomLine(
   let used = 0;
   const renderedChips = focusedOverseer
     ? chips.map((session) => renderOverseerSegment(session as NonNullable<ReturnType<typeof resolveFocusedOverseer>>))
-    : chips.map(focusedTeammate ? renderTeammateChip : renderSessionChip);
+    : focusedScribe
+      ? chips.map((session) => renderScribeSegment(session as NonNullable<ReturnType<typeof resolveFocusedScribe>>))
+      : chips.map(focusedTeammate ? renderTeammateChip : renderSessionChip);
   for (const chip of renderedChips) {
     const next = visibleSegmentLength(chip) + (chosenChips.length > 0 ? chipSeparator.length : 0);
     if (used + next > maxWidth) break;

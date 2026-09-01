@@ -112,6 +112,33 @@ describe("buildScribeBriefing", () => {
 });
 
 describe("ScribeWatcher", () => {
+  it("scans immediately when started", async () => {
+    const readAgentOutput = vi.fn(async () => "agent finished setup");
+    const sendAgentInput = vi.fn(async () => undefined);
+    const watcher = new ScribeWatcher({
+      loadSessions: () => [makeSession("scribe"), makeSession("agent-1")],
+      loadMetadata: () =>
+        metadata({
+          scribe: {
+            scribe: true,
+            derived: { activity: "idle", attention: "normal" },
+            updatedAt: "2026-08-30T00:00:00.000Z",
+          },
+          "agent-1": { derived: { activity: "done", attention: "normal" }, updatedAt: "2026-08-30T00:00:00.000Z" },
+        } as any),
+      readAgentOutput,
+      sendAgentInput,
+      scanIntervalMs: 60_000,
+      now: () => 10_000,
+    });
+
+    watcher.start();
+    await vi.waitFor(() => expect(sendAgentInput).toHaveBeenCalledTimes(1));
+    watcher.stop();
+
+    expect(readAgentOutput).toHaveBeenCalledWith("agent-1", SCRIBE_WATCHER_OUTPUT_START_LINE);
+  });
+
   it("does nothing without a live scribe", async () => {
     const readAgentOutput = vi.fn();
     const sendAgentInput = vi.fn();

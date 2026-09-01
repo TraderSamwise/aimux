@@ -400,7 +400,8 @@ export function buildWorkOutlineOverlayOutput(ctx: any, cols: number, rows: numb
       ["Enter", liveScribe ? "focus scribe" : "start scribe"],
       ["↑↓/jk", "scroll"],
       ["r", "reload"],
-      ...(scribe ? ([["x", "clear scribe"]] as [string, string][]) : []),
+      ...(liveScribe ? ([["x", "stop scribe"]] as [string, string][]) : []),
+      ...(scribe ? ([["d", "unset scribe"]] as [string, string][]) : []),
       ["Esc/q", "back"],
     ]),
   ];

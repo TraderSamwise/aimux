@@ -348,6 +348,50 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).not.toContain("coder(coder)");
   });
 
+  it("renders the active scribe with an explicit footer classification", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "coder",
+            tool: "codex",
+            label: "coder",
+            windowName: "codex",
+            tmuxWindowId: "@1",
+            role: "coder",
+            status: "running",
+            worktreePath: repoRoot,
+          },
+          {
+            id: "scribe",
+            tool: "claude",
+            label: "claude-scribe",
+            windowName: "claude",
+            tmuxWindowId: "@2",
+            role: "coder",
+            status: "idle",
+            worktreePath: repoRoot,
+            scribe: true,
+          },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@2",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+    expect(rendered).toContain("scribe");
+    expect(rendered).toContain("claude(coder) idle");
+    expect(rendered).not.toContain("coder(coder)");
+  });
+
   it("renders plugin-provided statusline segments for the active session", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(

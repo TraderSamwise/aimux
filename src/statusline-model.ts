@@ -370,6 +370,35 @@ export function resolveFocusedOverseer(
   };
 }
 
+export function resolveFocusedScribe(
+  data: StatuslineData,
+  projectRoot: string,
+  currentSession?: string,
+  currentWindow?: string,
+  currentWindowId?: string,
+  currentPath?: string,
+): ResolvedStatuslineSession | null {
+  const exactCurrentSessionId = resolveExactCurrentSessionId(
+    data,
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+    projectRoot,
+  );
+  if (!exactCurrentSessionId) return null;
+  const scribe = (data.sessions ?? []).find((session) => session.id === exactCurrentSessionId && session.scribe);
+  if (!scribe || scribe.status === "offline" || scribe.status === "exited") return null;
+  const resolvedMetadata = data.metadata?.[scribe.id];
+  return {
+    ...scribe,
+    derived: resolvedMetadata?.derived,
+    semantic: scribe.semantic,
+    metadata: resolvedMetadata,
+    isCurrent: true,
+  };
+}
+
 export function resolveFocusedTeammate(
   data: StatuslineData,
   projectRoot: string,

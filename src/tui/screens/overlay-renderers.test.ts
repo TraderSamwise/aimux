@@ -139,7 +139,8 @@ describe("buildWorkOutlineOverlayOutput", () => {
 
     expect(output).toContain("Scribe: claude ready");
     expect(output).toContain("Enter  focus scribe");
-    expect(output).toContain("x  clear scribe");
+    expect(output).toContain("x  stop scribe");
+    expect(output).toContain("d  unset scribe");
   });
 
   it("renders scoped outline entries with bounded omitted counts", () => {

@@ -2513,7 +2513,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showToolPicker).toHaveBeenCalledWith(undefined, { scribe: true });
   });
 
-  it("clears scribe assignment from the work outline overlay through the project API", async () => {
+  it("unsets scribe assignment from the work outline overlay through the project API", async () => {
     dashboardApiClientMock.mutateDashboardApi.mockResolvedValue({
       ok: true,
       sessionId: "claude-scribe",
@@ -2531,10 +2531,10 @@ describe("dashboardInteractionMethods", () => {
       renderWorkOutlineOverlay: vi.fn(),
     };
 
-    dashboardInteractionMethods.handleWorkOutlineOverlayKey.call(host, Buffer.from("x"));
+    dashboardInteractionMethods.handleWorkOutlineOverlayKey.call(host, Buffer.from("d"));
 
     await vi.waitFor(() => {
-      expect(host.footerFlash).toBe("claude cleared as scribe");
+      expect(host.footerFlash).toBe("claude unset as scribe");
     });
     expect(dashboardApiClientMock.mutateDashboardApi).toHaveBeenCalledWith(host, "/agents/scribe", {
       sessionId: "claude-scribe",
@@ -2544,7 +2544,22 @@ describe("dashboardInteractionMethods", () => {
       force: true,
       lifecycle: expect.anything(),
     });
-    expect(host.footerFlash).toBe("claude cleared as scribe");
+    expect(host.footerFlash).toBe("claude unset as scribe");
+    expect(host.renderWorkOutlineOverlay).toHaveBeenCalledOnce();
+  });
+
+  it("stops the live scribe from the work outline overlay", () => {
+    const scribe = { id: "claude-scribe", command: "claude", status: "working", scribe: true };
+    const host: any = {
+      dashboard: { viewModel: { scribeSessions: [scribe] } },
+      sessions: [],
+      stopSessionToOfflineWithFeedback: vi.fn(),
+      renderWorkOutlineOverlay: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleWorkOutlineOverlayKey.call(host, Buffer.from("x"));
+
+    expect(host.stopSessionToOfflineWithFeedback).toHaveBeenCalledWith(scribe);
     expect(host.renderWorkOutlineOverlay).toHaveBeenCalledOnce();
   });
 
