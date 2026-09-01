@@ -270,6 +270,29 @@ describe("ScribeWatcher", () => {
     expect(sendAgentInput).not.toHaveBeenCalled();
   });
 
+  it("allows a live scribe before derived activity has been parsed", async () => {
+    const readAgentOutput = vi.fn(async () => "agent finished docs");
+    const sendAgentInput = vi.fn(async () => undefined);
+    const watcher = new ScribeWatcher({
+      loadSessions: () => [makeSession("scribe"), makeSession("agent-1")],
+      loadMetadata: () =>
+        metadata({
+          scribe: {
+            scribe: true,
+            updatedAt: "2026-08-30T00:00:00.000Z",
+          },
+          "agent-1": { derived: { activity: "done", attention: "normal" }, updatedAt: "2026-08-30T00:00:00.000Z" },
+        } as any),
+      readAgentOutput,
+      sendAgentInput,
+    });
+
+    await watcher.scan();
+
+    expect(readAgentOutput).toHaveBeenCalledWith("agent-1", SCRIBE_WATCHER_OUTPUT_START_LINE);
+    expect(sendAgentInput).toHaveBeenCalledTimes(1);
+  });
+
   it("continues past unchanged early candidates before applying delivery cap", async () => {
     let now = 10_000;
     const sessions = [

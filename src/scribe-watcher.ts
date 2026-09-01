@@ -90,7 +90,7 @@ function scribeReadiness(
   }
   const meta = metadata.sessions[scribeId];
   const activity = meta?.derived?.activity;
-  if (activity !== "idle" && activity !== "done") {
+  if (activity && activity !== "idle" && activity !== "done") {
     return { ready: false, reason: "activity", scribeId, status, activity };
   }
   const attention = meta?.derived?.attention ?? "normal";
