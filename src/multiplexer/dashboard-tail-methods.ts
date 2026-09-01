@@ -400,6 +400,21 @@ function setQueuedSessionStartingAction(host: Multiplexer, input: ScheduledSessi
   if (typeof pendingActions?.setSessionAction !== "function") return;
   input.pendingActionToken = pendingActions.setSessionAction(input.sessionId, "starting", {
     timeoutMs: QUEUED_SESSION_PENDING_TIMEOUT_MS,
+    sessionSeed: {
+      index: -1,
+      id: input.sessionId,
+      command: input.command,
+      toolConfigKey: input.toolConfigKey,
+      label: input.label,
+      status: "waiting",
+      active: false,
+      worktreePath: input.targetWorktreePath,
+      team: input.team,
+      overseer: input.overseer,
+      scribe: input.scribe,
+      pendingAction: "starting",
+      optimistic: true,
+    },
   });
 }
 

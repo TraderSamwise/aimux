@@ -22,7 +22,13 @@ import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { isNotificationStale } from "../coordination-model.js";
 import type { SessionTeamMetadata } from "../team.js";
-import { isTeammateSession, isProjectControlSession, selectDirectTeammates } from "../team.js";
+import {
+  isOverseerSession,
+  isScribeSession,
+  isTeammateSession,
+  isProjectControlSession,
+  selectDirectTeammates,
+} from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { isDashboardWindowName, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
@@ -933,6 +939,8 @@ export function computeDashboardSessions(
       pendingStartedAt: session.pendingStartedAt,
       pending: Boolean(pendingAction) || session.pending,
       optimistic: Boolean(pendingAction) || session.optimistic,
+      overseer: session.overseer,
+      scribe: session.scribe,
     };
   });
   const sessions = buildDashboardSessions({
@@ -971,6 +979,8 @@ export function computeDashboardSessions(
     const notifications = notificationsBySessionId.get(session.id);
     const sessionMetadata = metadata[session.id];
     const runtimeInfo = includeRuntimeInfo && target ? readTmuxProcessInfo(host, target) : {};
+    const overseer = sessionMetadata?.overseer ?? session.overseer ?? isOverseerSession(session);
+    const scribe = sessionMetadata?.scribe ?? session.scribe ?? isScribeSession(session);
     const semantic = deriveSessionSemantics({
       status,
       pendingAction,
@@ -1002,8 +1012,8 @@ export function computeDashboardSessions(
       previewLine: runtimeInfo.previewLine,
       loop: sessionMetadata?.loop,
       loopLastAction: sessionMetadata?.loopLastAction,
-      overseer: sessionMetadata?.overseer ?? false,
-      scribe: sessionMetadata?.scribe ?? session.scribe ?? false,
+      overseer,
+      scribe,
       threadUnreadCount: stats?.unread ?? 0,
       threadWaitingCount: stats?.waiting ?? 0,
       threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,

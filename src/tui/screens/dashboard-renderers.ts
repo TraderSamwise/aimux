@@ -391,6 +391,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     ["T", "task"],
     ["o", "thread"],
     ["O", "overseer"],
+    ["P", "outline"],
     ["R", "reply"],
   ];
   if (selectedSession && state.selectedTeammates.length > 0) talk.push(["e", "team"]);

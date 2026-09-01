@@ -1333,6 +1333,35 @@ describe("computeDashboardSessions thread stats", () => {
     }
   });
 
+  it("preserves project control flags without waiting on metadata", () => {
+    const host = minimalDashboardHost([
+      {
+        id: "claude-overseer",
+        command: "claude",
+        status: "running",
+        team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+      },
+      {
+        id: "claude-scribe",
+        command: "claude",
+        status: "running",
+        team: { teamId: "scribe", parentSessionId: "", role: "scribe" },
+      },
+      {
+        id: "claude-pending-overseer",
+        command: "claude",
+        status: "waiting",
+        overseer: true,
+      },
+    ] as any);
+
+    const sessions = computeDashboardSessions(host, { includeRuntimeInfo: false });
+
+    expect(sessions.find((entry) => entry.id === "claude-overseer")).toMatchObject({ overseer: true });
+    expect(sessions.find((entry) => entry.id === "claude-scribe")).toMatchObject({ scribe: true });
+    expect(sessions.find((entry) => entry.id === "claude-pending-overseer")).toMatchObject({ overseer: true });
+  });
+
   it("builds read-only exchange stats from one exchange snapshot", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-exchange-snapshot-"));
     try {

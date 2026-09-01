@@ -21,6 +21,8 @@ export interface DashboardLocalSession {
   pendingStartedAt?: string;
   pending?: boolean;
   optimistic?: boolean;
+  overseer?: boolean;
+  scribe?: boolean;
 }
 
 export interface DashboardSessionRegistryOptions {
@@ -95,6 +97,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       pendingStartedAt: session.pendingStartedAt,
       pending: session.pending,
       optimistic: session.optimistic,
+      overseer: session.overseer,
+      scribe: session.scribe,
       label: options.getSessionLabel(session.id),
       headline: options.getSessionHeadline(session.id),
       taskDescription: options.getSessionTaskDescription(session.id),
@@ -130,6 +134,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
 
     const worktreePath = normalizeWtPath(offline.worktreePath);
     if (worktreePath && hiddenWorktreePaths.has(worktreePath)) continue;
+    const offlineFlags = offline as typeof offline & Pick<DashboardSession, "overseer" | "scribe">;
     const worktreeInfo = resolveWorktreeInfo(worktreePath);
     const restorability = describeSessionRestorability({ ...offline, status: "offline" }, tools);
     dashSessions.push({
@@ -165,6 +170,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       services: options.getSessionDerived(offline.id)?.services,
       threadId: options.getSessionDerived(offline.id)?.threadId,
       threadName: options.getSessionDerived(offline.id)?.threadName,
+      overseer: offlineFlags.overseer,
+      scribe: offlineFlags.scribe,
     });
   }
 

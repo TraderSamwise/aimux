@@ -92,7 +92,7 @@ describe("buildDashboardFooterHints", () => {
   it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
-      new Set(["u", "Tab", "n", "v", "f", "D", "a", "s", "H", "T", "o", "O", "R", "?", "q"]),
+      new Set(["u", "Tab", "n", "v", "f", "D", "a", "s", "H", "T", "o", "O", "P", "R", "?", "q"]),
     );
     // worktree level
     expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
@@ -127,6 +127,7 @@ describe("buildDashboardFooterHints", () => {
         "T",
         "o",
         "O",
+        "P",
         "R",
         "e",
         "m",
@@ -155,6 +156,7 @@ describe("buildDashboardFooterHints", () => {
         "T",
         "o",
         "O",
+        "P",
         "R",
         "x",
         "r",
