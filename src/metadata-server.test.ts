@@ -5162,6 +5162,41 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("rejects direct previous-restore requests for ungated stale offers", async () => {
+    server?.stop();
+    withProjectPaths(repoRoot, () => {
+      writeJsonAtomic(join(getProjectStateDir(), "agent-restore-offer.json"), {
+        version: 1,
+        id: "restore-stale",
+        snapshotId: "snapshot-stale",
+        snapshotUpdatedAt: "2026-08-24T13:40:00.000Z",
+        source: "last-online",
+        createdAt: "2026-08-24T13:40:00.000Z",
+        updatedAt: "2026-08-24T13:40:00.000Z",
+        sessionIds: ["codex-stale"],
+        sessions: [{ id: "codex-stale", command: "codex" }],
+      });
+    });
+    const resumeAgent = vi.fn(({ sessionId }: { sessionId: string }) => ({ sessionId, status: "running" }));
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: { resumeAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}${PROJECT_API_ROUTES.agents.restorePrevious}`, { method: "POST" });
+    const body = (await res.json()) as { ok: boolean; accepted: boolean; total: number; offer: null };
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, accepted: false, total: 0, offer: null });
+    expect(readAgentRestoreOffer(repoRoot)).toBeNull();
+    expect(resumeAgent).not.toHaveBeenCalled();
+  });
+
   it("keeps failed previous-restore sessions in the retry offer", async () => {
     server?.stop();
     seedPreviousAgentRestoreOffer(

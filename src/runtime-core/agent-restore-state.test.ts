@@ -129,7 +129,12 @@ describe("agent restore state", () => {
     expect(offer?.sessionIds).toEqual(["claude-1", "codex-2"]);
     expect(offer?.worktreeGroups).toEqual([{ name: "Main Checkout", count: 2 }]);
     expect(readAgentRestoreOffer()?.sessionIds).toEqual(["claude-1", "codex-2"]);
-    expect(readAgentRestorePromptGate()?.askedAt).toBe("2026-08-22T01:02:00.000Z");
+    expect(readAgentRestorePromptGate()?.askedAt).toBeUndefined();
+    expect(reconcileAgentRestoreOfferWithRestorableSessions(offer, ["claude-1", "codex-2"])?.sessionIds).toEqual([
+      "claude-1",
+      "codex-2",
+    ]);
+    expect(readAgentRestorePromptGate()?.askedAt).toBeTruthy();
 
     acknowledgeAgentRestoreOffer();
 

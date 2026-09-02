@@ -77,6 +77,7 @@ import {
 } from "../runtime-core/topology-sessions.js";
 import { listTopologyWorktreeStates, type RuntimeTopologyWorktreeState } from "../runtime-core/topology-worktrees.js";
 import { shouldMarkFreshRelaunchAllowed } from "../session-fresh-relaunch.js";
+import { removeAgentRestoreOfferSessions, removeLastOnlineAgentSessions } from "../runtime-core/agent-restore-state.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
@@ -93,6 +94,11 @@ function isLiveTopologyStatus(status: RuntimeTopologySessionState["status"] | un
 function projectRootFor(host: Multiplexer): string {
   const projectRoot = typeof (host as any).projectRoot === "string" ? (host as any).projectRoot.trim() : "";
   return projectRoot || getRepoRoot();
+}
+
+function pruneRestoreEligibility(host: Multiplexer, sessionId: string, projectRoot = projectRootFor(host)): void {
+  removeLastOnlineAgentSessions([sessionId], { projectRoot });
+  removeAgentRestoreOfferSessions([sessionId], projectRoot);
 }
 
 function runtimeToTopologySessionState(host: Multiplexer, session: any): RuntimeTopologySessionState {
@@ -1056,6 +1062,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       cacheOfflineSession(this, offlineEntry);
       (this as any).stoppingSessionIds?.add?.(sessionId);
       (this as any).startedInDashboard = true;
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       forgetRuntimeSession(this, sessionId);
       scheduleRuntimeKill(this, runtime, sessionId);
       notifyLifecycleChange(this);
@@ -1076,6 +1083,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
         worktreePath: canceledQueuedCreate.targetWorktreePath,
         label: canceledQueuedCreate.label,
       });
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       log.info("agent lifecycle stop canceled queued create", "session", {
         sessionId,
         projectRoot,
@@ -1098,6 +1106,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       upsertTopologySession(offlineEntry, "offline", { projectRoot });
       cacheOfflineSession(this, offlineEntry);
       (this as any).stoppingSessionIds?.add?.(sessionId);
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       log.info("agent lifecycle stop marked running create", "session", {
         sessionId,
         projectRoot,
@@ -1107,6 +1116,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
     }
     if (existing?.status === "offline") {
       cacheOfflineSession(this, existing);
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       if (runningCreate) {
         (this as any).stoppingSessionIds?.add?.(sessionId);
         log.info("agent lifecycle stop marked offline running create", "session", {
@@ -1128,6 +1138,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       } else if (!canceled && runningCreate) {
         (this as any).stoppingSessionIds?.add?.(sessionId);
       }
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       log.info("agent lifecycle stop reconciled live topology", "session", {
         sessionId,
         projectRoot,
@@ -1166,6 +1177,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
     const previousStatus: "running" | "offline" =
       runtime || runningCreate || isLiveTopologyStatus(existing?.status) ? "running" : "offline";
     if (existing?.status === "graveyard") {
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       return { sessionId, status: "graveyard", previousStatus };
     }
     const canceledQueuedCreate = cancelQueuedSessionCreate(this, sessionId);
@@ -1190,6 +1202,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
         );
       }
       removeOfflineSessionCache(this, sessionId);
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       log.info("agent lifecycle graveyard canceled queued create", "session", {
         sessionId,
         projectRoot,
@@ -1205,6 +1218,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       removeOfflineSessionCache(this, sessionId);
       (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
       (this as any).stoppingSessionIds?.add?.(sessionId);
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       log.info("agent lifecycle graveyard marked running create", "session", {
         sessionId,
         projectRoot,
@@ -1222,6 +1236,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       removeOfflineSessionCache(this, sessionId);
       (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
       (this as any).stoppingSessionIds?.add?.(sessionId);
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       log.info("agent lifecycle graveyard marked offline running create", "session", {
         sessionId,
         projectRoot,
@@ -1249,6 +1264,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
         throw new Error(`Unable to graveyard session "${sessionId}"`);
       }
       removeOfflineSessionCache(this, sessionId);
+      pruneRestoreEligibility(this, sessionId, projectRoot);
       if (tmuxTarget) {
         (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
         (this as any).stoppingSessionIds?.add?.(sessionId);
@@ -1304,6 +1320,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       throw new Error(`Unable to graveyard session "${sessionId}"`);
     }
     removeOfflineSessionCache(this, sessionId);
+    pruneRestoreEligibility(this, sessionId, projectRoot);
     if (runtime) {
       (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
       (this as any).stoppingSessionIds?.add?.(sessionId);

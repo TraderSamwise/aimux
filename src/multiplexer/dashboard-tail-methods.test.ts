@@ -51,6 +51,7 @@ import { reconcileOrphanedTopologySessions } from "./runtime-state.js";
 import { listDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { initPaths } from "../paths.js";
+import { readLastOnlineAgentsSnapshot, recordLastOnlineAgents } from "../runtime-core/agent-restore-state.js";
 import {
   listTopologySessionStates,
   moveTopologySessionToGraveyard,
@@ -1059,6 +1060,13 @@ describe("dashboard lifecycle adapter", () => {
       updateContextWatcherSessions: vi.fn(),
       debug: vi.fn(),
     };
+    recordLastOnlineAgents(
+      [
+        { id: "codex-1", command: "codex" },
+        { id: "claude-keep", command: "claude" },
+      ],
+      { projectRoot: repoRoot, now: "2026-08-22T01:00:00.000Z" },
+    );
 
     await expect(dashboardTailMethods.stopAgent.call(host, "codex-1")).resolves.toEqual({
       sessionId: "codex-1",
@@ -1072,6 +1080,7 @@ describe("dashboard lifecycle adapter", () => {
     expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
     expect(runtime.kill).not.toHaveBeenCalled();
     expect(transport.exited).toBe(true);
+    expect(readLastOnlineAgentsSnapshot(repoRoot)?.sessionIds).toEqual(["claude-keep"]);
     transport.destroy();
   });
 
@@ -1186,6 +1195,13 @@ describe("dashboard lifecycle adapter", () => {
       updateContextWatcherSessions: vi.fn(),
       debug: vi.fn(),
     };
+    recordLastOnlineAgents(
+      [
+        { id: "codex-1", command: "codex" },
+        { id: "claude-keep", command: "claude" },
+      ],
+      { projectRoot: repoRoot, now: "2026-08-22T01:00:00.000Z" },
+    );
 
     await expect(dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-1")).resolves.toEqual({
       sessionId: "codex-1",
@@ -1195,6 +1211,7 @@ describe("dashboard lifecycle adapter", () => {
 
     expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([]);
     expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual(["codex-1"]);
+    expect(readLastOnlineAgentsSnapshot(repoRoot)?.sessionIds).toEqual(["claude-keep"]);
   });
 
   it("moves live agents to graveyard through topology before killing the live runtime", async () => {

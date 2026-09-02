@@ -532,7 +532,6 @@ export function deriveAgentRestoreOffer(
       worktreeGroups: buildWorktreeGroups(sessions),
     };
     writeJsonAtomic(offerPath(), offer);
-    markAgentRestorePromptGateAsked(projectRoot, { snapshotId: snapshot.id, now });
     return offer;
   };
   return input.projectRoot ? withProjectPaths(input.projectRoot, derive) : derive();
@@ -611,7 +610,10 @@ export function reconcileAgentRestoreOfferWithRestorableSessions(
     if (!offer) return null;
     const restorable = new Set(restorableSessionIds);
     const sessions = offer.sessions.filter((session) => restorable.has(session.id));
-    if (sessions.length === offer.sessions.length) return offer;
+    if (sessions.length === offer.sessions.length) {
+      markAgentRestorePromptGateAsked(projectRoot, { snapshotId: offer.snapshotId });
+      return offer;
+    }
     if (sessions.length === 0) {
       acknowledgeAgentRestoreOffer();
       return null;
@@ -624,6 +626,7 @@ export function reconcileAgentRestoreOfferWithRestorableSessions(
       worktreeGroups: buildWorktreeGroups(sessions),
     };
     writeJsonAtomic(offerPath(), updated);
+    markAgentRestorePromptGateAsked(projectRoot, { snapshotId: updated.snapshotId });
     return updated;
   };
   return projectRoot ? withProjectPaths(projectRoot, reconcile) : reconcile();

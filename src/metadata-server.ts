@@ -5325,7 +5325,7 @@ export class MetadataServer {
           existsSync(getRuntimeTopologyPath()),
         );
         const offlineInventory = topologyDesktopSessionList(["offline"]);
-        const rawOffer = readAgentRestoreOffer(this.currentProjectRoot());
+        const rawOffer = readDisplayableAgentRestoreOffer(this.currentProjectRoot());
         const offer = hasTopologyInventory
           ? reconcileAgentRestoreOfferWithRestorableSessions(
               rawOffer,
