@@ -2307,6 +2307,113 @@ describe("refreshDashboardModelFromService", () => {
     }
   });
 
+  it("offers restore when only project-control sessions are running", async () => {
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-repo-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      withProjectPaths(repoRoot, () => {
+        writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+          version: 1,
+          id: "snapshot-old",
+          writerInstanceId: "previous-process",
+          createdAt: "2026-08-25T01:00:00.000Z",
+          updatedAt: "2026-08-25T01:00:00.000Z",
+          sessionIds: ["codex-offline"],
+          sessions: [{ id: "codex-offline", command: "codex", label: "codex(coder)", worktreePath: repoRoot }],
+        });
+      });
+
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-scribe", command: "claude", status: "running", scribe: true } as any]),
+        projectRoot: repoRoot,
+        offlineSessions: [
+          {
+            id: "codex-offline",
+            command: "codex",
+            toolConfigKey: "codex",
+            label: "codex(coder)",
+            backendSessionId: "codex-backend-1",
+            restoreState: "ready",
+            status: "offline",
+            worktreePath: repoRoot,
+          },
+        ],
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology: vi.fn(),
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.agentRestoreOffer?.sessionIds).toEqual(["codex-offline"]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(aimuxHome, { recursive: true, force: true });
+      if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = previousAimuxHome;
+    }
+  });
+
+  it("offers restore for offline snapshot agents when some snapshot agents are already live", async () => {
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-repo-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      withProjectPaths(repoRoot, () => {
+        writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+          version: 1,
+          id: "snapshot-old",
+          writerInstanceId: "previous-process",
+          createdAt: "2026-08-25T01:00:00.000Z",
+          updatedAt: "2026-08-25T01:00:00.000Z",
+          sessionIds: ["codex-live", "codex-offline"],
+          sessions: [
+            { id: "codex-live", command: "codex", label: "codex(live)", worktreePath: repoRoot },
+            { id: "codex-offline", command: "codex", label: "codex(offline)", worktreePath: repoRoot },
+          ],
+        });
+      });
+
+      const host = {
+        ...minimalDashboardHost([{ id: "codex-live", command: "codex", status: "running" }]),
+        projectRoot: repoRoot,
+        offlineSessions: [
+          {
+            id: "codex-offline",
+            command: "codex",
+            toolConfigKey: "codex",
+            label: "codex(offline)",
+            backendSessionId: "codex-backend-1",
+            restoreState: "ready",
+            status: "offline",
+            worktreePath: repoRoot,
+          },
+        ],
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology: vi.fn(),
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.agentRestoreOffer?.sessionIds).toEqual(["codex-offline"]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(aimuxHome, { recursive: true, force: true });
+      if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = previousAimuxHome;
+    }
+  });
+
   it("does not offer inventory restore while any agent is running", async () => {
     const previousAimuxHome = process.env.AIMUX_HOME;
     const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));

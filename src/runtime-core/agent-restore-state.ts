@@ -292,17 +292,28 @@ export function deriveAgentRestoreOffer(
 ): AgentRestoreOffer | null {
   const derive = () => {
     const liveIds = new Set(liveSessionIds);
-    if (liveIds.size > 0) {
-      rmSync(offerPath(), { force: true });
-      return null;
-    }
+    const now = input.now ?? new Date().toISOString();
     const existing = readAgentRestoreOffer();
     const snapshot = readLastOnlineAgentsSnapshot();
     if (
       existing &&
       (!snapshot || snapshot.id === existing.snapshotId || snapshot.writerInstanceId === WRITER_INSTANCE_ID)
     ) {
-      return existing;
+      const sessions = existing.sessions.filter((session) => !liveIds.has(session.id));
+      if (sessions.length === 0) {
+        rmSync(offerPath(), { force: true });
+        return null;
+      }
+      if (sessions.length === existing.sessions.length) return existing;
+      const updated: AgentRestoreOffer = {
+        ...existing,
+        updatedAt: now,
+        sessionIds: sessions.map((session) => session.id),
+        sessions,
+        worktreeGroups: buildWorktreeGroups(sessions),
+      };
+      writeJsonAtomic(offerPath(), updated);
+      return updated;
     }
     if (!snapshot || snapshot.writerInstanceId === WRITER_INSTANCE_ID) return null;
 
@@ -318,7 +329,6 @@ export function deriveAgentRestoreOffer(
       return null;
     }
 
-    const now = input.now ?? new Date().toISOString();
     const offer: AgentRestoreOffer = {
       version: 1,
       id: `restore-${snapshot.id}`,

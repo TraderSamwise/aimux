@@ -51,9 +51,14 @@ export function isScribeSession(session: { team?: SessionTeamMetadata; scribe?: 
 }
 
 export function isProjectControlSession(
-  session: { team?: SessionTeamMetadata; overseer?: boolean; scribe?: boolean } | undefined,
+  session: { team?: SessionTeamMetadata; overseer?: boolean; scribe?: boolean; projectControl?: boolean } | undefined,
 ): boolean {
-  return session?.overseer === true || isOverseerSession(session) || isScribeSession(session);
+  return (
+    session?.projectControl === true ||
+    session?.overseer === true ||
+    isOverseerSession(session) ||
+    isScribeSession(session)
+  );
 }
 
 export function compareTeammateSessions(

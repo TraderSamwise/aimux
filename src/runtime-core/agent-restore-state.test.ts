@@ -84,7 +84,7 @@ describe("agent restore state", () => {
     expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:03:00.000Z" })).toBeNull();
   });
 
-  it("does not create a previous-writer offer while any agent is live", () => {
+  it("creates a previous-writer offer for only the offline subset when some agents are already live", () => {
     writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
       version: 1,
       id: "snapshot-old",
@@ -96,6 +96,23 @@ describe("agent restore state", () => {
         { id: "claude-1", command: "claude", label: "claude(coder)" },
         { id: "codex-2", command: "codex", label: "codex(coder)" },
       ],
+    });
+
+    const offer = deriveAgentRestoreOffer(["claude-1"], { now: "2026-08-22T01:02:00.000Z" });
+
+    expect(offer?.sessionIds).toEqual(["codex-2"]);
+    expect(readAgentRestoreOffer()?.sessionIds).toEqual(["codex-2"]);
+  });
+
+  it("clears a previous-writer offer when all snapshot agents are already live", () => {
+    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+      version: 1,
+      id: "snapshot-old",
+      writerInstanceId: "previous-process",
+      createdAt: "2026-08-22T01:00:00.000Z",
+      updatedAt: "2026-08-22T01:00:00.000Z",
+      sessionIds: ["claude-1"],
+      sessions: [{ id: "claude-1", command: "claude", label: "claude(coder)" }],
     });
 
     expect(deriveAgentRestoreOffer(["claude-1"], { now: "2026-08-22T01:02:00.000Z" })).toBeNull();

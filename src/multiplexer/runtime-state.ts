@@ -22,10 +22,12 @@ import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
 import {
   agentRestoreSessionKey,
+  deriveAgentRestoreOffer,
   recordLastOnlineAgents,
   removeAgentRestoreOfferSessions,
   type AgentRestoreSession,
 } from "../runtime-core/agent-restore-state.js";
+import { isProjectControlSession } from "../team.js";
 import { shouldMarkFreshRelaunchAllowed, shouldRelaunchFreshSession } from "../session-fresh-relaunch.js";
 import {
   captureDashboardLifecycle,
@@ -158,8 +160,23 @@ function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
 }
 
 function onlineSessionsForRestore(host: RuntimeStateHost): AgentRestoreSession[] {
+  let metadata: ReturnType<typeof loadMetadataState> | undefined;
+  try {
+    metadata = loadMetadataState();
+  } catch {
+    metadata = undefined;
+  }
   return (host.sessions ?? [])
     .filter((session: any) => !session.exited && session.status !== "offline" && session.status !== "exited")
+    .filter((session: any) => {
+      const sessionMetadata = metadata?.sessions?.[session.id];
+      return !isProjectControlSession({
+        ...session,
+        overseer: session.overseer ?? sessionMetadata?.overseer,
+        scribe: session.scribe ?? sessionMetadata?.scribe,
+        projectControl: session.projectControl,
+      });
+    })
     .map((session: any) => ({
       id: session.id,
       tool: host.sessionToolKeys?.get?.(session.id),
@@ -172,15 +189,21 @@ function onlineSessionsForRestore(host: RuntimeStateHost): AgentRestoreSession[]
 
 function recordOnlineAgentsForRestore(host: RuntimeStateHost): void {
   const sessions = onlineSessionsForRestore(host);
-  const key = agentRestoreSessionKey(sessions);
-  if ((host as any).lastOnlineAgentRestoreSnapshotKey === key) return;
-  if (sessions.length === 0 && (host as any).lastOnlineAgentRestoreSnapshotKey === undefined) {
-    return;
-  }
   let projectRoot: string;
   try {
     projectRoot = projectRootFor(host);
   } catch {
+    return;
+  }
+  const pendingOffer = deriveAgentRestoreOffer(
+    sessions.map((session) => session.id),
+    { projectRoot },
+  );
+  if (pendingOffer) return;
+
+  const key = agentRestoreSessionKey(sessions);
+  if ((host as any).lastOnlineAgentRestoreSnapshotKey === key) return;
+  if (sessions.length === 0 && (host as any).lastOnlineAgentRestoreSnapshotKey === undefined) {
     return;
   }
   recordLastOnlineAgents(sessions, { projectRoot });

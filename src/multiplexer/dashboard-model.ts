@@ -1235,6 +1235,7 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
       ...new Map([...sessions, ...teammates].map((session) => [session.id, session])).values(),
     ]
       .filter((session) => !isDashboardSessionOffline(session))
+      .filter((session) => !isProjectControlSession(session))
       .map((session): AgentRestoreSession => {
         return {
           id: session.id,
@@ -1259,7 +1260,7 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
     );
     const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
     const shouldRecordRestoreSnapshot =
-      onlineRestoreSessions.length > 0 || ((host as any).lastOnlineAgentRestoreSnapshotKey !== undefined && !offer);
+      !offer && (onlineRestoreSessions.length > 0 || (host as any).lastOnlineAgentRestoreSnapshotKey !== undefined);
     if (shouldRecordRestoreSnapshot && (host as any).lastOnlineAgentRestoreSnapshotKey !== restoreSnapshotKey) {
       recordLastOnlineAgents(onlineRestoreSessions, { projectRoot });
       (host as any).lastOnlineAgentRestoreSnapshotKey = restoreSnapshotKey;
