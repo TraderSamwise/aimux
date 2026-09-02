@@ -47,6 +47,10 @@ When changing dashboard or app behavior, preserve that boundary:
 
 - Use `src/multiplexer/dashboard-control.ts` helpers for TUI reads and
   mutations that affect shared project state.
+- Classify project-control sessions such as overseer and scribe through
+  `src/team.ts` helpers, especially `isProjectControlSession`. Tmux-only code
+  should consume emitted `projectControl` metadata and keep local role fallbacks
+  only for existing windows created by older builds.
 - Keep response contracts aligned with `src/project-api-contract.ts` and
   app wrappers in `app/lib/api.ts`.
 - Do not add direct dashboard writes to runtime-exchange, notification stores,

@@ -924,6 +924,24 @@ def is_same_or_child_path(path, parent):
     parent = parent.rstrip("/")
     return path == parent or path.startswith(parent + "/")
 
+def control_role(team):
+    if not isinstance(team, dict):
+        return ""
+    role = team.get("role")
+    return role if isinstance(role, str) else ""
+
+def is_project_control_meta(meta, team):
+    explicit = meta.get("projectControl")
+    if isinstance(explicit, bool):
+        return explicit
+    role = control_role(team)
+    return (
+        bool(meta.get("overseer"))
+        or bool(meta.get("scribe"))
+        or role == "overseer"
+        or role == "scribe"
+    )
+
 if explicit_window_id:
     log(f"explicit target {explicit_window_id}")
     print(explicit_window_id)
@@ -952,13 +970,16 @@ for line in windows:
     worktree = meta.get("worktreePath") or project_root
     kind = meta.get("kind") or "agent"
     team = meta.get("team") or {}
+    is_control = is_project_control_meta(meta, team)
     items.append({
         "windowId": window_id,
         "windowIndex": int(index),
         "kind": kind,
         "sessionId": meta.get("sessionId", ""),
         "worktreePath": worktree,
-        "overseer": bool(meta.get("overseer")) or (isinstance(team, dict) and team.get("role") == "overseer"),
+        "overseer": bool(meta.get("overseer")) or control_role(team) == "overseer",
+        "scribe": bool(meta.get("scribe")) or control_role(team) == "scribe",
+        "projectControl": is_control,
         "attention": meta.get("attention", ""),
         "unseenCount": int(meta.get("unseenCount") or 0),
         "statusText": meta.get("statusText", ""),
@@ -1041,7 +1062,7 @@ if not items:
     log("no metadata candidates in current worktree")
     raise SystemExit(1)
 current = next((item for item in items if item.get("windowId") == current_window_id), None)
-if current and current.get("overseer") and action in ("next", "prev"):
+if current and current.get("projectControl") and action in ("next", "prev"):
     print("__AIMUX_NOOP__")
     raise SystemExit(0)
 
@@ -1056,7 +1077,7 @@ if current and (current.get("team") or {}).get("parentSessionId"):
 
     items.sort(key=lambda s: (teammate_nav_order(s), s.get("windowIndex", 10**9), s.get("createdAt") or "", s.get("sessionId") or ""))
 else:
-    items = [item for item in items if not item.get("overseer") and not (item.get("team") or {}).get("parentSessionId")]
+    items = [item for item in items if not item.get("projectControl") and not (item.get("team") or {}).get("parentSessionId")]
     items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
 
 if not items:

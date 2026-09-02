@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { readHistory } from "../context/history.js";
 import { getAimuxDirFor, getProjectStateDir, getRepoRoot, getStatusDir } from "../paths.js";
-import { loadTeamConfig } from "../team.js";
+import { isProjectControlSession, loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { withTmuxQueryMemo } from "../tmux/query-memo.js";
@@ -837,6 +837,9 @@ export function buildTmuxWindowMetadata(
 ): any {
   const sessionMetadata = loadMetadataState().sessions[sessionId];
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
+  const team = runtime?.team ?? existing?.team;
+  const overseer = sessionMetadata?.overseer === true;
+  const scribe = sessionMetadata?.scribe === true;
   // Compute the same semantic user label the dashboard shows, from the single source
   // of truth, so Exposé and the dashboard never disagree on an agent's state.
   const semantic = deriveSessionSemantics({
@@ -869,9 +872,10 @@ export function buildTmuxWindowMetadata(
     args: host.sessionOriginalArgs.get(sessionId) ?? [],
     toolConfigKey: host.sessionToolKeys.get(sessionId) ?? command,
     backendSessionId: runtime?.backendSessionId,
-    team: runtime?.team ?? existing?.team,
-    overseer: sessionMetadata?.overseer === true,
-    scribe: sessionMetadata?.scribe === true,
+    team,
+    overseer,
+    scribe,
+    projectControl: isProjectControlSession({ team, overseer, scribe: sessionMetadata?.scribe }),
     worktreePath: host.sessionWorktreePaths.get(sessionId),
     label: getSessionLabel(host, sessionId),
     role: host.sessionRoles.get(sessionId),

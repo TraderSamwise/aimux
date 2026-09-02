@@ -12,6 +12,7 @@ import {
 import { compactSessionTitle } from "./statusline-model.js";
 import { listWorktrees } from "./worktree.js";
 import { deriveSessionSemantics } from "./session-semantics.js";
+import { isProjectControlSession, isScribeSession } from "./team.js";
 
 export interface FastControlContext {
   projectRoot: string;
@@ -135,22 +136,35 @@ function listManagedWindowEntries(context: FastControlContext, tmux: TmuxRuntime
   return allManagedWindows;
 }
 
+function isProjectControlWindow(metadataState: MetadataState, metadata: TmuxWindowMetadata): boolean {
+  const sessionMetadata = metadataState.sessions[metadata.sessionId];
+  if (sessionMetadata?.overseer === true || sessionMetadata?.scribe === true) return true;
+  if (sessionMetadata?.scribe === false) {
+    return isProjectControlSession({
+      team: metadata.team,
+      overseer: sessionMetadata.overseer ?? metadata.overseer,
+      scribe: false,
+    });
+  }
+  if (typeof metadata.projectControl === "boolean") return metadata.projectControl;
+  return isProjectControlSession({
+    team: metadata.team,
+    overseer: sessionMetadata?.overseer ?? metadata.overseer,
+    scribe: sessionMetadata?.scribe ?? metadata.scribe,
+  });
+}
+
 function isOverseerWindow(metadataState: MetadataState, metadata: TmuxWindowMetadata): boolean {
-  return (
-    metadataState.sessions[metadata.sessionId]?.overseer === true ||
-    metadata.overseer === true ||
-    metadata.team?.role === "overseer"
-  );
+  const sessionMetadata = metadataState.sessions[metadata.sessionId];
+  return sessionMetadata?.overseer === true || metadata.overseer === true || metadata.team?.role === "overseer";
 }
 
 function isScribeWindow(metadataState: MetadataState, metadata: TmuxWindowMetadata): boolean {
-  const explicit = metadataState.sessions[metadata.sessionId]?.scribe ?? metadata.scribe;
-  if (explicit === false) return false;
-  return explicit === true || metadata.team?.role === "scribe";
-}
-
-function isProjectControlWindow(metadataState: MetadataState, metadata: TmuxWindowMetadata): boolean {
-  return isOverseerWindow(metadataState, metadata) || isScribeWindow(metadataState, metadata);
+  const sessionMetadata = metadataState.sessions[metadata.sessionId];
+  if (sessionMetadata?.scribe === true) return true;
+  if (sessionMetadata?.scribe === false) return false;
+  if (metadata.projectControl === false) return false;
+  return isScribeSession({ team: metadata.team, scribe: sessionMetadata?.scribe ?? metadata.scribe });
 }
 
 function currentWindowIsProjectControl(context: FastControlContext, tmux: TmuxRuntimeManager): boolean {

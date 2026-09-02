@@ -2985,6 +2985,58 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @overseer -t aimux-proj-client-1234abcd");
   });
 
+  it("keeps next/prev out of the scribe window", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@scribe", index: 2, name: "claude-scribe" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@scribe": {
+          sessionId: "scribe",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          team: { teamId: "scribe", parentSessionId: "", role: "scribe" },
+        },
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+
+    runControl(envRoot, [
+      "next",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@parent",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @scribe -t aimux-proj-client-1234abcd");
+  });
+
   it("does not switch from the overseer into normal checkout windows", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@overseer" }],
@@ -3029,6 +3081,61 @@ describe("tmux-control.sh", () => {
       "claude-overseer",
       "--current-window-id",
       "@overseer",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
+    expect(log.some((line) => line.includes("couldn't switch window"))).toBe(false);
+    expect(log).not.toContain("link-window -d -s @parent -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
+  });
+
+  it("does not switch from the scribe into normal checkout windows", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@scribe" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@scribe", index: 2, name: "claude-scribe" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+        "aimux-proj-client-1234abcd": [{ id: "@scribe", index: 2, name: "claude-scribe" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@scribe": {
+          sessionId: "scribe",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          scribe: true,
+          team: { teamId: "scribe", parentSessionId: "", role: "scribe" },
+        },
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+
+    runControl(envRoot, [
+      "prev",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude-scribe",
+      "--current-window-id",
+      "@scribe",
       "--current-path",
       "/repo/project/worktree",
     ]);

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getContextDir, initPaths } from "../paths.js";
-import { updateSessionMetadata } from "../metadata-store.js";
+import { updateSessionMetadata, setSessionScribe } from "../metadata-store.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import { loadOfflineTopologySessions } from "./runtime-state.js";
@@ -797,6 +797,68 @@ describe("session runtime prompt submission", () => {
       sessionId: "codex-1",
       team,
     });
+  });
+
+  it("marks project control sessions in tmux metadata", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-control-"));
+    try {
+      await initPaths(repoRoot);
+      setSessionScribe("claude-scribe", true, repoRoot);
+      const team = {
+        teamId: "scribe",
+        parentSessionId: "",
+        role: "scribe",
+      };
+      const host: any = {
+        sessions: [{ id: "claude-scribe", command: "claude", team }],
+        sessionOriginalArgs: new Map([["claude-scribe", []]]),
+        sessionToolKeys: new Map([["claude-scribe", "claude"]]),
+        sessionWorktreePaths: new Map(),
+        sessionLabels: new Map(),
+        sessionRoles: new Map(),
+        offlineSessions: [],
+      };
+
+      expect(buildTmuxWindowMetadata(host, "claude-scribe", "claude")).toMatchObject({
+        sessionId: "claude-scribe",
+        scribe: true,
+        projectControl: true,
+        team,
+      });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("lets an explicit scribe demotion override stale scribe team metadata", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-demoted-scribe-"));
+    try {
+      await initPaths(repoRoot);
+      setSessionScribe("claude-scribe", false, repoRoot);
+      const team = {
+        teamId: "scribe",
+        parentSessionId: "",
+        role: "scribe",
+      };
+      const host: any = {
+        sessions: [{ id: "claude-scribe", command: "claude", team }],
+        sessionOriginalArgs: new Map([["claude-scribe", []]]),
+        sessionToolKeys: new Map([["claude-scribe", "claude"]]),
+        sessionWorktreePaths: new Map(),
+        sessionLabels: new Map(),
+        sessionRoles: new Map(),
+        offlineSessions: [],
+      };
+
+      expect(buildTmuxWindowMetadata(host, "claude-scribe", "claude")).toMatchObject({
+        sessionId: "claude-scribe",
+        scribe: false,
+        projectControl: false,
+        team,
+      });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 
   it("attaches teammate metadata when registering recovered tmux runtimes", () => {

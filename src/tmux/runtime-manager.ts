@@ -115,6 +115,7 @@ export interface TmuxWindowMetadata {
   team?: SessionTeamMetadata;
   overseer?: boolean;
   scribe?: boolean;
+  projectControl?: boolean;
   worktreePath?: string;
   label?: string;
   launchCommandLine?: string;
