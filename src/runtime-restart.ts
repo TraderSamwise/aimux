@@ -831,6 +831,11 @@ async function restartAimuxControlPlaneUnlocked(
       result.service.error = errorMessage(error);
     }
 
+    projects.push(result);
+  }
+
+  for (const result of projects) {
+    const projectRoot = result.projectRoot;
     if (!dashboardProjectRoots.has(projectRoot)) {
       result.dashboard.status = "skipped";
     } else if (!tmuxAvailable) {
@@ -869,8 +874,6 @@ async function restartAimuxControlPlaneUnlocked(
         result.dashboard.error = errorMessage(error);
       }
     }
-
-    projects.push(result);
   }
 
   // The critical section ends here: a daemon is up and every project service has

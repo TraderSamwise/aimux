@@ -798,6 +798,9 @@ describe("restartAimuxControlPlane", () => {
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
     expect(resolveDashboardTarget).toHaveBeenCalledOnce();
+    expect(ensureProjectService.mock.invocationCallOrder[1]).toBeLessThan(
+      resolveDashboardTarget.mock.invocationCallOrder[0]!,
+    );
     expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/alpha", expect.any(Object), {
       forceReload: true,
       openInHostSession: true,
