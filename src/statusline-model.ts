@@ -322,11 +322,9 @@ export function resolveScopedSessions(
     .filter((session) => session.status !== "offline" && session.status !== "exited")
     .filter((session) => session.overseer !== true && session.scribe !== true)
     .filter((session) => normalizePath(session.worktreePath, projectRoot) === scopedWorktreePath);
-  const orderByTmuxWindow = (left: StatuslineSession, right: StatuslineSession) =>
-    (left.tmuxWindowIndex ?? Number.MAX_SAFE_INTEGER) - (right.tmuxWindowIndex ?? Number.MAX_SAFE_INTEGER);
   return [
-    ...scopedSessions.filter((session) => session.kind !== "service").sort(orderByTmuxWindow),
-    ...scopedSessions.filter((session) => session.kind === "service").sort(orderByTmuxWindow),
+    ...scopedSessions.filter((session) => session.kind !== "service"),
+    ...scopedSessions.filter((session) => session.kind === "service"),
   ]
     .slice(0, 5)
     .map((session) => {

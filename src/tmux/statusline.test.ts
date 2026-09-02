@@ -212,6 +212,32 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("echo");
   });
 
+  it("renders bottom-line agent chips in the precomputed dashboard order", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          { id: "claude-a", tool: "claude", label: "alpha", tmuxWindowId: "@5", tmuxWindowIndex: 5, status: "running" },
+          { id: "claude-b", tool: "claude", label: "bravo", tmuxWindowId: "@1", tmuxWindowIndex: 1, status: "running" },
+          { id: "codex-c", tool: "codex", label: "charlie", tmuxWindowId: "@3", tmuxWindowIndex: 3, status: "running" },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@5",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+
+    expect(rendered.indexOf("alpha")).toBeLessThan(rendered.indexOf("bravo"));
+    expect(rendered.indexOf("bravo")).toBeLessThan(rendered.indexOf("charlie"));
+  });
+
   it("renders bottom-line scoped agents and headline data", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
@@ -585,7 +611,7 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("yarn devpp");
   });
 
-  it("orders scoped footer agent chips by tmux window order", () => {
+  it("orders scoped footer chips by precomputed dashboard order", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -633,8 +659,8 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered.indexOf("claude")).toBeLessThan(rendered.indexOf("codex"));
-    expect(rendered.indexOf("codex")).toBeLessThan(rendered.indexOf("shell[svc]"));
+    expect(rendered.indexOf("codex")).toBeLessThan(rendered.indexOf("claude"));
+    expect(rendered.indexOf("claude")).toBeLessThan(rendered.indexOf("shell[svc]"));
   });
 
   it("renders current parent teammates separately from scoped footer chips", () => {
