@@ -8,10 +8,13 @@ import {
   acknowledgeAgentRestoreOffer,
   deriveAgentRestoreOffer,
   readAgentRestoreOffer,
+  readAgentRestorePromptGate,
   readLastOnlineAgentsSnapshot,
+  removeLastOnlineAgentSessions,
   recordLastOnlineAgents,
   reconcileAgentRestoreOfferWithRestorableSessions,
   removeAgentRestoreOfferSessions,
+  seedAgentRestorePromptGatesForDaemonBoot,
 } from "./agent-restore-state.js";
 
 describe("agent restore state", () => {
@@ -35,6 +38,14 @@ describe("agent restore state", () => {
     else process.env.AIMUX_HOME = previousAimuxHome;
   });
 
+  function seedRestorePromptGate(now = "2026-08-22T01:01:00.000Z") {
+    return seedAgentRestorePromptGatesForDaemonBoot({
+      daemonBootId: `daemon-${now}`,
+      projects: [{ repoRoot }],
+      now,
+    });
+  }
+
   it("records current online agents without prompting in the same process", () => {
     const first = recordLastOnlineAgents(
       [
@@ -57,7 +68,47 @@ describe("agent restore state", () => {
     expect(second?.updatedAt).toBe(first?.updatedAt);
   });
 
-  it("creates a one-shot offer from a previous writer instance", () => {
+  it("preserves the last online snapshot across an empty refresh", () => {
+    const snapshot = recordLastOnlineAgents([{ id: "claude-1", command: "claude" }], {
+      now: "2026-08-22T01:00:00.000Z",
+    });
+
+    expect(recordLastOnlineAgents([], { now: "2026-08-22T01:01:00.000Z" })?.id).toBe(snapshot?.id);
+    expect(readLastOnlineAgentsSnapshot()?.sessionIds).toEqual(["claude-1"]);
+  });
+
+  it("removes explicitly stopped sessions from the last online snapshot", () => {
+    recordLastOnlineAgents(
+      [
+        { id: "claude-1", command: "claude" },
+        { id: "codex-2", command: "codex" },
+      ],
+      { now: "2026-08-22T01:00:00.000Z" },
+    );
+
+    expect(removeLastOnlineAgentSessions(["claude-1"], { now: "2026-08-22T01:01:00.000Z" })?.sessionIds).toEqual([
+      "codex-2",
+    ]);
+    expect(removeLastOnlineAgentSessions(["codex-2"], { now: "2026-08-22T01:02:00.000Z" })).toBeNull();
+    expect(readLastOnlineAgentsSnapshot()).toBeNull();
+  });
+
+  it("does not create an offer from a previous writer instance without a daemon-start gate", () => {
+    writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+      version: 1,
+      id: "snapshot-old",
+      writerInstanceId: "previous-process",
+      createdAt: "2026-08-22T01:00:00.000Z",
+      updatedAt: "2026-08-22T01:00:00.000Z",
+      sessionIds: ["claude-1"],
+      sessions: [{ id: "claude-1", command: "claude", label: "claude(coder)" }],
+    });
+
+    expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" })).toBeNull();
+    expect(readAgentRestoreOffer()).toBeNull();
+  });
+
+  it("creates a one-shot offer from a daemon-start gate", () => {
     writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
       version: 1,
       id: "snapshot-old",
@@ -70,6 +121,7 @@ describe("agent restore state", () => {
         { id: "codex-2", command: "codex", label: "codex(coder)" },
       ],
     });
+    seedRestorePromptGate();
 
     const offer = deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" });
 
@@ -77,6 +129,7 @@ describe("agent restore state", () => {
     expect(offer?.sessionIds).toEqual(["claude-1", "codex-2"]);
     expect(offer?.worktreeGroups).toEqual([{ name: "Main Checkout", count: 2 }]);
     expect(readAgentRestoreOffer()?.sessionIds).toEqual(["claude-1", "codex-2"]);
+    expect(readAgentRestorePromptGate()?.askedAt).toBe("2026-08-22T01:02:00.000Z");
 
     acknowledgeAgentRestoreOffer();
 
@@ -97,6 +150,7 @@ describe("agent restore state", () => {
         { id: "codex-2", command: "codex", label: "codex(coder)" },
       ],
     });
+    seedRestorePromptGate();
 
     const offer = deriveAgentRestoreOffer(["claude-1"], { now: "2026-08-22T01:02:00.000Z" });
 
@@ -114,6 +168,7 @@ describe("agent restore state", () => {
       sessionIds: ["claude-1"],
       sessions: [{ id: "claude-1", command: "claude", label: "claude(coder)" }],
     });
+    seedRestorePromptGate();
 
     expect(deriveAgentRestoreOffer(["claude-1"], { now: "2026-08-22T01:02:00.000Z" })).toBeNull();
     expect(readAgentRestoreOffer()).toBeNull();
@@ -129,6 +184,7 @@ describe("agent restore state", () => {
       sessionIds: ["claude-1"],
       sessions: [{ id: "claude-1", command: "claude" }],
     });
+    seedRestorePromptGate();
     deriveAgentRestoreOffer([], { now: "2026-08-22T01:01:00.000Z" });
     acknowledgeAgentRestoreOffer();
 
@@ -142,6 +198,7 @@ describe("agent restore state", () => {
       ...fresh!,
       writerInstanceId: "next-process",
     });
+    seedRestorePromptGate("2026-08-22T01:02:30.000Z");
     expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:03:00.000Z" })?.snapshotId).toBe(fresh?.id);
   });
 
@@ -155,6 +212,7 @@ describe("agent restore state", () => {
       sessionIds: ["claude-old"],
       sessions: [{ id: "claude-old", command: "claude" }],
     });
+    seedRestorePromptGate();
     deriveAgentRestoreOffer([], { now: "2026-08-22T01:01:00.000Z" });
 
     recordLastOnlineAgents([{ id: "codex-new", command: "codex" }], { now: "2026-08-22T01:02:00.000Z" });
@@ -167,6 +225,7 @@ describe("agent restore state", () => {
       ...latest!,
       writerInstanceId: "next-process",
     });
+    seedRestorePromptGate("2026-08-22T01:02:30.000Z");
 
     expect(deriveAgentRestoreOffer([], { now: "2026-08-22T01:03:00.000Z" })?.sessionIds).toEqual(["codex-new"]);
   });
@@ -184,6 +243,7 @@ describe("agent restore state", () => {
         { id: "codex-2", command: "codex" },
       ],
     });
+    seedRestorePromptGate();
     deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" });
 
     expect(removeAgentRestoreOfferSessions(["claude-1"])?.sessionIds).toEqual(["codex-2"]);
@@ -208,6 +268,7 @@ describe("agent restore state", () => {
         { id: "codex-blocked", command: "codex", worktreePath },
       ],
     });
+    seedRestorePromptGate();
     const offer = deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" });
 
     const reconciled = reconcileAgentRestoreOfferWithRestorableSessions(offer, ["claude-ready", "codex-ready"]);
@@ -233,6 +294,7 @@ describe("agent restore state", () => {
         { id: "codex-main", command: "codex", worktreePath: repoRoot },
       ],
     });
+    seedRestorePromptGate();
 
     const offer = deriveAgentRestoreOffer([], { now: "2026-08-22T01:02:00.000Z" });
 

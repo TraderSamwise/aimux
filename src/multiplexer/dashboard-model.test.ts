@@ -13,6 +13,7 @@ import {
   getExchangeStoreStats,
   resetExchangeStoreStats,
 } from "../runtime-core/exchange-store.js";
+import { seedAgentRestorePromptGatesForDaemonBoot } from "../runtime-core/agent-restore-state.js";
 import { saveRuntimeTopologySessions, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import { NOTIFICATION_TAG, addNotification } from "../notifications.js";
 import {
@@ -2248,6 +2249,7 @@ describe("refreshDashboardModelFromService", () => {
           ],
         });
       });
+      seedAgentRestorePromptGatesForDaemonBoot({ daemonBootId: "daemon-test", projects: [{ repoRoot }] });
 
       const host = {
         ...minimalDashboardHost([]),
@@ -2326,6 +2328,7 @@ describe("refreshDashboardModelFromService", () => {
           sessions: [{ id: "codex-offline", command: "codex", label: "codex(coder)", worktreePath: repoRoot }],
         });
       });
+      seedAgentRestorePromptGatesForDaemonBoot({ daemonBootId: "daemon-test", projects: [{ repoRoot }] });
 
       const host = {
         ...minimalDashboardHost([{ id: "claude-scribe", command: "claude", status: "running", scribe: true } as any]),
@@ -2381,6 +2384,7 @@ describe("refreshDashboardModelFromService", () => {
           ],
         });
       });
+      seedAgentRestorePromptGatesForDaemonBoot({ daemonBootId: "daemon-test", projects: [{ repoRoot }] });
 
       const host = {
         ...minimalDashboardHost([{ id: "codex-live", command: "codex", status: "running" }]),

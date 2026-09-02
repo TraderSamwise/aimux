@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
-import { getProjectStateDir, withProjectPaths } from "../paths.js";
+import {
+  getGlobalAimuxDir,
+  getProjectIdFor,
+  getProjectStateDir,
+  getRepoRoot,
+  listProjects,
+  withProjectPaths,
+} from "../paths.js";
 
 const WRITER_INSTANCE_ID = `${process.pid}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 
@@ -51,6 +58,24 @@ interface RestoreOfferAck {
   acknowledgedAt: string;
 }
 
+export interface AgentRestorePromptGate {
+  version: 1;
+  projectId: string;
+  projectRoot: string;
+  daemonBootId: string;
+  snapshotId: string;
+  snapshotUpdatedAt: string;
+  createdAt: string;
+  askedAt?: string;
+}
+
+interface AgentRestorePromptGateState {
+  version: 1;
+  daemonBootId: string;
+  updatedAt: string;
+  projects: Record<string, AgentRestorePromptGate>;
+}
+
 function lastOnlinePath(): string {
   return join(getProjectStateDir(), "last-online-agents.json");
 }
@@ -61,6 +86,10 @@ function offerPath(): string {
 
 function ackPath(): string {
   return join(getProjectStateDir(), "agent-restore-offer-ack.json");
+}
+
+function promptGatePath(): string {
+  return join(getGlobalAimuxDir(), "restore-prompt-gates.json");
 }
 
 function readJsonFile<T>(path: string, normalize: (value: unknown) => T | null): T | null {
@@ -223,6 +252,128 @@ function normalizeAck(value: unknown): RestoreOfferAck | null {
   };
 }
 
+function normalizePromptGate(value: unknown): AgentRestorePromptGate | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const projectId = typeof record.projectId === "string" && record.projectId.trim() ? record.projectId : "";
+  const projectRoot = typeof record.projectRoot === "string" && record.projectRoot.trim() ? record.projectRoot : "";
+  const daemonBootId = typeof record.daemonBootId === "string" && record.daemonBootId.trim() ? record.daemonBootId : "";
+  const snapshotId = typeof record.snapshotId === "string" && record.snapshotId.trim() ? record.snapshotId : "";
+  const snapshotUpdatedAt =
+    typeof record.snapshotUpdatedAt === "string" && record.snapshotUpdatedAt.trim() ? record.snapshotUpdatedAt : "";
+  const createdAt = typeof record.createdAt === "string" && record.createdAt.trim() ? record.createdAt : "";
+  if (!projectId || !projectRoot || !daemonBootId || !snapshotId || !snapshotUpdatedAt || !createdAt) return null;
+  return {
+    version: 1,
+    projectId,
+    projectRoot,
+    daemonBootId,
+    snapshotId,
+    snapshotUpdatedAt,
+    createdAt,
+    askedAt: typeof record.askedAt === "string" && record.askedAt.trim() ? record.askedAt : undefined,
+  };
+}
+
+function normalizePromptGateState(value: unknown): AgentRestorePromptGateState | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const daemonBootId = typeof record.daemonBootId === "string" && record.daemonBootId.trim() ? record.daemonBootId : "";
+  const updatedAt = typeof record.updatedAt === "string" && record.updatedAt.trim() ? record.updatedAt : "";
+  if (!daemonBootId || !updatedAt || !record.projects || typeof record.projects !== "object") return null;
+  const projects: Record<string, AgentRestorePromptGate> = {};
+  for (const gate of Object.values(record.projects as Record<string, unknown>)) {
+    const normalized = normalizePromptGate(gate);
+    if (normalized) projects[normalized.projectId] = normalized;
+  }
+  return {
+    version: 1,
+    daemonBootId,
+    updatedAt,
+    projects,
+  };
+}
+
+function readPromptGateState(): AgentRestorePromptGateState | null {
+  return readJsonFile(promptGatePath(), normalizePromptGateState);
+}
+
+function readPromptGate(projectRoot: string): AgentRestorePromptGate | null {
+  const state = readPromptGateState();
+  if (!state) return null;
+  return state.projects[getProjectIdFor(projectRoot)] ?? null;
+}
+
+function offerHasPromptGate(offer: AgentRestoreOffer, projectRoot: string): boolean {
+  const gate = readPromptGate(projectRoot);
+  return Boolean(gate && gate.snapshotId === offer.snapshotId);
+}
+
+function clearOffer(): void {
+  rmSync(offerPath(), { force: true });
+}
+
+function currentProjectRoot(inputRoot?: string): string {
+  return inputRoot ?? getRepoRoot();
+}
+
+export function seedAgentRestorePromptGatesForDaemonBoot(input: {
+  daemonBootId: string;
+  projects?: { id?: string; repoRoot: string }[];
+  now?: string;
+}): AgentRestorePromptGateState {
+  const now = input.now ?? new Date().toISOString();
+  const projects: Record<string, AgentRestorePromptGate> = {};
+  for (const project of input.projects ?? listProjects()) {
+    const snapshot = readLastOnlineAgentsSnapshot(project.repoRoot);
+    if (!snapshot) continue;
+    const projectId = project.id ?? getProjectIdFor(project.repoRoot);
+    projects[projectId] = {
+      version: 1,
+      projectId,
+      projectRoot: project.repoRoot,
+      daemonBootId: input.daemonBootId,
+      snapshotId: snapshot.id,
+      snapshotUpdatedAt: snapshot.updatedAt,
+      createdAt: now,
+    };
+  }
+  const state: AgentRestorePromptGateState = {
+    version: 1,
+    daemonBootId: input.daemonBootId,
+    updatedAt: now,
+    projects,
+  };
+  writeJsonAtomic(promptGatePath(), state);
+  return state;
+}
+
+export function readAgentRestorePromptGate(projectRoot?: string): AgentRestorePromptGate | null {
+  return readPromptGate(currentProjectRoot(projectRoot));
+}
+
+export function markAgentRestorePromptGateAsked(
+  projectRoot?: string,
+  input: { snapshotId?: string; now?: string } = {},
+): AgentRestorePromptGate | null {
+  const resolvedProjectRoot = currentProjectRoot(projectRoot);
+  const state = readPromptGateState();
+  if (!state) return null;
+  const projectId = getProjectIdFor(resolvedProjectRoot);
+  const gate = state.projects[projectId];
+  if (!gate || (input.snapshotId && gate.snapshotId !== input.snapshotId)) return null;
+  if (gate.askedAt) return gate;
+  const askedAt = input.now ?? new Date().toISOString();
+  const updated: AgentRestorePromptGate = { ...gate, askedAt };
+  const nextState: AgentRestorePromptGateState = {
+    ...state,
+    updatedAt: askedAt,
+    projects: { ...state.projects, [projectId]: updated },
+  };
+  writeJsonAtomic(promptGatePath(), nextState);
+  return updated;
+}
+
 export function readAgentRestoreOffer(projectRoot?: string): AgentRestoreOffer | null {
   const read = () => {
     const path = offerPath();
@@ -246,6 +397,17 @@ export function readAgentRestoreOffer(projectRoot?: string): AgentRestoreOffer |
   return projectRoot ? withProjectPaths(projectRoot, read) : read();
 }
 
+export function readDisplayableAgentRestoreOffer(projectRoot?: string): AgentRestoreOffer | null {
+  const read = () => {
+    const offer = readAgentRestoreOffer();
+    if (!offer) return null;
+    if (offerHasPromptGate(offer, currentProjectRoot(projectRoot))) return offer;
+    clearOffer();
+    return null;
+  };
+  return projectRoot ? withProjectPaths(projectRoot, read) : read();
+}
+
 export function readLastOnlineAgentsSnapshot(projectRoot?: string): LastOnlineAgentsSnapshot | null {
   const read = () => readJsonFile(lastOnlinePath(), normalizeSnapshot);
   return projectRoot ? withProjectPaths(projectRoot, read) : read();
@@ -258,10 +420,7 @@ export function recordLastOnlineAgents(
   const write = () => {
     const normalized = normalizeSessions(sessions);
     if (normalized.length === 0) {
-      rmSync(lastOnlinePath(), { force: true });
-      rmSync(offerPath(), { force: true });
-      rmSync(ackPath(), { force: true });
-      return null;
+      return readLastOnlineAgentsSnapshot();
     }
     const now = input.now ?? new Date().toISOString();
     const existing = readLastOnlineAgentsSnapshot();
@@ -286,22 +445,49 @@ export function recordLastOnlineAgents(
   return input.projectRoot ? withProjectPaths(input.projectRoot, write) : write();
 }
 
+export function removeLastOnlineAgentSessions(
+  sessionIds: Iterable<string>,
+  input: { projectRoot?: string; now?: string } = {},
+): LastOnlineAgentsSnapshot | null {
+  const remove = () => {
+    const snapshot = readLastOnlineAgentsSnapshot();
+    if (!snapshot) return null;
+    const removed = new Set(sessionIds);
+    const sessions = snapshot.sessions.filter((session) => !removed.has(session.id));
+    if (sessions.length === snapshot.sessions.length) return snapshot;
+    if (sessions.length === 0) {
+      rmSync(lastOnlinePath(), { force: true });
+      return null;
+    }
+    const now = input.now ?? new Date().toISOString();
+    const updated: LastOnlineAgentsSnapshot = {
+      ...snapshot,
+      id: `online-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
+      updatedAt: now,
+      sessionIds: sessions.map((session) => session.id),
+      sessions,
+      worktreeGroups: buildWorktreeGroups(sessions),
+    };
+    writeJsonAtomic(lastOnlinePath(), updated);
+    return updated;
+  };
+  return input.projectRoot ? withProjectPaths(input.projectRoot, remove) : remove();
+}
+
 export function deriveAgentRestoreOffer(
   liveSessionIds: Iterable<string>,
   input: { projectRoot?: string; now?: string } = {},
 ): AgentRestoreOffer | null {
   const derive = () => {
+    const projectRoot = currentProjectRoot(input.projectRoot);
     const liveIds = new Set(liveSessionIds);
     const now = input.now ?? new Date().toISOString();
     const existing = readAgentRestoreOffer();
     const snapshot = readLastOnlineAgentsSnapshot();
-    if (
-      existing &&
-      (!snapshot || snapshot.id === existing.snapshotId || snapshot.writerInstanceId === WRITER_INSTANCE_ID)
-    ) {
+    if (existing && offerHasPromptGate(existing, projectRoot)) {
       const sessions = existing.sessions.filter((session) => !liveIds.has(session.id));
       if (sessions.length === 0) {
-        rmSync(offerPath(), { force: true });
+        clearOffer();
         return null;
       }
       if (sessions.length === existing.sessions.length) return existing;
@@ -315,17 +501,21 @@ export function deriveAgentRestoreOffer(
       writeJsonAtomic(offerPath(), updated);
       return updated;
     }
+    if (existing && !offerHasPromptGate(existing, projectRoot)) clearOffer();
     if (!snapshot || snapshot.writerInstanceId === WRITER_INSTANCE_ID) return null;
+
+    const gate = readPromptGate(projectRoot);
+    if (!gate || gate.snapshotId !== snapshot.id || gate.askedAt) return null;
 
     const ack = readJsonFile(ackPath(), normalizeAck);
     if (ack?.snapshotId === snapshot.id) {
-      rmSync(offerPath(), { force: true });
+      clearOffer();
       return null;
     }
 
     const sessions = snapshot.sessions.filter((session) => !liveIds.has(session.id));
     if (sessions.length === 0) {
-      rmSync(offerPath(), { force: true });
+      clearOffer();
       return null;
     }
 
@@ -342,6 +532,7 @@ export function deriveAgentRestoreOffer(
       worktreeGroups: buildWorktreeGroups(sessions),
     };
     writeJsonAtomic(offerPath(), offer);
+    markAgentRestorePromptGateAsked(projectRoot, { snapshotId: snapshot.id, now });
     return offer;
   };
   return input.projectRoot ? withProjectPaths(input.projectRoot, derive) : derive();

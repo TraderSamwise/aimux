@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { initPaths, withProjectPaths } from "../paths.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
-import { readLastOnlineAgentsSnapshot } from "../runtime-core/agent-restore-state.js";
+import { readLastOnlineAgentsSnapshot, recordLastOnlineAgents } from "../runtime-core/agent-restore-state.js";
 import {
   listTopologySessionStates,
   saveRuntimeTopologySessions,
@@ -347,6 +347,51 @@ describe("startStatusRefresh", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("does not record pending optimistic agents as last-online restore candidates", async () => {
+    vi.useFakeTimers();
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    const root = mkdtempSync(join(tmpdir(), "aimux-runtime-restore-"));
+    const repoRoot = join(root, "repo");
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    process.env.AIMUX_HOME = join(root, "home");
+    await initPaths(repoRoot);
+
+    const host: any = {
+      projectRoot: repoRoot,
+      statusInterval: null,
+      sessions: [
+        {
+          id: "codex-starting",
+          status: "running",
+          command: "codex",
+          pendingAction: "starting",
+          optimistic: true,
+        },
+      ],
+      prevStatuses: new Map([["codex-starting", "running"]]),
+      sessionToolKeys: new Map([["codex-starting", "codex"]]),
+      sessionWorktreePaths: new Map([["codex-starting", repoRoot]]),
+      getSessionLabel: vi.fn(() => "Starting"),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "agent",
+      publishAlert: vi.fn(),
+    };
+
+    try {
+      startStatusRefresh(host);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(readLastOnlineAgentsSnapshot(repoRoot)).toBeNull();
+    } finally {
+      stopStatusRefresh(host);
+      if (previousAimuxHome === undefined) {
+        delete process.env.AIMUX_HOME;
+      } else {
+        process.env.AIMUX_HOME = previousAimuxHome;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("resumeOfflineSession", () => {
@@ -409,6 +454,13 @@ describe("resumeOfflineSession", () => {
       saveState: vi.fn(() => runtimeLifecycleMethods.saveState.call(host as never)),
       debug: vi.fn(),
     };
+    recordLastOnlineAgents(
+      [
+        { id: "codex-1", command: "codex" },
+        { id: "claude-2", command: "claude" },
+      ],
+      { projectRoot: repoRoot, now: "2026-08-22T01:00:00.000Z" },
+    );
 
     stopSessionToOffline(host, session);
 
@@ -417,6 +469,7 @@ describe("resumeOfflineSession", () => {
     expect(listTopologySessionStates({ statuses: ["offline"] })).toMatchObject([
       { id: "codex-1", lifecycle: "offline", backendSessionId: "backend-current" },
     ]);
+    expect(readLastOnlineAgentsSnapshot(repoRoot)?.sessionIds).toEqual(["claude-2"]);
     expect(session.kill).toHaveBeenCalledOnce();
   });
 
@@ -1937,6 +1990,13 @@ describe("resumeOfflineSession", () => {
         },
       ],
     });
+    recordLastOnlineAgents(
+      [
+        { id: "codex-stale", command: "codex" },
+        { id: "claude-keep", command: "claude" },
+      ],
+      { projectRoot: repoRoot, now: "2026-08-22T01:00:00.000Z" },
+    );
 
     graveyardSession(host, "codex-stale", {
       id: "codex-stale",
@@ -1953,6 +2013,7 @@ describe("resumeOfflineSession", () => {
     expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
     expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    expect(readLastOnlineAgentsSnapshot(repoRoot)?.sessionIds).toEqual(["claude-keep"]);
   });
 
   it("prunes stale offline cache rows instead of graveyarding without topology authority", () => {

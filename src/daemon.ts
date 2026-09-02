@@ -41,6 +41,7 @@ import { countActiveHostedPrincipals } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
 import { serializeFastControlItem } from "./fast-control.js";
 import { agentStatusChip } from "./tui/render/agent-status.js";
+import { seedAgentRestorePromptGatesForDaemonBoot } from "./runtime-core/agent-restore-state.js";
 import {
   CORE_API_ROUTES,
   CORE_COMMAND_NAMES,
@@ -496,6 +497,9 @@ export class AimuxDaemon {
         this.server?.off("error", reject);
         resolve();
       });
+    });
+    seedAgentRestorePromptGatesForDaemonBoot({
+      daemonBootId: `${process.pid}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
     });
     this.refreshState();
     this.scheduleGlobalExposeHotSnapshotRefresh(GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS);

@@ -108,6 +108,7 @@ import { loadLibraryEntries } from "./library.js";
 import { getWorktreeCreatePath } from "./worktree.js";
 import {
   acknowledgeAgentRestoreOffer,
+  readDisplayableAgentRestoreOffer,
   readAgentRestoreOffer,
   reconcileAgentRestoreOfferWithRestorableSessions,
   writeAgentRestoreRetryOffer,
@@ -2592,7 +2593,7 @@ export class MetadataServer {
         ...(includePreview
           ? await this.attachDesktopStatePreviews(state, { includeChatPreview, trackPreview })
           : state),
-        agentRestoreOffer: readAgentRestoreOffer(this.currentProjectRoot()),
+        agentRestoreOffer: readDisplayableAgentRestoreOffer(this.currentProjectRoot()),
       });
       return;
     }

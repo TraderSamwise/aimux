@@ -1235,6 +1235,7 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
       ...new Map([...sessions, ...teammates].map((session) => [session.id, session])).values(),
     ]
       .filter((session) => !isDashboardSessionOffline(session))
+      .filter((session) => !session.pendingAction && !session.pending && !session.optimistic)
       .filter((session) => !isProjectControlSession(session))
       .map((session): AgentRestoreSession => {
         return {

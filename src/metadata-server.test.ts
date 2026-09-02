@@ -35,6 +35,7 @@ import {
 import {
   deriveAgentRestoreOffer,
   readAgentRestoreOffer,
+  seedAgentRestorePromptGatesForDaemonBoot,
   type AgentRestoreSession,
 } from "./runtime-core/agent-restore-state.js";
 import { emptyRuntimeExchange } from "./runtime-core/exchange-store.js";
@@ -91,6 +92,7 @@ function seedPreviousAgentRestoreOffer(
       sessions,
     });
   });
+  seedAgentRestorePromptGatesForDaemonBoot({ daemonBootId: `daemon-${now}`, projects: [{ repoRoot }], now });
   deriveAgentRestoreOffer([], { projectRoot: repoRoot, now });
 }
 

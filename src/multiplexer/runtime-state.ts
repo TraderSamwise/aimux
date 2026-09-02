@@ -22,7 +22,7 @@ import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
 import {
   agentRestoreSessionKey,
-  deriveAgentRestoreOffer,
+  removeLastOnlineAgentSessions,
   recordLastOnlineAgents,
   removeAgentRestoreOfferSessions,
   type AgentRestoreSession,
@@ -168,6 +168,7 @@ function onlineSessionsForRestore(host: RuntimeStateHost): AgentRestoreSession[]
   }
   return (host.sessions ?? [])
     .filter((session: any) => !session.exited && session.status !== "offline" && session.status !== "exited")
+    .filter((session: any) => !session.pendingAction && !session.pending && !session.optimistic)
     .filter((session: any) => {
       const sessionMetadata = metadata?.sessions?.[session.id];
       return !isProjectControlSession({
@@ -195,12 +196,6 @@ function recordOnlineAgentsForRestore(host: RuntimeStateHost): void {
   } catch {
     return;
   }
-  const pendingOffer = deriveAgentRestoreOffer(
-    sessions.map((session) => session.id),
-    { projectRoot },
-  );
-  if (pendingOffer) return;
-
   const key = agentRestoreSessionKey(sessions);
   if ((host as any).lastOnlineAgentRestoreSnapshotKey === key) return;
   if (sessions.length === 0 && (host as any).lastOnlineAgentRestoreSnapshotKey === undefined) {
@@ -657,6 +652,8 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
   host.stoppingSessionIds.add(session.id);
   host.startedInDashboard = true;
   upsertTopologySession(offlineEntry, "offline", { projectRoot });
+  removeLastOnlineAgentSessions([session.id], { projectRoot });
+  removeAgentRestoreOfferSessions([session.id], projectRoot);
   pruneOfflineSessionCache(host, session.id);
   host.saveState();
   session.kill();
@@ -683,6 +680,8 @@ export function graveyardSession(host: RuntimeStateHost, sessionId: string, _ses
   const projectRoot = projectRootFor(host);
   const session = findTopologySession(sessionId, ["running", "idle", "offline"], projectRoot);
   if (!session) {
+    removeLastOnlineAgentSessions([sessionId], { projectRoot });
+    removeAgentRestoreOfferSessions([sessionId], projectRoot);
     pruneOfflineSessionCache(host, sessionId);
     host.invalidateDesktopStateSnapshot?.();
     host.writeStatuslineFile?.();
@@ -694,6 +693,7 @@ export function graveyardSession(host: RuntimeStateHost, sessionId: string, _ses
   markLifecycleUsed(host, sessionId);
 
   pruneOfflineSessionCache(host, sessionId);
+  removeLastOnlineAgentSessions([sessionId], { projectRoot });
   removeAgentRestoreOfferSessions([sessionId], projectRoot);
 
   moveTopologySessionToGraveyard(sessionId, { projectRoot });
