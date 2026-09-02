@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
-import { initProject, loadConfig } from "../config.js";
+import { initProject, loadConfig, type AimuxConfig, type DefaultScribeAgentConfig } from "../config.js";
 import { getProjectStateDirFor } from "../paths.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
@@ -18,8 +18,14 @@ import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { capLaunchPreambleForArgv } from "../session-bootstrap.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
-import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
-import { isProjectControlSession, type SessionTeamMetadata } from "../team.js";
+import {
+  clearSessionTranscriptPath,
+  findOverseerSessionId,
+  findScribeSessionId,
+  loadMetadataState,
+  setSessionScribe,
+} from "../metadata-store.js";
+import { isProjectControlSession, isScribeSession, SCRIBE_SESSION_TEAM, type SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
@@ -43,10 +49,167 @@ const STARTUP_INTERSTITIAL_WINDOW_MS = 30_000;
 const DASHBOARD_VIEWPORT_POLL_MS = 250;
 const DERIVED_AIMUX_ID_MIN_CHARS = 6;
 const DERIVED_AIMUX_ID_MAX_CHARS = 16;
+const defaultScribeEnsurePromises = new Map<string, Promise<DefaultScribeEnsureResult>>();
+
+export type DefaultScribeEnsureResult =
+  | { created: false; reason: "disabled" | "existing" | "unknown-tool" | "disabled-tool"; sessionId?: string }
+  | { created: true; sessionId: string; toolConfigKey: string };
+type DefaultScribeSkipResult = Extract<DefaultScribeEnsureResult, { created: false }>;
+
+export interface DefaultScribeLaunch {
+  toolConfigKey: string;
+  command: string;
+  args: string[];
+  sessionIdFlag?: string[];
+  preambleFlag?: string[];
+  env?: Record<string, string>;
+}
 
 function projectRootFor(host: SessionLaunchHost, worktreePath?: string): string {
   if (worktreePath?.trim()) return worktreePath.trim();
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
+}
+
+function normalizeDefaultScribeAgent(
+  defaultAgent: AimuxConfig["scribe"]["defaultAgent"],
+): { toolConfigKey: string; extraArgs: string[]; env?: Record<string, string> } | null {
+  if (!defaultAgent) return null;
+  if (typeof defaultAgent === "string") {
+    return { toolConfigKey: defaultAgent, extraArgs: [] };
+  }
+  const configured = defaultAgent as DefaultScribeAgentConfig;
+  return {
+    toolConfigKey: configured.tool,
+    extraArgs: configured.extraArgs ?? [],
+    env: configured.env,
+  };
+}
+
+export function resolveDefaultScribeLaunch(config: AimuxConfig): DefaultScribeLaunch | DefaultScribeSkipResult {
+  const normalized = normalizeDefaultScribeAgent(config.scribe.defaultAgent);
+  if (!normalized) return { created: false, reason: "disabled" };
+  const tool = config.tools[normalized.toolConfigKey];
+  if (!tool) return { created: false, reason: "unknown-tool" };
+  if (tool.enabled === false) return { created: false, reason: "disabled-tool" };
+  return {
+    toolConfigKey: normalized.toolConfigKey,
+    command: tool.command,
+    args: [...tool.args, ...normalized.extraArgs],
+    sessionIdFlag: tool.sessionIdFlag,
+    preambleFlag: tool.preambleFlag,
+    env: normalized.env,
+  };
+}
+
+function isLiveScribeStatus(status: string | undefined): boolean {
+  return (
+    status === undefined || status === "running" || status === "idle" || status === "starting" || status === "planned"
+  );
+}
+
+function findLiveScribeSessionId(host: SessionLaunchHost, projectRoot: string): string | undefined {
+  const metadata = loadMetadataState(projectRoot);
+  const metadataScribeId = findScribeSessionId(metadata);
+  if (metadataScribeId) {
+    const liveRuntime = host.sessions?.find?.((session: any) => session.id === metadataScribeId && !session.exited);
+    if (liveRuntime) return metadataScribeId;
+    const topologyScribe = listTopologySessionStates({ projectRoot }).find(
+      (session) => session.id === metadataScribeId && isLiveScribeStatus(session.lifecycle),
+    );
+    if (topologyScribe) return metadataScribeId;
+  }
+
+  const liveRuntimeScribe = host.sessions?.find?.((session: any) => !session.exited && isScribeSession(session));
+  if (liveRuntimeScribe?.id) {
+    setSessionScribe(liveRuntimeScribe.id, true, projectRoot);
+    return liveRuntimeScribe.id;
+  }
+
+  const topologyScribe = listTopologySessionStates({ projectRoot }).find((session) => {
+    const sessionMetadata = metadata.sessions[session.id];
+    return (
+      isLiveScribeStatus(session.lifecycle) &&
+      isScribeSession({
+        team: session.team as SessionTeamMetadata | undefined,
+        scribe: sessionMetadata?.scribe,
+      })
+    );
+  });
+  if (topologyScribe?.id) {
+    setSessionScribe(topologyScribe.id, true, projectRoot);
+    return topologyScribe.id;
+  }
+
+  return undefined;
+}
+
+async function createDefaultScribeAgent(
+  host: SessionLaunchHost,
+  projectRoot: string,
+  launch: DefaultScribeLaunch,
+): Promise<DefaultScribeEnsureResult> {
+  const existing = findLiveScribeSessionId(host, projectRoot);
+  if (existing) return { created: false, reason: "existing", sessionId: existing };
+
+  const sessionId =
+    host.generateDashboardSessionId?.(launch.command) ?? `${basename(launch.command) || launch.command}-scribe`;
+  log.info("default scribe create starting", "scribe", {
+    projectRoot,
+    sessionId,
+    toolConfigKey: launch.toolConfigKey,
+    argCount: launch.args.length,
+  });
+  const transport = await createSessionAsync(
+    host,
+    launch.command,
+    launch.args,
+    launch.preambleFlag,
+    launch.toolConfigKey,
+    undefined,
+    launch.sessionIdFlag,
+    projectRoot,
+    undefined,
+    sessionId,
+    true,
+    false,
+    SCRIBE_SESSION_TEAM,
+    { ...(launch.env ?? {}), AIMUX_SCRIBE: "1" },
+    launch.args,
+  );
+  setSessionScribe(transport.id, true, projectRoot);
+  log.info("default scribe create settled", "scribe", {
+    projectRoot,
+    sessionId: transport.id,
+    toolConfigKey: launch.toolConfigKey,
+  });
+  return { created: true, sessionId: transport.id, toolConfigKey: launch.toolConfigKey };
+}
+
+export async function ensureDefaultScribeAgent(host: SessionLaunchHost): Promise<DefaultScribeEnsureResult> {
+  const projectRoot = projectRootFor(host);
+  const config = loadConfig({ projectRoot });
+  const launch = resolveDefaultScribeLaunch(config);
+  if ("reason" in launch) {
+    if (launch.reason === "unknown-tool" || launch.reason === "disabled-tool") {
+      log.warn("default scribe disabled by invalid config", "scribe", {
+        projectRoot,
+        reason: launch.reason,
+        defaultAgent: config.scribe.defaultAgent,
+      });
+    }
+    return launch;
+  }
+
+  const existing = findLiveScribeSessionId(host, projectRoot);
+  if (existing) return { created: false, reason: "existing", sessionId: existing };
+
+  const running = defaultScribeEnsurePromises.get(projectRoot);
+  if (running) return running;
+  const promise = createDefaultScribeAgent(host, projectRoot, launch).finally(() => {
+    defaultScribeEnsurePromises.delete(projectRoot);
+  });
+  defaultScribeEnsurePromises.set(projectRoot, promise);
+  return promise;
 }
 
 function backendSessionIdSlug(backendSessionId: string): string {
@@ -574,6 +737,13 @@ export async function startProjectServiceHost(host: SessionLaunchHost): Promise<
   host.writeInstructionFiles();
   host.refreshDesktopStateSnapshot();
   await host.startProjectServices();
+  await ensureDefaultScribeAgent(host).catch((error: unknown) => {
+    log.warn("default scribe create failed", "scribe", {
+      projectRoot,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+  });
   host.startStatusRefresh();
   host.startGraveyardCleanup?.();
   if (host.cleanupGraveyard && !host.graveyardCleanupRunning) {

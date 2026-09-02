@@ -19,9 +19,11 @@ import {
   createSession,
   createSessionAsync,
   deriveAimuxSessionIdFromBackendSessionId,
+  ensureDefaultScribeAgent,
   focusSession,
   injectCodexDeveloperInstructions,
   migrateAgent,
+  resolveDefaultScribeLaunch,
   resumeSessions,
   restoreSessions,
   runDashboard,
@@ -30,8 +32,9 @@ import {
   startProjectServiceHost,
   switchAgentTool,
 } from "./session-launch.js";
-import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
+import { loadMetadataState, setSessionScribe, updateSessionMetadata } from "../metadata-store.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
+import { loadConfig } from "../config.js";
 
 /**
  * The real arg composition, not a stub: these tests exist to pin what gets
@@ -2131,6 +2134,71 @@ describe("handleAction", () => {
 });
 
 describe("startProjectServiceHost", () => {
+  function makeProjectServiceHost(repoRoot = process.cwd()): any {
+    const sessions: any[] = [];
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "dashboard",
+      tmuxRuntimeManager: {
+        repairLegacyProjectSessionNames: vi.fn(),
+        ensureProjectSessionAsync: vi.fn(async () => ({ sessionName: "aimux-test" })),
+        createWindowAsync: vi.fn(async () => ({ sessionName: "aimux-test", windowId: "@1", windowName: "scribe" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "scribe" })),
+        isWindowAlive: vi.fn(() => true),
+        setWindowMetadataAsync: vi.fn(async () => undefined),
+        applyManagedAgentWindowPolicyAsync: vi.fn(async () => undefined),
+        clearTargetHistoryAsync: vi.fn(async () => undefined),
+      },
+      sessionBootstrap: {
+        ...realArgComposition(),
+        buildSessionPreamble: vi.fn(() => "aimux scribe preamble"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      startProjectServices: vi.fn(),
+      startStatusRefresh: vi.fn(),
+      startGraveyardCleanup: vi.fn(),
+      cleanupGraveyard: vi.fn(() => Promise.resolve({ dryRun: false, plan: {}, results: [] })),
+      refreshDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      generateDashboardSessionId: vi.fn((command: string) => `${command}-scribe`),
+      getSessionLabel: vi.fn(),
+      buildTmuxWindowMetadata: vi.fn((sessionId: string, command: string) => ({ kind: "agent", sessionId, command })),
+      registerManagedSession: vi.fn(
+        (
+          transport: any,
+          args: string[],
+          toolConfigKey?: string,
+          worktreePath?: string,
+          _role?: string,
+          startTime?: number,
+          team?: any,
+        ) => {
+          transport.team = team;
+          transport.startTime = startTime;
+          sessions.push(transport);
+          host.sessionToolKeys.set(transport.id, toolConfigKey ?? transport.command);
+          host.sessionOriginalArgs.set(transport.id, args);
+          if (worktreePath) host.sessionWorktreePaths.set(transport.id, worktreePath);
+        },
+      ),
+      syncTmuxWindowMetadata: vi.fn(),
+      sessionTmuxTargets: new Map(),
+      sessionToolKeys: new Map(),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      sessionStartTimes: new Map(),
+      sessions,
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+    return host;
+  }
+
   it("adopts live topology before exposing the project service", async () => {
     const host: any = {
       mode: "dashboard",
@@ -2168,6 +2236,151 @@ describe("startProjectServiceHost", () => {
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
     expect(host.startGraveyardCleanup).toHaveBeenCalledOnce();
     expect(host.cleanupGraveyard).toHaveBeenCalledOnce();
+  });
+
+  it("does not create a scribe when automatic scribe config is disabled", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-default-scribe-disabled-"));
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-default-scribe-home-"));
+    const previousCwd = process.cwd();
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    try {
+      gitInit(repoRoot);
+      process.chdir(repoRoot);
+      process.env.AIMUX_HOME = aimuxHome;
+      await initPaths(repoRoot);
+      const host = makeProjectServiceHost(repoRoot);
+
+      await startProjectServiceHost(host);
+
+      expect(host.tmuxRuntimeManager.createWindowAsync).not.toHaveBeenCalled();
+      expect(host.sessions).toHaveLength(0);
+    } finally {
+      process.chdir(previousCwd);
+      if (previousAimuxHome === undefined) {
+        delete process.env.AIMUX_HOME;
+      } else {
+        process.env.AIMUX_HOME = previousAimuxHome;
+      }
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(aimuxHome, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves object-form default scribe launch options", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-resolve-default-scribe-"));
+    const previousCwd = process.cwd();
+    try {
+      gitInit(repoRoot);
+      process.chdir(repoRoot);
+      mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+      writeFileSync(
+        join(repoRoot, ".aimux/config.json"),
+        JSON.stringify({
+          scribe: { defaultAgent: { tool: "claude", extraArgs: ["--model", "opus"], env: { TEST: "1" } } },
+        }),
+      );
+      await initPaths(repoRoot);
+
+      expect(resolveDefaultScribeLaunch(loadConfig({ includeGlobal: false }))).toEqual(
+        expect.objectContaining({
+          toolConfigKey: "claude",
+          command: "claude",
+          args: expect.arrayContaining(["--dangerously-skip-permissions", "--model", "opus"]),
+          env: { TEST: "1" },
+        }),
+      );
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("creates one default scribe from project config", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-default-scribe-"));
+    const previousCwd = process.cwd();
+    try {
+      gitInit(repoRoot);
+      process.chdir(repoRoot);
+      mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+      writeFileSync(
+        join(repoRoot, ".aimux/config.json"),
+        JSON.stringify(
+          {
+            scribe: {
+              defaultAgent: {
+                tool: "claude",
+                extraArgs: ["--model", "sonnet"],
+                env: { AIMUX_TEST_SCRIBE: "1" },
+              },
+            },
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+      await initPaths(repoRoot);
+      const host = makeProjectServiceHost(repoRoot);
+
+      const result = await ensureDefaultScribeAgent(host);
+
+      expect(result).toEqual({ created: true, sessionId: "claude-scribe", toolConfigKey: "claude" });
+      expect(host.tmuxRuntimeManager.createWindowAsync).toHaveBeenCalledOnce();
+      const createWindowArgs = host.tmuxRuntimeManager.createWindowAsync.mock.calls[0];
+      expect(createWindowArgs[2]).toBe(repoRoot);
+      expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SCRIBE=1");
+      expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TEST_SCRIBE=1");
+      expect(createWindowArgs[4].join(" ")).toContain("--dangerously-skip-permissions");
+      expect(createWindowArgs[4].join(" ")).toContain("--model");
+      expect(createWindowArgs[4].join(" ")).toContain("sonnet");
+      expect(loadMetadataState(repoRoot).sessions["claude-scribe"]?.scribe).toBe(true);
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses an existing live scribe instead of creating a duplicate", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-existing-scribe-"));
+    const previousCwd = process.cwd();
+    try {
+      gitInit(repoRoot);
+      process.chdir(repoRoot);
+      mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+      writeFileSync(join(repoRoot, ".aimux/config.json"), JSON.stringify({ scribe: { defaultAgent: "claude" } }));
+      await initPaths(repoRoot);
+      setSessionScribe("claude-existing", true, repoRoot);
+      const host = makeProjectServiceHost(repoRoot);
+      host.sessions.push({ id: "claude-existing", command: "claude", exited: false });
+
+      const result = await ensureDefaultScribeAgent(host);
+
+      expect(result).toEqual({ created: false, reason: "existing", sessionId: "claude-existing" });
+      expect(host.tmuxRuntimeManager.createWindowAsync).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("logs and skips unknown default scribe tools", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-unknown-scribe-"));
+    const previousCwd = process.cwd();
+    try {
+      gitInit(repoRoot);
+      process.chdir(repoRoot);
+      mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+      writeFileSync(join(repoRoot, ".aimux/config.json"), JSON.stringify({ scribe: { defaultAgent: "missing" } }));
+      await initPaths(repoRoot);
+      const host = makeProjectServiceHost(repoRoot);
+
+      const result = await ensureDefaultScribeAgent(host);
+
+      expect(result).toEqual({ created: false, reason: "unknown-tool" });
+      expect(host.tmuxRuntimeManager.createWindowAsync).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 
   it("reconciles missing offline backend ids during startup", async () => {

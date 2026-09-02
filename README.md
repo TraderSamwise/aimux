@@ -96,6 +96,39 @@ aimux task assign "Audit the reconnect path" --project /path/to/repo
 aimux thread list --project /path/to/repo --json
 ```
 
+## Configuration
+
+Aimux reads defaults, then `~/.aimux/config.json`, then `.aimux/config.json`
+inside the project. Project config wins over global config.
+
+Automatic project scribes are disabled by default. To create one whenever a
+project service starts, set a default scribe tool:
+
+```json
+{
+  "scribe": {
+    "defaultAgent": "claude"
+  }
+}
+```
+
+Use object form when the scribe needs tool-specific launch options:
+
+```json
+{
+  "scribe": {
+    "defaultAgent": {
+      "tool": "claude",
+      "extraArgs": ["--model", "sonnet"],
+      "env": { "AIMUX_EXAMPLE": "1" }
+    }
+  }
+}
+```
+
+Set `"defaultAgent": null` in a project config to disable a global default for
+that project.
+
 ## Remote Access And Sharing
 
 The web and native clients are clients of the same local control plane as the

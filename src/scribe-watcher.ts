@@ -66,14 +66,6 @@ function fingerprintFor(sessionId: string, output: string): string {
   return createHash("sha1").update(sessionId).update("\0").update(output).digest("hex");
 }
 
-function readyScribeExists(
-  sessions: ScribeWatcherSession[],
-  metadata: MetadataState,
-  scribeId: string | undefined,
-): scribeId is string {
-  return scribeReadiness(sessions, metadata, scribeId).ready;
-}
-
 function scribeReadiness(
   sessions: ScribeWatcherSession[],
   metadata: MetadataState,

@@ -84,6 +84,20 @@ export interface LoopConfig {
   overseerBriefingTemplate?: string;
 }
 
+export interface DefaultScribeAgentConfig {
+  /** Tool config key to launch as the project scribe. */
+  tool: string;
+  /** Extra args appended after that tool's configured args, same as the tool picker options field. */
+  extraArgs?: string[];
+  /** Extra environment applied to the scribe launch. */
+  env?: Record<string, string>;
+}
+
+export interface ScribeConfig {
+  /** Null disables automatic project scribe creation. */
+  defaultAgent: string | DefaultScribeAgentConfig | null;
+}
+
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
 export interface LoggingConfig {
@@ -131,6 +145,7 @@ export interface AimuxConfig {
   runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
   loop: LoopConfig;
+  scribe: ScribeConfig;
   tools: Record<string, ToolConfig>;
 }
 
@@ -240,6 +255,9 @@ const DEFAULT_CONFIG: AimuxConfig = {
     nudgeCooldownMs: 60000,
     autoNudgeWithoutOverseer: false,
   },
+  scribe: {
+    defaultAgent: null,
+  },
   tools: {
     claude: {
       command: "claude",
@@ -306,6 +324,15 @@ function normalizeConfig(config: AimuxConfig): AimuxConfig {
   const positiveInteger = (value: unknown, fallback: number): number => {
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
   };
+  const stringArray = (value: unknown): string[] | undefined => {
+    return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : undefined;
+  };
+  const stringRecord = (value: unknown): Record<string, string> | undefined => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const entries = Object.entries(value);
+    if (!entries.every(([, entry]) => typeof entry === "string")) return undefined;
+    return Object.fromEntries(entries) as Record<string, string>;
+  };
 
   if (!config.worktrees || typeof config.worktrees !== "object" || Array.isArray(config.worktrees)) {
     config.worktrees = cloneJson(DEFAULT_CONFIG.worktrees);
@@ -336,6 +363,29 @@ function normalizeConfig(config: AimuxConfig): AimuxConfig {
     typeof config.loop.overseerBriefingTemplate !== "string"
   ) {
     delete config.loop.overseerBriefingTemplate;
+  }
+
+  if (!config.scribe || typeof config.scribe !== "object" || Array.isArray(config.scribe)) {
+    config.scribe = cloneJson(DEFAULT_CONFIG.scribe);
+  } else {
+    const defaultAgent = config.scribe.defaultAgent;
+    if (defaultAgent === undefined || defaultAgent === null || (defaultAgent as unknown) === false) {
+      config.scribe.defaultAgent = null;
+    } else if (typeof defaultAgent === "string") {
+      config.scribe.defaultAgent = defaultAgent.trim() || null;
+    } else if (typeof defaultAgent === "object" && !Array.isArray(defaultAgent)) {
+      const raw = defaultAgent as unknown as Record<string, unknown>;
+      const tool = typeof raw.tool === "string" ? raw.tool.trim() : "";
+      config.scribe.defaultAgent = tool
+        ? {
+            tool,
+            extraArgs: stringArray(raw.extraArgs),
+            env: stringRecord(raw.env),
+          }
+        : null;
+    } else {
+      config.scribe.defaultAgent = null;
+    }
   }
 
   if (!config.expose || typeof config.expose !== "object") {

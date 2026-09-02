@@ -30,6 +30,51 @@ describe("config", () => {
     }
   });
 
+  it("leaves automatic scribe creation disabled by default", () => {
+    expect(loadConfig({ includeGlobal: false }).scribe).toEqual({ defaultAgent: null });
+  });
+
+  it("loads a global default scribe agent", () => {
+    writeFileSync(getGlobalConfigPath(), JSON.stringify({ scribe: { defaultAgent: "claude" } }, null, 2) + "\n");
+
+    expect(loadGlobalConfig().scribe.defaultAgent).toBe("claude");
+    expect(loadConfig().scribe.defaultAgent).toBe("claude");
+  });
+
+  it("lets project config disable a global default scribe agent", () => {
+    writeFileSync(getGlobalConfigPath(), JSON.stringify({ scribe: { defaultAgent: "claude" } }, null, 2) + "\n");
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(join(repoRoot, ".aimux/config.json"), JSON.stringify({ scribe: { defaultAgent: null } }) + "\n");
+
+    expect(loadConfig().scribe.defaultAgent).toBeNull();
+  });
+
+  it("normalizes object-form default scribe launch options", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          scribe: {
+            defaultAgent: {
+              tool: "claude",
+              extraArgs: ["--model", "sonnet"],
+              env: { AIMUX_TEST_MODEL: "sonnet" },
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).scribe.defaultAgent).toEqual({
+      tool: "claude",
+      extraArgs: ["--model", "sonnet"],
+      env: { AIMUX_TEST_MODEL: "sonnet" },
+    });
+  });
+
   it("normalizes exact Claude resume as backend-session resumable", () => {
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
