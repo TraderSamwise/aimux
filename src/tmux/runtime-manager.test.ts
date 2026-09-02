@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
+  TMUX_SEND_TEXT_CHUNK_BYTES,
   TmuxRuntimeManager,
   buildDefaultRootMouseBindingsConfig,
+  splitTextForTmuxSendKeys,
   type TmuxExec,
   type TmuxInteractiveExec,
 } from "./runtime-manager.js";
@@ -1718,6 +1720,33 @@ describe("TmuxRuntimeManager", () => {
       ["send-keys", "-t", "@3", "C-j"],
       ["resize-window", "-t", "@3", "-x", "100", "-y", "32"],
     ]);
+  });
+
+  it("chunks large literal sends without splitting utf8 characters", () => {
+    const text = `${"a".repeat(TMUX_SEND_TEXT_CHUNK_BYTES - 1)}🙂${"b".repeat(20)}`;
+    const chunks = splitTextForTmuxSendKeys(text);
+
+    expect(chunks.length).toBe(2);
+    expect(chunks.join("")).toBe(text);
+    expect(chunks.every((chunk) => Buffer.byteLength(chunk) <= TMUX_SEND_TEXT_CHUNK_BYTES)).toBe(true);
+  });
+
+  it("sends large text as multiple literal tmux chunks", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux-mobile-abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+    const text = "x".repeat(TMUX_SEND_TEXT_CHUNK_BYTES + 10);
+
+    manager.sendText(target, text);
+
+    const sends = exec.calls.filter((call) => call.args[0] === "send-keys" && call.args[3] === "-l");
+    expect(sends).toHaveLength(2);
+    expect(sends.map((call) => call.args[4]).join("")).toBe(text);
   });
 
   it("passes an end line when capture output is bounded above", () => {

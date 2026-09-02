@@ -168,6 +168,27 @@ export const MANAGED_TMUX_AGENT_WINDOW_OPTIONS = Object.freeze({
   aggressiveResize: "on",
 });
 
+export const TMUX_SEND_TEXT_CHUNK_BYTES = 4_000;
+
+export function splitTextForTmuxSendKeys(text: string, maxBytes = TMUX_SEND_TEXT_CHUNK_BYTES): string[] {
+  if (!text) return [];
+  const chunks: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const ch of text) {
+    const chBytes = Buffer.byteLength(ch);
+    if (current && currentBytes + chBytes > maxBytes) {
+      chunks.push(current);
+      current = "";
+      currentBytes = 0;
+    }
+    current += ch;
+    currentBytes += chBytes;
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 const MODIFIED_ENTER_HEX = "1b 5b 31 33 3b 32 75";
 // Timed because this is the blocking one: the daemon hosts every project service
 // in-process, so time spent here is time no other project's handler can run.
@@ -1159,11 +1180,14 @@ export class TmuxRuntimeManager {
 
   sendText(target: TmuxTarget, text: string): void {
     if (!text) return;
+    const chunks = splitTextForTmuxSendKeys(text);
     debug(
-      `tmux sendText: target=${target.windowId} bytes=${Buffer.byteLength(text)} preview=${JSON.stringify(text.slice(0, 180))}`,
+      `tmux sendText: target=${target.windowId} bytes=${Buffer.byteLength(text)} chunks=${chunks.length} preview=${JSON.stringify(text.slice(0, 180))}`,
       "fork",
     );
-    this.exec(["send-keys", "-t", target.windowId, "-l", text]);
+    for (const chunk of chunks) {
+      this.exec(["send-keys", "-t", target.windowId, "-l", chunk]);
+    }
   }
 
   sendEnter(target: TmuxTarget): void {

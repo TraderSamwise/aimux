@@ -5,10 +5,11 @@ import { isProjectControlSession, type SessionTeamMetadata } from "./team.js";
 
 export const SCRIBE_WATCHER_SCAN_INTERVAL_MS = 60_000;
 export const SCRIBE_WATCHER_COOLDOWN_MS = 60_000;
-export const SCRIBE_WATCHER_MAX_CANDIDATES = 8;
+export const SCRIBE_WATCHER_MAX_CANDIDATES = 4;
 export const SCRIBE_WATCHER_MAX_SCAN_CANDIDATES = 50;
-export const SCRIBE_WATCHER_OUTPUT_START_LINE = -160;
-export const SCRIBE_WATCHER_MAX_OUTPUT_CHARS = 12_000;
+export const SCRIBE_WATCHER_OUTPUT_START_LINE = -80;
+export const SCRIBE_WATCHER_MAX_OUTPUT_CHARS = 3_000;
+export const SCRIBE_WATCHER_MAX_BRIEFING_CHARS = 16_000;
 export const SCRIBE_WATCHER_MAX_SEEN_FINGERPRINTS_PER_SESSION = 5;
 export const SCRIBE_WATCHER_MAX_SEEN_SESSIONS = SCRIBE_WATCHER_MAX_SCAN_CANDIDATES + SCRIBE_WATCHER_MAX_CANDIDATES + 4;
 
@@ -49,6 +50,7 @@ export interface ScribeWatcherDeps {
   maxScanCandidates?: number;
   outputStartLine?: number;
   maxOutputChars?: number;
+  maxBriefingChars?: number;
 }
 
 function normalizeOutput(value: { output?: string } | string | null | undefined): string {
@@ -152,6 +154,25 @@ export function buildScribeBriefing(candidates: ScribeBriefingCandidate[]): stri
   ].join("\n");
 }
 
+function fitBriefingCandidate(
+  existing: ScribeBriefingCandidate[],
+  candidate: ScribeBriefingCandidate,
+  maxBriefingChars: number,
+): ScribeBriefingCandidate | null {
+  const nextBriefing = buildScribeBriefing([...existing, candidate]);
+  if (nextBriefing.length <= maxBriefingChars) return candidate;
+
+  const emptyCandidate = { ...candidate, output: "", outputChars: 0 };
+  const emptyBriefingChars = buildScribeBriefing([...existing, emptyCandidate]).length;
+  const availableOutputChars = maxBriefingChars - emptyBriefingChars;
+  if (availableOutputChars <= 0) return null;
+
+  const output = candidate.output.slice(-availableOutputChars);
+  const trimmedCandidate = { ...candidate, output, outputChars: output.length };
+  if (buildScribeBriefing([...existing, trimmedCandidate]).length > maxBriefingChars) return null;
+  return trimmedCandidate;
+}
+
 export class ScribeWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private scanning = false;
@@ -240,6 +261,7 @@ export class ScribeWatcher {
       let skippedUnchanged = 0;
       let failedReads = 0;
       let totalOutputChars = 0;
+      const maxBriefingChars = this.deps.maxBriefingChars ?? SCRIBE_WATCHER_MAX_BRIEFING_CHARS;
       for (const candidate of candidates) {
         try {
           readCount += 1;
@@ -257,13 +279,19 @@ export class ScribeWatcher {
             skippedUnchanged += 1;
             continue;
           }
-          totalOutputChars += output.length;
-          briefingCandidates.push({
+          const nextCandidate = {
             ...candidate,
             output,
             outputChars: output.length,
             fingerprint,
-          });
+          };
+          const fittedCandidate = fitBriefingCandidate(briefingCandidates, nextCandidate, maxBriefingChars);
+          if (!fittedCandidate && briefingCandidates.length > 0) {
+            break;
+          }
+          if (!fittedCandidate) continue;
+          totalOutputChars += fittedCandidate.output.length;
+          briefingCandidates.push(fittedCandidate);
           if (briefingCandidates.length >= (this.deps.maxCandidates ?? SCRIBE_WATCHER_MAX_CANDIDATES)) break;
         } catch (error) {
           failedReads += 1;
@@ -287,7 +315,8 @@ export class ScribeWatcher {
       }
 
       if (this.stopped) return;
-      await this.deps.sendAgentInput(readyScribeId, buildScribeBriefing(briefingCandidates));
+      const briefing = buildScribeBriefing(briefingCandidates);
+      await this.deps.sendAgentInput(readyScribeId, briefing);
       if (this.stopped) return;
       this.lastBriefingAt = now;
       for (const candidate of briefingCandidates) {
@@ -308,6 +337,8 @@ export class ScribeWatcher {
         skippedUnchanged,
         failedReads,
         totalOutputChars,
+        briefingChars: briefing.length,
+        maxBriefingChars,
         durationMs: Math.max(0, (this.deps.now ?? Date.now)() - startedAt),
       });
     } catch (error) {

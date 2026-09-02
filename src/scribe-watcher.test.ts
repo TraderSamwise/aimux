@@ -188,6 +188,43 @@ describe("ScribeWatcher", () => {
     expect(text).not.toContain("x".repeat(SCRIBE_WATCHER_MAX_OUTPUT_CHARS + 1));
   });
 
+  it("caps each automatic briefing even when many agents changed", async () => {
+    const sessions = [makeSession("scribe"), ...Array.from({ length: 6 }, (_, index) => makeSession(`agent-${index}`))];
+    const readAgentOutput = vi.fn(async (sessionId: string) => `${sessionId} ${"work ".repeat(80)}`);
+    const sendAgentInput = vi.fn(async () => undefined);
+    const watcher = new ScribeWatcher({
+      loadSessions: () => sessions,
+      loadMetadata: () =>
+        metadata({
+          scribe: {
+            scribe: true,
+            derived: { activity: "idle", attention: "normal" },
+            updatedAt: "2026-08-30T00:00:00.000Z",
+          },
+          ...Object.fromEntries(
+            sessions
+              .filter((session) => session.id !== "scribe")
+              .map((session) => [
+                session.id,
+                { derived: { activity: "idle", attention: "normal" }, updatedAt: "2026-08-30T00:00:00.000Z" },
+              ]),
+          ),
+        } as any),
+      readAgentOutput,
+      sendAgentInput,
+      maxCandidates: 6,
+      maxBriefingChars: 1_500,
+    });
+
+    await watcher.scan();
+
+    expect(sendAgentInput).toHaveBeenCalledTimes(1);
+    const text = sendAgentInput.mock.calls[0][1];
+    expect(text.length).toBeLessThanOrEqual(1_500);
+    expect(text).toContain("id=agent-0");
+    expect(text).not.toContain("id=agent-5");
+  });
+
   it("does not resend unchanged fingerprints after cooldown", async () => {
     let now = 10_000;
     const readAgentOutput = vi.fn(async () => "same output");
