@@ -3,7 +3,7 @@ import type { AgentActivityState, AgentAttentionState } from "./agent-events.js"
 import type { SessionSemanticState } from "./session-semantics.js";
 import { sessionSemanticCompactHint } from "./session-semantics.js";
 import type { SessionTeamMetadata } from "./team.js";
-import { compareTeammateSessions, isTeammateSession } from "./team.js";
+import { compareTeammateSessions, isProjectControlSession, isTeammateSession } from "./team.js";
 
 export interface StatuslineSession {
   id: string;
@@ -320,7 +320,7 @@ export function resolveScopedSessions(
   const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
   const scopedSessions = (data.sessions ?? [])
     .filter((session) => session.status !== "offline" && session.status !== "exited")
-    .filter((session) => session.overseer !== true && session.scribe !== true)
+    .filter((session) => !isProjectControlSession(session))
     .filter((session) => normalizePath(session.worktreePath, projectRoot) === scopedWorktreePath);
   return [
     ...scopedSessions.filter((session) => session.kind !== "service"),

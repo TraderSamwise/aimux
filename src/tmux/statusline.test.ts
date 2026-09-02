@@ -286,7 +286,7 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("Fix auth flow");
   });
 
-  it("omits the overseer from normal scoped footer chips", () => {
+  it("omits project-control sessions from normal scoped footer chips", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -314,6 +314,17 @@ describe("renderTmuxStatusline", () => {
             worktreePath: repoRoot,
             overseer: true,
           },
+          {
+            id: "scribe",
+            tool: "claude",
+            label: "claude-scribe",
+            windowName: "claude",
+            tmuxWindowId: "@3",
+            role: "coder",
+            status: "idle",
+            worktreePath: repoRoot,
+            team: { role: "scribe" },
+          },
         ],
       }),
     );
@@ -328,6 +339,8 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("coder(coder)");
     expect(rendered).not.toContain("claude-overseer");
     expect(rendered).not.toContain("overseer");
+    expect(rendered).not.toContain("claude-scribe");
+    expect(rendered).not.toContain("scribe");
   });
 
   it("renders the active overseer with an explicit footer classification", () => {
