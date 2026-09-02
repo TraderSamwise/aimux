@@ -112,7 +112,9 @@ project service starts, set a default scribe tool:
 }
 ```
 
-Use object form when the scribe needs tool-specific launch options:
+Use object form when the scribe needs tool-specific launch options. `extraArgs`
+is the same argument line exposed by the tool picker's `o` options flow, so
+model or generation flags stay owned by the underlying tool:
 
 ```json
 {
