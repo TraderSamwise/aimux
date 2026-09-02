@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths } from "../paths.js";
+import { getProjectStateDirFor, initPaths } from "../paths.js";
 import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 
 function gitInit(cwd: string): void {
@@ -2306,10 +2306,16 @@ describe("startProjectServiceHost", () => {
         join(repoRoot, ".aimux/config.json"),
         JSON.stringify(
           {
+            tools: {
+              claude: {
+                defaultArgs: ["--model", "opus"],
+                defaultEnv: { AIMUX_TOOL_DEFAULT: "1" },
+              },
+            },
             scribe: {
               defaultAgent: {
                 tool: "claude",
-                extraArgs: ["--model", "sonnet"],
+                extraArgs: ["--max-turns", "4"],
                 env: { AIMUX_TEST_SCRIBE: "1" },
               },
             },
@@ -2328,10 +2334,13 @@ describe("startProjectServiceHost", () => {
       const createWindowArgs = host.tmuxRuntimeManager.createWindowAsync.mock.calls[0];
       expect(createWindowArgs[2]).toBe(repoRoot);
       expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SCRIBE=1");
+      expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL_DEFAULT=1");
       expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TEST_SCRIBE=1");
       expect(createWindowArgs[4].join(" ")).toContain("--dangerously-skip-permissions");
       expect(createWindowArgs[4].join(" ")).toContain("--model");
-      expect(createWindowArgs[4].join(" ")).toContain("sonnet");
+      expect(createWindowArgs[4].join(" ")).toContain("opus");
+      expect(createWindowArgs[4].join(" ")).toContain("--max-turns");
+      expect(createWindowArgs[4].join(" ")).toContain("4");
       expect(loadMetadataState(repoRoot).sessions["claude-scribe"]?.scribe).toBe(true);
     } finally {
       process.chdir(previousCwd);
@@ -2356,6 +2365,30 @@ describe("startProjectServiceHost", () => {
 
       expect(result).toEqual({ created: false, reason: "existing", sessionId: "claude-existing" });
       expect(host.tmuxRuntimeManager.createWindowAsync).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a stale persistent default scribe create claim", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-stale-scribe-claim-"));
+    const previousCwd = process.cwd();
+    try {
+      gitInit(repoRoot);
+      process.chdir(repoRoot);
+      mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+      writeFileSync(join(repoRoot, ".aimux/config.json"), JSON.stringify({ scribe: { defaultAgent: "claude" } }));
+      await initPaths(repoRoot);
+      const lockPath = join(getProjectStateDirFor(repoRoot), "default-scribe-create.lock");
+      mkdirSync(lockPath, { recursive: true });
+      writeFileSync(join(lockPath, "owner"), "999999999\n");
+      const host = makeProjectServiceHost(repoRoot);
+
+      const result = await ensureDefaultScribeAgent(host);
+
+      expect(result).toEqual({ created: true, sessionId: "claude-scribe", toolConfigKey: "claude" });
+      expect(host.tmuxRuntimeManager.createWindowAsync).toHaveBeenCalledOnce();
     } finally {
       process.chdir(previousCwd);
       rmSync(repoRoot, { recursive: true, force: true });

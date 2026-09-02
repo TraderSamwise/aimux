@@ -1,4 +1,5 @@
 import { loadConfig, type ToolConfig } from "../config.js";
+import { defaultsLaunchOverride } from "../tool-launch-defaults.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { parseEnvAssignments, parseShellArgs, type LaunchOverride } from "../shell-args.js";
 import { applyLineEdit, createLineState, renderLineWindow, type LineState } from "../line-editor.js";
@@ -14,6 +15,8 @@ import {
 import { findMainRepo } from "../worktree.js";
 import { setSessionOverseer, setSessionScribe } from "../metadata-store.js";
 import { OVERSEER_SESSION_TEAM, SCRIBE_SESSION_TEAM } from "../team.js";
+
+export { defaultsLaunchOverride } from "../tool-launch-defaults.js";
 
 type ToolPickerHost = any;
 type ToolEntry = [string, ToolConfig];
@@ -34,18 +37,6 @@ export function formatEnvDefaults(env: Record<string, string> | undefined): stri
   return Object.entries(env)
     .map(([key, value]) => `${key}=${quoteShellArg(value)}`)
     .join(" ");
-}
-
-/** Build the launch override implied by a tool's configured defaults, or undefined if it has none. */
-export function defaultsLaunchOverride(tool: ToolConfig): LaunchOverride | undefined {
-  const defaultArgs = tool.defaultArgs ?? [];
-  const hasEnv = tool.defaultEnv && Object.keys(tool.defaultEnv).length > 0;
-  if (defaultArgs.length === 0 && !hasEnv) return undefined;
-  return {
-    command: tool.command,
-    args: [...tool.args, ...defaultArgs],
-    env: hasEnv ? tool.defaultEnv : undefined,
-  };
 }
 
 function initStructuredOptions(toolKey: string, tool: ToolConfig): LaunchOptionsState {

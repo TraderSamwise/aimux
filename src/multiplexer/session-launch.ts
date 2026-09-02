@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import { initProject, loadConfig, type AimuxConfig, type DefaultScribeAgentConfig } from "../config.js";
 import { getProjectStateDirFor } from "../paths.js";
+import { mergeToolLaunchDefaults } from "../tool-launch-defaults.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
@@ -49,10 +51,17 @@ const STARTUP_INTERSTITIAL_WINDOW_MS = 30_000;
 const DASHBOARD_VIEWPORT_POLL_MS = 250;
 const DERIVED_AIMUX_ID_MIN_CHARS = 6;
 const DERIVED_AIMUX_ID_MAX_CHARS = 16;
+const DEFAULT_SCRIBE_CLAIM_RETRY_MS = 100;
+const DEFAULT_SCRIBE_CLAIM_TIMEOUT_MS = 30_000;
+const DEFAULT_SCRIBE_CLAIM_STALE_MS = 60_000;
 const defaultScribeEnsurePromises = new Map<string, Promise<DefaultScribeEnsureResult>>();
 
 export type DefaultScribeEnsureResult =
-  | { created: false; reason: "disabled" | "existing" | "unknown-tool" | "disabled-tool"; sessionId?: string }
+  | {
+      created: false;
+      reason: "disabled" | "existing" | "unknown-tool" | "disabled-tool" | "claim-timeout";
+      sessionId?: string;
+    }
   | { created: true; sessionId: string; toolConfigKey: string };
 type DefaultScribeSkipResult = Extract<DefaultScribeEnsureResult, { created: false }>;
 
@@ -91,14 +100,95 @@ export function resolveDefaultScribeLaunch(config: AimuxConfig): DefaultScribeLa
   const tool = config.tools[normalized.toolConfigKey];
   if (!tool) return { created: false, reason: "unknown-tool" };
   if (tool.enabled === false) return { created: false, reason: "disabled-tool" };
+  const launch = mergeToolLaunchDefaults(tool, normalized.extraArgs, normalized.env);
   return {
     toolConfigKey: normalized.toolConfigKey,
-    command: tool.command,
-    args: [...tool.args, ...normalized.extraArgs],
+    command: launch.command,
+    args: launch.args,
     sessionIdFlag: tool.sessionIdFlag,
     preambleFlag: tool.preambleFlag,
-    env: normalized.env,
+    env: launch.env,
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function defaultScribeClaimPath(projectRoot: string): string {
+  return join(getProjectStateDirFor(projectRoot), "default-scribe-create.lock");
+}
+
+function recoverStaleDefaultScribeClaim(lockPath: string): boolean {
+  const ownerPath = join(lockPath, "owner");
+  try {
+    const ownerPid = Number.parseInt(readFileSync(ownerPath, "utf-8").trim().split(".")[0] ?? "", 10);
+    if (Number.isFinite(ownerPid) && ownerPid > 0) {
+      if (isProcessAlive(ownerPid)) return false;
+      rmSync(lockPath, { recursive: true, force: true });
+      return true;
+    }
+  } catch {
+    if (existsSync(ownerPath)) return false;
+  }
+
+  try {
+    if (Date.now() - statSync(lockPath).mtimeMs > DEFAULT_SCRIBE_CLAIM_STALE_MS) {
+      rmSync(lockPath, { recursive: true, force: true });
+      return true;
+    }
+  } catch {}
+
+  return false;
+}
+
+async function acquireDefaultScribeClaim(
+  projectRoot: string,
+  findExisting: () => string | undefined,
+): Promise<(() => void) | DefaultScribeSkipResult> {
+  const lockPath = defaultScribeClaimPath(projectRoot);
+  mkdirSync(getProjectStateDirFor(projectRoot), { recursive: true });
+  const deadline = Date.now() + DEFAULT_SCRIBE_CLAIM_TIMEOUT_MS;
+  for (;;) {
+    const existing = findExisting();
+    if (existing) return { created: false, reason: "existing", sessionId: existing };
+    try {
+      mkdirSync(lockPath);
+      const ownerToken = `${process.pid}.${randomUUID()}`;
+      try {
+        writeFileSync(join(lockPath, "owner"), `${ownerToken}\n`);
+      } catch (ownerError) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw ownerError;
+      }
+      return () => {
+        try {
+          if (readFileSync(join(lockPath, "owner"), "utf-8").trim() === ownerToken) {
+            rmSync(lockPath, { recursive: true, force: true });
+          }
+        } catch {
+          // Already gone, or no longer ours.
+        }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (recoverStaleDefaultScribeClaim(lockPath)) continue;
+      if (Date.now() >= deadline) {
+        log.warn("default scribe create claim timed out", "scribe", { projectRoot, lockPath });
+        return { created: false, reason: "claim-timeout" };
+      }
+      await sleep(DEFAULT_SCRIBE_CLAIM_RETRY_MS);
+    }
+  }
 }
 
 function isLiveScribeStatus(status: string | undefined): boolean {
@@ -148,41 +238,50 @@ async function createDefaultScribeAgent(
   projectRoot: string,
   launch: DefaultScribeLaunch,
 ): Promise<DefaultScribeEnsureResult> {
-  const existing = findLiveScribeSessionId(host, projectRoot);
+  const findExisting = () => findLiveScribeSessionId(host, projectRoot);
+  const existing = findExisting();
   if (existing) return { created: false, reason: "existing", sessionId: existing };
+  const releaseClaim = await acquireDefaultScribeClaim(projectRoot, findExisting);
+  if (typeof releaseClaim !== "function") return releaseClaim;
 
-  const sessionId =
-    host.generateDashboardSessionId?.(launch.command) ?? `${basename(launch.command) || launch.command}-scribe`;
-  log.info("default scribe create starting", "scribe", {
-    projectRoot,
-    sessionId,
-    toolConfigKey: launch.toolConfigKey,
-    argCount: launch.args.length,
-  });
-  const transport = await createSessionAsync(
-    host,
-    launch.command,
-    launch.args,
-    launch.preambleFlag,
-    launch.toolConfigKey,
-    undefined,
-    launch.sessionIdFlag,
-    projectRoot,
-    undefined,
-    sessionId,
-    true,
-    false,
-    SCRIBE_SESSION_TEAM,
-    { ...(launch.env ?? {}), AIMUX_SCRIBE: "1" },
-    launch.args,
-  );
-  setSessionScribe(transport.id, true, projectRoot);
-  log.info("default scribe create settled", "scribe", {
-    projectRoot,
-    sessionId: transport.id,
-    toolConfigKey: launch.toolConfigKey,
-  });
-  return { created: true, sessionId: transport.id, toolConfigKey: launch.toolConfigKey };
+  try {
+    const claimedExisting = findExisting();
+    if (claimedExisting) return { created: false, reason: "existing", sessionId: claimedExisting };
+    const sessionId =
+      host.generateDashboardSessionId?.(launch.command) ?? `${basename(launch.command) || launch.command}-scribe`;
+    log.info("default scribe create starting", "scribe", {
+      projectRoot,
+      sessionId,
+      toolConfigKey: launch.toolConfigKey,
+      argCount: launch.args.length,
+    });
+    const transport = await createSessionAsync(
+      host,
+      launch.command,
+      launch.args,
+      launch.preambleFlag,
+      launch.toolConfigKey,
+      undefined,
+      launch.sessionIdFlag,
+      projectRoot,
+      undefined,
+      sessionId,
+      true,
+      false,
+      SCRIBE_SESSION_TEAM,
+      { ...(launch.env ?? {}), AIMUX_SCRIBE: "1" },
+      launch.args,
+    );
+    setSessionScribe(transport.id, true, projectRoot);
+    log.info("default scribe create settled", "scribe", {
+      projectRoot,
+      sessionId: transport.id,
+      toolConfigKey: launch.toolConfigKey,
+    });
+    return { created: true, sessionId: transport.id, toolConfigKey: launch.toolConfigKey };
+  } finally {
+    releaseClaim();
+  }
 }
 
 export async function ensureDefaultScribeAgent(host: SessionLaunchHost): Promise<DefaultScribeEnsureResult> {
