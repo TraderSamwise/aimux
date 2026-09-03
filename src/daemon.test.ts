@@ -3656,9 +3656,10 @@ describe("daemon supervision", () => {
   });
 
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
+    const { createFullDaemonRemoteFeatures } = await import("./full/daemon-remote-features.js");
     const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
-    const daemon = new AimuxDaemon();
+    const daemon = new AimuxDaemon(createFullDaemonRemoteFeatures());
     const previousWebSocket = globalThis.WebSocket;
     class FakeWebSocket extends EventTarget {
       constructor(
@@ -3674,9 +3675,21 @@ describe("daemon supervision", () => {
     }
 
     const missing = await daemon.routeRequest("POST", CORE_API_ROUTES.remoteEnableText);
+    const missingCommand = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.relayEnable,
+    });
+    const missingRaw = await daemon.routeRequest("POST", "/relay/enable");
 
     expect(missing.status).toBe(401);
     expect(missing.body).toBe("Not logged in. Run `aimux login` first.\n");
+    expect(missingCommand).toMatchObject({
+      status: 401,
+      body: { ok: false, command: CORE_COMMAND_NAMES.relayEnable, error: "Not logged in. Run `aimux login` first." },
+    });
+    expect(missingRaw).toMatchObject({
+      status: 401,
+      body: { ok: false, error: "Not logged in. Run `aimux login` first." },
+    });
 
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     try {
@@ -4706,9 +4719,10 @@ describe("daemon routing (relay + proxy)", () => {
 
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     try {
+      const { createFullDaemonRemoteFeatures } = await import("./full/daemon-remote-features.js");
       const { saveCredentials } = await import("./full/credentials.js");
       const { AimuxDaemon } = await import("./daemon.js");
-      const daemon = new AimuxDaemon();
+      const daemon = new AimuxDaemon(createFullDaemonRemoteFeatures());
       const baseCredentials = {
         version: 1 as const,
         relayUrl: "wss://relay.example",

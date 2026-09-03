@@ -97,3 +97,11 @@ export function notifyRemoteClientConnected(input: { title?: unknown; body?: unk
   const body = typeof input.body === "string" && input.body.trim().length > 0 ? input.body : "Remote client connected";
   sendSecurity(title, body);
 }
+
+export function notifyRemoteAuthLost(input: { body?: unknown } = {}): void {
+  const body =
+    typeof input.body === "string" && input.body.trim().length > 0
+      ? input.body
+      : "Remote access is disconnected. Run `aimux login` again.";
+  sendSecurity("aimux remote login expired", body);
+}

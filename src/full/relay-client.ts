@@ -1,5 +1,5 @@
 import type { DaemonRelayBridge } from "../daemon-remote-features.js";
-import { notifyRemoteClientConnected } from "../notify.js";
+import { notifyRemoteAuthLost, notifyRemoteClientConnected } from "../notify.js";
 import type { RelayConnectionStatus, RelayNotificationPush, RelayStatusSnapshot } from "../relay-contract.js";
 export type { RelayConnectionStatus, RelayNotificationPush, RelayStatusSnapshot } from "../relay-contract.js";
 
@@ -55,6 +55,7 @@ export class RelayClient {
   private lastError: string | null = null;
   private readonly relayUrl: string;
   private handshakeFailures = 0;
+  private authFailureNotified = false;
   private readonly recentRemoteClientNotifications = new Map<string, number>();
   private readonly projectEventSubscriptions = new Map<string, AbortController>();
 
@@ -116,8 +117,7 @@ export class RelayClient {
       const code = (event as unknown as { code?: number }).code;
       // 1008/4001 = auth rejected by relay; don't hammer with retries.
       if (code === 1008 || code === 4001) {
-        this.status = "auth_failed";
-        this.lastError = "Relay rejected credentials — run `aimux login` again";
+        this.markAuthFailed(`Relay rejected credentials (code ${code}) — run \`aimux login\` again`);
         console.warn(`[relay] Auth failed (code ${code}). Stopping reconnect.`);
         return;
       }
@@ -126,8 +126,7 @@ export class RelayClient {
       if (code === 1006) {
         this.handshakeFailures++;
         if (this.handshakeFailures >= MAX_HANDSHAKE_FAILURES) {
-          this.status = "auth_failed";
-          this.lastError = "Too many handshake failures — token may be expired, run `aimux login` again";
+          this.markAuthFailed("Too many handshake failures — token may be expired, run `aimux login` again");
           console.warn(`[relay] ${MAX_HANDSHAKE_FAILURES} consecutive handshake failures. Stopping reconnect.`);
           return;
         }
@@ -397,6 +396,14 @@ export class RelayClient {
     if (previous && now - previous <= REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS) return false;
     this.recentRemoteClientNotifications.set(key, now);
     return true;
+  }
+
+  private markAuthFailed(message: string): void {
+    this.status = "auth_failed";
+    this.lastError = message;
+    if (this.authFailureNotified) return;
+    this.authFailureNotified = true;
+    notifyRemoteAuthLost({ body: message });
   }
 
   private scheduleRetry(): void {

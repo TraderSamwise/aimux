@@ -537,6 +537,40 @@ export class AimuxDaemon {
     return this.remote.enableRelay(this);
   }
 
+  private async enableRelayForUserRequest(): Promise<CoreRelaySnapshot> {
+    const initial = this.enableRelay();
+    if (initial.status !== "connecting" && initial.status !== "reconnecting") return initial;
+
+    const deadline = Date.now() + 400;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const current = this.getRelayStatus();
+      if (current.status === "auth_failed" || current.status === "connected" || current.status === "disconnected") {
+        return current;
+      }
+    }
+    return this.getRelayStatus();
+  }
+
+  private requireRemoteCredentials(): { ok: true } | { ok: false; status: 401; error: string } {
+    if (this.remote.hasCredentials()) return { ok: true };
+    return { ok: false, status: 401, error: "Not logged in. Run `aimux login` first." };
+  }
+
+  private relayAuthFailedMessage(relay: CoreRelaySnapshot): string {
+    return "lastError" in relay && typeof relay.lastError === "string" && relay.lastError.trim().length > 0
+      ? relay.lastError
+      : "Relay rejected credentials — run `aimux login` again";
+  }
+
+  private relayAuthFailedCoreResponse(
+    id: string,
+    command: string,
+    relay: CoreRelaySnapshot,
+  ): { status: number; body: CoreCommandResponse } {
+    return { status: 401, body: { ok: false, id, command, error: this.relayAuthFailedMessage(relay) } };
+  }
+
   private enableRelayBestEffort(): CoreRelaySnapshot {
     return this.remote.enableRelayBestEffort(this);
   }
@@ -3514,11 +3548,17 @@ export class AimuxDaemon {
           status: 200,
           body: { ok: true, id, command, issuedAt, result: { relay: this.getRelayStatus() } },
         };
-      case CORE_COMMAND_NAMES.relayEnable:
+      case CORE_COMMAND_NAMES.relayEnable: {
+        const credentials = this.requireRemoteCredentials();
+        if (!credentials.ok)
+          return { status: credentials.status, body: { ok: false, id, command, error: credentials.error } };
+        const relay = await this.enableRelayForUserRequest();
+        if (relay.status === "auth_failed") return this.relayAuthFailedCoreResponse(id, command, relay);
         return {
           status: 200,
-          body: { ok: true, id, command, issuedAt, result: { relay: this.enableRelay() } },
+          body: { ok: true, id, command, issuedAt, result: { relay } },
         };
+      }
       case CORE_COMMAND_NAMES.relayDisable:
         return {
           status: 200,
@@ -4103,14 +4143,22 @@ export class AimuxDaemon {
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.remoteEnableText) {
-      if (!this.remote.hasCredentials()) {
+      const credentials = this.requireRemoteCredentials();
+      if (!credentials.ok) {
         return {
-          status: 401,
-          body: "Not logged in. Run `aimux login` first.\n",
+          status: credentials.status,
+          body: `${credentials.error}\n`,
           contentType: "text/plain; charset=utf-8",
         };
       }
-      const relay = this.enableRelay();
+      const relay = await this.enableRelayForUserRequest();
+      if (relay.status === "auth_failed") {
+        return {
+          status: 401,
+          body: `${this.relayAuthFailedMessage(relay)}\n`,
+          contentType: "text/plain; charset=utf-8",
+        };
+      }
       return this.textOrJsonLines(routeUrl, { relay }, renderCoreRemoteEnableLines(relay));
     }
 
@@ -4158,7 +4206,13 @@ export class AimuxDaemon {
     }
 
     if (method === "POST" && pathname === "/relay/enable") {
-      return { status: 200, body: { ok: true, relay: this.enableRelay() } };
+      const credentials = this.requireRemoteCredentials();
+      if (!credentials.ok) return { status: credentials.status, body: { ok: false, error: credentials.error } };
+      const relay = await this.enableRelayForUserRequest();
+      if (relay.status === "auth_failed") {
+        return { status: 401, body: { ok: false, error: this.relayAuthFailedMessage(relay), relay } };
+      }
+      return { status: 200, body: { ok: true, relay } };
     }
 
     if (method === "POST" && pathname === "/relay/disable") {

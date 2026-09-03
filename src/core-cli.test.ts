@@ -517,6 +517,19 @@ describe("runCoreCli", () => {
     });
   });
 
+  it("does not enable remote access without credentials", async () => {
+    const result = await run(["remote", "enable"]);
+
+    expect(result).toMatchObject({
+      code: 1,
+      stdout: [],
+      stderr: ["Not logged in. Run `aimux login` first."],
+    });
+    expect(mocks.requestCoreCommand.mock.calls.some(([command]) => command === CORE_COMMAND_NAMES.relayEnable)).toBe(
+      false,
+    );
+  });
+
   it("keeps credential-only remote disable local when the daemon is down", async () => {
     mocks.daemonInfo = null;
 

@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RelayClient } from "./relay-client.js";
 import type { AimuxDaemon } from "../daemon.js";
-import { notifyRemoteClientConnected } from "../notify.js";
+import { notifyRemoteAuthLost, notifyRemoteClientConnected } from "../notify.js";
 
 vi.mock("../notify.js", () => ({
+  notifyRemoteAuthLost: vi.fn(),
   notifyRemoteClientConnected: vi.fn(),
 }));
 
 describe("RelayClient runtime compatibility", () => {
   beforeEach(() => {
+    vi.mocked(notifyRemoteAuthLost).mockClear();
     vi.mocked(notifyRemoteClientConnected).mockClear();
   });
 
@@ -31,6 +33,38 @@ describe("RelayClient runtime compatibility", () => {
       lastConnectedAt: null,
     });
     expect(status.lastError).toContain("Node 24+");
+  });
+
+  it("notifies once when relay authentication fails", () => {
+    const sockets: EventTarget[] = [];
+    class FakeWebSocket extends EventTarget {
+      static OPEN = 1;
+
+      constructor() {
+        super();
+        sockets.push(this);
+      }
+
+      close(): void {}
+    }
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
+    const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
+
+    client.connect();
+    const closeEvent = new Event("close") as Event & { code: number };
+    Object.defineProperty(closeEvent, "code", { value: 1008 });
+    sockets[0].dispatchEvent(closeEvent);
+    sockets[0].dispatchEvent(closeEvent);
+
+    expect(client.getStatus()).toMatchObject({
+      status: "auth_failed",
+      lastError: "Relay rejected credentials (code 1008) — run `aimux login` again",
+    });
+    expect(notifyRemoteAuthLost).toHaveBeenCalledTimes(1);
+    expect(notifyRemoteAuthLost).toHaveBeenCalledWith({
+      body: "Relay rejected credentials (code 1008) — run `aimux login` again",
+    });
   });
 
   it("turns relay new_client_detected security events into local approval notifications", async () => {

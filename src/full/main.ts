@@ -1436,9 +1436,14 @@ remoteCmd
       console.error("Not logged in. Run `aimux login` first.");
       process.exit(1);
     }
-    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
-    const r = result.relay;
-    console.log(`✓ Remote access enabled (connection: ${r.status ?? "unknown"})`);
+    try {
+      const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
+      const r = result.relay;
+      console.log(`✓ Remote access enabled (connection: ${r.status ?? "unknown"})`);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
   });
 
 remoteCmd
