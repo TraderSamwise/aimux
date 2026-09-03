@@ -242,6 +242,33 @@ describe("buildAgentRestoreConfirmOverlayOutput", () => {
     expect(output).toContain("Enter  confirm");
     expect(output).toContain("Esc  cancel");
   });
+
+  it("does not classify a demoted scribe as project control", () => {
+    const output = plain(
+      buildAgentRestoreConfirmOverlayOutput(
+        {
+          dashboardAgentRestoreOfferCache: {
+            sessionIds: ["claude-1"],
+            sessions: [
+              {
+                id: "claude-1",
+                command: "claude",
+                worktreePath: "/repo",
+                scribe: false,
+                team: { teamId: "scribe", parentSessionId: "", role: "scribe" },
+              },
+            ],
+          },
+        },
+        100,
+        30,
+      ) ?? "",
+    );
+
+    expect(output).toContain("Main Checkout 1");
+    expect(output).not.toContain("project control: scribe");
+    expect(output).not.toContain("scribe: claude");
+  });
 });
 
 describe("buildHelpOverlayOutput", () => {

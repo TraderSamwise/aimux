@@ -4,6 +4,7 @@ import {
   renderWorktreeCacheCleanupRunResult,
   type WorktreeCacheCleanupRunResult,
 } from "../../worktree-cache-cleanup.js";
+import { isProjectControlSession, isScribeSession } from "../../team.js";
 import { renderOverlayBox } from "../render/box.js";
 import { keycap, keycapHint, padVisible, style, visibleWidth } from "../render/theme.js";
 
@@ -179,10 +180,11 @@ function restoreOfferGroupLabels(offer: any): string {
 }
 
 function restoreOfferSessionControlRole(session: any): string | null {
+  if (!isProjectControlSession(session)) return null;
   const role = typeof session?.team?.role === "string" ? session.team.role : undefined;
   if (session?.overseer === true || role === "overseer") return "overseer";
-  if (session?.scribe === true || role === "scribe") return "scribe";
-  return session?.projectControl === true && role ? role : null;
+  if (isScribeSession(session)) return "scribe";
+  return role ?? "control";
 }
 
 function restoreOfferSessionLabel(session: any): string {
