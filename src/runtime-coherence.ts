@@ -20,6 +20,7 @@ import {
   readProcessArgs as defaultReadProcessArgs,
   type ProcessArgsEntry,
 } from "./process-inspector.js";
+import { AIMUX_BUILD_PROFILE, type AimuxBuildProfile } from "./build-profile.js";
 
 export type RuntimeCoherenceStatus = "ok" | "missing" | "mismatch" | "unreachable";
 export type RuntimeCoherenceProjectStatus = "ok" | "needs-restart";
@@ -78,6 +79,7 @@ export interface RuntimeCoherenceProjectReport {
 export interface RuntimeCoherenceReport {
   generatedAt: string;
   cliVersion: string;
+  buildProfile: AimuxBuildProfile;
   cliLaunch: AimuxCliLaunchCommand;
   expected: {
     projectService: ProjectServiceManifest;
@@ -547,6 +549,7 @@ export async function buildRuntimeCoherenceReport(
   return {
     generatedAt: (options.now ?? (() => new Date()))().toISOString(),
     cliVersion: AIMUX_VERSION,
+    buildProfile: AIMUX_BUILD_PROFILE,
     cliLaunch,
     expected: {
       projectService: expectedService,
@@ -616,6 +619,7 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
   const lines = [
     "Aimux Versions",
     `  cli version: ${report.cliVersion}`,
+    `  build profile: ${report.buildProfile}`,
     `  cli launcher: ${report.cliLaunch.source} ${report.cliLaunch.command} ${report.cliLaunch.args.join(" ")}`.trim(),
     `  cli current entry: ${report.cliLaunch.currentEntryPath}`,
     `  cli stable shim: ${report.cliLaunch.stableShimPath}`,

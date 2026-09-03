@@ -2,9 +2,11 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
+import { readAimuxBuildProfileFromPackageRoot } from "./build-profile.js";
 import { readAimuxVersionFromPackageRoot } from "./version.js";
 
 const tmpRoots: string[] = [];
+const originalBuildProfile = process.env.AIMUX_BUILD_PROFILE;
 
 function makePackageRoot(files: Record<string, string>): string {
   const root = join(tmpdir(), `aimux-version-${process.pid}-${tmpRoots.length}`);
@@ -17,6 +19,11 @@ function makePackageRoot(files: Record<string, string>): string {
 }
 
 afterEach(() => {
+  if (originalBuildProfile === undefined) {
+    delete process.env.AIMUX_BUILD_PROFILE;
+  } else {
+    process.env.AIMUX_BUILD_PROFILE = originalBuildProfile;
+  }
   while (tmpRoots.length > 0) {
     rmSync(tmpRoots.pop()!, { recursive: true, force: true });
   }
@@ -44,5 +51,30 @@ describe("readAimuxVersionFromPackageRoot", () => {
     const root = makePackageRoot({});
 
     expect(readAimuxVersionFromPackageRoot(root)).toBe("0.0.0");
+  });
+});
+
+describe("readAimuxBuildProfileFromPackageRoot", () => {
+  it("prefers the installed artifact BUILD_PROFILE label", () => {
+    const root = makePackageRoot({
+      BUILD_PROFILE: "local\n",
+    });
+
+    expect(readAimuxBuildProfileFromPackageRoot(root)).toBe("local");
+  });
+
+  it("falls back to full for source checkouts and older installs", () => {
+    delete process.env.AIMUX_BUILD_PROFILE;
+    const root = makePackageRoot({});
+
+    expect(readAimuxBuildProfileFromPackageRoot(root)).toBe("full");
+  });
+
+  it("ignores unknown artifact labels", () => {
+    const root = makePackageRoot({
+      BUILD_PROFILE: "enterprise\n",
+    });
+
+    expect(readAimuxBuildProfileFromPackageRoot(root)).toBe("full");
   });
 });

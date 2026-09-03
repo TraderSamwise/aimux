@@ -6,6 +6,11 @@ PACKAGE_VERSION="$(awk -F'"' '/"version"[[:space:]]*:/ { print $4; exit }' "$ROO
 printf '%s\n' "$PACKAGE_VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' \
   || { printf 'Failed to read package version from package.json\n' >&2; exit 1; }
 VERSION="${AIMUX_RELEASE_VERSION:-$PACKAGE_VERSION}"
+BUILD_PROFILE="${AIMUX_BUILD_PROFILE:-full}"
+case "$BUILD_PROFILE" in
+  full | local) ;;
+  *) printf 'Unsupported AIMUX_BUILD_PROFILE: %s\n' "$BUILD_PROFILE" >&2; exit 1 ;;
+esac
 
 detect_platform() {
   case "$(uname -s)" in
@@ -50,6 +55,7 @@ mkdir -p "$PKG_DIR"
 cp package.json yarn.lock README.md LICENSE "$PKG_DIR/"
 cp -R bin dist dist-ui docs scripts "$PKG_DIR/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
+printf '%s\n' "$BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
 
 artifact_mtime_ms() {
   [ -f "$1" ] || { printf 'Missing build artifact: %s\n' "$1" >&2; exit 1; }
