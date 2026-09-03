@@ -29,11 +29,10 @@ import {
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
 } from "./core-text.js";
+import { createLocalCoreCliRemoteFeatures, type CoreCliRemoteFeatures } from "./core-cli-remote-features.js";
 import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
 import { requestCoreCommand } from "./core-command-client.js";
-import { clearCredentials, loadCredentials, setRemoteEnabled } from "./full/credentials.js";
 import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
-import { runLoginFlow } from "./full/login-flow.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { initPaths } from "./paths.js";
 import { findMainRepo } from "./worktree.js";
@@ -42,6 +41,10 @@ interface CoreCliIo {
   cwd?: () => string;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
+}
+
+export interface CoreCliDeps {
+  remote?: CoreCliRemoteFeatures;
 }
 
 const defaultIo: Required<CoreCliIo> = {
@@ -266,10 +269,14 @@ async function runProjectsList(args: string[], io: Required<CoreCliIo>): Promise
   return 0;
 }
 
-async function runRemoteStatus(args: string[], io: Required<CoreCliIo>): Promise<number> {
-  const creds = loadCredentials();
+async function runRemoteStatus(
+  args: string[],
+  io: Required<CoreCliIo>,
+  remote: CoreCliRemoteFeatures,
+): Promise<number> {
+  const credentials = remote.credentialsForStatus();
   let relay: CoreRelaySnapshot = { status: "off" };
-  if (loadDaemonInfo()) {
+  if (credentials && loadDaemonInfo()) {
     try {
       const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayStatus, undefined, {
         ensureDaemon: false,
@@ -281,18 +288,18 @@ async function runRemoteStatus(args: string[], io: Required<CoreCliIo>): Promise
     }
   }
   if (hasFlag(args, "--json")) {
-    io.stdout(JSON.stringify({ loggedIn: Boolean(creds), relay }, null, 2));
+    io.stdout(JSON.stringify({ loggedIn: Boolean(credentials), relay }, null, 2));
     return 0;
   }
   renderCoreRemoteStatusLines({
-    credentials: creds ? { relayUrl: creds.relayUrl, remoteEnabled: creds.remoteEnabled } : null,
+    credentials,
     relay,
   }).forEach(io.stdout);
   return 0;
 }
 
-async function runRemoteEnable(io: Required<CoreCliIo>): Promise<number> {
-  if (!loadCredentials()) {
+async function runRemoteEnable(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
+  if (!remote.hasCredentials()) {
     io.stderr("Not logged in. Run `aimux login` first.");
     return 1;
   }
@@ -301,18 +308,18 @@ async function runRemoteEnable(io: Required<CoreCliIo>): Promise<number> {
   return 0;
 }
 
-async function runRemoteDisable(io: Required<CoreCliIo>): Promise<number> {
+async function runRemoteDisable(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
   if (loadDaemonInfo()) {
     await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
     renderCoreRemoteDisableLines(true).forEach(io.stdout);
     return 0;
   }
-  setRemoteEnabled(false);
+  remote.setRemoteEnabled(false);
   renderCoreRemoteDisableLines(false).forEach(io.stdout);
   return 0;
 }
 
-async function enableRelayBestEffort(): Promise<CoreRelaySnapshot> {
+async function enableRelayBestEffort(remote: CoreCliRemoteFeatures): Promise<CoreRelaySnapshot> {
   if (!loadDaemonInfo()) return { status: "off" };
   try {
     const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable, undefined, {
@@ -330,17 +337,8 @@ async function enableRelayBestEffort(): Promise<CoreRelaySnapshot> {
   }
 }
 
-async function runWhoami(args: string[], io: Required<CoreCliIo>): Promise<number> {
-  const creds = loadCredentials();
-  const payload = {
-    credentials: creds
-      ? {
-          userId: creds.userId,
-          relayUrl: creds.relayUrl,
-          remoteEnabled: creds.remoteEnabled,
-        }
-      : null,
-  };
+async function runWhoami(args: string[], io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
+  const payload = remote.whoamiPayload();
   if (hasFlag(args, "--json")) {
     io.stdout(JSON.stringify(coreWhoamiJson(payload), null, 2));
     return 0;
@@ -349,27 +347,27 @@ async function runWhoami(args: string[], io: Required<CoreCliIo>): Promise<numbe
   return 0;
 }
 
-async function runLogout(io: Required<CoreCliIo>): Promise<number> {
+async function runLogout(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
   if (loadDaemonInfo()) {
     try {
       await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
     } catch {}
   }
-  const result = clearCredentials();
+  const result = remote.clearCredentials();
   renderCoreLogoutLines(result).forEach(result === "failed" ? io.stderr : io.stdout);
   return result === "failed" ? 1 : 0;
 }
 
-async function runLogin(io: Required<CoreCliIo>): Promise<number> {
-  const { userId } = await runLoginFlow();
-  const relay = await enableRelayBestEffort();
+async function runLogin(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
+  const { userId } = await remote.runLoginFlow();
+  const relay = await enableRelayBestEffort(remote);
   renderCoreLoginLines({ userId, relay }).forEach(io.stdout);
   return 0;
 }
 
-async function runSecurityUnlock(io: Required<CoreCliIo>): Promise<number> {
-  const { userId } = await runLoginFlow({ action: "security-unlock" });
-  const relay = await enableRelayBestEffort();
+async function runSecurityUnlock(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
+  const { userId } = await remote.runLoginFlow({ action: "security-unlock" });
+  const relay = await enableRelayBestEffort(remote);
   renderCoreSecurityUnlockLines({ userId, relay }).forEach(io.stdout);
   return 0;
 }
@@ -377,8 +375,10 @@ async function runSecurityUnlock(io: Required<CoreCliIo>): Promise<number> {
 export async function runCoreCli(
   rawArgs: string[] = process.argv.slice(2),
   ioOptions: CoreCliIo = {},
+  deps: CoreCliDeps = {},
 ): Promise<number> {
   const io = ioFor(ioOptions);
+  const remote = deps.remote ?? createLocalCoreCliRemoteFeatures();
   const args = coreCommandArgs(rawArgs);
   const [command, subcommand] = args;
   try {
@@ -399,13 +399,13 @@ export async function runCoreCli(
     if (command === "daemon" && subcommand === "project-ensure") return await runDaemonProjectEnsure(args, io);
     if (command === "logs") return await runLogs(args, io);
     if (command === "projects" && subcommand === "list") return await runProjectsList(args, io);
-    if (command === "remote" && subcommand === "status") return await runRemoteStatus(args, io);
-    if (command === "remote" && subcommand === "enable") return await runRemoteEnable(io);
-    if (command === "remote" && subcommand === "disable") return await runRemoteDisable(io);
-    if (command === "whoami") return await runWhoami(args, io);
-    if (command === "logout") return await runLogout(io);
-    if (command === "login") return await runLogin(io);
-    if (command === "security" && subcommand === "unlock") return await runSecurityUnlock(io);
+    if (command === "remote" && subcommand === "status") return await runRemoteStatus(args, io, remote);
+    if (command === "remote" && subcommand === "enable") return await runRemoteEnable(io, remote);
+    if (command === "remote" && subcommand === "disable") return await runRemoteDisable(io, remote);
+    if (command === "whoami") return await runWhoami(args, io, remote);
+    if (command === "logout") return await runLogout(io, remote);
+    if (command === "login") return await runLogin(io, remote);
+    if (command === "security" && subcommand === "unlock") return await runSecurityUnlock(io, remote);
     io.stderr(`unsupported core command: ${args.join(" ")}`);
     return 2;
   } catch (error) {

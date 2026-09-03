@@ -1,9 +1,10 @@
 import { Command } from "commander";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
-import { Multiplexer } from "./multiplexer/index.js";
-import { llmCompact } from "./context/compactor.js";
-import { initProject, loadConfig } from "./config.js";
+import { createInterface } from "node:readline/promises";
+import { Multiplexer } from "../multiplexer/index.js";
+import { llmCompact } from "../context/compactor.js";
+import { initProject, loadConfig } from "../config.js";
 import {
   initPaths,
   getHistoryDir,
@@ -13,55 +14,78 @@ import {
   getDaemonLogPath,
   getProjectLogPath,
   getRuntimeTopologyPath,
-} from "./paths.js";
-import { PROJECT_API_ROUTES, type AgentLoopInput } from "./project-api-contract.js";
-import { AIMUX_VERSION } from "./version.js";
-import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
-import { renderWorktreeCacheCleanupRunResult, type WorktreeCacheCleanupRunResult } from "./worktree-cache-cleanup.js";
-import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+} from "../paths.js";
+import { PROJECT_API_ROUTES, type AgentLoopInput } from "../project-api-contract.js";
+import { AIMUX_VERSION } from "../version.js";
+import { findMainRepo, listWorktrees, type WorktreeInfo } from "../worktree.js";
+import { renderWorktreeCacheCleanupRunResult, type WorktreeCacheCleanupRunResult } from "../worktree-cache-cleanup.js";
+import { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import {
   buildTmuxDoctorReport,
   renderTmuxDoctorReport,
   renderTmuxRepairResult,
   repairTmuxRuntime,
-} from "./tmux/doctor.js";
+} from "../tmux/doctor.js";
 import {
   DEFAULT_INSTALL_KEEP_RECENT,
   DEFAULT_INSTALL_RETENTION_DAYS,
   planInstallCleanup,
   runInstallCleanup,
-} from "./install-cleanup.js";
-import { isInstallCleanupDryRun, renderInstallCleanupResult } from "./install-doctor.js";
-import { removeMetadataEndpoint } from "./metadata-store.js";
-import { AimuxDaemon } from "./daemon.js";
-import { getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
-import { stopDaemon } from "./daemon-supervisor.js";
-import { requestCoreCommand } from "./core-command-client.js";
-import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreRelaySnapshot } from "./core-command-contract.js";
-import { renderDiskDoctorReport, type DiskDoctorReport } from "./disk-doctor.js";
-import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
-import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
+} from "../install-cleanup.js";
+import { isInstallCleanupDryRun, renderInstallCleanupResult } from "../install-doctor.js";
+import { removeMetadataEndpoint } from "../metadata-store.js";
+import { AimuxDaemon } from "../daemon.js";
+import { getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState } from "../daemon-state.js";
+import { stopDaemon } from "../daemon-supervisor.js";
+import { requestCoreCommand } from "../core-command-client.js";
+import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreRelaySnapshot } from "../core-command-contract.js";
+import { renderDiskDoctorReport, type DiskDoctorReport } from "../disk-doctor.js";
+import { type MessageKind, type ThreadKind, type ThreadStatus } from "../threads.js";
+import { runLoginFlow } from "./login-flow.js";
+import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { createFullDaemonRemoteFeatures } from "./daemon-remote-features.js";
+import { listRegisteredDesktopProjects } from "../project-scanner.js";
+import { tailHostedAudit, tailHostedPrompts } from "./hosted-audit.js";
+import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
+import { hostedLockdownState, setHostedLockdown } from "./hosted-lockdown.js";
+import { raiseHostedCliEvent } from "./hosted-outbox.js";
+import {
+  approveRemoteSecurityDevice,
+  blockRemoteSecurityDevice,
+  listLivePendingRemoteSecurityDevices,
+  listRemoteSecurityDevices,
+  type RemoteSecurityDevice,
+  unblockRemoteSecurityDevice,
+} from "./security-devices-client.js";
+import {
+  createHostedPrincipal,
+  grantHostedSession,
+  listHostedPrincipals,
+  revokeHostedPrincipal,
+  ungrantHostedSession,
+} from "./hosted-principals.js";
+import { takeOverProjectFromOtherOwners } from "../project-takeover.js";
 import {
   buildDesktopNotifierDoctorReport,
   renderDesktopNotifierDoctorReport,
   sendDesktopNotificationAndWait,
-} from "./desktop-notifier.js";
-import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
-import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "./dashboard/targets.js";
-import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
-import { rewriteDashboardStatuslineArtifacts } from "./tmux/statusline-artifacts.js";
-import { stopProjectTmuxRuntime } from "./tmux/runtime-stop.js";
+} from "../desktop-notifier.js";
+import { buildDebugStateReport, renderDebugStateReport } from "../debug-state.js";
+import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "../dashboard/targets.js";
+import { invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
+import { rewriteDashboardStatuslineArtifacts } from "../tmux/statusline-artifacts.js";
+import { stopProjectTmuxRuntime } from "../tmux/runtime-stop.js";
 import {
   configureLogging,
   log,
   logLifecycleAlways,
   resolveLoggingRuntimeConfig,
   type LoggingCliOptions,
-} from "./debug.js";
-import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
-import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
-import { resolveAgentIdentity } from "./runtime-core/backend-session-ids.js";
-import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
+} from "../debug.js";
+import { createRuntimeTopologyStore } from "../runtime-core/topology-store.js";
+import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
+import { resolveAgentIdentity } from "../runtime-core/backend-session-ids.js";
+import { type GraveyardCleanupRunResult } from "../graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
   importRuntimeMigration,
@@ -69,24 +93,29 @@ import {
   renderRuntimeMigrationReport,
   renderRuntimeMigrationRollbackResult,
   rollbackRuntimeMigration,
-} from "./runtime-migration.js";
-import { createAgentOutputSseTextHandler } from "./agent-output-stream.js";
+} from "../runtime-migration.js";
+import { createAgentOutputSseTextHandler } from "../agent-output-stream.js";
 import {
   DEFAULT_LOCAL_UI_HOST,
   DEFAULT_LOCAL_UI_PORT,
   openUrlInBrowser,
   startLocalUiServer,
-} from "./local-ui-server.js";
-import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
-import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
-import { registerExposeCommand } from "./popup-expose.js";
-import { MAX_AGENT_OUTPUT_CAPTURE_LINES } from "./agent-output-bounds.js";
-import { buildAgentIdentityErrorPayload, buildAgentIdentityPayload, renderAgentIdentityLines } from "./cli/agent-id.js";
-import { renderAgentsByWorktreeLines, renderAgentsFlatLines, type CliAgentListItem } from "./cli/agent-list.js";
-import { registerAttachmentCommand } from "./cli/attachment.js";
-import { registerLogsCommand } from "./cli/logs.js";
-import { registerMetadataCommand } from "./cli/metadata.js";
-import { registerWorkOutlineCommand } from "./cli/work-outline.js";
+} from "../local-ui-server.js";
+import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "../runtime-coherence.js";
+import { restartControlPlaneFromCli } from "../control-plane-restart-client.js";
+import { registerExposeCommand } from "../popup-expose.js";
+import { MAX_AGENT_OUTPUT_CAPTURE_LINES } from "../agent-output-bounds.js";
+import {
+  buildAgentIdentityErrorPayload,
+  buildAgentIdentityPayload,
+  renderAgentIdentityLines,
+} from "../cli/agent-id.js";
+import { renderAgentsByWorktreeLines, renderAgentsFlatLines, type CliAgentListItem } from "../cli/agent-list.js";
+import { registerAttachmentCommand } from "../cli/attachment.js";
+import { maybeHostPublishedAttachment } from "./attachment-hosting.js";
+import { registerLogsCommand } from "../cli/logs.js";
+import { registerMetadataCommand } from "../cli/metadata.js";
+import { registerWorkOutlineCommand } from "../cli/work-outline.js";
 import {
   coreProjectServicePid,
   ensureCoreProjectServiceForCliWithRepair,
@@ -103,8 +132,8 @@ import {
   renderProjectServiceVersionHelp,
   resolveProjectRoot,
   stopCoreProjectServiceForCliWithRepair,
-} from "./cli/project-service.js";
-import { registerTeamCommand } from "./cli/team.js";
+} from "../cli/project-service.js";
+import { registerTeamCommand } from "../cli/team.js";
 const program = new Command();
 
 const rewriteLocalStatuslineArtifacts = rewriteDashboardStatuslineArtifacts;
@@ -251,6 +280,10 @@ function parseStrictInteger(value: string): number | undefined {
   if (!/^-?\d+$/.test(value.trim())) return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function relayLastError(relay: CoreRelaySnapshot): string | null {
+  return "lastError" in relay ? relay.lastError : null;
 }
 
 program
@@ -847,7 +880,7 @@ daemonCmd
   .command("run")
   .description("Internal daemon entrypoint")
   .action(async () => {
-    const daemon = new AimuxDaemon();
+    const daemon = new AimuxDaemon(createFullDaemonRemoteFeatures());
     await daemon.start();
     let shuttingDown = false;
     const shutdown = (exitCode: number, trigger: string) => {
@@ -1064,6 +1097,562 @@ program
     llmCompact(sessionIds);
     console.log(`Done. Summary written to ${getContextDir()}/summary.md`);
   });
+
+program
+  .command("login")
+  .description("Sign in to enable remote access via aimux.app")
+  .option("--web-app-url <url>", "Override the web app URL")
+  // No --relay-url here: the token is minted by whichever relay the web app
+  // points at, so a CLI override would just store a relay URL that rejects
+  // the resulting token (different RELAY_TOKEN_SECRET).
+  .action(async (opts: { webAppUrl?: string }) => {
+    try {
+      const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl });
+      let relayStatus: string | null = null;
+      let relayError: string | null = null;
+      if (loadDaemonInfo()) {
+        try {
+          const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable, undefined, {
+            ensureDaemon: false,
+            timeoutMs: 1000,
+          });
+          const relay = result.relay;
+          relayStatus = relay.status ?? "unknown";
+          relayError = relayLastError(relay);
+        } catch (err) {
+          relayError = err instanceof Error ? err.message : String(err);
+        }
+      }
+      console.log(`\n✓ Logged in as ${userId}`);
+      if (relayStatus) {
+        console.log(`Remote access is enabled (connection: ${relayStatus}).`);
+        if (relayError) console.log(`Last error: ${relayError}`);
+      } else {
+        console.log("Remote access is enabled. The daemon will connect on next start.");
+        if (relayError) console.log(`Daemon refresh failed: ${relayError}`);
+      }
+    } catch (err) {
+      console.error(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("logout")
+  .description("Clear stored credentials and disable remote access")
+  .action(async () => {
+    // If the daemon is running it already has the credential loaded into
+    // memory; tell it to disconnect before we yank the file so the running
+    // process stops talking to the relay immediately (best-effort — we
+    // ignore failures since the daemon may not be up).
+    if (loadDaemonInfo()) {
+      try {
+        await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
+      } catch {
+        // daemon offline or refused; the file removal below still kills
+        // future startup, so this isn't fatal.
+      }
+    }
+    const result = clearCredentials();
+    if (result === "cleared") console.log("✓ Logged out. Remote access disabled.");
+    else if (result === "none") console.log("Not logged in.");
+    else {
+      console.error("Failed to remove credentials file — check permissions.");
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("whoami")
+  .description("Show the current remote-access login status")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const creds = loadCredentials();
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          creds
+            ? { loggedIn: true, userId: creds.userId, relayUrl: creds.relayUrl, remoteEnabled: creds.remoteEnabled }
+            : { loggedIn: false },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    if (!creds) {
+      console.log("Not logged in. Run `aimux login` to enable remote access.");
+      return;
+    }
+    console.log(`Logged in as ${creds.userId}`);
+    console.log(`Relay: ${creds.relayUrl}`);
+    console.log(`Remote access: ${creds.remoteEnabled ? "enabled" : "disabled"}`);
+  });
+
+const remoteCmd = program.command("remote").description("Manage remote access via the relay");
+const securityCmd = program.command("security").description("Manage aimux security controls");
+const hostedCmd = program.command("hosted").description("Manage hosted mode: principals, grants, audit, lockdown");
+
+/**
+ * The project root a grant must be stored under.
+ *
+ * NOT a bare resolve of `--project`. The daemon checks grants against the
+ * registry's repo root, which is normalized (a subdirectory or a worktree
+ * resolves to the main repo). Storing the raw argument would produce a grant
+ * the daemon never matches, and every request would 403 with nothing to show
+ * why. The global preAction hook has already initPaths'd `--project`, so this
+ * is exactly the value the registry holds.
+ */
+function hostedGrantProjectRoot(): string {
+  const root = getRepoRoot();
+  // Checked against the SAME list the daemon resolves ports through, not the
+  // raw registry: the preAction hook has already registered whatever was
+  // passed, so a registry lookup would always succeed — including for a typo'd
+  // or temporary path the daemon filters out and could therefore never match.
+  if (!listRegisteredDesktopProjects().some((project) => project.path === root)) {
+    console.error(
+      `Project ${root} is not one the daemon can resolve, so a grant on it could never match.\n` +
+        `Open it in aimux once, and check it is a real repository outside a temporary directory.`,
+    );
+    process.exit(1);
+  }
+  return root;
+}
+
+hostedCmd
+  .command("status")
+  .description("Show hosted mode configuration and principals")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const config = loadHostedConfig();
+    const principals = listHostedPrincipals();
+    const active = principals.filter((principal) => !principal.revokedAt);
+    // Surfaced here because a refused start is otherwise only visible in the
+    // daemon log, and "enabled: true" alone would be misleading.
+    const validation = validateHostedStartup(config, active.length);
+    const lockdown = hostedLockdownState();
+
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            enabled: config.enabled,
+            bindAddress: config.bindAddress,
+            port: config.port,
+            webhookConfigured: Boolean(config.webhookUrl),
+            trustedForwardedHeader: config.trustedForwardedHeader,
+            retentionDays: config.retentionDays,
+            principals: { total: principals.length, active: active.length },
+            lockdown,
+            startup: validation,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    console.log(`Hosted mode: ${config.enabled ? "enabled" : "disabled"}`);
+    console.log(`Listener:    ${config.bindAddress}:${config.port}`);
+    console.log(`Principals:  ${active.length} active, ${principals.length} total`);
+    console.log(`Webhook:     ${config.webhookUrl ? `configured (${config.webhookSecretEnv})` : "not configured"}`);
+    console.log(`Lockdown:    ${lockdown.active ? `ON since ${lockdown.since ?? "unknown"}` : "off"}`);
+    if (!validation.ok) console.log(`\nWill not start: ${validation.error}`);
+  });
+
+const hostedTokenCmd = hostedCmd.command("token").description("Manage hosted bearer tokens");
+
+hostedTokenCmd
+  .command("create")
+  .description("Create a principal and print its token once")
+  .requiredOption("--label <label>", "Who this token is for (an opaque identifier, shown in audit records)")
+  .action((opts: { label: string }) => {
+    const { principal, token } = createHostedPrincipal({ label: opts.label });
+    // Printed once, to stdout only. Nothing stores the plaintext, so a lost
+    // token is replaced rather than recovered.
+    console.log(`\nPrincipal: ${principal.id}  (${principal.label})`);
+    console.log(`Token:     ${token}`);
+    console.log(`\nStore it now — only its hash is kept, so it cannot be shown again.`);
+    console.log(`Grant it a session with:\n  aimux hosted grant ${principal.id} --project <root> --session <id>\n`);
+  });
+
+hostedTokenCmd
+  .command("list")
+  .description("List principals")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const principals = listHostedPrincipals();
+    if (opts.json) {
+      console.log(JSON.stringify(principals, null, 2));
+      return;
+    }
+    if (principals.length === 0) {
+      console.log("No principals. Create one with: aimux hosted token create --label <label>");
+      return;
+    }
+    for (const principal of principals) {
+      const state = principal.revokedAt ? `revoked ${principal.revokedAt}` : "active";
+      console.log(`${principal.id}  ${principal.label}  [${state}]`);
+      for (const grant of principal.grants) console.log(`    ${grant.sessionId}  ${grant.projectRoot}`);
+      if (principal.grants.length === 0) console.log("    (no grants)");
+    }
+  });
+
+hostedTokenCmd
+  .command("revoke <principalId>")
+  .description("Revoke a principal's token")
+  .action((principalId: string) => {
+    if (!revokeHostedPrincipal(principalId)) {
+      console.error(`No active principal ${principalId}`);
+      process.exit(1);
+    }
+    raiseHostedCliEvent("hosted_token_revoked", principalId, `revoked via CLI`);
+    console.log(`Revoked ${principalId}`);
+  });
+
+hostedCmd
+  .command("grant <principalId>")
+  .description("Allow a principal to converse with one session")
+  .requiredOption("--project <root>", "Project root the session belongs to")
+  .requiredOption("--session <id>", "Session id")
+  .action((principalId: string, opts: { project: string; session: string }) => {
+    const projectRoot = hostedGrantProjectRoot();
+    if (!grantHostedSession(principalId, { projectRoot, sessionId: opts.session })) {
+      console.error(`Could not grant — no active principal ${principalId}, or an invalid project/session`);
+      process.exit(1);
+    }
+    raiseHostedCliEvent("hosted_grant_changed", principalId, `granted ${opts.session}`);
+    console.log(`Granted ${principalId} -> ${opts.session} in ${projectRoot}`);
+  });
+
+hostedCmd
+  .command("ungrant <principalId>")
+  .description("Remove a principal's access to one session")
+  .requiredOption("--project <root>", "Project root the session belongs to")
+  .requiredOption("--session <id>", "Session id")
+  .action((principalId: string, opts: { project: string; session: string }) => {
+    const projectRoot = hostedGrantProjectRoot();
+    if (!ungrantHostedSession(principalId, { projectRoot, sessionId: opts.session })) {
+      console.error(`No such grant on ${principalId}`);
+      process.exit(1);
+    }
+    raiseHostedCliEvent("hosted_grant_changed", principalId, `ungranted ${opts.session}`);
+    console.log(`Removed ${opts.session} from ${principalId}`);
+  });
+
+hostedCmd
+  .command("lockdown <state>")
+  .description('Close or reopen the hosted listener ("on" or "off")')
+  .action((state: string) => {
+    if (state !== "on" && state !== "off") {
+      console.error("Usage: aimux hosted lockdown on|off");
+      process.exit(1);
+    }
+    const result = setHostedLockdown(state === "on");
+    raiseHostedCliEvent("hosted_lockdown", null, state === "on" ? "engaged" : "cleared");
+    console.log(result.active ? `Hosted mode locked down at ${result.since}` : "Hosted lockdown cleared");
+  });
+
+const hostedAuditCmd = hostedCmd.command("audit").description("Inspect the hosted audit log");
+
+hostedAuditCmd
+  .command("tail")
+  .description("Show the most recent audit records")
+  .option("-n, --lines <count>", "How many records", "20")
+  .option("--json", "Emit JSON")
+  .option("--prompts", "Include the prompt bodies that were kept")
+  .action((opts: { lines?: string; json?: boolean; prompts?: boolean }) => {
+    const count = Math.max(1, Number.parseInt(opts.lines ?? "20", 10) || 20);
+    const records = tailHostedAudit(count);
+    const bodies = opts.prompts
+      ? tailHostedPrompts(records.flatMap((record) => (record.promptRef ? [record.promptRef] : [])))
+      : new Map();
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          opts.prompts
+            ? records.map((record) => ({
+                ...record,
+                prompt: record.promptRef ? (bodies.get(record.promptRef) ?? null) : null,
+              }))
+            : records,
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    for (const record of records) {
+      const what = record.event ? `${record.event} ${record.detail ?? ""}`.trim() : `${record.method} ${record.path}`;
+      console.log(`${record.ts}  ${record.label}  ${record.status || "-"}  ${record.sessionId ?? "-"}  ${what}`);
+      const body = record.promptRef ? bodies.get(record.promptRef) : undefined;
+      if (body) {
+        const suffix = body.truncated ? " […]" : "";
+        console.log(`    ${body.promptText.replace(/\n/g, "\n    ")}${suffix}`);
+      }
+    }
+  });
+
+remoteCmd
+  .command("status")
+  .description("Show relay connection status")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const creds = loadCredentials();
+    let relay: CoreRelaySnapshot = { status: "off" };
+    if (loadDaemonInfo()) {
+      try {
+        const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayStatus, undefined, {
+          ensureDaemon: false,
+          timeoutMs: 1000,
+        });
+        relay = result.relay;
+      } catch {
+        // Daemon is not reachable — fall back to credential state.
+      }
+    }
+    if (opts.json) {
+      console.log(JSON.stringify({ loggedIn: Boolean(creds), relay }, null, 2));
+      return;
+    }
+    if (!creds) {
+      console.log("Not logged in. Run `aimux login` to enable remote access.");
+      return;
+    }
+    const r = relay;
+    console.log(`Remote access: ${creds.remoteEnabled ? "enabled" : "disabled"}`);
+    console.log(`Relay: ${creds.relayUrl}`);
+    console.log(`Connection: ${r.status ?? "unknown"}`);
+    const lastError = relayLastError(r);
+    if (lastError) console.log(`Last error: ${lastError}`);
+  });
+
+remoteCmd
+  .command("enable")
+  .description("Enable remote access and connect to the relay")
+  .action(async () => {
+    if (!loadCredentials()) {
+      console.error("Not logged in. Run `aimux login` first.");
+      process.exit(1);
+    }
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
+    const r = result.relay;
+    console.log(`✓ Remote access enabled (connection: ${r.status ?? "unknown"})`);
+  });
+
+remoteCmd
+  .command("disable")
+  .description("Disable remote access and disconnect from the relay")
+  .action(async () => {
+    if (loadDaemonInfo()) {
+      await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
+      console.log("✓ Remote access disabled. Daemon disconnected from relay.");
+      return;
+    }
+    setRemoteEnabled(false);
+    console.log("✓ Remote access disabled.");
+  });
+
+securityCmd
+  .command("devices")
+  .description("List remote client devices")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    try {
+      const devices = await listRemoteSecurityDevices();
+      if (opts.json) {
+        console.log(JSON.stringify({ devices }, null, 2));
+        return;
+      }
+      renderRemoteSecurityDevices(devices).forEach((line) => console.log(line));
+    } catch (err) {
+      console.error(`Could not list remote devices: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+const securityDeviceCmd = securityCmd.command("device").description("Approve a live remote client device");
+
+securityDeviceCmd
+  .command("approve [deviceId]")
+  .description("Approve the most recent live remote client waiting for access")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string | undefined, opts: { json?: boolean }) => {
+    try {
+      const devices = await listLivePendingRemoteSecurityDevices();
+      const candidates = deviceId
+        ? devices.filter((device) => device.id === deviceId || device.deviceId === deviceId)
+        : devices;
+      if (candidates.length === 0) {
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              { ok: false, devices: [], error: "No live remote clients are waiting for approval" },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+        console.log(
+          deviceId
+            ? `No live remote client is waiting for approval as ${deviceId}.`
+            : "No live remote clients are waiting for approval.",
+        );
+        return;
+      }
+
+      const approved = await approveLiveRemoteSecurityDeviceInteractively(candidates);
+      if (!approved) {
+        if (opts.json) console.log(JSON.stringify({ ok: false, devices: candidates }, null, 2));
+        return;
+      }
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, device: approved }, null, 2));
+        return;
+      }
+      console.log(`Approved ${approved.name ?? approved.kind} (${approved.id})`);
+    } catch (err) {
+      console.error(`Could not approve remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
+  .command("approve <deviceId>")
+  .description("Approve a remote client device")
+  .option("--code <code>", "Approval code shown on the waiting device")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string, opts: { code?: string; json?: boolean }) => {
+    try {
+      const device = await approveRemoteSecurityDevice(deviceId, opts.code);
+      if (opts.json) {
+        console.log(JSON.stringify({ device }, null, 2));
+        return;
+      }
+      console.log(`Approved ${device.id} (${device.name ?? device.kind})`);
+    } catch (err) {
+      console.error(`Could not approve remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
+  .command("block <deviceId>")
+  .alias("revoke")
+  .description("Block a remote client device")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string, opts: { json?: boolean }) => {
+    try {
+      const device = await blockRemoteSecurityDevice(deviceId);
+      if (opts.json) {
+        console.log(JSON.stringify({ device }, null, 2));
+        return;
+      }
+      console.log(`Blocked ${device.id} (${device.name ?? device.kind})`);
+    } catch (err) {
+      console.error(`Could not block remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
+  .command("unblock <deviceId>")
+  .description("Unblock a remote client device without approving it")
+  .option("--json", "Emit JSON")
+  .action(async (deviceId: string, opts: { json?: boolean }) => {
+    try {
+      const device = await unblockRemoteSecurityDevice(deviceId);
+      if (opts.json) {
+        console.log(JSON.stringify({ device }, null, 2));
+        return;
+      }
+      console.log(`Unblocked ${device.id} (${device.name ?? device.kind})`);
+    } catch (err) {
+      console.error(`Could not unblock remote device: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+securityCmd
+  .command("unlock")
+  .description("Clear relay security lockdown after re-authenticating")
+  .option("--web-app-url <url>", "Override the web app URL")
+  .action(async (opts: { webAppUrl?: string }) => {
+    try {
+      const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl, action: "security-unlock" });
+      console.log(`\n✓ Security unlocked for ${userId}`);
+      console.log("Remote access is enabled with a fresh daemon token. Restart the daemon to reconnect immediately.");
+    } catch (err) {
+      console.error(`Security unlock failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+function renderRemoteSecurityDevices(devices: RemoteSecurityDevice[]): string[] {
+  if (devices.length === 0) return ["No remote client devices have connected."];
+  const lines = ["Remote client devices (most recent first)"];
+  for (const device of devices) {
+    const state = device.blocked ? "blocked" : device.approved ? "approved" : "pending";
+    const name = device.name ?? device.kind;
+    const location = device.lastCountry ? ` from ${device.lastCountry}` : "";
+    lines.push(
+      "",
+      `${state.padEnd(8)} ${name}${location}`,
+      `  id       ${device.id}`,
+      `  platform ${device.platform ?? device.kind}`,
+      `  seen     ${device.lastSeenAt}`,
+    );
+  }
+  return lines;
+}
+
+async function approveLiveRemoteSecurityDeviceInteractively(
+  devices: RemoteSecurityDevice[],
+): Promise<RemoteSecurityDevice | null> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      "Interactive approval requires a TTY. Run `aimux security device approve` in a terminal and type the code shown on the waiting device.",
+    );
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (const [index, device] of devices.entries()) {
+      console.log("");
+      renderPendingRemoteSecurityDevice(device, index + 1, devices.length).forEach((line) => console.log(line));
+      const answer = (
+        await rl.question("Type the code shown on the waiting device here, Enter for not this device, or q to quit: ")
+      ).trim();
+      if (!answer) continue;
+      if (answer.toLowerCase() === "q") return null;
+      try {
+        return await approveRemoteSecurityDevice(device.id, answer);
+      } catch (error) {
+        console.log(error instanceof Error ? error.message : "Code did not match; device was not approved.");
+        console.log("Leaving this device pending; showing the next live device if there is one.");
+        continue;
+      }
+    }
+  } finally {
+    rl.close();
+  }
+  console.log("No device approved.");
+  return null;
+}
+
+function renderPendingRemoteSecurityDevice(device: RemoteSecurityDevice, index: number, total: number): string[] {
+  const name = device.name ?? device.kind;
+  const location = device.lastCountry ? ` from ${device.lastCountry}` : "";
+  return [
+    `Remote client waiting for approval (${index} of ${total})`,
+    `  Device   ${name}${location}`,
+    `  ID       ${device.id}`,
+    `  Platform ${device.platform ?? device.kind}`,
+    `  Seen     ${device.lastSeenAt}`,
+    "  Confirm  Read the code on that waiting device, then type it here.",
+  ];
+}
 
 async function prepareProjectContext(requestedProject?: string): Promise<string> {
   const requestedPath = pathResolve(requestedProject ?? process.cwd());
@@ -1342,6 +1931,7 @@ registerAttachmentCommand(program, {
   prepareProjectContext,
   postProjectServiceJson,
   listWorktrees,
+  hostPublishedAttachment: maybeHostPublishedAttachment,
 });
 
 program

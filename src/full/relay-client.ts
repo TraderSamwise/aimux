@@ -1,7 +1,7 @@
-import type { AimuxDaemon } from "../daemon.js";
+import type { DaemonRelayBridge } from "../daemon-remote-features.js";
 import { notifyRemoteClientConnected } from "../notify.js";
-import type { RelayConnectionStatus, RelayStatusSnapshot } from "../relay-contract.js";
-export type { RelayConnectionStatus, RelayStatusSnapshot } from "../relay-contract.js";
+import type { RelayConnectionStatus, RelayNotificationPush, RelayStatusSnapshot } from "../relay-contract.js";
+export type { RelayConnectionStatus, RelayNotificationPush, RelayStatusSnapshot } from "../relay-contract.js";
 
 interface RelayRequest {
   id: string;
@@ -37,23 +37,6 @@ interface RelayControl {
   };
 }
 
-export interface RelayNotificationPush {
-  title: string;
-  body: string;
-  kind?: string;
-  sessionId?: string;
-  projectId?: string;
-  notificationId?: string;
-  projectName?: string;
-  projectRoot?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  branch?: string;
-  categoryLabel?: string;
-  reasonLabel?: string;
-  dedupeKey?: string;
-}
-
 type RelayMessage = RelayRequest | RelayProjectEventsSubscribe | RelayProjectEventsUnsubscribe | RelayControl;
 
 const INITIAL_RETRY_MS = 1_000;
@@ -78,7 +61,7 @@ export class RelayClient {
   constructor(
     relayUrl: string,
     private readonly token: string,
-    private readonly daemon: AimuxDaemon,
+    private readonly daemon: DaemonRelayBridge,
   ) {
     this.relayUrl = relayUrl.replace(/\/+$/, "");
   }

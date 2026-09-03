@@ -28,15 +28,13 @@ export function runRoutedCli(): void {
   const entry = cliEntryFor(process.argv);
   const run =
     entry === "core"
-      ? Promise.all([import("./core-cli.js"), import("./full/core-cli-remote-features.js")]).then(
-          async ([{ runCoreCli }, { createFullCoreCliRemoteFeatures }]) => {
-            const code = await runCoreCli(process.argv.slice(2), {}, { remote: createFullCoreCliRemoteFeatures() });
-            process.exitCode = code;
-          },
-        )
+      ? import("./core-cli.js").then(async ({ runCoreCli }) => {
+          const code = await runCoreCli(process.argv.slice(2));
+          process.exitCode = code;
+        })
       : entry === "expose"
         ? import("./popup-expose.js").then((m) => m.runExpose())
-        : import("./full/main.js").then(() => undefined);
+        : import("./main.js").then(() => undefined);
 
   void run.catch((error: unknown) => {
     console.error(error);

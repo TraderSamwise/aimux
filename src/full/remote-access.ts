@@ -1,22 +1,8 @@
-import { principalHasGrant, type HostedPrincipal } from "./hosted-principals.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
-
-export type RemoteActorRole = "owner" | "guest" | "operator";
-
-export interface RemoteActor {
-  role: RemoteActorRole;
-  userId?: string;
-  displayName?: string;
-  email?: string;
-  shareId?: string;
-  shareSessionId?: string;
-  /**
-   * Hosted-mode principal. Server-minted only — `parseRemoteActor` never
-   * produces one, because the relay cannot authenticate an operator and an
-   * inbound header claiming the role is forgery.
-   */
-  principal?: HostedPrincipal;
-}
+import { principalHasGrant, type HostedPrincipal } from "./hosted-principals.js";
+import { type RemoteActor, parseRemoteActor } from "../remote-actor.js";
+export type { RemoteActor, RemoteActorRole } from "../remote-actor.js";
+export { parseRemoteActor } from "../remote-actor.js";
 
 export interface RemoteAccessContext {
   /** Parsed request body: POST routes carry `sessionId` there, not in the query. */
@@ -31,14 +17,6 @@ export interface RemoteAccessDecision {
   error?: string;
 }
 
-const ACTOR_HEADER = "x-aimux-actor";
-const ROLE_HEADER = "x-aimux-actor-role";
-const USER_ID_HEADER = "x-aimux-actor-user-id";
-const DISPLAY_NAME_HEADER = "x-aimux-actor-display-name";
-const EMAIL_HEADER = "x-aimux-actor-email";
-const SHARE_ID_HEADER = "x-aimux-share-id";
-const SHARE_SESSION_ID_HEADER = "x-aimux-share-session-id";
-const RELAY_HEADER_PREFIX = "x-aimux-";
 const SHARED_GUEST_SESSION_READ_ROUTES = new Set<string>([
   PROJECT_API_ROUTES.agents.output,
   PROJECT_API_ROUTES.agents.history,
@@ -184,7 +162,7 @@ function operatorSubPath(
   actor: RemoteActor,
   pathname: string,
 ): { denied: RemoteAccessDecision } | { denied?: undefined; principal: HostedPrincipal; subPath: string } {
-  const principal = actor.principal;
+  const principal = actor.principal as HostedPrincipal | undefined;
   if (!principal) {
     return { denied: { ok: false, status: 403, error: "operator actor is missing its principal" } };
   }
@@ -268,61 +246,6 @@ export function assertOperatorStreamAllowed(
   }
 
   return assertGrantedSession(resolved.principal, "GET", searchParams, context);
-}
-
-function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
-  if (!headers) return undefined;
-  const direct = headers[name];
-  if (typeof direct === "string") return direct.trim() || undefined;
-  const lowerName = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === lowerName) return value.trim() || undefined;
-  }
-  return undefined;
-}
-
-function hasRelayActorHeaders(headers: Record<string, string> | undefined): boolean {
-  if (!headers) return false;
-  return Object.keys(headers).some((key) => key.toLowerCase().startsWith(RELAY_HEADER_PREFIX));
-}
-
-function actorFromJson(value: string): Partial<RemoteActor> | null {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== "object") return null;
-    const record = parsed as Record<string, unknown>;
-    return {
-      role: record.role === "owner" || record.role === "guest" ? record.role : undefined,
-      userId: typeof record.userId === "string" ? record.userId : undefined,
-      displayName: typeof record.displayName === "string" ? record.displayName : undefined,
-      email: typeof record.email === "string" ? record.email : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function parseRemoteActor(headers: Record<string, string> | undefined): RemoteActor | null {
-  const actorJson = headerValue(headers, ACTOR_HEADER);
-  const jsonActor = actorJson ? actorFromJson(actorJson) : null;
-  const role = headerValue(headers, ROLE_HEADER) ?? jsonActor?.role;
-  if (!role) {
-    return hasRelayActorHeaders(headers) ? { role: "guest" } : null;
-  }
-  // Only owner and guest are mintable from headers. "operator" in particular
-  // must degrade rather than pass: hosted mode constructs operators from a
-  // verified bearer token, so a header claiming the role is forgery.
-  if (role !== "owner" && role !== "guest") {
-    return { role: "guest" };
-  }
-  return {
-    role,
-    userId: headerValue(headers, USER_ID_HEADER) ?? jsonActor?.userId,
-    displayName: headerValue(headers, DISPLAY_NAME_HEADER) ?? jsonActor?.displayName,
-    email: headerValue(headers, EMAIL_HEADER) ?? jsonActor?.email,
-    shareId: headerValue(headers, SHARE_ID_HEADER),
-    shareSessionId: headerValue(headers, SHARE_SESSION_ID_HEADER),
-  };
 }
 
 export function assertRemoteAccessAllowed(

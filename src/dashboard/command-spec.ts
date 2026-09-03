@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { getAimuxDashboardLaunchCommand } from "../cli-launcher.js";
-import { DEFAULT_DAEMON_PORT, DEFAULT_ENV, DEFAULT_HOME, DEFAULT_WEB_APP_URL } from "../launcher-env.js";
+import { DEFAULT_DAEMON_PORT, DEFAULT_ENV, DEFAULT_HOME, DEFAULT_WEB_APP_URL } from "../launcher-defaults.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
 
 function shellQuote(value: string): string {

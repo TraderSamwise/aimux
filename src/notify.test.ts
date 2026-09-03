@@ -14,19 +14,15 @@ vi.mock("./config.js", () => ({
 vi.mock("./notification-context.js", () => ({
   shouldSuppressNotification: vi.fn(() => false),
 }));
-vi.mock("./full/mobile-push-bridge.js", () => ({
-  forwardAlertToMobilePush: vi.fn(),
-}));
 vi.mock("node-notifier", () => ({ default: { notify: vi.fn() } }));
 vi.mock("node:child_process", () => ({
   execFile: vi.fn((_file: string, _args: string[], cb?: (err: Error | null) => void) => cb?.(null)),
 }));
 
-import { notifyAlert, resetNotifyConfig } from "./notify";
-import { forwardAlertToMobilePush } from "./full/mobile-push-bridge.js";
+import { notifyAlert, resetNotifyConfig, setMobilePushForwarder } from "./notify";
 import { shouldSuppressNotification } from "./notification-context.js";
 
-const forward = vi.mocked(forwardAlertToMobilePush);
+const forward = vi.fn();
 const suppress = vi.mocked(shouldSuppressNotification);
 
 function alert(overrides: Partial<AlertEvent> = {}): AlertEvent {
@@ -49,6 +45,7 @@ describe("notifyAlert mobile choke point", () => {
     notificationsConfig = { enabled: true, onPrompt: true, onError: true, onComplete: true };
     suppress.mockReturnValue(false);
     resetNotifyConfig();
+    setMobilePushForwarder(forward);
   });
 
   it("forwards to mobile whenever a desktop alert fires", () => {

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.release.json",
+  "compilerOptions": {
+    "outDir": "dist-local"
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-local",
+    "src/full/**",
+    "src/launcher-env.ts",
+    "src/launcher-bin.ts",
+    "src/**/*.test.ts",
+    "src/**/*test-utils.ts"
+  ]
+}

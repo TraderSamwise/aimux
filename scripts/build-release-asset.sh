@@ -46,14 +46,31 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
-yarn build:release
-yarn build:ui:local
+if [ "$BUILD_PROFILE" = "local" ]; then
+  rm -rf dist dist-local
+  yarn tsc -p tsconfig.local.json
+  mv dist-local dist
+  cp dist/local-launcher-env.js dist/launcher-env.js
+  cp dist/local-launcher-env.d.ts dist/launcher-env.d.ts
+  cp dist/local-launcher-bin.js dist/launcher-bin.js
+  cp dist/local-launcher-bin.d.ts dist/launcher-bin.d.ts
+  node scripts/check-local-build-boundary.mjs dist
+else
+  yarn build:release
+  yarn build:ui:local
+fi
 
 PKG_DIR="$TMP_DIR/aimux"
 mkdir -p "$PKG_DIR"
 
 cp package.json yarn.lock README.md LICENSE "$PKG_DIR/"
-cp -R bin dist dist-ui docs scripts "$PKG_DIR/"
+cp -R bin dist "$PKG_DIR/"
+if [ "$BUILD_PROFILE" = "full" ]; then
+  cp -R dist-ui docs scripts "$PKG_DIR/"
+else
+  mkdir -p "$PKG_DIR/scripts"
+  cp scripts/installed-aimux-shim.sh scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh scripts/tmux-statusline.sh "$PKG_DIR/scripts/"
+fi
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 printf '%s\n' "$BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
 
@@ -67,7 +84,7 @@ artifact_mtime_ms() {
   printf '%s000' "$timestamp"
 }
 
-MAIN_ARTIFACT="$PKG_DIR/dist/main".js
+MAIN_ARTIFACT="$PKG_DIR/dist/main.js"
 BUILD_STAMP="$(artifact_mtime_ms "$PKG_DIR/dist/launcher-bin.js").$(artifact_mtime_ms "$MAIN_ARTIFACT")-$(cat "$PKG_DIR/dist/launcher-bin.js" "$MAIN_ARTIFACT" | shasum -a 1 | awk '{ print substr($1, 1, 12) }')"
 printf '%s\n' "$BUILD_STAMP" > "$PKG_DIR/BUILD_STAMP"
 

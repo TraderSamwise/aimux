@@ -19,16 +19,14 @@ import { listAllProjectsExposeItems, type GlobalExposeItem } from "./expose-cont
 import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
 import { VisualClientLeaseRegistry, parseVisualClientKind } from "./visual-client-leases.js";
 import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from "./tmux/expose-ordering.js";
-import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./full/relay-client.js";
-import { MobilePushThrottle } from "./full/mobile-push-throttle.js";
-import { clearCredentials, loadCredentials, setRemoteEnabled } from "./full/credentials.js";
 import { loadConfig, loadGlobalConfig } from "./config.js";
 import {
-  assertOperatorStreamAllowed,
-  assertRemoteAccessAllowed,
-  parseRemoteActor,
-  type RemoteActor,
-} from "./full/remote-access.js";
+  createLocalDaemonRemoteFeatures,
+  type DaemonRemoteFeatures,
+  type DaemonRouteResponse,
+} from "./daemon-remote-features.js";
+import type { RemoteActor } from "./remote-actor.js";
+import type { RelayNotificationPush } from "./relay-contract.js";
 import {
   isBinaryProjectRoute,
   PROJECT_API_ROUTES,
@@ -36,9 +34,6 @@ import {
   type ExposePreviewSnapshot,
 } from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
-import { loadHostedConfig, validateHostedStartup } from "./full/hosted-config.js";
-import { countActiveHostedPrincipals } from "./full/hosted-principals.js";
-import { startHostedServer, type HostedServerHandle } from "./full/hosted-server.js";
 import { serializeFastControlItem } from "./fast-control.js";
 import { agentStatusChip } from "./tui/render/agent-status.js";
 import { seedAgentRestorePromptGatesForDaemonBoot } from "./runtime-core/agent-restore-state.js";
@@ -164,7 +159,6 @@ import {
   type CoreWorktreeSummaryTextPayload,
   type CoreWhoamiTextPayload,
 } from "./core-text.js";
-import { runLoginFlow } from "./full/login-flow.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { buildDiskDoctorReport, renderDiskDoctorReport, type DiskDoctorProjectReport } from "./disk-doctor.js";
@@ -361,12 +355,6 @@ const CORS_ALLOWED_ORIGINS = new Set([
   "http://127.0.0.1:43192",
 ]);
 
-interface DaemonRouteResponse {
-  status: number;
-  body: unknown;
-  contentType?: string;
-}
-
 type ProjectServiceJson = Record<string, unknown> & { ok?: boolean; error?: unknown };
 type ProjectServiceJsonResult =
   | { ok: true; projectRoot: string; json: ProjectServiceJson }
@@ -444,10 +432,7 @@ function rejectCors(res: ServerResponse): void {
 
 export class AimuxDaemon {
   private server: Server | null = null;
-  private relayClient: RelayClient | null = null;
-  private hostedServer: HostedServerHandle | null = null;
   private readonly serverSockets = new Set<Socket>();
-  private readonly pushThrottle = new MobilePushThrottle();
   private readonly projectActors = new Map<string, CoreProjectActor>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
   private readonly projectOnlineAgentCounts = new ProjectOnlineAgentCountReader();
@@ -461,6 +446,11 @@ export class AimuxDaemon {
   private globalExposeHotSnapshotRefreshing = false;
   private globalExposeHotSnapshotWorker: Worker | null = null;
   private readonly visualClientLeases = new VisualClientLeaseRegistry();
+  private readonly remote: DaemonRemoteFeatures;
+
+  constructor(remote: DaemonRemoteFeatures = createLocalDaemonRemoteFeatures()) {
+    this.remote = remote;
+  }
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -517,77 +507,30 @@ export class AimuxDaemon {
    * and nothing else. It is loud in the log either way.
    */
   private async startHostedListenerIfConfigured(): Promise<void> {
-    const config = loadHostedConfig();
-    if (!config.enabled) return;
-
-    const validation = validateHostedStartup(config, countActiveHostedPrincipals());
-    if (!validation.ok) {
-      log.warn("hosted listener refused to start", "hosted", { error: validation.error });
-      return;
-    }
-
-    try {
-      this.hostedServer = await startHostedServer({
-        config,
-        routeHostedRequest: (actor, method, path, body) => this.routeHostedRequest(actor, method, path, body),
-        resolveHostedStream: (actor, method, path) => this.resolveHostedStream(actor, method, path),
-      });
-    } catch (error) {
-      log.warn("hosted listener failed to bind", "hosted", {
-        host: config.bindAddress,
-        port: config.port,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.hostedServer = null;
-    }
+    await this.remote.startHostedListener({
+      routeHostedRequest: (actor, method, path, body) => this.routeHostedRequest(actor, method, path, body),
+      resolveHostedStream: (actor, method, path) => this.resolveHostedStream(actor, method, path),
+    });
   }
 
-  // Resolve relay config from stored credentials (`aimux login`), with env-var
-  // overrides for advanced/CI use. Connects only when remote access is enabled.
   private connectRelayIfConfigured(options: { force?: boolean } = {}): void {
-    const status = this.relayClient?.getStatus().status;
-    if (!options.force && this.relayClient && status !== "auth_failed" && status !== "disconnected") return;
-    if (this.relayClient) {
-      this.relayClient.disconnect();
-      this.relayClient = null;
-    }
-    const creds = loadCredentials();
-    const relayUrl = process.env.AIMUX_RELAY_URL ?? creds?.relayUrl;
-    const relayToken = process.env.AIMUX_RELAY_TOKEN ?? creds?.token;
-    const hasEnvOverride = Boolean(process.env.AIMUX_RELAY_URL || process.env.AIMUX_RELAY_TOKEN);
-    const enabled = hasEnvOverride ? Boolean(relayUrl && relayToken) : Boolean(creds?.remoteEnabled);
-    if (relayUrl && relayToken && enabled) {
-      this.relayClient = new RelayClient(relayUrl, relayToken, this);
-      this.relayClient.connect();
-    }
+    this.remote.connectRelay(this, options);
   }
 
-  getRelayStatus(): RelayStatusSnapshot | { status: "off" } {
-    return this.relayClient?.getStatus() ?? { status: "off" };
+  getRelayStatus(): CoreRelaySnapshot {
+    return this.remote.getRelayStatus();
   }
 
-  enableRelay(): RelayStatusSnapshot | { status: "off" } {
-    setRemoteEnabled(true);
-    this.connectRelayIfConfigured({ force: true });
-    return this.getRelayStatus();
+  enableRelay(): CoreRelaySnapshot {
+    return this.remote.enableRelay(this);
   }
 
   private enableRelayBestEffort(): CoreRelaySnapshot {
-    try {
-      return this.enableRelay();
-    } catch (error) {
-      const lastError = error instanceof Error ? error.message : String(error);
-      const relay = this.getRelayStatus();
-      if (relay.status === "off") return { status: "disconnected", relayUrl: "", lastConnectedAt: null, lastError };
-      return { ...relay, lastError };
-    }
+    return this.remote.enableRelayBestEffort(this);
   }
 
   disableRelay(): { status: "off" } {
-    setRemoteEnabled(false);
-    this.relayClient?.disconnect();
-    this.relayClient = null;
-    return { status: "off" };
+    return this.remote.disableRelay();
   }
 
   stop(): Promise<void> {
@@ -609,13 +552,7 @@ export class AimuxDaemon {
     this.globalExposeHotSnapshotRefreshing = false;
     this.globalExposeHotSnapshotWorker?.terminate().catch(() => {});
     this.globalExposeHotSnapshotWorker = null;
-    // Close the outside door first, so nothing new arrives while the project
-    // actors below are being torn down.
-    const hosted = this.hostedServer;
-    this.hostedServer = null;
-    if (hosted) await hosted.close().catch(() => {});
-    this.relayClient?.disconnect();
-    this.relayClient = null;
+    await this.remote.stop();
     const serverClose = this.closeServer();
     const ensureResults = await Promise.allSettled(Array.from(this.projectEnsurePromises.values()));
     for (const result of ensureResults) {
@@ -752,24 +689,11 @@ export class AimuxDaemon {
   }
 
   private remoteStatusTextPayload(): CoreRemoteStatusTextPayload {
-    const credentials = loadCredentials();
-    return {
-      credentials: credentials ? { relayUrl: credentials.relayUrl, remoteEnabled: credentials.remoteEnabled } : null,
-      relay: this.getRelayStatus(),
-    };
+    return this.remote.remoteStatusTextPayload();
   }
 
   private whoamiTextPayload(): CoreWhoamiTextPayload {
-    const credentials = loadCredentials();
-    return {
-      credentials: credentials
-        ? {
-            userId: credentials.userId,
-            relayUrl: credentials.relayUrl,
-            remoteEnabled: credentials.remoteEnabled,
-          }
-        : null,
-    };
+    return this.remote.whoamiTextPayload();
   }
 
   private hostStatusPayload(
@@ -1518,8 +1442,8 @@ export class AimuxDaemon {
   ): Promise<{ ok: true; url: string; sessionId: string } | { ok: false; response: DaemonRouteResponse }> {
     this.refreshState();
     const pathname = routeUrl.pathname;
-    const actor = parseRemoteActor(headers);
-    const access = assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
+    const actor = this.remote.parseRemoteActor(headers);
+    const access = this.remote.assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
     if (!access.ok) {
       return {
         ok: false,
@@ -2717,7 +2641,7 @@ export class AimuxDaemon {
   }): Promise<DaemonRouteResponse> {
     const messages: string[] = [];
     try {
-      const { userId } = await runLoginFlow({
+      const { userId } = await this.remote.runLoginFlow({
         action: opts.action,
         onMessage: (message) => messages.push(message),
       });
@@ -2747,13 +2671,15 @@ export class AimuxDaemon {
     const messagesReady = new Promise<void>((resolve) => {
       releaseMessages = resolve;
     });
-    const promise = runLoginFlow({
-      action,
-      onMessage: (message) => {
-        messages.push(message);
-        if (messages.length >= 2) releaseMessages();
-      },
-    }).then(({ userId }) => ({ userId, relay: this.enableRelayBestEffort() }));
+    const promise = this.remote
+      .runLoginFlow({
+        action,
+        onMessage: (message) => {
+          messages.push(message);
+          if (messages.length >= 2) releaseMessages();
+        },
+      })
+      .then(({ userId }) => ({ userId, relay: this.enableRelayBestEffort() }));
     this.authFlows.set(id, { promise, startedAt: Date.now() });
     await Promise.race([
       messagesReady,
@@ -3428,7 +3354,7 @@ export class AimuxDaemon {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const projectRoot = this.resolveProxyProjectRoot(routeUrl.pathname);
-    const access = assertOperatorStreamAllowed(actor, method, routeUrl.pathname, routeUrl.searchParams, {
+    const access = this.remote.assertOperatorStreamAllowed(actor, method, routeUrl.pathname, routeUrl.searchParams, {
       projectRoot,
     });
     if (!access.ok) {
@@ -3458,7 +3384,7 @@ export class AimuxDaemon {
     body?: unknown,
     headers?: Record<string, string>,
   ): Promise<DaemonRouteResponse> {
-    return this.routeWithActor(parseRemoteActor(headers), method, path, body, headers);
+    return this.routeWithActor(this.remote.parseRemoteActor(headers), method, path, body, headers);
   }
 
   private async routeWithActor(
@@ -3471,7 +3397,7 @@ export class AimuxDaemon {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
-    const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams, {
+    const access = this.remote.assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams, {
       body,
       // Only operators are bound to a project, and resolving costs a registry
       // read per request — keep it off the owner/local polling path.
@@ -3943,7 +3869,7 @@ export class AimuxDaemon {
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.remoteEnableText) {
-      if (!loadCredentials()) {
+      if (!this.remote.hasCredentials()) {
         return {
           status: 401,
           body: "Not logged in. Run `aimux login` first.\n",
@@ -3973,7 +3899,7 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.logoutText) {
       this.disableRelay();
-      const result = clearCredentials();
+      const result = this.remote.clearCredentials();
       return {
         status: result === "failed" ? 500 : 200,
         body: `${renderCoreLogoutLines(result).join("\n")}\n`,
@@ -4009,12 +3935,7 @@ export class AimuxDaemon {
       if (actor) return { status: 403, body: { ok: false, error: "internal route is loopback-only" } };
       const payload = body as RelayNotificationPush | undefined;
       if (!payload?.title) return { status: 400, body: { ok: false, error: "title is required" } };
-      if (this.relayClient?.getStatus().status !== "connected") {
-        return { status: 200, body: { ok: true, suppressed: true, reason: "relay_unavailable" } };
-      }
-      if (!this.pushThrottle.allow(payload)) return { status: 200, body: { ok: true, suppressed: true } };
-      this.relayClient.pushNotification(payload);
-      return { status: 200, body: { ok: true } };
+      return { status: 200, body: this.remote.pushNotification(payload) };
     }
 
     if (method === "GET" && pathname === "/diagnostics/loop") {
@@ -4148,8 +4069,8 @@ export class AimuxDaemon {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
-    const actor = parseRemoteActor(headers);
-    const access = assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
+    const actor = this.remote.parseRemoteActor(headers);
+    const access = this.remote.assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
     if (!access.ok) {
       return { ok: false, status: access.status ?? 403, error: access.error ?? "remote access denied" };
     }

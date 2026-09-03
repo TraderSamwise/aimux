@@ -20,7 +20,7 @@ import { isHostedLockedDown } from "./hosted-lockdown.js";
 import { drainHostedOutbox } from "./hosted-outbox.js";
 import { findPrincipalById, markPrincipalSeen, principalHasGrant, type HostedPrincipal } from "./hosted-principals.js";
 import { HostedRateLimiter } from "./hosted-rate-limit.js";
-import type { RemoteActor } from "./remote-access.js";
+import type { RemoteActor } from "../remote-actor.js";
 
 /**
  * The hosted listener: the only door hosted mode opens.

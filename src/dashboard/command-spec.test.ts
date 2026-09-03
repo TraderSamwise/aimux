@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, utimesSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { prepareStableCliEnv } from "../launcher-env.js";
+import { prepareStableCliEnv } from "../launcher-defaults.js";
 import { getDashboardCommandSpec } from "./command-spec.js";
 
 describe("getDashboardCommandSpec", () => {

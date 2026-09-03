@@ -6,3 +6,20 @@ export interface RelayStatusSnapshot {
   lastConnectedAt: string | null;
   lastError: string | null;
 }
+
+export interface RelayNotificationPush {
+  title: string;
+  body: string;
+  kind?: string;
+  sessionId?: string;
+  projectId?: string;
+  notificationId?: string;
+  projectName?: string;
+  projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
+  dedupeKey?: string;
+}

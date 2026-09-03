@@ -4,6 +4,35 @@ Aimux remote access is an account-security surface. Security events are separate
 from ordinary agent notifications and should reach the owner even when optional
 agent alerts are disabled.
 
+## Local Build Profile
+
+Aimux has two native build profiles:
+
+- `full` is the default release profile. It includes local TUI/runtime code,
+  the app bundle, owner remote access, relay attachment hosting, hosted mode,
+  mobile push forwarding, and remote security-device commands.
+- `local` is the TUI/runtime profile for machines where remote access should be
+  visibly absent. It starts the same daemon, project service, tmux runtime, and
+  dashboard, but uses no-op remote adapters and does not package `dist/full`,
+  `dist-ui`, or docs.
+
+Security-sensitive implementation lives under `src/full/`: credentials,
+login, relay client, hosted listener/auth/principals/audit, security-device
+client, relay attachment hosting, and mobile push forwarding. Root-level shared
+modules may define inert contracts or parsers used by both profiles, such as
+remote actor header parsing or relay payload types, but they must not perform
+remote network IO or credential storage.
+
+Build the local package with:
+
+```bash
+AIMUX_BUILD_PROFILE=local yarn release:asset
+```
+
+The local release path runs `scripts/check-local-build-boundary.mjs`, which
+fails if compiled local output contains `dist/full` or a static import into the
+full tree.
+
 ## Remote Access
 
 Owner remote access is opt-in:

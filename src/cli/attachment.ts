@@ -1,9 +1,6 @@
 import type { Command } from "commander";
-import { readFileSync } from "node:fs";
 import { basename, extname, resolve as pathResolve } from "node:path";
 import { assertPublishableSource } from "../attachment-store.js";
-import { loadCredentials } from "../full/credentials.js";
-import { requestJson } from "../http-client.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { WorktreeInfo } from "../worktree.js";
 
@@ -26,49 +23,6 @@ export interface RegisterAttachmentCommandDeps {
   postProjectServiceJson: (path: string, body: unknown, opts?: { projectRoot?: string }) => Promise<any>;
   listWorktrees: (projectRoot: string) => WorktreeInfo[];
   hostPublishedAttachment?: (input: PublishedAttachmentHostInput) => Promise<HostedAttachmentForPublish | undefined>;
-}
-
-export async function maybeHostPublishedAttachment(
-  input: PublishedAttachmentHostInput,
-): Promise<HostedAttachmentForPublish | undefined> {
-  const creds = loadCredentials();
-  if (!creds?.remoteEnabled) return undefined;
-  let relayBase: string;
-  try {
-    relayBase = relayHttpUrl(creds.relayUrl);
-  } catch {
-    return undefined;
-  }
-  try {
-    const bytes = readFileSync(input.sourcePath);
-    const response = await requestJson<{
-      ok?: boolean;
-      error?: string;
-      hostedAttachment?: HostedAttachmentForPublish;
-    }>(`${relayBase}/attachments/hosted`, {
-      method: "POST",
-      timeoutMs: 15_000,
-      headers: { authorization: `Bearer ${creds.token}` },
-      body: {
-        filename: input.filename,
-        mimeType: input.mimeType,
-        dataBase64: bytes.toString("base64"),
-        sessionId: input.sessionId,
-      },
-    });
-    if (response.status >= 400 || !response.json.ok || !response.json.hostedAttachment?.contentUrl) {
-      console.error(
-        `aimux: warning: relay attachment hosting failed${response.json.error ? `: ${response.json.error}` : ""}`,
-      );
-      return undefined;
-    }
-    return response.json.hostedAttachment;
-  } catch (error) {
-    console.error(
-      `aimux: warning: relay attachment hosting failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return undefined;
-  }
 }
 
 export function relayHttpUrl(relayUrl: string): string {
@@ -137,13 +91,14 @@ export function registerAttachmentCommand(program: Command, deps: RegisterAttach
           console.error(`aimux: ${error instanceof Error ? error.message : String(error)}`);
           process.exit(1);
         }
-        const hostPublishedAttachment = deps.hostPublishedAttachment ?? maybeHostPublishedAttachment;
-        const hostedAttachment = await hostPublishedAttachment({
-          sourcePath: sourceRealPath,
-          filename: opts.name || basename(sourcePath),
-          mimeType: opts.mime || mimeTypeForPublishedAttachment(sourcePath),
-          sessionId: opts.session,
-        });
+        const hostedAttachment = deps.hostPublishedAttachment
+          ? await deps.hostPublishedAttachment({
+              sourcePath: sourceRealPath,
+              filename: opts.name || basename(sourcePath),
+              mimeType: opts.mime || mimeTypeForPublishedAttachment(sourcePath),
+              sessionId: opts.session,
+            })
+          : undefined;
         const result = await deps.postProjectServiceJson(
           PROJECT_API_ROUTES.attachmentsPublish,
           {

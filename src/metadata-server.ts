@@ -156,7 +156,7 @@ import {
   type SessionTeamMetadata,
 } from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
-import { parseRemoteActor } from "./full/remote-access.js";
+import { parseRemoteActor } from "./remote-actor.js";
 import {
   listSwitchableAgentItems,
   resolveAttentionAgent,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CORE_COMMAND_NAMES, type CoreCommandName } from "./core-command-contract.js";
+import type { CoreCliRemoteFeatures } from "./core-cli-remote-features.js";
 
 const mocks = vi.hoisted(() => ({
   credentials: null as null | {
@@ -42,19 +43,9 @@ vi.mock("./control-plane-restart-client.js", () => ({
   restartControlPlaneFromCli: mocks.restartControlPlaneFromCli,
 }));
 
-vi.mock("./full/credentials.js", () => ({
-  clearCredentials: mocks.clearCredentials,
-  loadCredentials: () => mocks.credentials,
-  setRemoteEnabled: mocks.setRemoteEnabled,
-}));
-
 vi.mock("./daemon-state.js", () => ({
   loadDaemonInfo: () => mocks.daemonInfo,
   loadDaemonState: () => mocks.daemonState,
-}));
-
-vi.mock("./full/login-flow.js", () => ({
-  runLoginFlow: mocks.runLoginFlow,
 }));
 
 vi.mock("./logs.js", () => ({
@@ -140,11 +131,40 @@ function runtimeRestartResult(failures = 0) {
 async function run(args: string[], cwd = "/repo") {
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const code = await runCoreCli(args, {
-    cwd: () => cwd,
-    stdout: (line) => stdout.push(line),
-    stderr: (line) => stderr.push(line),
-  });
+  const remote: CoreCliRemoteFeatures = {
+    credentialsForStatus: () =>
+      mocks.credentials
+        ? { relayUrl: mocks.credentials.relayUrl, remoteEnabled: mocks.credentials.remoteEnabled }
+        : null,
+    whoamiPayload: () => ({
+      credentials: mocks.credentials
+        ? {
+            userId: mocks.credentials.userId,
+            relayUrl: mocks.credentials.relayUrl,
+            remoteEnabled: mocks.credentials.remoteEnabled,
+          }
+        : null,
+    }),
+    hasCredentials: () => Boolean(mocks.credentials),
+    setRemoteEnabled: mocks.setRemoteEnabled,
+    clearCredentials: mocks.clearCredentials,
+    runLoginFlow: (opts) => (opts ? mocks.runLoginFlow(opts) : mocks.runLoginFlow()),
+    remoteUnavailableRelayStatus: () => ({
+      status: "disconnected",
+      relayUrl: "",
+      lastConnectedAt: null,
+      lastError: "unavailable",
+    }),
+  };
+  const code = await runCoreCli(
+    args,
+    {
+      cwd: () => cwd,
+      stdout: (line) => stdout.push(line),
+      stderr: (line) => stderr.push(line),
+    },
+    { remote },
+  );
   return { code, stdout, stderr };
 }
 

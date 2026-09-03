@@ -23,6 +23,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc",
     "build:release": "rm -rf dist && tsc -p tsconfig.release.json",
+    "check:local-build-boundary": "node scripts/check-local-build-boundary.mjs",
     "build:ui:local": "bash scripts/build-local-ui.sh",
     "dev": "tsc --watch",
     "dev:gui": "yarn dev:gui:web",

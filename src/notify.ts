@@ -2,11 +2,12 @@ import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
 import type { AlertEvent } from "./project-events.js";
 import { shouldSuppressNotification } from "./notification-context.js";
-import { forwardAlertToMobilePush } from "./full/mobile-push-bridge.js";
 import { sendDesktopNotification } from "./desktop-notifier.js";
 import { externalNotificationsDisabled } from "./external-notifications.js";
 
 let cachedConfig: NotificationConfig | null = null;
+export type MobilePushForwarder = (event: AlertEvent) => void;
+let mobilePushForwarder: MobilePushForwarder | null = null;
 
 function getNotifyConfig(): NotificationConfig {
   if (!cachedConfig) {
@@ -18,6 +19,11 @@ function getNotifyConfig(): NotificationConfig {
 /** Reset cached config (call when config may have changed) */
 export function resetNotifyConfig(): void {
   cachedConfig = null;
+  mobilePushForwarder = null;
+}
+
+export function setMobilePushForwarder(forwarder: MobilePushForwarder | null): void {
+  mobilePushForwarder = forwarder;
 }
 
 function send(title: string, message: string): void {
@@ -82,7 +88,7 @@ export function notifyAlert(event: AlertEvent): boolean {
   if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return false;
 
   send(event.title || "aimux", event.message || event.sessionId || event.kind);
-  if (!externalNotificationsDisabled()) forwardAlertToMobilePush(event);
+  if (!externalNotificationsDisabled()) mobilePushForwarder?.(event);
   return true;
 }
 
