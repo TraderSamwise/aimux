@@ -169,26 +169,25 @@ function onlineSessionsForRestore(host: RuntimeStateHost): AgentRestoreSession[]
   return (host.sessions ?? [])
     .filter((session: any) => !session.exited && session.status !== "offline" && session.status !== "exited")
     .filter((session: any) => !session.pendingAction && !session.pending && !session.optimistic)
-    .filter((session: any) => {
+    .map((session: any) => {
       const sessionMetadata = metadata?.sessions?.[session.id];
-      return !isProjectControlSession({
+      const merged = {
         ...session,
         overseer: session.overseer ?? sessionMetadata?.overseer,
         scribe: session.scribe ?? sessionMetadata?.scribe,
-        projectControl: session.projectControl,
-      });
+      };
+      return {
+        id: session.id,
+        tool: host.sessionToolKeys?.get?.(session.id),
+        command: session.command,
+        label: host.getSessionLabel?.(session.id),
+        worktreePath: host.sessionWorktreePaths?.get?.(session.id),
+        team: merged.team,
+        overseer: merged.overseer,
+        scribe: merged.scribe,
+        projectControl: isProjectControlSession(merged) || undefined,
+      };
     })
-    .map((session: any) => ({
-      id: session.id,
-      tool: host.sessionToolKeys?.get?.(session.id),
-      command: session.command,
-      label: host.getSessionLabel?.(session.id),
-      worktreePath: host.sessionWorktreePaths?.get?.(session.id),
-      team: session.team,
-      overseer: session.overseer,
-      scribe: session.scribe,
-      projectControl: isProjectControlSession(session) || undefined,
-    }))
     .filter((session: AgentRestoreSession) => Boolean(session.id));
 }
 

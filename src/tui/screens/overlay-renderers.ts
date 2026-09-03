@@ -153,14 +153,14 @@ function restoreConfirmButton(label: string, active: boolean): string {
 }
 
 function restoreOfferGroupLabels(offer: any): string {
-  if (Array.isArray(offer.worktreeGroups) && offer.worktreeGroups.length > 0) {
-    return offer.worktreeGroups
-      .slice(0, 4)
-      .map((group: any) => `${group.name ?? "Worktree"} ${group.count ?? 0}`)
-      .join(" · ");
-  }
   const groups = new Map<string, number>();
+  const controlRoles = new Map<string, number>();
   for (const session of Array.isArray(offer.sessions) ? offer.sessions : []) {
+    const controlRole = restoreOfferSessionControlRole(session);
+    if (controlRole) {
+      controlRoles.set(controlRole, (controlRoles.get(controlRole) ?? 0) + 1);
+      continue;
+    }
     const path = typeof session.worktreePath === "string" ? session.worktreePath : "";
     const marker = "/.aimux/worktrees/";
     const name = path.includes(marker)
@@ -168,10 +168,14 @@ function restoreOfferGroupLabels(offer: any): string {
       : "Main Checkout";
     groups.set(name || "Main Checkout", (groups.get(name || "Main Checkout") ?? 0) + 1);
   }
-  return [...groups.entries()]
-    .slice(0, 4)
-    .map(([name, count]) => `${name} ${count}`)
-    .join(" · ");
+  const labels = [...groups.entries()].map(([name, count]) => `${name} ${count}`);
+  if (controlRoles.size > 0) {
+    const controls = [...controlRoles.entries()]
+      .map(([role, count]) => (count === 1 ? role : `${role} ${count}`))
+      .join(", ");
+    labels.push(`project control: ${controls}`);
+  }
+  return labels.slice(0, 4).join(" · ");
 }
 
 function restoreOfferSessionControlRole(session: any): string | null {
@@ -199,7 +203,7 @@ export function buildAgentRestoreConfirmOverlayOutput(ctx: any, cols: number, ro
   const count = offer.sessionIds.length;
   const groups = restoreOfferGroupLabels(offer);
   const body = [
-    `  Restore ${count} restorable agent${count === 1 ? "" : "s"} for this project?`,
+    `  Restore ${count} restorable session${count === 1 ? "" : "s"} for this project?`,
     groups ? `  ${style(groups, "muted")}` : "",
     labels ? `  ${style(`${labels}${extra}`, "muted")}` : "",
     "",
@@ -211,7 +215,7 @@ export function buildAgentRestoreConfirmOverlayOutput(ctx: any, cols: number, ro
       ["Esc", "cancel"],
     ]),
   ].filter(Boolean);
-  return renderOverlayBox({ title: "Restore agents", body, cols, rows });
+  return renderOverlayBox({ title: "Restore sessions", body, cols, rows });
 }
 
 export function buildDashboardBusyOverlayOutput(ctx: any, cols: number, rows: number): string | null {

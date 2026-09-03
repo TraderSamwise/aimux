@@ -13,7 +13,10 @@ import {
   getExchangeStoreStats,
   resetExchangeStoreStats,
 } from "../runtime-core/exchange-store.js";
-import { seedAgentRestorePromptGatesForDaemonBoot } from "../runtime-core/agent-restore-state.js";
+import {
+  readLastOnlineAgentsSnapshot,
+  seedAgentRestorePromptGatesForDaemonBoot,
+} from "../runtime-core/agent-restore-state.js";
 import { saveRuntimeTopologySessions, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import { NOTIFICATION_TAG, addNotification } from "../notifications.js";
 import {
@@ -2159,6 +2162,53 @@ describe("refreshDashboardModelFromService", () => {
       const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
 
       expect(snapshot.agentRestoreOffer).toBeNull();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(aimuxHome, { recursive: true, force: true });
+      if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = previousAimuxHome;
+    }
+  });
+
+  it("records project-control sessions in the last-online restore snapshot", async () => {
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-repo-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+
+      const host = {
+        ...minimalDashboardHost([
+          {
+            id: "claude-overseer",
+            command: "claude",
+            status: "running",
+            worktreePath: repoRoot,
+            overseer: true,
+            team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+          } as any,
+        ]),
+        projectRoot: repoRoot,
+        offlineSessions: [],
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology: vi.fn(),
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+      const recorded = withProjectPaths(repoRoot, () => readLastOnlineAgentsSnapshot());
+
+      expect(snapshot.agentRestoreOffer).toBeNull();
+      expect(recorded?.sessionIds).toEqual(["claude-overseer"]);
+      expect(recorded?.sessions[0]).toMatchObject({
+        id: "claude-overseer",
+        team: { role: "overseer" },
+        overseer: true,
+        projectControl: true,
+      });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
       rmSync(aimuxHome, { recursive: true, force: true });

@@ -230,10 +230,11 @@ describe("buildAgentRestoreConfirmOverlayOutput", () => {
       ) ?? "",
     );
 
-    expect(output).toContain("RESTORE AGENTS");
-    expect(output).toContain("Restore 2 restorable agents for this project?");
-    expect(output).toContain("Main Checkout 1");
-    expect(output).toContain("feature-a 1");
+    expect(output).toContain("RESTORE SESSIONS");
+    expect(output).toContain("Restore 2 restorable sessions for this project?");
+    expect(output).not.toContain("Main Checkout 1");
+    expect(output).not.toContain("feature-a 1");
+    expect(output).toContain("project control: overseer, scribe");
     expect(output).toContain("overseer: claude, scribe: codex");
     expect(output).toContain("Restore");
     expect(output).toContain("Cancel");

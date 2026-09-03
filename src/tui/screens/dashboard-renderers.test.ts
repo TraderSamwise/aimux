@@ -894,7 +894,7 @@ describe("renderDashboardFrame worktree progress", () => {
 
     const { frame } = renderDashboardFrame(baseDashboardViewModel({ agentRestoreOffer }), 120, 40);
     const plain = stripAnsi(frame);
-    expect(plain).not.toContain("RESTORE AGENTS");
+    expect(plain).not.toContain("RESTORE SESSIONS");
     expect(plain).not.toContain("previously running agents can be restored");
   });
 
