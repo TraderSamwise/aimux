@@ -330,4 +330,23 @@ describe("the projected transcript", () => {
     expect(store.get(transcriptStartLineFamily("agent-1"))).toBe(-640);
     expect(store.get(transcriptFamily("agent-1"))).toEqual([wider]);
   });
+
+  it("clears stale activity text when a snapshot explicitly sends an empty label", () => {
+    const store = createStore();
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      activity: "running",
+      activityText: "Perambulating...",
+    });
+
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      activity: "interrupted",
+      activityText: "",
+    });
+
+    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+  });
 });

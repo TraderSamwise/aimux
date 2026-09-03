@@ -299,6 +299,7 @@ type PendingComposerAck = {
   id: number;
   text: string;
   attachmentFilenames: string[];
+  showTimeoutError: boolean;
   timedOut: boolean;
 };
 
@@ -893,6 +894,7 @@ export default function ChatScreen() {
         transcriptCaptureStartLineRef.current,
         { token, mode: "chat", purpose },
       );
+      if (result.sessionId !== sessionId) return false;
       if (!serviceProjectsTranscript(result.messages)) {
         // Not an empty pane — a daemon older than this app, which does not
         // project the transcript at all. Rendering it as empty would look like a
@@ -1016,8 +1018,6 @@ export default function ChatScreen() {
     const nextStartLine = nextChatOutputCaptureStartLine(previousStartLine);
     olderTranscriptLoadingRef.current = true;
     setOlderTranscriptLoading(true);
-    transcriptCaptureStartLineRef.current = nextStartLine;
-    setTranscriptCaptureStartLine(nextStartLine);
     try {
       const result = await getLivePaneOutput(
         { host: endpointHost, port: endpointPort },
@@ -1025,12 +1025,21 @@ export default function ChatScreen() {
         nextStartLine,
         { token, mode: "chat", purpose: "history" },
       );
+      if (result.sessionId !== sessionId) return;
+      const resultStartLine =
+        typeof result.startLine === "number" ? result.startLine : nextStartLine;
+      if (resultStartLine >= previousStartLine) {
+        setOlderTranscriptExhausted(true);
+        return;
+      }
+      transcriptCaptureStartLineRef.current = resultStartLine;
+      setTranscriptCaptureStartLine(resultStartLine);
       applyOutputSnapshot({
         sessionId: result.sessionId,
         output: result.output,
         outputAnsi: result.outputAnsi,
         outputAvailable: result.outputAvailable,
-        startLine: result.startLine,
+        startLine: resultStartLine,
         messages: result.messages,
         activity: result.activity,
         activityText: result.activityText,
@@ -1039,13 +1048,12 @@ export default function ChatScreen() {
       if (
         nextStartLine <= CHAT_OUTPUT_MAX_CAPTURE_START_LINE ||
         result.outputStartLineClamped ||
-        result.startLine === previousStartLine
+        resultStartLine <= CHAT_OUTPUT_MAX_CAPTURE_START_LINE
       ) {
         setOlderTranscriptExhausted(true);
       }
     } catch {
-      transcriptCaptureStartLineRef.current = previousStartLine;
-      setTranscriptCaptureStartLine(previousStartLine);
+      // Transient relay/service errors are surfaced elsewhere; keep the cursor unchanged so retry can work.
     } finally {
       olderTranscriptLoadingRef.current = false;
       setOlderTranscriptLoading(false);
@@ -1104,7 +1112,7 @@ export default function ChatScreen() {
     const timer = setTimeout(() => {
       setPendingComposerAck((current) => {
         if (current?.id !== pendingId) return current;
-        setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
+        if (current.showTimeoutError) setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
         return { ...current, timedOut: true };
       });
     }, COMPOSER_SEND_ACK_TIMEOUT_MS);
@@ -1182,7 +1190,7 @@ export default function ChatScreen() {
     token,
   ]);
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
-  const visibleComposerScrollReserve = composerHideDistance + COMPOSER_SCROLL_SAFETY_PADDING;
+  const visibleComposerScrollReserve = composerLayoutHeight + COMPOSER_SCROLL_SAFETY_PADDING;
   const composerVisibilityStyle = useMemo(
     () => ({
       opacity: composerHideProgress.interpolate({
@@ -1275,6 +1283,12 @@ export default function ChatScreen() {
       },
     );
   }, [composerScrollReserve, usesNativeKeyboardController, visibleComposerScrollReserve]);
+  useEffect(() => {
+    if (!usesNativeKeyboardController || !nativeChatPinnedToEndRef.current) return;
+    requestAnimationFrame(() => {
+      chatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    });
+  }, [usesNativeKeyboardController, visibleComposerScrollReserve]);
   const cycleAgentOutputViewMode = useCallback(() => {
     setAgentOutputViewMode((current) => nextAgentOutputViewMode(current, canUseSplitView));
   }, [canUseSplitView, setAgentOutputViewMode]);
@@ -1756,6 +1770,7 @@ export default function ChatScreen() {
         attachmentFilenames: attachments.map((attachment) => attachment.filename),
         baselineUserMessageCount,
         id: Date.now(),
+        showTimeoutError: false,
         text,
         timedOut: false,
       });
@@ -1767,6 +1782,7 @@ export default function ChatScreen() {
               attachmentFilenames: attachments.map((attachment) => attachment.filename),
               baselineUserMessageCount,
               id: Date.now(),
+              showTimeoutError: true,
               text,
               timedOut: true,
             }
@@ -1853,6 +1869,14 @@ export default function ChatScreen() {
     setSendError(null);
     try {
       await interruptLivePane({ host: endpointHost, port: endpointPort }, sessionId, { token });
+      applyOutputSnapshot({
+        sessionId,
+        outputAnsi: undefined,
+        activity: "interrupted",
+        activityText: "",
+        attention: undefined,
+      });
+      void refreshOutputSnapshot().catch(() => {});
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not interrupt the agent.");
     } finally {
@@ -2124,7 +2148,7 @@ export default function ChatScreen() {
         {({ dragging }) => (
           <ComposerFocusShell
             dragging={dragging}
-            sending={composerAwaitingAck}
+            sending={sendBusy || composerAwaitingAck}
             onLayout={(event: LayoutChangeEvent) =>
               setComposerWidth(event.nativeEvent.layout.width)
             }
@@ -2162,7 +2186,7 @@ export default function ChatScreen() {
                       paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
                       paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
                       paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
-                      opacity: composerAwaitingAck ? 0.55 : 1,
+                      opacity: sendBusy || composerAwaitingAck ? 0.55 : 1,
                     },
                   ]}
                   textAlignVertical="top"
@@ -2188,7 +2212,7 @@ export default function ChatScreen() {
                           {sendError}
                         </Text>
                       </View>
-                    ) : composerAwaitingAck ? (
+                    ) : sendBusy || composerAwaitingAck ? (
                       <View className="min-w-0 flex-row items-center gap-1.5">
                         <ActivityIndicator size="small" color="#a1a1aa" />
                         <Text className="text-xs text-muted-foreground" numberOfLines={1}>

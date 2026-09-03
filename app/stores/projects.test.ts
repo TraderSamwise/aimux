@@ -1,7 +1,16 @@
+import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 
 import type { DaemonProject } from "@/lib/api";
-import { reconcileProjectList } from "./projects";
+import {
+  explicitProjectSelectionAtom,
+  projectsAtom,
+  reconcileProjectsAtom,
+  selectedProjectPathAtom,
+  selectedSessionIdAtom,
+  selectProjectAtom,
+  reconcileProjectList,
+} from "@/stores/projects";
 
 function project(input: Partial<DaemonProject> & Pick<DaemonProject, "id" | "name" | "path">) {
   return {
@@ -44,5 +53,57 @@ describe("reconcileProjectList", () => {
     const next = reconcileProjectList([], incoming);
 
     expect(next.map((entry) => entry.id)).toEqual(["a", "b", "z"]);
+  });
+});
+
+describe("project selection store", () => {
+  it("keeps the selected project during transient empty discovery snapshots", () => {
+    const store = createStore();
+    store.set(projectsAtom, [
+      project({ id: "tealstreet-next", name: "Tealstreet", path: "/tealstreet-next" }),
+      project({ id: "thegrand", name: "The Grand", path: "/thegrand" }),
+    ]);
+    store.set(selectedProjectPathAtom, "/thegrand");
+    store.set(selectedSessionIdAtom, "claude-1");
+    store.set(explicitProjectSelectionAtom, {
+      path: "/thegrand",
+      expiresAt: Date.now() + 1000,
+    });
+
+    store.set(reconcileProjectsAtom, []);
+
+    expect(store.get(projectsAtom).map((item) => item.path)).toEqual([
+      "/tealstreet-next",
+      "/thegrand",
+    ]);
+    expect(store.get(selectedProjectPathAtom)).toBe("/thegrand");
+    expect(store.get(selectedSessionIdAtom)).toBe("claude-1");
+  });
+
+  it("clears stale selection when discovery really becomes empty", () => {
+    const store = createStore();
+    store.set(projectsAtom, [
+      project({ id: "tealstreet-next", name: "Tealstreet", path: "/tealstreet-next" }),
+    ]);
+    store.set(selectedProjectPathAtom, "/tealstreet-next");
+    store.set(selectedSessionIdAtom, "claude-1");
+
+    store.set(reconcileProjectsAtom, []);
+
+    expect(store.get(projectsAtom)).toEqual([]);
+    expect(store.get(selectedProjectPathAtom)).toBeNull();
+    expect(store.get(selectedSessionIdAtom)).toBeNull();
+  });
+
+  it("records a short explicit-selection guard when the user picks a project", () => {
+    const store = createStore();
+    const before = Date.now();
+
+    store.set(selectProjectAtom, "/thegrand");
+
+    expect(store.get(selectedProjectPathAtom)).toBe("/thegrand");
+    expect(store.get(selectedSessionIdAtom)).toBeNull();
+    expect(store.get(explicitProjectSelectionAtom)).toMatchObject({ path: "/thegrand" });
+    expect(store.get(explicitProjectSelectionAtom)?.expiresAt ?? 0).toBeGreaterThan(before);
   });
 });

@@ -30,9 +30,11 @@ import { buildMainTabHref, MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } fro
 import { filterProjectPickerProjects } from "@/lib/project-picker";
 import {
   buildViewHref,
+  buildViewPath,
   detailHrefForPath,
   parentViewHrefForPath,
   projectPathFromSearchOrLocation,
+  replaceBrowserViewPath,
   type SearchValue,
 } from "@/lib/view-location";
 import { cn } from "@/lib/utils";
@@ -549,6 +551,11 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   function handlePickProject(path: string) {
     blurWebActiveElement();
+    if (Platform.OS === "web") {
+      replaceBrowserViewPath(
+        buildViewPath(MAIN_TAB_ROUTES.project.href, { project: path }) as string,
+      );
+    }
     selectProject(path);
     setShowPicker(false);
     // Selecting a project always lands on the Project screen's Dashboard section.

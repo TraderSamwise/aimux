@@ -18,6 +18,7 @@ export const selectedProjectPathAtom = atomWithStorage<string | null>(
   createSsrSafeJsonStorage<string | null>(),
   { getOnInit: true },
 );
+export const explicitProjectSelectionAtom = atom<{ path: string; expiresAt: number } | null>(null);
 
 export const selectedSessionIdAtom = atom<string | null>(null);
 export const lastSyncAtAtom = atom<number | null>(null);
@@ -57,6 +58,18 @@ export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProje
   let nextPath = get(selectedProjectPathAtom);
   let nextSession = get(selectedSessionIdAtom);
 
+  if (incoming.length === 0 && previousProjects.length > 0) {
+    const explicitSelection = get(explicitProjectSelectionAtom);
+    const preservingRecentExplicitSelection =
+      explicitSelection &&
+      explicitSelection.path === nextPath &&
+      explicitSelection.expiresAt > Date.now();
+    if (preservingRecentExplicitSelection) {
+      set(lastSyncAtAtom, Date.now());
+      return;
+    }
+  }
+
   const stillPresent = nextPath ? sorted.some((p) => p.path === nextPath) : false;
 
   if (!nextPath && sorted.length > 0) {
@@ -75,6 +88,7 @@ export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProje
 
 // Select a project, clearing the session selection (matches old Zustand `selectProject`).
 export const selectProjectAtom = atom(null, (_get, set, path: string | null) => {
+  if (path) set(explicitProjectSelectionAtom, { path, expiresAt: Date.now() + 1500 });
   set(selectedProjectPathAtom, path);
   set(selectedSessionIdAtom, null);
 });

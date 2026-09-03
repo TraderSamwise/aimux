@@ -53,6 +53,7 @@ import {
   notificationFeedRefreshNonceAtom,
 } from "@/stores/notifications";
 import {
+  explicitProjectSelectionAtom,
   projectsAtom,
   reconcileProjectsAtom,
   selectedProjectEndpointAtom,
@@ -94,6 +95,7 @@ export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
   const projects = useAtomValue(projectsAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
@@ -155,9 +157,20 @@ export default function MainLayout() {
 
   usePrePaintEffect(() => {
     if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;
+    if (
+      explicitProjectSelection &&
+      explicitProjectSelection.path === selectedProjectPath &&
+      explicitProjectSelection.path !== urlProjectPath &&
+      explicitProjectSelection.expiresAt > Date.now()
+    ) {
+      return;
+    }
+    if (explicitProjectSelection?.path === urlProjectPath) {
+      store.set(explicitProjectSelectionAtom, null);
+    }
     store.set(selectedProjectPathAtom, urlProjectPath);
     store.set(selectedSessionIdAtom, null);
-  }, [activeShare, selectedProjectPath, store, urlProjectPath]);
+  }, [activeShare, explicitProjectSelection, selectedProjectPath, store, urlProjectPath]);
 
   useEffect(() => {
     if (!activeShare) return;
