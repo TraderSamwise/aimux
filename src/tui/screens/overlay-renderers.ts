@@ -467,6 +467,25 @@ export function buildOverseerOverlayOutput(ctx: any, cols: number, rows: number)
   return renderOverlayBox({ title: "Overseer", body, cols, rows });
 }
 
+export function buildOverseerWatchInstructionsOverlayOutput(ctx: any, cols: number, rows: number): string | null {
+  const target = ctx.overseerWatchInstructionsTarget;
+  if (!target) return null;
+  const buffer = typeof ctx.overseerWatchInstructionsBuffer === "string" ? ctx.overseerWatchInstructionsBuffer : "";
+  const goal = target.taskDescription || target.headline || target.loop?.goal || "";
+  const body = [
+    `  ${style("Watch:", "muted")} ${style(sessionLabel(target), "strong")} ${style(target.status ?? "", "muted")}`,
+    ...(goal ? [`  ${style("Goal:", "muted")} ${goal}`] : []),
+    "",
+    `  ${style("Instructions:", "muted")} ${buffer}_`,
+    "",
+    hints([
+      ["Enter", "watch"],
+      ["Esc", "cancel"],
+    ]),
+  ];
+  return renderOverlayBox({ title: "Overseer Watch", body, cols, rows });
+}
+
 export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): string {
   const allLines = [
     "Tmux mode",

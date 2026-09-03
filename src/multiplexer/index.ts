@@ -296,6 +296,8 @@ export class Multiplexer {
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
   private dashboardAgentRestoreOfferCache: unknown = null;
+  private overseerWatchInstructionsBuffer = "";
+  private overseerWatchInstructionsTarget: DashboardSession | null = null;
   private workOutlineOverlayEntries: WorkOutlineEntry[] = [];
   private workOutlineOverlayOffset = 0;
   private workOutlineOverlaySessionId: string | undefined = undefined;

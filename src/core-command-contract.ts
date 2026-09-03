@@ -102,6 +102,7 @@ export const CORE_COMMAND_NAMES = {
   projectStop: "core.project.stop",
   projectKill: "core.project.kill",
   projectRestart: "core.project.restart",
+  overseerWatch: "core.overseer.watch",
   restart: "core.restart",
   relayStatus: "core.relay.status",
   relayEnable: "core.relay.enable",
@@ -152,6 +153,12 @@ export interface CoreProjectPayload {
 
 export interface CoreProjectRestartPayload extends CoreProjectPayload {
   serve?: boolean;
+}
+
+export interface CoreOverseerWatchPayload extends CoreProjectPayload {
+  sessionId: string;
+  goal?: string;
+  instructions?: string;
 }
 
 export interface CoreRestartPayload {
@@ -217,6 +224,14 @@ export interface CoreRestartResult {
   text: string;
 }
 
+export interface CoreOverseerWatchResult {
+  projectRoot: string;
+  sessionId: string;
+  overseerSessionId: string;
+  watchedSessionIds: string[];
+  instructions?: string;
+}
+
 export interface CoreCommandPayloadByName {
   [CORE_COMMAND_NAMES.ping]: undefined;
   [CORE_COMMAND_NAMES.status]: undefined;
@@ -225,6 +240,7 @@ export interface CoreCommandPayloadByName {
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectRestart]: CoreProjectRestartPayload;
+  [CORE_COMMAND_NAMES.overseerWatch]: CoreOverseerWatchPayload;
   [CORE_COMMAND_NAMES.restart]: CoreRestartPayload | undefined;
   [CORE_COMMAND_NAMES.relayStatus]: undefined;
   [CORE_COMMAND_NAMES.relayEnable]: undefined;
@@ -239,6 +255,7 @@ export interface CoreCommandResultByName {
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectStopResult;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectKillResult;
   [CORE_COMMAND_NAMES.projectRestart]: CoreProjectRestartResult;
+  [CORE_COMMAND_NAMES.overseerWatch]: CoreOverseerWatchResult;
   [CORE_COMMAND_NAMES.restart]: CoreRestartResult;
   [CORE_COMMAND_NAMES.relayStatus]: CoreRelayResult;
   [CORE_COMMAND_NAMES.relayEnable]: CoreRelayResult;

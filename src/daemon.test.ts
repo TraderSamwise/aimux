@@ -102,6 +102,24 @@ vi.mock("./paths.js", () => ({
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
+  getReadOnlyProjectPathsFor: (cwd: string) => {
+    const repoRoot = cwd;
+    const projectId = `proj-${basename(cwd)}`;
+    const projectStateDir = join(tmpRoot, ".aimux", "projects", projectId);
+    return {
+      repoRoot,
+      projectId,
+      projectStateDir,
+      localAimuxDir: join(repoRoot, ".aimux"),
+      statePath: join(projectStateDir, "state.json"),
+      runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
+      runtimeExchangePath: join(projectStateDir, "runtime-exchange.yaml"),
+      metadataPath: join(projectStateDir, "metadata.json"),
+      notificationContextPath: join(projectStateDir, "notification-context.json"),
+      dashboardOperationFailuresPath: join(projectStateDir, "dashboard-operation-failures.json"),
+    };
+  },
+  withProjectPaths: (_cwd: string, fn: () => unknown) => fn(),
   isGitProjectRoot: (cwd: string) => cwd === projectRoot || existsSync(join(cwd, ".git")),
   listProjects: () => [
     { id: `proj-${basename(projectRoot)}`, name: basename(projectRoot), repoRoot: projectRoot, lastSeen: "" },
@@ -2487,6 +2505,156 @@ describe("daemon supervision", () => {
       sessionId: "codex-overseer",
       active: false,
     });
+  });
+
+  it("sends dashboard watch instructions to an ensured overseer", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    let agentListReads = 0;
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts?: { body?: unknown }) => {
+      calls.push({ url, body: opts?.body });
+      if (url.endsWith(PROJECT_API_ROUTES.agents.loop)) {
+        return {
+          status: 200,
+          json: { ok: true, sessionId: "codex-1", loop: { active: true, goal: "keep going" } },
+        };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.agents.list)) {
+        agentListReads += 1;
+        const overseer =
+          agentListReads === 1
+            ? []
+            : [
+                {
+                  id: "claude-overseer",
+                  command: "claude",
+                  status: agentListReads === 2 ? "starting" : "ready",
+                  overseer: true,
+                },
+              ];
+        return {
+          status: 200,
+          json: {
+            ok: true,
+            agents: [
+              {
+                id: "codex-1",
+                command: "codex",
+                status: "working",
+                loop: { active: true, goal: "keep going" },
+              },
+              ...overseer,
+            ],
+          },
+        };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.agents.spawn)) {
+        return { status: 200, json: { ok: true, sessionId: "claude-overseer" } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.agents.input)) {
+        return { status: 200, json: { ok: true } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.overseerWatch,
+      payload: {
+        projectRoot,
+        sessionId: "codex-1",
+        goal: "keep going",
+        instructions: "watch CI",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.result).toEqual({
+      projectRoot,
+      sessionId: "codex-1",
+      overseerSessionId: "claude-overseer",
+      watchedSessionIds: ["codex-1"],
+      instructions: "watch CI",
+    });
+    const loopCallIndex = calls.findIndex((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.loop));
+    const spawnCallIndex = calls.findIndex((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.spawn));
+    const inputCallIndex = calls.findIndex((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.input));
+    expect(agentListReads).toBeGreaterThanOrEqual(3);
+    expect(spawnCallIndex).toBeGreaterThan(-1);
+    expect(loopCallIndex).toBeGreaterThan(spawnCallIndex);
+    expect(inputCallIndex).toBeGreaterThan(loopCallIndex);
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.loop))?.body).toEqual({
+      sessionId: "codex-1",
+      active: true,
+      action: "add",
+      source: "dashboard",
+      updatedBy: "dashboard",
+      goal: "keep going",
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.spawn))?.body).toEqual({
+      tool: "claude",
+      open: false,
+      overseer: true,
+    });
+    const overseerInput = calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.input))?.body as {
+      sessionId?: string;
+      text?: string;
+    };
+    expect(overseerInput.sessionId).toBe("claude-overseer");
+    expect(overseerInput.text).toContain("Current watch list:");
+    expect(overseerInput.text).toContain("- codex-1 (codex): keep going");
+    expect(overseerInput.text).toContain("Special instructions:\nwatch CI");
+  });
+
+  it("refuses overseer watch for missing agents before changing loop state", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts?: { body?: unknown }) => {
+      calls.push({ url, body: opts?.body });
+      if (url.endsWith(PROJECT_API_ROUTES.agents.list)) {
+        return { status: 200, json: { ok: true, agents: [] } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.overseerWatch,
+      payload: { projectRoot, sessionId: "missing-agent" },
+    });
+
+    expect(response.status).toBe(404);
+    expect(response.body.error).toBe("agent not found: missing-agent");
+    expect(calls.some((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.loop))).toBe(false);
+  });
+
+  it("refuses overseer watch for project control sessions before changing loop state", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts?: { body?: unknown }) => {
+      calls.push({ url, body: opts?.body });
+      if (url.endsWith(PROJECT_API_ROUTES.agents.list)) {
+        return {
+          status: 200,
+          json: { ok: true, agents: [{ id: "claude-overseer", status: "ready", overseer: true }] },
+        };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.overseerWatch,
+      payload: { projectRoot, sessionId: "claude-overseer" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("cannot watch project control session: claude-overseer");
+    expect(calls.some((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.loop))).toBe(false);
   });
 
   it("serves team config text through the project service", async () => {

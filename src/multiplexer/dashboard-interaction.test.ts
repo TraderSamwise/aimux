@@ -4,12 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CORE_COMMAND_NAMES } from "../core-command-contract.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
 
 const dashboardApiClientMock = vi.hoisted(() => ({
   mutateDashboardApi: vi.fn(),
   refreshDashboardModelThroughApi: vi.fn(),
+}));
+const coreCommandTransportMock = vi.hoisted(() => ({
+  sendCoreCommand: vi.fn(),
 }));
 const workOutlineMock = vi.hoisted(() => ({
   listWorkOutlineEntries: vi.fn(),
@@ -25,6 +29,10 @@ vi.mock("./dashboard-api-client.js", async () => {
     refreshDashboardModelThroughApi: dashboardApiClientMock.refreshDashboardModelThroughApi,
   };
 });
+
+vi.mock("../core-command-transport.js", () => ({
+  sendCoreCommand: coreCommandTransportMock.sendCoreCommand,
+}));
 
 vi.mock("../team.js", async () => {
   const actual = await vi.importActual<typeof import("../team.js")>("../team.js");
@@ -60,6 +68,7 @@ describe("dashboardInteractionMethods", () => {
   beforeEach(() => {
     dashboardApiClientMock.mutateDashboardApi.mockClear();
     dashboardApiClientMock.refreshDashboardModelThroughApi.mockClear();
+    coreCommandTransportMock.sendCoreCommand.mockReset();
     workOutlineMock.listWorkOutlineEntries.mockReset();
     workOutlineMock.listWorkOutlineEntries.mockReturnValue([]);
   });
@@ -2585,55 +2594,183 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showToolPicker).not.toHaveBeenCalled();
   });
 
-  it("toggles the selected agent in the overseer loop through the overlay", async () => {
+  it("opens an instructions prompt before watching a selected agent", () => {
     const selected = { id: "codex-1", command: "codex", status: "working", headline: "keep going" };
     const host: any = {
       mode: "dashboard",
-      dashboardInputEpoch: 1,
       getSelectedDashboardSessionForActions: vi.fn(() => selected),
+      showOverseerWatchInstructions: dashboardInteractionMethods.showOverseerWatchInstructions,
       renderOverseerOverlay: vi.fn(),
+      renderOverseerWatchInstructions: vi.fn(),
+      openDashboardOverlay: vi.fn(),
       footerFlash: "",
       footerFlashTicks: 0,
     };
-    dashboardApiClientMock.mutateDashboardApi.mockResolvedValueOnce({ ok: true });
-    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
 
     dashboardInteractionMethods.handleOverseerOverlayKey.call(host, Buffer.from("w"));
-    await Promise.resolve();
-    await Promise.resolve();
 
-    expect(dashboardApiClientMock.mutateDashboardApi).toHaveBeenCalledWith(
-      host,
-      "/agents/loop",
-      expect.objectContaining({ sessionId: "codex-1", active: true, goal: "keep going" }),
-    );
-    await vi.waitFor(() => expect(host.footerFlash).toBe("codex added to overseer loop"));
-    expect(host.renderOverseerOverlay).toHaveBeenCalled();
+    expect(host.overseerWatchInstructionsTarget).toBe(selected);
+    expect(host.overseerWatchInstructionsBuffer).toBe("");
+    expect(host.openDashboardOverlay).toHaveBeenCalledWith("overseer-watch-instructions");
+    expect(host.renderOverseerWatchInstructions).toHaveBeenCalled();
+    expect(dashboardApiClientMock.mutateDashboardApi).not.toHaveBeenCalled();
   });
 
-  it("ignores stale overseer loop updates after the overlay input epoch changes", async () => {
-    const selected = { id: "codex-1", command: "codex", status: "working" };
-    const mutation = deferred<unknown>();
+  it("submits overseer watch instructions through the daemon and opens overseer", async () => {
+    const target = { id: "codex-1", command: "codex", status: "working", headline: "keep going" };
     const host: any = {
       mode: "dashboard",
+      projectRoot: "/repo",
       dashboardInputEpoch: 1,
-      getSelectedDashboardSessionForActions: vi.fn(() => selected),
-      renderOverseerOverlay: vi.fn(),
+      overseerWatchInstructionsTarget: target,
+      overseerWatchInstructionsBuffer: "",
+      clearDashboardOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      renderOverseerWatchInstructions: vi.fn(),
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
       footerFlash: "",
       footerFlashTicks: 0,
     };
-    dashboardApiClientMock.mutateDashboardApi.mockReturnValueOnce(mutation.promise);
+    coreCommandTransportMock.sendCoreCommand.mockResolvedValueOnce({
+      ok: true,
+      result: { overseerSessionId: "claude-overseer" },
+    });
     dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
 
-    dashboardInteractionMethods.handleOverseerOverlayKey.call(host, Buffer.from("w"));
+    dashboardInteractionMethods.handleOverseerWatchInstructionsKey.call(host, Buffer.from("stay sharp\r"));
+    await vi.waitFor(() => expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalled());
+
+    expect(coreCommandTransportMock.sendCoreCommand).toHaveBeenCalledWith(
+      CORE_COMMAND_NAMES.overseerWatch,
+      {
+        projectRoot: "/repo",
+        sessionId: "codex-1",
+        goal: "keep going",
+        instructions: "stay sharp",
+      },
+      { timeoutMs: 20_000 },
+    );
+    expect(dashboardApiClientMock.refreshDashboardModelThroughApi).toHaveBeenCalledWith(host, {
+      force: true,
+      lifecycle: expect.objectContaining({ inputEpoch: 1 }),
+    });
+    expect(host.clearDashboardOverlay).toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith({ id: "claude-overseer" }, 10_000);
+  });
+
+  it("submits blank overseer watch instructions", async () => {
+    const target = { id: "codex-1", command: "codex", status: "working" };
+    const host: any = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardInputEpoch: 1,
+      overseerWatchInstructionsTarget: target,
+      overseerWatchInstructionsBuffer: "",
+      clearDashboardOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+    };
+    coreCommandTransportMock.sendCoreCommand.mockResolvedValueOnce({
+      ok: true,
+      result: { overseerSessionId: "claude-overseer" },
+    });
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
+
+    dashboardInteractionMethods.handleOverseerWatchInstructionsKey.call(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(coreCommandTransportMock.sendCoreCommand).toHaveBeenCalled());
+
+    expect(coreCommandTransportMock.sendCoreCommand).toHaveBeenCalledWith(
+      CORE_COMMAND_NAMES.overseerWatch,
+      expect.objectContaining({ sessionId: "codex-1", instructions: "" }),
+      { timeoutMs: 20_000 },
+    );
+  });
+
+  it("reports when overseer watch succeeds but the overseer cannot be opened", async () => {
+    const target = { id: "codex-1", command: "codex", status: "working" };
+    const host: any = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardInputEpoch: 1,
+      overseerWatchInstructionsTarget: target,
+      overseerWatchInstructionsBuffer: "",
+      clearDashboardOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "missing"),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+    coreCommandTransportMock.sendCoreCommand.mockResolvedValueOnce({
+      ok: true,
+      result: { overseerSessionId: "claude-overseer" },
+    });
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
+
+    dashboardInteractionMethods.handleOverseerWatchInstructionsKey.call(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.footerFlash).toBe("Overseer updated, but could not open overseer"));
+
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith({ id: "claude-overseer" }, 10_000);
+    expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
+  it("does not report overseer open failures after the dashboard input epoch changes", async () => {
+    const target = { id: "codex-1", command: "codex", status: "working" };
+    const open = deferred<string>();
+    const host: any = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardInputEpoch: 1,
+      overseerWatchInstructionsTarget: target,
+      overseerWatchInstructionsBuffer: "",
+      clearDashboardOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(() => open.promise),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+    coreCommandTransportMock.sendCoreCommand.mockResolvedValueOnce({
+      ok: true,
+      result: { overseerSessionId: "claude-overseer" },
+    });
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
+
+    dashboardInteractionMethods.handleOverseerWatchInstructionsKey.call(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalled());
     host.dashboardInputEpoch = 2;
-    mutation.resolve({ ok: true });
+    open.resolve("missing");
+    await Promise.resolve();
+
+    expect(host.footerFlash).toBe("");
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale overseer watch submits after the overlay input epoch changes", async () => {
+    const selected = { id: "codex-1", command: "codex", status: "working" };
+    const command = deferred<unknown>();
+    const host: any = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardInputEpoch: 1,
+      overseerWatchInstructionsTarget: selected,
+      overseerWatchInstructionsBuffer: "",
+      clearDashboardOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+    coreCommandTransportMock.sendCoreCommand.mockReturnValueOnce(command.promise);
+    dashboardApiClientMock.refreshDashboardModelThroughApi.mockResolvedValueOnce({ ok: true });
+
+    dashboardInteractionMethods.handleOverseerWatchInstructionsKey.call(host, Buffer.from("\r"));
+    host.dashboardInputEpoch = 2;
+    command.resolve({ ok: true, result: { overseerSessionId: "claude-overseer" } });
 
     await Promise.resolve();
     await Promise.resolve();
 
     expect(host.footerFlash).toBe("");
-    expect(host.renderOverseerOverlay).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
   });
 
   it("stops the live overseer from the dashboard view model", () => {

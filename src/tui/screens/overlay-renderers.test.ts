@@ -4,6 +4,7 @@ import {
   buildAgentRestoreConfirmOverlayOutput,
   buildHelpOverlayOutput,
   buildOverseerOverlayOutput,
+  buildOverseerWatchInstructionsOverlayOutput,
   buildWorkOutlineOverlayOutput,
   buildWorktreeCacheCleanupConfirmOverlayOutput,
   buildWorktreeListOverlayOutput,
@@ -354,5 +355,31 @@ describe("buildOverseerOverlayOutput", () => {
     expect(output).toContain("Status: Active");
     expect(output).toContain("Overseer: claude ready");
     expect(output).toContain("x  stop overseer");
+  });
+});
+
+describe("buildOverseerWatchInstructionsOverlayOutput", () => {
+  it("renders selected agent, goal, and instructions buffer", () => {
+    const output = plain(
+      buildOverseerWatchInstructionsOverlayOutput(
+        {
+          overseerWatchInstructionsTarget: {
+            id: "codex-1",
+            command: "codex",
+            status: "working",
+            headline: "ship it",
+          },
+          overseerWatchInstructionsBuffer: "watch CI",
+        },
+        100,
+        30,
+      ) ?? "",
+    );
+
+    expect(output).toContain("OVERSEER WATCH");
+    expect(output).toContain("Watch: codex working");
+    expect(output).toContain("Goal: ship it");
+    expect(output).toContain("Instructions: watch CI_");
+    expect(output).toContain("Enter  watch");
   });
 });

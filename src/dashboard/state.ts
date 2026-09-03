@@ -20,6 +20,7 @@ export type DashboardOverlayKind =
   | "thread-reply"
   | "teammate-picker"
   | "overseer"
+  | "overseer-watch-instructions"
   | "work-outline"
   | "switcher";
 

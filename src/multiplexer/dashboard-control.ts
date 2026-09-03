@@ -36,6 +36,7 @@ import {
   buildLabelInputOverlayOutput,
   buildMigratePickerOverlayOutput,
   buildOverseerOverlayOutput,
+  buildOverseerWatchInstructionsOverlayOutput,
   buildServiceInputOverlayOutput,
   buildSwitcherOverlayOutput,
   buildTeammatePickerOverlayOutput,
@@ -919,6 +920,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "overseer":
       host.handleOverseerOverlayKey(data);
       return true;
+    case "overseer-watch-instructions":
+      host.handleOverseerWatchInstructionsKey(data);
+      return true;
     case "work-outline":
       host.handleWorkOutlineOverlayKey(data);
       return true;
@@ -1126,6 +1130,9 @@ export function buildActiveDashboardOverlayOutput(
   }
   if (host.dashboardOverlayState.kind === "overseer") {
     return buildOverseerOverlayOutput(host, cols, rows);
+  }
+  if (host.dashboardOverlayState.kind === "overseer-watch-instructions") {
+    return buildOverseerWatchInstructionsOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "work-outline") {
     return buildWorkOutlineOverlayOutput(host, cols, rows);

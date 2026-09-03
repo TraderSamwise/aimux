@@ -31,6 +31,7 @@ import {
   isBinaryProjectRoute,
   PROJECT_API_ROUTES,
   type AgentLoopInput,
+  type AgentListItem,
   type ExposePreviewSnapshot,
 } from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
@@ -45,6 +46,7 @@ import {
   type CoreCommandEnvelope,
   type CoreCommandName,
   type CoreCommandResponse,
+  type CoreOverseerWatchPayload,
   type CoreProjectRestartPayload,
   type CoreProjectRestartResult,
   type CoreRelaySnapshot,
@@ -159,6 +161,7 @@ import {
   type CoreWorktreeSummaryTextPayload,
   type CoreWhoamiTextPayload,
 } from "./core-text.js";
+import { isOverseerSession, isProjectControlSession } from "./team.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { buildDiskDoctorReport, renderDiskDoctorReport, type DiskDoctorProjectReport } from "./disk-doctor.js";
@@ -359,6 +362,15 @@ type ProjectServiceJson = Record<string, unknown> & { ok?: boolean; error?: unkn
 type ProjectServiceJsonResult =
   | { ok: true; projectRoot: string; json: ProjectServiceJson }
   | { ok: false; response: DaemonRouteResponse };
+
+type OverseerWatchPayload = {
+  ok: true;
+  projectRoot: string;
+  sessionId: string;
+  overseerSessionId: string;
+  watched: AgentListItem[];
+  instructions?: string;
+};
 
 type AuthAction = "security-unlock" | undefined;
 
@@ -2426,6 +2438,187 @@ export class AimuxDaemon {
     return this.textOrJsonLines(routeUrl, payload, input.render(payload));
   }
 
+  private isLiveAgent(agent: AgentListItem): boolean {
+    return agent.status !== "offline" && agent.status !== "exited" && agent.status !== "graveyard";
+  }
+
+  private isAgentInputReady(agent: AgentListItem): boolean {
+    return this.isLiveAgent(agent) && agent.status !== "starting";
+  }
+
+  private agentWatchGoal(agent: AgentListItem): string | undefined {
+    const loop = agent.loop && typeof agent.loop === "object" && !Array.isArray(agent.loop) ? agent.loop : undefined;
+    const loopGoal =
+      loop && typeof (loop as { goal?: unknown }).goal === "string" ? (loop as { goal: string }).goal : "";
+    const taskDescription =
+      agent.task && typeof agent.task === "object" && typeof agent.task.description === "string"
+        ? agent.task.description
+        : "";
+    const headline = typeof agent.headline === "string" ? agent.headline : "";
+    return loopGoal.trim() || taskDescription.trim() || headline.trim() || undefined;
+  }
+
+  private agentWatchLabel(agent: AgentListItem): string {
+    return agent.label || agent.command || agent.tool || agent.id;
+  }
+
+  private buildOverseerWatchMessage(input: {
+    target: AgentListItem | undefined;
+    watched: AgentListItem[];
+    instructions?: string;
+  }): string {
+    const targetLine = input.target
+      ? `- ${input.target.id} (${this.agentWatchLabel(input.target)}): ${this.agentWatchGoal(input.target) ?? "No goal."}`
+      : "- Unknown selected agent.";
+    const watchedLines =
+      input.watched.length > 0
+        ? input.watched.map(
+            (agent) => `- ${agent.id} (${this.agentWatchLabel(agent)}): ${this.agentWatchGoal(agent) ?? "No goal."}`,
+          )
+        : ["- None."];
+    const instructions = input.instructions?.trim();
+    return [
+      "Overseer watch update.",
+      "",
+      "Selected agent:",
+      targetLine,
+      "",
+      "Current watch list:",
+      ...watchedLines,
+      "",
+      "Special instructions:",
+      instructions || "None.",
+      "",
+      "Start watching now. Treat the current watch list above as the source of truth.",
+    ].join("\n");
+  }
+
+  private async readProjectAgents(
+    projectRoot: string,
+  ): Promise<{ ok: true; agents: AgentListItem[] } | { ok: false; status: number; error: string }> {
+    const agentsResult = await this.getProjectServiceJson(projectRoot, PROJECT_API_ROUTES.agents.list);
+    if (!agentsResult.ok) return this.projectServiceCoreError(agentsResult.response);
+    const agents = agentsResult.json.agents;
+    if (!Array.isArray(agents)) {
+      return { ok: false, status: 502, error: "project service returned invalid agent list response" };
+    }
+    return {
+      ok: true,
+      agents: agents.filter((agent): agent is AgentListItem =>
+        Boolean(agent && typeof agent === "object" && !Array.isArray(agent) && typeof agent.id === "string"),
+      ),
+    };
+  }
+
+  private async waitForProjectAgentInput(
+    projectRoot: string,
+    sessionId: string,
+    timeoutMs = 15_000,
+  ): Promise<{ ok: true; agent: AgentListItem } | { ok: false; status: number; error: string }> {
+    const deadline = Date.now() + timeoutMs;
+    let lastStatus = "missing";
+    while (Date.now() <= deadline) {
+      const agentsResult = await this.readProjectAgents(projectRoot);
+      if (!agentsResult.ok) return agentsResult;
+      const agent = agentsResult.agents.find((entry) => entry.id === sessionId);
+      if (agent) {
+        lastStatus = String(agent.status ?? "unknown");
+        if (this.isAgentInputReady(agent)) return { ok: true, agent };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return {
+      ok: false,
+      status: 504,
+      error: `overseer ${sessionId} was not ready for input before timeout (${lastStatus})`,
+    };
+  }
+
+  private async overseerWatchPayload(input: {
+    projectRoot: string;
+    sessionId: string;
+    goal?: string;
+    instructions?: string;
+  }): Promise<{ ok: true; payload: OverseerWatchPayload } | { ok: false; status: number; error: string }> {
+    const initialAgentsResult = await this.readProjectAgents(input.projectRoot);
+    if (!initialAgentsResult.ok) return initialAgentsResult;
+    const target = initialAgentsResult.agents.find((agent) => agent.id === input.sessionId);
+    if (!target) return { ok: false, status: 404, error: `agent not found: ${input.sessionId}` };
+    if (isProjectControlSession(target as any)) {
+      return { ok: false, status: 400, error: `cannot watch project control session: ${input.sessionId}` };
+    }
+    if (!this.isLiveAgent(target)) {
+      return { ok: false, status: 400, error: `cannot watch offline agent: ${input.sessionId}` };
+    }
+    const liveOverseer = initialAgentsResult.agents.find(
+      (agent) => this.isAgentInputReady(agent) && (agent.overseer === true || isOverseerSession(agent as any)),
+    );
+    let overseerSessionId = liveOverseer?.id;
+    if (!overseerSessionId) {
+      const tool = loadConfig({ projectRoot: input.projectRoot }).defaultTool;
+      const spawnResult = await this.postProjectServiceJson(input.projectRoot, PROJECT_API_ROUTES.agents.spawn, {
+        tool,
+        open: false,
+        overseer: true,
+      });
+      if (!spawnResult.ok) return this.projectServiceCoreError(spawnResult.response);
+      const spawnedSessionId = spawnResult.json.sessionId;
+      if (typeof spawnedSessionId !== "string" || !spawnedSessionId.trim()) {
+        return { ok: false, status: 502, error: "project service returned invalid overseer spawn response" };
+      }
+      overseerSessionId = spawnedSessionId;
+    }
+
+    const readyOverseer = await this.waitForProjectAgentInput(input.projectRoot, overseerSessionId);
+    if (!readyOverseer.ok) return readyOverseer;
+
+    const loopResult = await this.postProjectServiceJson(input.projectRoot, PROJECT_API_ROUTES.agents.loop, {
+      sessionId: input.sessionId,
+      active: true,
+      action: "add",
+      source: "dashboard",
+      updatedBy: "dashboard",
+      ...(input.goal ? { goal: input.goal } : {}),
+    });
+    if (!loopResult.ok) return this.projectServiceCoreError(loopResult.response);
+
+    const updatedAgentsResult = await this.readProjectAgents(input.projectRoot);
+    if (!updatedAgentsResult.ok) return updatedAgentsResult;
+    const updatedTarget = updatedAgentsResult.agents.find((agent) => agent.id === input.sessionId) ?? target;
+    const watched = updatedAgentsResult.agents.filter((agent) => {
+      if (isProjectControlSession(agent as any)) return false;
+      const loop = agent.loop && typeof agent.loop === "object" && !Array.isArray(agent.loop) ? agent.loop : undefined;
+      return loop && (loop as { active?: unknown }).active === true;
+    });
+    const instructions = input.instructions?.trim() || undefined;
+    const message = this.buildOverseerWatchMessage({ target: updatedTarget, watched, instructions });
+    const inputResult = await this.postProjectServiceJson(input.projectRoot, PROJECT_API_ROUTES.agents.input, {
+      sessionId: overseerSessionId,
+      text: message,
+    });
+    if (!inputResult.ok) return this.projectServiceCoreError(inputResult.response);
+
+    const payload: OverseerWatchPayload = {
+      ok: true,
+      projectRoot: loopResult.projectRoot,
+      sessionId: input.sessionId,
+      overseerSessionId,
+      watched,
+      ...(instructions ? { instructions } : {}),
+    };
+    return { ok: true, payload };
+  }
+
+  private projectServiceCoreError(response: DaemonRouteResponse): { ok: false; status: number; error: string } {
+    return {
+      ok: false,
+      status: response.status || 502,
+      error: String(response.body ?? "project service request failed")
+        .trim()
+        .replace(/^Error:\s*/, ""),
+    };
+  }
+
   private async overseerStartTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
@@ -3258,6 +3451,47 @@ export class AimuxDaemon {
             command,
             issuedAt,
             result: this.projectRestartResult(result),
+          },
+        };
+      }
+      case CORE_COMMAND_NAMES.overseerWatch: {
+        const watchPayload = envelope?.payload as CoreOverseerWatchPayload | undefined;
+        const watchProjectRoot = this.requireProjectRoot(id, command, watchPayload);
+        if (!watchProjectRoot.ok) return watchProjectRoot.response;
+        const sessionId = typeof watchPayload?.sessionId === "string" ? watchPayload.sessionId.trim() : "";
+        if (!sessionId) {
+          return {
+            status: 400,
+            body: { ok: false, id, command, error: "sessionId is required" },
+          };
+        }
+        const watchResult = await this.overseerWatchPayload({
+          projectRoot: pathResolve(watchProjectRoot.projectRoot),
+          sessionId,
+          goal: typeof watchPayload?.goal === "string" ? watchPayload.goal.trim() || undefined : undefined,
+          instructions:
+            typeof watchPayload?.instructions === "string" ? watchPayload.instructions.trim() || undefined : undefined,
+        });
+        if (!watchResult.ok) {
+          return {
+            status: watchResult.status,
+            body: { ok: false, id, command, error: watchResult.error },
+          };
+        }
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: {
+              projectRoot: watchResult.payload.projectRoot,
+              sessionId: watchResult.payload.sessionId,
+              overseerSessionId: watchResult.payload.overseerSessionId,
+              watchedSessionIds: watchResult.payload.watched.map((agent) => agent.id),
+              ...(watchResult.payload.instructions ? { instructions: watchResult.payload.instructions } : {}),
+            },
           },
         };
       }

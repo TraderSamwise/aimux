@@ -5,6 +5,8 @@ import { filterDashboardVisibleModel, isDashboardSessionOffline } from "../dashb
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { commandKey, isShiftedLetterCommand, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
+import { sendCoreCommand } from "../core-command-transport.js";
+import { CORE_COMMAND_NAMES } from "../core-command-contract.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { buildWorkOutlineOverlayOutput } from "../tui/screens/overlay-renderers.js";
 import {
@@ -1264,6 +1266,17 @@ export const dashboardInteractionMethods = {
     this.redrawDashboardWithOverlay();
   },
 
+  showOverseerWatchInstructions(this: any, selected: DashboardSession): void {
+    this.overseerWatchInstructionsTarget = selected;
+    this.overseerWatchInstructionsBuffer = "";
+    this.openDashboardOverlay("overseer-watch-instructions");
+    this.renderOverseerWatchInstructions();
+  },
+
+  renderOverseerWatchInstructions(this: any): void {
+    this.redrawDashboardWithOverlay();
+  },
+
   loadWorkOutlineOverlayEntries(this: any): boolean {
     try {
       this.workOutlineOverlayEntries = listWorkOutlineEntries(
@@ -1408,7 +1421,7 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    if (key === "w" || key === "u") {
+    if (key === "w") {
       const selected = this.getSelectedDashboardSessionForActions();
       if (!selected) {
         this.footerFlash = "Select an agent first";
@@ -1416,20 +1429,30 @@ export const dashboardInteractionMethods = {
         this.renderOverseerOverlay();
         return;
       }
-      const active = key === "w";
+      this.showOverseerWatchInstructions(selected);
+      return;
+    }
+
+    if (key === "u") {
+      const selected = this.getSelectedDashboardSessionForActions();
+      if (!selected) {
+        this.footerFlash = "Select an agent first";
+        this.footerFlashTicks = 2;
+        this.renderOverseerOverlay();
+        return;
+      }
       const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
       void mutateDashboardApi(this, PROJECT_API_ROUTES.agents.loop, {
         sessionId: selected.id,
-        active,
-        action: active ? "add" : "remove",
+        active: false,
+        action: "remove",
         source: "dashboard",
         updatedBy: "dashboard",
-        goal: active ? selected.taskDescription || selected.headline || undefined : undefined,
       })
         .then(() => refreshDashboardModelThroughApi(this, { force: true, lifecycle }))
         .then(() => {
           if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
-          this.footerFlash = `${dashboardSessionLabel(selected)} ${active ? "added to" : "removed from"} overseer loop`;
+          this.footerFlash = `${dashboardSessionLabel(selected)} removed from overseer loop`;
           this.footerFlashTicks = 2;
           this.renderOverseerOverlay();
         })
@@ -1455,6 +1478,91 @@ export const dashboardInteractionMethods = {
       const runtime = this.sessions?.find((session: DashboardSession) => session.id === overseer.id);
       void this.stopSessionToOfflineWithFeedback(runtime ?? overseer);
       this.renderOverseerOverlay();
+    }
+  },
+
+  handleOverseerWatchInstructionsKey(this: any, data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    for (const event of events) {
+      const key = commandKey(event);
+
+      if (key === "escape") {
+        this.clearDashboardOverlay();
+        this.overseerWatchInstructionsBuffer = "";
+        this.overseerWatchInstructionsTarget = null;
+        this.restoreDashboardAfterOverlayDismiss?.();
+        return;
+      }
+
+      if (key === "enter" || key === "return") {
+        const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+        const target = this.overseerWatchInstructionsTarget;
+        const instructions =
+          typeof this.overseerWatchInstructionsBuffer === "string" ? this.overseerWatchInstructionsBuffer.trim() : "";
+        this.clearDashboardOverlay();
+        this.overseerWatchInstructionsBuffer = "";
+        this.overseerWatchInstructionsTarget = null;
+        if (!target) {
+          this.renderDashboard();
+          return;
+        }
+        const requestCoreCommandForDashboard =
+          typeof this.dashboardCoreCommandRequest === "function" ? this.dashboardCoreCommandRequest : sendCoreCommand;
+        void requestCoreCommandForDashboard(
+          CORE_COMMAND_NAMES.overseerWatch,
+          {
+            projectRoot: this.projectRoot,
+            sessionId: target.id,
+            goal: target.taskDescription || target.headline || undefined,
+            instructions,
+          },
+          { timeoutMs: 20_000 },
+        )
+          .then((response: any) =>
+            refreshDashboardModelThroughApi(this, { force: true, lifecycle }).then(() => response),
+          )
+          .then(async (response: any) => {
+            if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+            const overseerSessionId = response?.result?.overseerSessionId;
+            if (typeof overseerSessionId === "string" && overseerSessionId.trim()) {
+              const openResult =
+                typeof this.waitAndOpenLiveTmuxWindowForEntry === "function"
+                  ? await this.waitAndOpenLiveTmuxWindowForEntry({ id: overseerSessionId }, 10_000)
+                  : undefined;
+              if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+              if (openResult === "missing" || openResult === "error") {
+                this.footerFlash = "Overseer updated, but could not open overseer";
+                this.footerFlashTicks = 3;
+                this.renderDashboard();
+              }
+              return;
+            }
+            this.footerFlash = `${dashboardSessionLabel(target)} added to overseer loop`;
+            this.footerFlashTicks = 2;
+            this.renderDashboard();
+          })
+          .catch((error: unknown) => {
+            if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+            this.footerFlash = `Overseer update failed: ${error instanceof Error ? error.message : String(error)}`;
+            this.footerFlashTicks = 3;
+            this.renderDashboard();
+          });
+        return;
+      }
+
+      if (key === "backspace" || key === "delete") {
+        this.overseerWatchInstructionsBuffer = (this.overseerWatchInstructionsBuffer ?? "").slice(0, -1);
+        this.renderOverseerWatchInstructions();
+        continue;
+      }
+
+      const text = printableInputText(event);
+      if (text) {
+        this.overseerWatchInstructionsBuffer = `${this.overseerWatchInstructionsBuffer ?? ""}${text}`;
+        this.renderOverseerWatchInstructions();
+      }
     }
   },
 
