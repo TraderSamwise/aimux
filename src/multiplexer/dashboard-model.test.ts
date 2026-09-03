@@ -2309,6 +2309,66 @@ describe("refreshDashboardModelFromService", () => {
     }
   });
 
+  it("enriches restore offer sessions with current project-control metadata", async () => {
+    const previousAimuxHome = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-repo-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      withProjectPaths(repoRoot, () => {
+        writeJsonAtomic(join(getProjectStateDir(), "last-online-agents.json"), {
+          version: 1,
+          id: "snapshot-old",
+          writerInstanceId: "previous-process",
+          createdAt: "2026-08-25T01:00:00.000Z",
+          updatedAt: "2026-08-25T01:00:00.000Z",
+          sessionIds: ["claude-overseer"],
+          sessions: [{ id: "claude-overseer", command: "claude", label: "claude", worktreePath: repoRoot }],
+        });
+      });
+      seedAgentRestorePromptGatesForDaemonBoot({ daemonBootId: "daemon-test", projects: [{ repoRoot }] });
+
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        offlineSessions: [
+          {
+            id: "claude-overseer",
+            command: "claude",
+            toolConfigKey: "claude",
+            label: "claude",
+            backendSessionId: "backend-overseer",
+            restoreState: "ready",
+            status: "offline",
+            worktreePath: repoRoot,
+            team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+            overseer: true,
+          },
+        ],
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology: vi.fn(),
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.agentRestoreOffer?.sessions[0]).toMatchObject({
+        id: "claude-overseer",
+        team: { role: "overseer" },
+        overseer: true,
+        projectControl: true,
+      });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(aimuxHome, { recursive: true, force: true });
+      if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = previousAimuxHome;
+    }
+  });
+
   it("offers restore when only project-control sessions are running", async () => {
     const previousAimuxHome = process.env.AIMUX_HOME;
     const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-restore-home-"));

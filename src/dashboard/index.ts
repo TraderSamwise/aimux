@@ -147,6 +147,10 @@ export interface DashboardAgentRestoreOffer {
     command?: string;
     label?: string;
     worktreePath?: string;
+    team?: SessionTeamMetadata;
+    overseer?: boolean;
+    scribe?: boolean;
+    projectControl?: boolean;
   }>;
   worktreeGroups?: Array<{
     path?: string;

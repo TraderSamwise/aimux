@@ -188,7 +188,6 @@ describe("dashboardViewMethods.renderDashboard", () => {
       },
       dashboardOverlayState: { kind: "none" },
       agentRestoreConfirmSelection: "cancel",
-      agentRestoreConfirmOpenedAt: 0,
       openDashboardOverlay: vi.fn((kind: string) => {
         host.dashboardOverlayState.kind = kind;
       }),
@@ -207,7 +206,6 @@ describe("dashboardViewMethods.renderDashboard", () => {
 
     expect(host.openDashboardOverlay).toHaveBeenCalledWith("agent-restore-confirm");
     expect(host.agentRestoreConfirmSelection).toBe("restore");
-    expect(host.agentRestoreConfirmOpenedAt).toBeGreaterThan(0);
     expect(host.writeFrame).toHaveBeenCalledWith("base-frame");
   });
 

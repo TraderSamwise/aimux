@@ -109,7 +109,6 @@ import { getWorktreeCreatePath } from "./worktree.js";
 import {
   acknowledgeAgentRestoreOffer,
   readDisplayableAgentRestoreOffer,
-  readAgentRestoreOffer,
   reconcileAgentRestoreOfferWithRestorableSessions,
   writeAgentRestoreRetryOffer,
 } from "./runtime-core/agent-restore-state.js";

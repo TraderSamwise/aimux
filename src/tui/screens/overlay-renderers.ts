@@ -174,13 +174,26 @@ function restoreOfferGroupLabels(offer: any): string {
     .join(" · ");
 }
 
+function restoreOfferSessionControlRole(session: any): string | null {
+  const role = typeof session?.team?.role === "string" ? session.team.role : undefined;
+  if (session?.overseer === true || role === "overseer") return "overseer";
+  if (session?.scribe === true || role === "scribe") return "scribe";
+  return session?.projectControl === true && role ? role : null;
+}
+
+function restoreOfferSessionLabel(session: any): string {
+  const label = session.label ?? session.command ?? session.tool ?? session.id;
+  const controlRole = restoreOfferSessionControlRole(session);
+  return controlRole ? `${controlRole}: ${label}` : label;
+}
+
 export function buildAgentRestoreConfirmOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const offer = ctx.dashboardAgentRestoreOfferCache;
   if (!offer || !Array.isArray(offer.sessions) || !Array.isArray(offer.sessionIds)) return null;
   const selected = restoreConfirmAction(ctx);
   const labels = offer.sessions
     .slice(0, 5)
-    .map((session: any) => session.label ?? session.command ?? session.tool ?? session.id)
+    .map((session: any) => restoreOfferSessionLabel(session))
     .join(", ");
   const extra = offer.sessions.length > 5 ? `, +${offer.sessions.length - 5} more` : "";
   const count = offer.sessionIds.length;

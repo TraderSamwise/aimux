@@ -52,6 +52,7 @@ import {
   deriveAgentRestoreOffer,
   recordLastOnlineAgents,
   reconcileAgentRestoreOfferWithRestorableSessions,
+  type AgentRestoreOffer,
   type AgentRestoreSession,
 } from "../runtime-core/agent-restore-state.js";
 import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
@@ -1244,19 +1245,23 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
           command: session.command,
           label: session.label,
           worktreePath: session.worktreePath,
+          team: session.team,
+          overseer: session.overseer,
+          scribe: session.scribe,
+          projectControl: isProjectControlSession(session) || undefined,
         };
       });
     const liveRestoreSessionIds = onlineRestoreSessions.map((session) => session.id);
+    const offlineRestoreSessions = allSessions.filter(
+      (session) =>
+        isDashboardSessionOffline(session) &&
+        session.restoreState === "ready" &&
+        !liveRestoreSessionIds.includes(session.id),
+    );
+    const offlineRestoreSessionsById = new Map(offlineRestoreSessions.map((session) => [session.id, session]));
     const offer = reconcileAgentRestoreOfferWithRestorableSessions(
       deriveAgentRestoreOffer(liveRestoreSessionIds, { projectRoot }),
-      allSessions
-        .filter(
-          (session) =>
-            isDashboardSessionOffline(session) &&
-            session.restoreState === "ready" &&
-            !liveRestoreSessionIds.includes(session.id),
-        )
-        .map((session) => session.id),
+      offlineRestoreSessions.map((session) => session.id),
       projectRoot,
     );
     const restoreSnapshotKey = agentRestoreSessionKey(onlineRestoreSessions);
@@ -1266,7 +1271,25 @@ function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: 
       recordLastOnlineAgents(onlineRestoreSessions, { projectRoot });
       (host as any).lastOnlineAgentRestoreSnapshotKey = restoreSnapshotKey;
     }
-    return offer;
+    if (!offer) return null;
+    return {
+      ...offer,
+      sessions: offer.sessions.map((session) => {
+        const offline = offlineRestoreSessionsById.get(session.id);
+        if (!offline) return session;
+        return {
+          ...session,
+          tool: session.tool ?? offline.toolConfigKey,
+          command: session.command ?? offline.command,
+          label: session.label ?? offline.label,
+          worktreePath: session.worktreePath ?? offline.worktreePath,
+          team: session.team ?? offline.team,
+          overseer: session.overseer ?? offline.overseer,
+          scribe: session.scribe ?? offline.scribe,
+          projectControl: session.projectControl ?? (isProjectControlSession(offline) || undefined),
+        };
+      }),
+    } satisfies AgentRestoreOffer;
   });
   const state = {
     sessions,

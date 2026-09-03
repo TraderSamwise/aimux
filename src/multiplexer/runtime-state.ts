@@ -184,6 +184,10 @@ function onlineSessionsForRestore(host: RuntimeStateHost): AgentRestoreSession[]
       command: session.command,
       label: host.getSessionLabel?.(session.id),
       worktreePath: host.sessionWorktreePaths?.get?.(session.id),
+      team: session.team,
+      overseer: session.overseer,
+      scribe: session.scribe,
+      projectControl: isProjectControlSession(session) || undefined,
     }))
     .filter((session: AgentRestoreSession) => Boolean(session.id));
 }

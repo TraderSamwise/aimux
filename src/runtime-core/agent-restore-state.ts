@@ -10,6 +10,7 @@ import {
   listProjects,
   withProjectPaths,
 } from "../paths.js";
+import type { SessionTeamMetadata } from "../team.js";
 
 const WRITER_INSTANCE_ID = `${process.pid}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 
@@ -19,6 +20,10 @@ export interface AgentRestoreSession {
   command?: string;
   label?: string;
   worktreePath?: string;
+  team?: SessionTeamMetadata;
+  overseer?: boolean;
+  scribe?: boolean;
+  projectControl?: boolean;
 }
 
 export interface AgentRestoreWorktreeGroup {
@@ -107,12 +112,27 @@ function normalizeSession(value: unknown): AgentRestoreSession | null {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== "string" || !record.id.trim()) return null;
   const optional = (key: string) => (typeof record[key] === "string" && record[key].trim() ? record[key] : undefined);
+  const teamRecord = record.team && typeof record.team === "object" ? (record.team as Record<string, unknown>) : null;
+  const team =
+    typeof teamRecord?.teamId === "string" && typeof teamRecord.parentSessionId === "string"
+      ? {
+          teamId: teamRecord.teamId,
+          parentSessionId: teamRecord.parentSessionId,
+          role: typeof teamRecord.role === "string" ? teamRecord.role : undefined,
+          label: typeof teamRecord.label === "string" ? teamRecord.label : undefined,
+          order: typeof teamRecord.order === "number" ? teamRecord.order : undefined,
+        }
+      : undefined;
   return {
     id: record.id,
     tool: optional("tool"),
     command: optional("command"),
     label: optional("label"),
     worktreePath: optional("worktreePath"),
+    team,
+    overseer: typeof record.overseer === "boolean" ? record.overseer : undefined,
+    scribe: typeof record.scribe === "boolean" ? record.scribe : undefined,
+    projectControl: typeof record.projectControl === "boolean" ? record.projectControl : undefined,
   };
 }
 
@@ -171,6 +191,12 @@ export function agentRestoreSessionKey(sessions: AgentRestoreSession[]): string 
       session.command ?? "",
       session.label ?? "",
       session.worktreePath ?? "",
+      session.team?.teamId ?? "",
+      session.team?.parentSessionId ?? "",
+      session.team?.role ?? "",
+      session.overseer === undefined ? "" : String(session.overseer),
+      session.scribe === undefined ? "" : String(session.scribe),
+      session.projectControl === undefined ? "" : String(session.projectControl),
     ]),
   );
 }
@@ -188,7 +214,13 @@ function sameSessions(left: AgentRestoreSession[], right: AgentRestoreSession[])
       session.tool === other?.tool &&
       session.command === other.command &&
       session.label === other.label &&
-      session.worktreePath === other.worktreePath
+      session.worktreePath === other.worktreePath &&
+      session.team?.teamId === other.team?.teamId &&
+      session.team?.parentSessionId === other.team?.parentSessionId &&
+      session.team?.role === other.team?.role &&
+      session.overseer === other.overseer &&
+      session.scribe === other.scribe &&
+      session.projectControl === other.projectControl
     );
   });
 }
