@@ -32,7 +32,7 @@ export interface NotificationPushInput {
   dedupeKey?: string;
 }
 
-export async function deliverNotificationPush(input: NotificationPushInput): Promise<void> {
+export async function deliverNotificationPush(input: NotificationPushInput): Promise<{ sent: number }> {
   const messages = input.pushTokens
     .filter((record) => record.userId === input.userId)
     .filter((record) => record.platform === "ios" || record.platform === "android")
@@ -42,6 +42,7 @@ export async function deliverNotificationPush(input: NotificationPushInput): Pro
       title: input.title,
       body: input.body,
       priority: "high",
+      ...(record.platform === "android" ? { channelId: "security" } : {}),
       // sound and interruptionLevel are iOS-only in the Expo push API.
       ...(record.platform === "ios" ? { sound: "default", interruptionLevel: "timeSensitive" } : {}),
       data: {
@@ -53,11 +54,11 @@ export async function deliverNotificationPush(input: NotificationPushInput): Pro
         dedupeKey: input.dedupeKey,
       },
     }));
-  await sendExpoPush(messages);
+  return sendExpoPush(messages);
 }
 
-async function sendExpoPush(messages: unknown[]): Promise<void> {
-  if (messages.length === 0) return;
+async function sendExpoPush(messages: unknown[]): Promise<{ sent: number }> {
+  if (messages.length === 0) return { sent: 0 };
   const response = await fetch("https://exp.host/--/api/v2/push/send", {
     method: "POST",
     headers: {
@@ -70,6 +71,17 @@ async function sendExpoPush(messages: unknown[]): Promise<void> {
     const detail = await response.text().catch(() => "");
     throw new Error(`Expo push failed (${response.status}): ${detail.slice(0, 300)}`);
   }
+  const body = (await response.json().catch(() => null)) as
+    | { data?: Array<{ status?: string; message?: string; details?: unknown }> }
+    | null;
+  const failedTicket = body?.data?.find((ticket) => ticket.status === "error");
+  if (failedTicket) {
+    const detail =
+      failedTicket.message ||
+      (failedTicket.details ? JSON.stringify(failedTicket.details) : "");
+    throw new Error(`Expo push rejected a token${detail ? `: ${detail}` : ""}`);
+  }
+  return { sent: messages.length };
 }
 
 async function sendSecurityEmail(input: DeliveryInput): Promise<void> {
@@ -112,6 +124,7 @@ async function sendSecurityPush(input: DeliveryInput): Promise<void> {
       to: record.token,
       title: input.event.title,
       body: input.event.body,
+      ...(record.platform === "android" ? { channelId: "security" } : {}),
       data: {
         category: "security",
         kind: input.event.kind,

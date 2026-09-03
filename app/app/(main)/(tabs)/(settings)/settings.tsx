@@ -194,7 +194,7 @@ export default function SettingsScreen() {
         return;
       }
       setPushStatus("Sending test");
-      await sendSecurityTestPush(relayUrl, getToken, context);
+      const sent = await sendSecurityTestPush(relayUrl, getToken, context);
       updateNotifications({
         ...notificationSettings,
         enabled: true,
@@ -203,7 +203,11 @@ export default function SettingsScreen() {
           push: true,
         },
       });
-      setPushStatus("Test sent");
+      setPushStatus(
+        sent.sent > 0
+          ? `Test sent to ${sent.sent} device${sent.sent === 1 ? "" : "s"}`
+          : "Test sent",
+      );
     } catch (err) {
       setPushStatus(getErrorMessage(err));
     } finally {

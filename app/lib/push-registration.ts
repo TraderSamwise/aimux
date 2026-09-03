@@ -8,6 +8,8 @@ import {
   buildSecurityPushTestUrl,
 } from "@/lib/push-registration-url";
 
+export const SECURITY_NOTIFICATION_CHANNEL_ID = "security";
+
 export type PushRegistrationResult =
   | { status: "unsupported" }
   | { status: "permission_denied"; permissionStatus: Notifications.PermissionStatus }
@@ -19,6 +21,14 @@ export interface PushRegistrationOptions {
   shareId?: string;
   requestPermission?: boolean;
   agentAlerts?: boolean;
+}
+
+export async function ensureSecurityNotificationChannel(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  await Notifications.setNotificationChannelAsync(SECURITY_NOTIFICATION_CHANNEL_ID, {
+    name: "Security alerts",
+    importance: Notifications.AndroidImportance.DEFAULT,
+  });
 }
 
 export async function registerSecurityPushToken(
@@ -39,12 +49,7 @@ export async function registerSecurityPushToken(
   const projectId =
     Constants.easConfig?.projectId ??
     (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("security", {
-      name: "Security alerts",
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
-  }
+  await ensureSecurityNotificationChannel();
   const expoToken = await Notifications.getExpoPushTokenAsync(
     projectId ? { projectId } : undefined,
   );
@@ -82,8 +87,8 @@ export async function sendSecurityTestPush(
   relayUrl: string,
   getToken: () => Promise<string | null>,
   options: Pick<PushRegistrationOptions, "ownerUserId" | "shareId"> = {},
-): Promise<void> {
-  if (Platform.OS === "web") return;
+): Promise<{ sent: number }> {
+  if (Platform.OS === "web") return { sent: 0 };
   const token = await getToken();
   if (!token) throw new Error("Sign in required");
   const url = buildSecurityPushTestUrl(relayUrl, options);
@@ -102,4 +107,6 @@ export async function sendSecurityTestPush(
     } catch {}
     throw new Error(detail || `Test push failed (${res.status})`);
   }
+  const body = (await res.json().catch(() => null)) as { sent?: unknown } | null;
+  return { sent: typeof body?.sent === "number" ? body.sent : 0 };
 }

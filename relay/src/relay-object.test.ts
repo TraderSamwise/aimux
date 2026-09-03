@@ -603,6 +603,202 @@ describe("RelayObject owner device security", () => {
     expect(await unblocked.json()).toMatchObject({ device: { id: "client_1", approved: false, blocked: false } });
   });
 
+  it("uses approved-device policy for test push delivery", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const storage = storageWithSockets([]);
+    const securityState = {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "ios",
+          name: "iPhone",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+          approvalCode: "QTE-WK4",
+        },
+      },
+      pushTokens: {
+        "user_owner:client_1": {
+          userId: "user_owner",
+          deviceId: "client_1",
+          token: "ExponentPushToken[owner-ios]",
+          platform: "ios",
+          agentAlerts: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      proofNonces: {},
+      events: [],
+    };
+    await storage.put("security-state:v1", securityState);
+    const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
+
+    const rejected = await object.fetch(
+      new Request("https://relay.aimux.app/security/test-push", {
+        method: "POST",
+        headers: { "X-Aimux-User-Id": "user_owner" },
+      }),
+    );
+
+    expect(rejected.status).toBe(404);
+    expect(await rejected.json()).toMatchObject({
+      ok: false,
+      error: "No enabled approved mobile push token registered",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await storage.put("security-state:v1", {
+      ...securityState,
+      devices: {
+        ...securityState.devices,
+        client_1: {
+          ...securityState.devices.client_1,
+          approvedAt: "2026-05-24T00:01:00.000Z",
+        },
+      },
+    });
+    const sent = await object.fetch(
+      new Request("https://relay.aimux.app/security/test-push", {
+        method: "POST",
+        headers: { "X-Aimux-User-Id": "user_owner" },
+      }),
+    );
+
+    expect(sent.status).toBe(200);
+    expect(await sent.json()).toMatchObject({ ok: true, sent: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("tests shared mobile pushes against the owner delivery path", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        owner_phone: {
+          id: "owner_phone",
+          deviceId: "owner_phone",
+          kind: "ios",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+        },
+        guest_phone: {
+          id: "guest_phone",
+          deviceId: "guest_phone",
+          kind: "ios",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      pushTokens: {
+        "user_owner:owner_phone": {
+          userId: "user_owner",
+          deviceId: "owner_phone",
+          token: "ExponentPushToken[owner-ios]",
+          platform: "ios",
+          agentAlerts: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+        "user_guest:guest_phone": {
+          userId: "user_guest",
+          deviceId: "guest_phone",
+          token: "ExponentPushToken[guest-ios]",
+          platform: "ios",
+          agentAlerts: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      proofNonces: {},
+      events: [],
+    });
+
+    const sent = await object.fetch(
+      new Request("https://relay.aimux.app/security/test-push", {
+        method: "POST",
+        headers: {
+          "X-Aimux-User-Id": "user_guest",
+          "X-Aimux-Share-Owner-Id": "user_owner",
+          "X-Aimux-Share-Id": shareId,
+        },
+      }),
+    );
+
+    expect(sent.status).toBe(200);
+    expect(await sent.json()).toMatchObject({ ok: true, sent: 1 });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{ to: string }>;
+    expect(body.map((message) => message.to)).toEqual(["ExponentPushToken[owner-ios]"]);
+  });
+
+  it("rejects forged shared test push headers", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const storage = storageWithSockets([]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        owner_phone: {
+          id: "owner_phone",
+          deviceId: "owner_phone",
+          kind: "ios",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      pushTokens: {
+        "user_owner:owner_phone": {
+          userId: "user_owner",
+          deviceId: "owner_phone",
+          token: "ExponentPushToken[owner-ios]",
+          platform: "ios",
+          agentAlerts: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      proofNonces: {},
+      events: [],
+    });
+    const object = createObject(storage, {} as unknown as Env);
+
+    const rejected = await object.fetch(
+      new Request("https://relay.aimux.app/security/test-push", {
+        method: "POST",
+        headers: {
+          "X-Aimux-User-Id": "user_guest",
+          "X-Aimux-Share-Owner-Id": "user_owner",
+          "X-Aimux-Share-Id": "share_missing",
+        },
+      }),
+    );
+
+    expect(rejected.status).toBe(404);
+    expect(await rejected.json()).toMatchObject({ ok: false, error: "Shared chat not found" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sends the approval event to the waiting owner client", async () => {
     const storage = storageWithSockets([]);
     const object = createObject(storage, {

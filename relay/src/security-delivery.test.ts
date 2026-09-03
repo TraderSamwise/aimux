@@ -23,7 +23,7 @@ describe("deliverNotificationPush", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await deliverNotificationPush({
+    const result = await deliverNotificationPush({
       userId: "user_owner",
       title: "Agent needs input",
       body: "claude-abc is waiting",
@@ -38,12 +38,14 @@ describe("deliverNotificationPush", () => {
       ],
     });
 
+    expect(result).toEqual({ sent: 2 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{
       to: string;
       priority?: string;
       sound?: string;
       interruptionLevel?: string;
+      channelId?: string;
     }>;
     expect(body.map((message) => message.to).sort()).toEqual([
       "ExponentPushToken[owner-android]",
@@ -60,6 +62,7 @@ describe("deliverNotificationPush", () => {
       data: { category: "agent", kind: "needs_input", sessionId: "claude-abc", projectRoot: "/repo" },
     });
     expect(android).toMatchObject({ priority: "high" });
+    expect(android).toMatchObject({ channelId: "security" });
     expect(android).not.toHaveProperty("interruptionLevel");
     expect(android).not.toHaveProperty("sound");
   });
@@ -68,13 +71,14 @@ describe("deliverNotificationPush", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await deliverNotificationPush({
+    const result = await deliverNotificationPush({
       userId: "user_owner",
       title: "Agent done",
       body: "finished",
       pushTokens: [token({ userId: "user_guest", platform: "ios" }), token({ platform: "web" })],
     });
 
+    expect(result).toEqual({ sent: 0 });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -115,6 +119,27 @@ describe("deliverNotificationPush", () => {
       }),
     ).rejects.toThrow(/Expo push failed \(429\)/);
   });
+
+  it("throws when Expo accepts the request but rejects a push token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ status: "error", message: "DeviceNotRegistered" }],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      deliverNotificationPush({
+        userId: "user_owner",
+        title: "Agent needs input",
+        body: "waiting",
+        pushTokens: [token({ platform: "ios", token: "ExponentPushToken[stale]" })],
+      }),
+    ).rejects.toThrow(/Expo push rejected a token: DeviceNotRegistered/);
+  });
 });
 
 describe("deliverSecurityAlert", () => {
@@ -141,7 +166,7 @@ describe("deliverSecurityAlert", () => {
         actorName: "Alex",
       },
       pushTokens: [
-        token({ userId: "user_owner", deviceId: "owner", token: "ExponentPushToken[owner]" }),
+        token({ userId: "user_owner", deviceId: "owner", token: "ExponentPushToken[owner]", platform: "android" }),
         token({ userId: "user_guest", deviceId: "guest", token: "ExponentPushToken[guest]" }),
       ],
     });
@@ -149,9 +174,11 @@ describe("deliverSecurityAlert", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{
       to: string;
+      channelId?: string;
       data: Record<string, string>;
     }>;
     expect(body.map((message) => message.to)).toEqual(["ExponentPushToken[owner]"]);
+    expect(body[0]?.channelId).toBe("security");
     expect(body[0]?.data).toMatchObject({
       category: "security",
       kind: "shared_client_connected",

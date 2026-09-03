@@ -890,25 +890,49 @@ export class RelayObject extends DurableObject<Env> {
   private async sendTestPush(request: Request): Promise<Response> {
     const userId = request.headers.get("X-Aimux-User-Id")?.trim();
     if (!userId) return json({ ok: false, error: "Missing authorization" }, 401);
+    const ownerUserId = request.headers.get("X-Aimux-Share-Owner-Id")?.trim();
+    const shareId = request.headers.get("X-Aimux-Share-Id")?.trim();
+    let targetUserId = userId;
+    if (ownerUserId || shareId) {
+      if (!ownerUserId || !shareId) return json({ ok: false, error: "Missing shared push context" }, 401);
+      const shared = await this.authorizeSharedClientConnect(request, shareId);
+      if (!shared.ok) return json({ ok: false, error: shared.error }, shared.status);
+      targetUserId = shared.share.ownerUserId;
+    }
     const state = await loadSecurityState(this.ctx.storage);
-    const pushTokens = Object.values(state.pushTokens).filter(
+    const eligiblePolicyTokens = notificationPushTokensForDevicePolicy(state, this.env.SECURITY_DEVICE_POLICY);
+    const pushTokens = eligiblePolicyTokens.filter(
       (record) =>
-        record.userId === userId &&
+        record.userId === targetUserId &&
         (record.platform === "ios" || record.platform === "android") &&
         record.agentAlerts !== false,
     );
     if (pushTokens.length === 0) {
-      return json({ ok: false, error: "No enabled mobile push token registered" }, 404);
+      const hasRegisteredToken = Object.values(state.pushTokens).some(
+        (record) =>
+          record.userId === targetUserId &&
+          (record.platform === "ios" || record.platform === "android") &&
+          record.agentAlerts !== false,
+      );
+      return json(
+        {
+          ok: false,
+          error: hasRegisteredToken
+            ? "No enabled approved mobile push token registered"
+            : "No enabled mobile push token registered",
+        },
+        404,
+      );
     }
-    await deliverNotificationPush({
-      userId,
+    const delivered = await deliverNotificationPush({
+      userId: targetUserId,
       pushTokens,
       title: "aimux test notification",
       body: "Push notifications are working.",
       kind: "test",
       dedupeKey: `test:${Date.now()}`,
     });
-    return json({ ok: true }, 200);
+    return json({ ok: true, sent: delivered.sent }, 200);
   }
 
   private async authorizeSharedClientConnect(

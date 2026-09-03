@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useSetAtom } from "jotai";
 import * as Notifications from "expo-notifications";
+import { ensureSecurityNotificationChannel } from "@/lib/push-registration";
 import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
 import { selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
 
@@ -35,6 +36,7 @@ export function NativeNotificationRouter() {
 
   useEffect(() => {
     if (Platform.OS === "web") return;
+    void ensureSecurityNotificationChannel().catch(() => undefined);
 
     const route = (response: Notifications.NotificationResponse | null) => {
       const data = response?.notification.request.content.data;
