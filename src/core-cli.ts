@@ -31,9 +31,9 @@ import {
 } from "./core-text.js";
 import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
 import { requestCoreCommand } from "./core-command-client.js";
-import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { clearCredentials, loadCredentials, setRemoteEnabled } from "./full/credentials.js";
 import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
-import { runLoginFlow } from "./login-flow.js";
+import { runLoginFlow } from "./full/login-flow.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { initPaths } from "./paths.js";
 import { findMainRepo } from "./worktree.js";

@@ -41,13 +41,13 @@ import { requestCoreCommand } from "./core-command-client.js";
 import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreRelaySnapshot } from "./core-command-contract.js";
 import { renderDiskDoctorReport, type DiskDoctorReport } from "./disk-doctor.js";
 import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
-import { runLoginFlow } from "./login-flow.js";
-import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { runLoginFlow } from "./full/login-flow.js";
+import { clearCredentials, loadCredentials, setRemoteEnabled } from "./full/credentials.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
-import { tailHostedAudit, tailHostedPrompts } from "./hosted-audit.js";
-import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
-import { hostedLockdownState, setHostedLockdown } from "./hosted-lockdown.js";
-import { raiseHostedCliEvent } from "./hosted-outbox.js";
+import { tailHostedAudit, tailHostedPrompts } from "./full/hosted-audit.js";
+import { loadHostedConfig, validateHostedStartup } from "./full/hosted-config.js";
+import { hostedLockdownState, setHostedLockdown } from "./full/hosted-lockdown.js";
+import { raiseHostedCliEvent } from "./full/hosted-outbox.js";
 import {
   approveRemoteSecurityDevice,
   blockRemoteSecurityDevice,
@@ -55,14 +55,14 @@ import {
   listRemoteSecurityDevices,
   type RemoteSecurityDevice,
   unblockRemoteSecurityDevice,
-} from "./security-devices-client.js";
+} from "./full/security-devices-client.js";
 import {
   createHostedPrincipal,
   grantHostedSession,
   listHostedPrincipals,
   revokeHostedPrincipal,
   ungrantHostedSession,
-} from "./hosted-principals.js";
+} from "./full/hosted-principals.js";
 import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
 import {
   buildDesktopNotifierDoctorReport,

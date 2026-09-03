@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 
-import { quarantineCorruptFile } from "./atomic-write.js";
-import { log } from "./debug.js";
-import { getGlobalConfigPath } from "./paths.js";
+import { quarantineCorruptFile } from "../atomic-write.js";
+import { log } from "../debug.js";
+import { getGlobalConfigPath } from "../paths.js";
 
 /**
  * Hosted mode is configured from the GLOBAL config only.

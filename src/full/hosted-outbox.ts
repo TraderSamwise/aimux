@@ -1,11 +1,11 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-import { log } from "./debug.js";
+import { log } from "../debug.js";
 import { appendHostedAudit } from "./hosted-audit.js";
 import type { HostedEvent } from "./hosted-events.js";
 import { withHostedLock } from "./hosted-lock.js";
-import { getHostedDir, getHostedOutboxPath } from "./paths.js";
+import { getHostedDir, getHostedOutboxPath } from "../paths.js";
 
 /**
  * Cross-process event spool.

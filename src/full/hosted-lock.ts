@@ -1,7 +1,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
-import { getHostedDir } from "./paths.js";
+import { getHostedDir } from "../paths.js";
 
 /**
  * Exclusive file lock for hosted-mode state.

@@ -1,10 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 
-import { atomicWrite } from "./atomic-write.js";
-import { log } from "./debug.js";
+import { atomicWrite } from "../atomic-write.js";
+import { log } from "../debug.js";
 import { withHostedLock } from "./hosted-lock.js";
-import { getHostedAuditPath, getHostedAuditPromptsPath, getHostedDir } from "./paths.js";
+import { getHostedAuditPath, getHostedAuditPromptsPath, getHostedDir } from "../paths.js";
 
 /**
  * The hosted audit log: one JSONL record per request, append-only.

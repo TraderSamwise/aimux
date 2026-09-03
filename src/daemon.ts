@@ -19,16 +19,16 @@ import { listAllProjectsExposeItems, type GlobalExposeItem } from "./expose-cont
 import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
 import { VisualClientLeaseRegistry, parseVisualClientKind } from "./visual-client-leases.js";
 import { assignWorktreeTones, exposeTileContextForItem, orderExposeItems } from "./tmux/expose-ordering.js";
-import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
-import { MobilePushThrottle } from "./mobile-push-throttle.js";
-import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./full/relay-client.js";
+import { MobilePushThrottle } from "./full/mobile-push-throttle.js";
+import { clearCredentials, loadCredentials, setRemoteEnabled } from "./full/credentials.js";
 import { loadConfig, loadGlobalConfig } from "./config.js";
 import {
   assertOperatorStreamAllowed,
   assertRemoteAccessAllowed,
   parseRemoteActor,
   type RemoteActor,
-} from "./remote-access.js";
+} from "./full/remote-access.js";
 import {
   isBinaryProjectRoute,
   PROJECT_API_ROUTES,
@@ -36,9 +36,9 @@ import {
   type ExposePreviewSnapshot,
 } from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
-import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
-import { countActiveHostedPrincipals } from "./hosted-principals.js";
-import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
+import { loadHostedConfig, validateHostedStartup } from "./full/hosted-config.js";
+import { countActiveHostedPrincipals } from "./full/hosted-principals.js";
+import { startHostedServer, type HostedServerHandle } from "./full/hosted-server.js";
 import { serializeFastControlItem } from "./fast-control.js";
 import { agentStatusChip } from "./tui/render/agent-status.js";
 import { seedAgentRestorePromptGatesForDaemonBoot } from "./runtime-core/agent-restore-state.js";
@@ -164,7 +164,7 @@ import {
   type CoreWorktreeSummaryTextPayload,
   type CoreWhoamiTextPayload,
 } from "./core-text.js";
-import { runLoginFlow } from "./login-flow.js";
+import { runLoginFlow } from "./full/login-flow.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { buildDiskDoctorReport, renderDiskDoctorReport, type DiskDoctorProjectReport } from "./disk-doctor.js";

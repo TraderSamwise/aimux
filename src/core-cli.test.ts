@@ -42,7 +42,7 @@ vi.mock("./control-plane-restart-client.js", () => ({
   restartControlPlaneFromCli: mocks.restartControlPlaneFromCli,
 }));
 
-vi.mock("./credentials.js", () => ({
+vi.mock("./full/credentials.js", () => ({
   clearCredentials: mocks.clearCredentials,
   loadCredentials: () => mocks.credentials,
   setRemoteEnabled: mocks.setRemoteEnabled,
@@ -53,7 +53,7 @@ vi.mock("./daemon-state.js", () => ({
   loadDaemonState: () => mocks.daemonState,
 }));
 
-vi.mock("./login-flow.js", () => ({
+vi.mock("./full/login-flow.js", () => ({
   runLoginFlow: mocks.runLoginFlow,
 }));
 

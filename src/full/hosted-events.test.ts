@@ -15,7 +15,7 @@ import {
   signHostedEvent,
   type HostedEvent,
 } from "./hosted-events.js";
-import { getHostedDevicesPath } from "./paths.js";
+import { getHostedDevicesPath } from "../paths.js";
 
 let previousAimuxHome: string | undefined;
 let previousSecret: string | undefined;

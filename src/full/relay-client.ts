@@ -1,7 +1,7 @@
-import type { AimuxDaemon } from "./daemon.js";
-import { notifyRemoteClientConnected } from "./notify.js";
-import type { RelayConnectionStatus, RelayStatusSnapshot } from "./relay-contract.js";
-export type { RelayConnectionStatus, RelayStatusSnapshot } from "./relay-contract.js";
+import type { AimuxDaemon } from "../daemon.js";
+import { notifyRemoteClientConnected } from "../notify.js";
+import type { RelayConnectionStatus, RelayStatusSnapshot } from "../relay-contract.js";
+export type { RelayConnectionStatus, RelayStatusSnapshot } from "../relay-contract.js";
 
 interface RelayRequest {
   id: string;

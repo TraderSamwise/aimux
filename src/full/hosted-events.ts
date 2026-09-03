@@ -3,11 +3,11 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
-import { atomicWrite, quarantineCorruptFile } from "./atomic-write.js";
-import { log } from "./debug.js";
+import { atomicWrite, quarantineCorruptFile } from "../atomic-write.js";
+import { log } from "../debug.js";
 import type { HostedConfig } from "./hosted-config.js";
 import { withHostedLock } from "./hosted-lock.js";
-import { getHostedDevicesPath, getHostedDir } from "./paths.js";
+import { getHostedDevicesPath, getHostedDir } from "../paths.js";
 
 /**
  * Connection events for hosted mode.

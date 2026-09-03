@@ -1,5 +1,5 @@
 import { loadCredentials } from "./credentials.js";
-import { requestJson } from "./http-client.js";
+import { requestJson } from "../http-client.js";
 
 export interface RemoteSecurityDevice {
   id: string;

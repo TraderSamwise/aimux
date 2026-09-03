@@ -1,6 +1,6 @@
-import { requestDaemonJson } from "./daemon-client.js";
-import { externalNotificationsDisabled } from "./external-notifications.js";
-import type { AlertEvent } from "./project-events.js";
+import { requestDaemonJson } from "../daemon-client.js";
+import { externalNotificationsDisabled } from "../external-notifications.js";
+import type { AlertEvent } from "../project-events.js";
 
 /**
  * Forwards an alert that already passed desktop notification gating to the

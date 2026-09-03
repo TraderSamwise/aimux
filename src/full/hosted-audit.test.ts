@@ -23,7 +23,7 @@ import {
   tailHostedPrompts,
   type HostedAuditRecord,
 } from "./hosted-audit.js";
-import { getHostedAuditPath, getHostedAuditPromptsPath, getHostedDir } from "./paths.js";
+import { getHostedAuditPath, getHostedAuditPromptsPath, getHostedDir } from "../paths.js";
 
 let previousAimuxHome: string | undefined;
 let aimuxHome = "";

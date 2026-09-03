@@ -10,7 +10,7 @@ import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
-import type { RemoteActor } from "./remote-access.js";
+import type { RemoteActor } from "./full/remote-access.js";
 import { getDaemonLogPath, getProjectIdFor, getProjectLogPathFor, getProjectStateDirFor } from "./paths.js";
 import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 import { refreshGlobalExposeHotSnapshots } from "./expose-hot-snapshot-worker.js";
@@ -305,7 +305,7 @@ vi.mock("./tmux/runtime-manager.js", () => ({
   },
 }));
 
-vi.mock("./login-flow.js", () => ({
+vi.mock("./full/login-flow.js", () => ({
   runLoginFlow: loginFlowMock,
 }));
 
@@ -2704,7 +2704,7 @@ describe("daemon supervision", () => {
   });
 
   it("serves remote status text for the installed shell shim without leaking tokens", async () => {
-    const { saveCredentials } = await import("./credentials.js");
+    const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     saveCredentials({
       version: 1,
@@ -2725,7 +2725,7 @@ describe("daemon supervision", () => {
   });
 
   it("preserves remote status JSON shape for the installed shell shim", async () => {
-    const { saveCredentials } = await import("./credentials.js");
+    const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     saveCredentials({
       version: 1,
@@ -2745,7 +2745,7 @@ describe("daemon supervision", () => {
   });
 
   it("serves whoami text and JSON for the installed shell shim without leaking tokens", async () => {
-    const { saveCredentials } = await import("./credentials.js");
+    const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     saveCredentials({
       version: 1,
@@ -2774,7 +2774,7 @@ describe("daemon supervision", () => {
   });
 
   it("serves logout text and clears credentials for the installed shell shim", async () => {
-    const { saveCredentials, loadCredentials } = await import("./credentials.js");
+    const { saveCredentials, loadCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     saveCredentials({
       version: 1,
@@ -2794,7 +2794,7 @@ describe("daemon supervision", () => {
   });
 
   it("serves login text through the daemon auth flow", async () => {
-    const { saveCredentials } = await import("./credentials.js");
+    const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     loginFlowMock.mockImplementation(async (opts: { onMessage?: (line: string) => void }) => {
       opts.onMessage?.("Opening your browser to sign in...");
@@ -2843,7 +2843,7 @@ describe("daemon supervision", () => {
   });
 
   it("serves security unlock text through the daemon auth flow", async () => {
-    const { saveCredentials } = await import("./credentials.js");
+    const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     loginFlowMock.mockImplementation(async () => {
       saveCredentials({
@@ -2882,7 +2882,7 @@ describe("daemon supervision", () => {
   });
 
   it("starts then waits on a daemon-owned login auth session", async () => {
-    const { saveCredentials } = await import("./credentials.js");
+    const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     let completeLogin: (() => void) | null = null;
     loginFlowMock.mockImplementation(
@@ -3488,7 +3488,7 @@ describe("daemon supervision", () => {
   });
 
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
-    const { saveCredentials } = await import("./credentials.js");
+    const { saveCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     const previousWebSocket = globalThis.WebSocket;
@@ -3530,7 +3530,7 @@ describe("daemon supervision", () => {
   });
 
   it("serves remote disable text for the installed shell shim", async () => {
-    const { saveCredentials, loadCredentials } = await import("./credentials.js");
+    const { saveCredentials, loadCredentials } = await import("./full/credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     saveCredentials({
       version: 1,
@@ -4538,7 +4538,7 @@ describe("daemon routing (relay + proxy)", () => {
 
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     try {
-      const { saveCredentials } = await import("./credentials.js");
+      const { saveCredentials } = await import("./full/credentials.js");
       const { AimuxDaemon } = await import("./daemon.js");
       const daemon = new AimuxDaemon();
       const baseCredentials = {

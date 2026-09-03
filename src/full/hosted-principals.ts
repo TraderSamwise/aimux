@@ -2,9 +2,9 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
-import { atomicWrite, quarantineCorruptFile } from "./atomic-write.js";
+import { atomicWrite, quarantineCorruptFile } from "../atomic-write.js";
 import { withHostedLock } from "./hosted-lock.js";
-import { getHostedDir, getHostedPrincipalsPath } from "./paths.js";
+import { getHostedDir, getHostedPrincipalsPath } from "../paths.js";
 
 /**
  * Hosted-mode principals: who may connect, and to exactly which sessions.

@@ -14,7 +14,7 @@ vi.mock("./config.js", () => ({
 vi.mock("./notification-context.js", () => ({
   shouldSuppressNotification: vi.fn(() => false),
 }));
-vi.mock("./mobile-push-bridge.js", () => ({
+vi.mock("./full/mobile-push-bridge.js", () => ({
   forwardAlertToMobilePush: vi.fn(),
 }));
 vi.mock("node-notifier", () => ({ default: { notify: vi.fn() } }));
@@ -23,7 +23,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { notifyAlert, resetNotifyConfig } from "./notify";
-import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
+import { forwardAlertToMobilePush } from "./full/mobile-push-bridge.js";
 import { shouldSuppressNotification } from "./notification-context.js";
 
 const forward = vi.mocked(forwardAlertToMobilePush);

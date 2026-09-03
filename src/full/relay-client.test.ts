@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RelayClient } from "./relay-client.js";
-import type { AimuxDaemon } from "./daemon.js";
-import { notifyRemoteClientConnected } from "./notify.js";
+import type { AimuxDaemon } from "../daemon.js";
+import { notifyRemoteClientConnected } from "../notify.js";
 
-vi.mock("./notify.js", () => ({
+vi.mock("../notify.js", () => ({
   notifyRemoteClientConnected: vi.fn(),
 }));
 

@@ -2,7 +2,7 @@ import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
 import type { AlertEvent } from "./project-events.js";
 import { shouldSuppressNotification } from "./notification-context.js";
-import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
+import { forwardAlertToMobilePush } from "./full/mobile-push-bridge.js";
 import { sendDesktopNotification } from "./desktop-notifier.js";
 import { externalNotificationsDisabled } from "./external-notifications.js";
 

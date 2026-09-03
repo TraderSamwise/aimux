@@ -11,7 +11,7 @@ import {
   setHostedLockdown,
 } from "./hosted-lockdown.js";
 import { drainHostedOutbox, raiseHostedCliEvent, spoolHostedEvent } from "./hosted-outbox.js";
-import { getHostedDir, getHostedLockdownPath, getHostedOutboxPath } from "./paths.js";
+import { getHostedDir, getHostedLockdownPath, getHostedOutboxPath } from "../paths.js";
 import { tailHostedAudit } from "./hosted-audit.js";
 import type { HostedEvent } from "./hosted-events.js";
 

@@ -28,7 +28,7 @@ import {
   revokeHostedPrincipal,
   ungrantHostedSession,
 } from "./hosted-principals.js";
-import { getHostedDir, getHostedPrincipalsPath } from "./paths.js";
+import { getHostedDir, getHostedPrincipalsPath } from "../paths.js";
 
 let previousAimuxHome: string | undefined;
 let aimuxHome = "";

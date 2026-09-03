@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 
-import { atomicWrite } from "./atomic-write.js";
-import { getHostedDir, getHostedLockdownPath } from "./paths.js";
+import { atomicWrite } from "../atomic-write.js";
+import { getHostedDir, getHostedLockdownPath } from "../paths.js";
 
 /**
  * Emergency lockdown for the hosted listener.

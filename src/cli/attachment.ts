@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { basename, extname, resolve as pathResolve } from "node:path";
 import { assertPublishableSource } from "../attachment-store.js";
-import { loadCredentials } from "../credentials.js";
+import { loadCredentials } from "../full/credentials.js";
 import { requestJson } from "../http-client.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { WorktreeInfo } from "../worktree.js";

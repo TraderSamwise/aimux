@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { HostedPrincipal } from "./hosted-principals.js";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   assertOperatorStreamAllowed,
   assertRemoteAccessAllowed,

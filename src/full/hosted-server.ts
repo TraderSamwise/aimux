@@ -3,7 +3,7 @@ import type { Socket } from "node:net";
 
 import { randomUUID } from "node:crypto";
 
-import { log } from "./debug.js";
+import { log } from "../debug.js";
 import type { HostedConfig } from "./hosted-config.js";
 import { authenticateHosted, stripTrustedHeaders } from "./hosted-auth.js";
 import {
@@ -14,8 +14,8 @@ import {
   type HostedAuditRecord,
 } from "./hosted-audit.js";
 import { clientAddress, HostedEventDelivery, pruneHostedDevices, recordDeviceSighting } from "./hosted-events.js";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
-import { parseProxyTarget } from "./proxy-project-binding.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import { parseProxyTarget } from "../proxy-project-binding.js";
 import { isHostedLockedDown } from "./hosted-lockdown.js";
 import { drainHostedOutbox } from "./hosted-outbox.js";
 import { findPrincipalById, markPrincipalSeen, principalHasGrant, type HostedPrincipal } from "./hosted-principals.js";

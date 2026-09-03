@@ -5,8 +5,8 @@
 // session token — so it survives daemon restarts and runs for ~90 days.
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { atomicWrite } from "./atomic-write.js";
-import { getAuthPath } from "./paths.js";
+import { atomicWrite } from "../atomic-write.js";
+import { getAuthPath } from "../paths.js";
 
 export interface AimuxCredentials {
   version: 1;

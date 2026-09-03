@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { saveCredentials } from "./credentials.js";
-import { resolveRelayUrl, resolveWebAppUrl } from "./connection-targets.js";
+import { resolveRelayUrl, resolveWebAppUrl } from "../connection-targets.js";
 
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const HTML_CONTENT_TYPE = "text/html; charset=utf-8";

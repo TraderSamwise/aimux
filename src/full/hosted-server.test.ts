@@ -4,13 +4,13 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { atomicWrite } from "./atomic-write.js";
+import { atomicWrite } from "../atomic-write.js";
 import { hashPrompt } from "./hosted-audit.js";
 import { DEFAULT_HOSTED_CONFIG, type HostedConfig } from "./hosted-config.js";
 import { resetHostedLockdownCache, setHostedLockdown } from "./hosted-lockdown.js";
 import { createHostedPrincipal, loadHostedPrincipals, revokeHostedPrincipal } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle, type StreamLimits } from "./hosted-server.js";
-import { getHostedAuditPath, getHostedAuditPromptsPath, getHostedPrincipalsPath } from "./paths.js";
+import { getHostedAuditPath, getHostedAuditPromptsPath, getHostedPrincipalsPath } from "../paths.js";
 import type { RemoteActor } from "./remote-access.js";
 
 let previousAimuxHome: string | undefined;

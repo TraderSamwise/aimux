@@ -1,5 +1,5 @@
 import { principalHasGrant, type HostedPrincipal } from "./hosted-principals.js";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 
 export type RemoteActorRole = "owner" | "guest" | "operator";
 
