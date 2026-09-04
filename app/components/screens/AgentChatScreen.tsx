@@ -447,7 +447,6 @@ export default function ChatScreen() {
   const [pendingComposerAck, setPendingComposerAck] = useState<PendingComposerAck | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
-  const [interruptBusy, setInterruptBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [composerLayoutHeight, setComposerLayoutHeight] = useState(
     COMPOSER_FOOTER_ESTIMATED_HEIGHT,
@@ -607,6 +606,7 @@ export default function ChatScreen() {
     terminal: null,
   });
   const activeComposerDraftKeyRef = useRef<string | null>(null);
+  const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
     draft: "",
     inputContentHeight: COMPOSER_INPUT_MIN_HEIGHT,
@@ -1812,23 +1812,24 @@ export default function ChatScreen() {
    * guess is wrong.
    */
   async function handleInterrupt() {
-    if (!endpointHost || !endpointPort || !sessionId || interruptBusy) return;
-    setInterruptBusy(true);
+    if (!endpointHost || !endpointPort || !sessionId) return;
+    applyOutputSnapshot({
+      sessionId,
+      outputAnsi: undefined,
+      activity: "interrupted",
+      activityText: "",
+      attention: undefined,
+    });
+    if (interruptInFlightRef.current) return;
+    interruptInFlightRef.current = true;
     setSendError(null);
     try {
       await interruptLivePane({ host: endpointHost, port: endpointPort }, sessionId, { token });
-      applyOutputSnapshot({
-        sessionId,
-        outputAnsi: undefined,
-        activity: "interrupted",
-        activityText: "",
-        attention: undefined,
-      });
       void refreshOutputSnapshot().catch(() => {});
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not interrupt the agent.");
     } finally {
-      setInterruptBusy(false);
+      interruptInFlightRef.current = false;
     }
   }
 
@@ -2185,7 +2186,6 @@ export default function ChatScreen() {
                       // Filled, because a stop is a stop and an outline reads as
                       // a checkbox at this size.
                       icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                      disabled={interruptBusy}
                       onPress={handleInterrupt}
                     />
                   ) : null}
