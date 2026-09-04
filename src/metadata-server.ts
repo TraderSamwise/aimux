@@ -397,6 +397,25 @@ function buildTopologyWorktreesFromDesktopState(state: {
   });
 }
 
+function dashboardDisplayOrderIds(desktopState: unknown): string[] {
+  const worktreeGroups = (desktopState as { worktreeGroups?: unknown })?.worktreeGroups;
+  if (!Array.isArray(worktreeGroups) || worktreeGroups.length === 0) return [];
+  const ids: string[] = [];
+  for (const group of worktreeGroups) {
+    const sessions = Array.isArray((group as { sessions?: unknown }).sessions)
+      ? ((group as { sessions?: Array<{ id?: unknown }> }).sessions ?? [])
+      : [];
+    const services = Array.isArray((group as { services?: unknown }).services)
+      ? ((group as { services?: Array<{ id?: unknown }> }).services ?? [])
+      : [];
+    for (const entry of [...sessions, ...services]) {
+      const id = typeof entry.id === "string" ? entry.id : "";
+      if (id) ids.push(id);
+    }
+  }
+  return ids;
+}
+
 function formatRoutePreview(recipientIds: string[]): string {
   if (recipientIds.length === 0) return "";
   const preview = recipientIds.slice(0, 2).join(", ");
@@ -2849,6 +2868,7 @@ export class MetadataServer {
         requestedChatPreview: includeChatPreview,
         defaultKind: expose ? "expose" : undefined,
       });
+      const displayOrderIds = dashboardDisplayOrderIds(this.options.desktop?.getState?.());
       const rawItems = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
@@ -2858,7 +2878,7 @@ export class MetadataServer {
           currentPath,
         },
         new TmuxRuntimeManager(),
-        { scope, includeOverseer },
+        { scope, includeOverseer, displayOrderIds },
       );
       let itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems, { trackPreview }) : rawItems;
       if (includeChatPreview) itemsWithPreview = await this.attachExposeChatPreviews(itemsWithPreview);
@@ -3614,6 +3634,7 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: sessionError });
           return;
         }
+        const displayOrderIds = dashboardDisplayOrderIds(this.options.desktop?.getState?.());
         const item = resolveNextAgent(
           {
             projectRoot: this.currentProjectRoot(),
@@ -3624,6 +3645,7 @@ export class MetadataServer {
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
           tmux,
+          { displayOrderIds },
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no switchable agent found" });
@@ -3672,6 +3694,7 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: sessionError });
           return;
         }
+        const displayOrderIds = dashboardDisplayOrderIds(this.options.desktop?.getState?.());
         const item = resolvePrevAgent(
           {
             projectRoot: this.currentProjectRoot(),
@@ -3682,6 +3705,7 @@ export class MetadataServer {
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
           tmux,
+          { displayOrderIds },
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no switchable agent found" });

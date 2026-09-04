@@ -206,11 +206,33 @@ function urgencyFor(projectRoot: string, sessionId?: string): number {
 }
 
 export type AgentListScope = "all" | "worktree";
+interface FastControlListOptions {
+  scope?: AgentListScope;
+  includeOverseer?: boolean;
+  displayOrderIds?: string[];
+}
+
+function orderManagedEntriesByDisplayOrder(
+  entries: ManagedWindowEntry[],
+  displayOrderIds: string[] | undefined,
+): ManagedWindowEntry[] {
+  if (!displayOrderIds?.length) return entries;
+  const rankById = new Map(displayOrderIds.map((id, index) => [id, index]));
+  const fallbackRankByWindowId = new Map(entries.map((entry, index) => [entry.target.windowId, index]));
+  return [...entries].sort((left, right) => {
+    const leftRank = rankById.get(left.metadata.sessionId) ?? Number.POSITIVE_INFINITY;
+    const rightRank = rankById.get(right.metadata.sessionId) ?? Number.POSITIVE_INFINITY;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return (
+      (fallbackRankByWindowId.get(left.target.windowId) ?? 0) - (fallbackRankByWindowId.get(right.target.windowId) ?? 0)
+    );
+  });
+}
 
 function buildSwitchableAgentItems(
   context: FastControlContext,
   tmux = new TmuxRuntimeManager(),
-  opts: { scope?: AgentListScope; includeOverseer?: boolean } = {},
+  opts: FastControlListOptions = {},
 ): InternalFastControlItem[] {
   const scope = opts.scope ?? "worktree";
   const metadataState = loadMetadataState(context.projectRoot);
@@ -225,7 +247,7 @@ function buildSwitchableAgentItems(
   );
   const teammateParentSessionId = currentManagedWindow?.metadata.team?.parentSessionId;
   const scopedWorktreePath = resolveContextWorktreePath(context, currentManagedWindow);
-  let managed = allManagedWindows
+  const managed = allManagedWindows
     .filter(({ target, metadata }) => {
       if (isDashboardWindowName(target.windowName)) return false;
       const alive = aliveByWindowId.get(target.windowId) ?? false;
@@ -246,8 +268,9 @@ function buildSwitchableAgentItems(
       const worktreePath = metadata.worktreePath || context.projectRoot;
       return pathResolve(worktreePath) === scopedWorktreePath;
     })
-    .sort((a, b) => compareSwitchableWindows(a, b, teammateParentSessionId))
-    .map((entry) => ({
+    .sort((a, b) => compareSwitchableWindows(a, b, teammateParentSessionId));
+  const items: InternalFastControlItem[] = orderManagedEntriesByDisplayOrder(managed, opts.displayOrderIds).map(
+    (entry) => ({
       ...entry,
       id: entry.metadata.sessionId,
       label: compactSessionTitle({
@@ -265,25 +288,24 @@ function buildSwitchableAgentItems(
       overseer: isOverseerWindow(metadataState, entry.metadata),
       scribe: isScribeWindow(metadataState, entry.metadata),
       alive: aliveByWindowId.get(entry.target.windowId) ?? false,
-    }));
+    }),
+  );
 
   const activityByWindowId = new Map(
     sessionNames.flatMap((sessionName) =>
       tmux.listWindows(sessionName).map((window) => [window.id, window.activity ?? 0] as const),
     ),
   );
-  managed = managed.map((entry) => ({
+  return items.map((entry) => ({
     ...entry,
     activity: activityByWindowId.get(entry.target.windowId) ?? 0,
   }));
-
-  return managed;
 }
 
 export function listSwitchableAgentItems(
   context: FastControlContext,
   tmux = new TmuxRuntimeManager(),
-  opts: { scope?: AgentListScope; includeOverseer?: boolean } = {},
+  opts: FastControlListOptions = {},
 ): FastControlItem[] {
   return buildSwitchableAgentItems(context, tmux, opts).filter((entry) => entry.alive);
 }
@@ -298,9 +320,13 @@ export function resolveCurrentAgentIndex(items: FastControlItem[], context: Fast
   );
 }
 
-export function resolveNextAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
+export function resolveNextAgent(
+  context: FastControlContext,
+  tmux = new TmuxRuntimeManager(),
+  opts: FastControlListOptions = {},
+): FastControlItem | null {
   if (currentWindowIsProjectControl(context, tmux)) return null;
-  const items = buildSwitchableAgentItems(context, tmux);
+  const items = buildSwitchableAgentItems(context, tmux, opts);
   if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
   const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
@@ -311,9 +337,13 @@ export function resolveNextAgent(context: FastControlContext, tmux = new TmuxRun
   return null;
 }
 
-export function resolvePrevAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
+export function resolvePrevAgent(
+  context: FastControlContext,
+  tmux = new TmuxRuntimeManager(),
+  opts: FastControlListOptions = {},
+): FastControlItem | null {
   if (currentWindowIsProjectControl(context, tmux)) return null;
-  const items = buildSwitchableAgentItems(context, tmux);
+  const items = buildSwitchableAgentItems(context, tmux, opts);
   if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
   const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;

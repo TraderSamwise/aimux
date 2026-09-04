@@ -770,6 +770,51 @@ describe("persistenceMethods", () => {
     expect(statusline.metadata["codex-teammate"]?.status?.text).toBe("reviewing");
   });
 
+  it("builds statusline agent order from dashboard worktree groups", () => {
+    const host = {
+      desktopStateSnapshot: {
+        sessions: [
+          { index: 2, id: "agent-c", command: "claude", status: "running", active: true },
+          { index: 0, id: "agent-a", command: "claude", status: "running", active: false },
+          { index: 1, id: "agent-b", command: "claude", status: "offline", active: false },
+        ],
+        teammates: [],
+        services: [],
+        worktrees: [],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "master",
+            status: "active",
+            sessions: [
+              { id: "agent-a", command: "claude", status: "running", active: false },
+              { id: "agent-b", command: "claude", status: "offline", active: false },
+              { id: "agent-c", command: "claude", status: "running", active: true },
+            ],
+            services: [],
+          },
+        ],
+        operationFailures: [],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        mainCheckoutPath: "/repo",
+      },
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+      dashboardUiStateStore: {
+        orderWorktreeGroups: vi.fn((groups) => groups),
+        orderSessionsForWorktree: vi.fn((sessions) => sessions),
+        orderServicesForWorktree: vi.fn((services) => services),
+      },
+      dashboardState: { screen: "dashboard" },
+      footerFlash: null,
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildDesktopStateSnapshot: vi.fn(),
+    };
+
+    const statusline = persistenceMethods.buildStatuslineSnapshot.call(host);
+
+    expect(statusline.sessions.map((session) => session.id)).toEqual(["agent-a", "agent-b", "agent-c"]);
+  });
+
   it("derives statusline task counts from runtime exchange", () => {
     createRuntimeExchangeStore().update((exchange) => ({
       ...exchange,

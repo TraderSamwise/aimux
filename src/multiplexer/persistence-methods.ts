@@ -38,6 +38,7 @@ import {
   listWorktreeGraveyardEntries as listWorktreeGraveyardEntriesImpl,
   listWorktreeGraveyardPaths,
 } from "./worktree-graveyard.js";
+import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
@@ -209,10 +210,9 @@ function refreshDashboardWorktreeProjection(host: any): void {
   }
 }
 
-function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: string }>(
-  items: T[],
-  orderForWorktree: (items: T[], worktreePath: string | undefined) => T[],
-): T[] {
+function orderStatuslineItemsByWorktree<
+  T extends { id: string; worktreePath?: string; createdAt?: string; tmuxWindowIndex?: number; index?: number },
+>(items: T[], orderForWorktree: (items: T[], worktreePath: string | undefined) => T[]): T[] {
   const grouped = new Map<string, { worktreePath: string | undefined; items: T[] }>();
   for (const item of items) {
     const key = item.worktreePath ?? "__main__";
@@ -220,7 +220,34 @@ function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: s
     group.items.push(item);
     grouped.set(key, group);
   }
-  return [...grouped.values()].flatMap((group) => orderForWorktree(group.items, group.worktreePath));
+  return [...grouped.values()].flatMap((group) =>
+    orderForWorktree(sortDashboardEntriesByCreatedAt(group.items), group.worktreePath),
+  );
+}
+
+function orderStatuslineItemsByDashboardGroups<
+  T extends { id: string; worktreePath?: string; createdAt?: string; tmuxWindowIndex?: number; index?: number },
+>(
+  items: T[],
+  worktreeGroups: WorktreeGroup[] | undefined,
+  kind: "session" | "service",
+  fallbackOrderForWorktree: (items: T[], worktreePath: string | undefined) => T[],
+): T[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const used = new Set<string>();
+  const ordered: T[] = [];
+  for (const group of worktreeGroups ?? []) {
+    const entries = kind === "session" ? group.sessions : group.services;
+    for (const entry of entries) {
+      const item = byId.get(entry.id);
+      if (!item || used.has(item.id)) continue;
+      ordered.push(item);
+      used.add(item.id);
+    }
+  }
+  if (used.size === items.length) return ordered;
+  const missing = items.filter((item) => !used.has(item.id));
+  return [...ordered, ...orderStatuslineItemsByWorktree(missing, fallbackOrderForWorktree)];
 }
 
 function exchangeTaskCounts(): { pending: number; assigned: number } {
@@ -507,17 +534,36 @@ export const persistenceMethods = {
     updatedAt: string;
   } {
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
-    const orderedSessions = orderStatuslineItemsByWorktree(desktopState.sessions, (sessions, worktreePath) =>
-      this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
+    const orderWorktreeGroups =
+      typeof this.dashboardUiStateStore?.orderWorktreeGroups === "function"
+        ? this.dashboardUiStateStore.orderWorktreeGroups.bind(this.dashboardUiStateStore)
+        : (groups: WorktreeGroup[]) => groups;
+    const orderSessionsForWorktree =
+      typeof this.dashboardUiStateStore?.orderSessionsForWorktree === "function"
+        ? this.dashboardUiStateStore.orderSessionsForWorktree.bind(this.dashboardUiStateStore)
+        : (sessions: DashboardSession[]) => sessions;
+    const orderServicesForWorktree =
+      typeof this.dashboardUiStateStore?.orderServicesForWorktree === "function"
+        ? this.dashboardUiStateStore.orderServicesForWorktree.bind(this.dashboardUiStateStore)
+        : (services: DashboardService[]) => services;
+    const orderedWorktreeGroups = orderWorktreeGroups(desktopState.worktreeGroups ?? []);
+    const orderedSessions = orderStatuslineItemsByDashboardGroups(
+      desktopState.sessions,
+      orderedWorktreeGroups,
+      "session",
+      orderSessionsForWorktree,
     );
     const teammateSessions = this.dashboardPendingActions
       .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
       .filter((session: DashboardSession) => isTeammateSession(session));
     const orderedTeammates = orderStatuslineItemsByWorktree(teammateSessions, (sessions, worktreePath) =>
-      this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
+      orderSessionsForWorktree(sessions, worktreePath),
     );
-    const orderedServices = orderStatuslineItemsByWorktree(desktopState.services, (services, worktreePath) =>
-      this.dashboardUiStateStore.orderServicesForWorktree(services, worktreePath),
+    const orderedServices = orderStatuslineItemsByDashboardGroups(
+      desktopState.services,
+      orderedWorktreeGroups,
+      "service",
+      orderServicesForWorktree,
     );
     const projectRoot = projectRootFor(this);
     return {
@@ -621,10 +667,16 @@ export const persistenceMethods = {
       .filter((session: DashboardSession) => isTeammateSession(session));
     const services = this.dashboardPendingActions.applyToServices(desktopState.services);
     const worktrees = this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees);
-    const worktreeGroups = composeDashboardWorktreeGroups(
-      this.dashboardPendingActions.applyToWorktrees(desktopState.worktreeGroups ?? desktopState.worktrees),
-      sessions,
-      services,
+    const orderWorktreeGroups =
+      typeof this.dashboardUiStateStore?.orderWorktreeGroups === "function"
+        ? this.dashboardUiStateStore.orderWorktreeGroups.bind(this.dashboardUiStateStore)
+        : (groups: WorktreeGroup[]) => groups;
+    const worktreeGroups = orderWorktreeGroups(
+      composeDashboardWorktreeGroups(
+        this.dashboardPendingActions.applyToWorktrees(desktopState.worktreeGroups ?? desktopState.worktrees),
+        sessions,
+        services,
+      ),
     );
     const state = {
       sessions,

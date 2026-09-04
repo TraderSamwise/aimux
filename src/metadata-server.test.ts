@@ -2883,6 +2883,112 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("orders switchable-agent responses by dashboard worktree group order", async () => {
+    server?.stop();
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.listManagedWindows = () =>
+      [
+        {
+          target: { sessionName: "aimux-test", windowId: "@3", windowIndex: 3, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-c",
+            command: "claude",
+            args: [],
+            toolConfigKey: "claude",
+            worktreePath: repoRoot,
+          },
+        },
+        {
+          target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-a",
+            command: "claude",
+            args: [],
+            toolConfigKey: "claude",
+            worktreePath: repoRoot,
+          },
+        },
+        {
+          target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-b",
+            command: "claude",
+            args: [],
+            toolConfigKey: "claude",
+            worktreePath: repoRoot,
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.listWindows = () => [
+      { id: "@1", index: 1, name: "claude", active: false, activity: 10 },
+      { id: "@2", index: 2, name: "claude", active: false, activity: 20 },
+      { id: "@3", index: 3, name: "claude", active: true, activity: 30 },
+    ];
+    TmuxRuntimeManager.prototype.isWindowAlive = (target: any) => target.windowId !== "@2";
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        getState: () => ({
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [{ id: "agent-a" }, { id: "agent-b" }, { id: "agent-c" }],
+              services: [],
+            },
+          ],
+        }),
+      },
+    });
+    await server.start();
+
+    try {
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const response = await fetch(
+        `http://127.0.0.1:${endpoint!.port}${PROJECT_API_ROUTES.controls.switchableAgents}?currentPath=${encodeURIComponent(
+          repoRoot,
+        )}`,
+      );
+      const body = (await response.json()) as { ok: boolean; items: Array<Record<string, any>> };
+
+      expect(response.status).toBe(200);
+      expect(body.items.map((item) => item.id)).toEqual(["agent-a", "agent-c"]);
+
+      const nextResponse = await fetch(
+        `http://127.0.0.1:${endpoint!.port}${PROJECT_API_ROUTES.controls.switchNext}?currentWindowId=${encodeURIComponent(
+          "@3",
+        )}&currentPath=${encodeURIComponent(repoRoot)}`,
+      );
+      const nextBody = (await nextResponse.json()) as { ok: boolean; itemId?: string };
+      expect(nextResponse.status).toBe(200);
+      expect(nextBody.itemId).toBe("agent-a");
+
+      const prevResponse = await fetch(
+        `http://127.0.0.1:${endpoint!.port}${PROJECT_API_ROUTES.controls.switchPrev}?currentWindowId=${encodeURIComponent(
+          "@3",
+        )}&currentPath=${encodeURIComponent(repoRoot)}`,
+      );
+      const prevBody = (await prevResponse.json()) as { ok: boolean; itemId?: string };
+      expect(prevResponse.status).toBe(200);
+      expect(prevBody.itemId).toBe("agent-a");
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+    }
+  });
+
   it("attaches expose preview snapshots to desktop-state agent sessions", async () => {
     server?.stop();
     const exposePreviewCache = {
