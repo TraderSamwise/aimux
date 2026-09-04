@@ -924,15 +924,20 @@ export class RelayObject extends DurableObject<Env> {
         404,
       );
     }
-    const delivered = await deliverNotificationPush({
-      userId: targetUserId,
-      pushTokens,
-      title: "aimux test notification",
-      body: "Push notifications are working.",
-      kind: "test",
-      dedupeKey: `test:${Date.now()}`,
-    });
-    return json({ ok: true, sent: delivered.sent }, 200);
+    try {
+      const delivered = await deliverNotificationPush({
+        userId: targetUserId,
+        pushTokens,
+        title: "aimux test notification",
+        body: "Push notifications are working.",
+        kind: "test",
+        dedupeKey: `test:${Date.now()}`,
+      });
+      return json({ ok: true, sent: delivered.sent }, 200);
+    } catch (error) {
+      console.error("test push delivery failed", error);
+      return json({ ok: false, error: errorMessage(error, "Push delivery failed") }, 502);
+    }
   }
 
   private async authorizeSharedClientConnect(
@@ -1603,6 +1608,10 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function tagValue(tags: string[], prefix: string): string | undefined {

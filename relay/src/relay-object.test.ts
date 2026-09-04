@@ -676,6 +676,61 @@ describe("RelayObject owner device security", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("reports Expo delivery errors for test push instead of returning a raw worker 500", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ status: "error", message: "DeviceNotRegistered" }],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const storage = storageWithSockets([]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "ios",
+          name: "iPhone",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+          approvedAt: "2026-05-24T00:01:00.000Z",
+        },
+      },
+      pushTokens: {
+        "user_owner:client_1": {
+          userId: "user_owner",
+          deviceId: "client_1",
+          token: "ExponentPushToken[stale]",
+          platform: "ios",
+          agentAlerts: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      proofNonces: {},
+      events: [],
+    });
+    const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
+
+    const response = await object.fetch(
+      new Request("https://relay.aimux.app/security/test-push", {
+        method: "POST",
+        headers: { "X-Aimux-User-Id": "user_owner" },
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: "Expo push rejected a token: DeviceNotRegistered",
+    });
+  });
+
   it("tests shared mobile pushes against the owner delivery path", async () => {
     const fetchMock = vi
       .fn()

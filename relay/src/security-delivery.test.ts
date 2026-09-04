@@ -58,7 +58,7 @@ describe("deliverNotificationPush", () => {
       body: "claude-abc is waiting",
       sound: "default",
       priority: "high",
-      interruptionLevel: "timeSensitive",
+      interruptionLevel: "time-sensitive",
       data: { category: "agent", kind: "needs_input", sessionId: "claude-abc", projectRoot: "/repo" },
     });
     expect(android).toMatchObject({ priority: "high" });
