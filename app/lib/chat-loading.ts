@@ -33,3 +33,11 @@ export function shouldHydrateTerminalOutput({
 }): boolean {
   return terminalViewVisible && outputAvailable;
 }
+
+export function agentOutputModeForVisiblePane({
+  terminalViewVisible,
+}: {
+  terminalViewVisible: boolean;
+}): "full" | "chat" {
+  return terminalViewVisible ? "full" : "chat";
+}

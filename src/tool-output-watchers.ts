@@ -18,7 +18,11 @@ function classifyActiveTailError(text: string): { errorVisible: boolean; interru
   }
 
   const isInterruptedLine = (line: string) =>
-    /conversation interrupted/i.test(line) || /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(line);
+    /conversation interrupted/i.test(line) ||
+    /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(line) ||
+    /^\s*(?:[■●•]\s*)?interrupted(?:\b|$)/i.test(line);
+  const isActivityStatusLine = (line: string) =>
+    /\b(?:esc|ctrl\+c)\s+to\s+interrupt\b/i.test(line) || /^\s*(?:[•●]\s*)?working(?:\.{3}|…|\s*\()/i.test(line);
   const isErrorLine = (line: string) =>
     isInterruptedLine(line) || /something went wrong/i.test(line) || /error:/i.test(line) || /failed:/i.test(line);
 
@@ -34,7 +38,7 @@ function classifyActiveTailError(text: string): { errorVisible: boolean; interru
     return { errorVisible: false, interruptedVisible: false };
   }
 
-  const laterMeaningfulLines = recentLines.slice(lastErrorIndex + 1);
+  const laterMeaningfulLines = recentLines.slice(lastErrorIndex + 1).filter((line) => !isActivityStatusLine(line));
   if (laterMeaningfulLines.length > 0) {
     return { errorVisible: false, interruptedVisible: false };
   }

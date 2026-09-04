@@ -58,6 +58,55 @@ describe("ProjectOutputPreviewCoordinator", () => {
     expect(calls).toBe(1);
   });
 
+  it("does not coalesce reads with different output modes or purposes", async () => {
+    const calls: Array<{ mode?: string; purpose?: string }> = [];
+    const readAgentOutput: MetadataReadAgentOutput = async (input) => {
+      calls.push({ mode: input.mode, purpose: input.purpose });
+      return {
+        sessionId: input.sessionId,
+        output: input.mode === "full" ? "terminal" : "",
+        startLine: input.startLine,
+      };
+    };
+    const coordinator = new ProjectOutputPreviewCoordinator({
+      currentProjectRoot: () => process.cwd(),
+      isServerRunning: () => true,
+      readAgentOutput,
+      exposePreviewCache: false,
+      exposePaneOutputTap: false,
+      exposeHotSnapshots: false,
+      runInProjectContext: (fn) => fn(),
+    });
+
+    const chat = await coordinator.measureAgentOutputRead("events", {
+      sessionId: "agent-1",
+      startLine: -20,
+      mode: "chat",
+      purpose: "poll",
+    });
+    const terminal = await coordinator.measureAgentOutputRead("live-pane-output", {
+      sessionId: "agent-1",
+      startLine: -20,
+      mode: "full",
+      purpose: "poll",
+    });
+    const interrupt = await coordinator.measureAgentOutputRead("live-pane-output", {
+      sessionId: "agent-1",
+      startLine: -20,
+      mode: "full",
+      purpose: "interrupt",
+    });
+
+    expect(chat.coalesced).toBe(false);
+    expect(terminal.coalesced).toBe(false);
+    expect(interrupt.coalesced).toBe(false);
+    expect(calls).toEqual([
+      { mode: "chat", purpose: "poll" },
+      { mode: "full", purpose: "poll" },
+      { mode: "full", purpose: "interrupt" },
+    ]);
+  });
+
   it("does not touch visual client leases when no preview was requested", () => {
     const coordinator = new ProjectOutputPreviewCoordinator({
       currentProjectRoot: () => process.cwd(),

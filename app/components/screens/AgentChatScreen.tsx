@@ -108,8 +108,8 @@ import {
   type ChatScrollPolicyState,
 } from "@/lib/chat-scroll-model";
 import {
+  agentOutputModeForVisiblePane,
   paneOutputSnapshotHasVisibleTranscript,
-  shouldHydrateTerminalOutput,
 } from "@/lib/chat-loading";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -566,7 +566,6 @@ export default function ChatScreen() {
   const composerFocusedRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
-  const terminalHydrationKeyRef = useRef<string | null>(null);
   const transcriptCaptureStartLineRef = useRef(CHAT_OUTPUT_CAPTURE_START_LINE);
   const olderTranscriptLoadingRef = useRef(false);
   const historyPrependPendingRef = useRef(false);
@@ -657,7 +656,6 @@ export default function ChatScreen() {
     setTranscriptCaptureStartLine(CHAT_OUTPUT_CAPTURE_START_LINE);
     setOlderTranscriptLoading(false);
     setOlderTranscriptExhausted(false);
-    terminalHydrationKeyRef.current = null;
   }, [sessionKey]);
 
   useEffect(() => {
@@ -761,6 +759,24 @@ export default function ChatScreen() {
       : null);
   const serviceDisconnected =
     !routeSessionMissing && !serviceEndpoint && Boolean(displayServiceEndpoint);
+  const canShowTerminal = outputAvailable || Boolean(output);
+  const usesNativeKeyboardController = Platform.OS !== "web";
+  const compactHeaderActionsWidth = canShowTerminal
+    ? canUseOwnerControls
+      ? 76
+      : 32
+    : canUseOwnerControls
+      ? 32
+      : 0;
+  const viewportWidth =
+    Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
+  const canUseSplitView = viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
+  const effectiveAgentOutputViewMode =
+    agentOutputViewMode === "split" && !canUseSplitView ? "chat" : agentOutputViewMode;
+  const showSplit = canUseSplitView && canShowTerminal && agentOutputViewMode === "split";
+  const showTerminalOnly = canShowTerminal && effectiveAgentOutputViewMode === "terminal";
+  const terminalViewVisible = showSplit || showTerminalOnly;
+  const agentOutputMode = agentOutputModeForVisiblePane({ terminalViewVisible });
 
   useEffect(() => {
     if (!endpointHost || !endpointPort) return;
@@ -783,7 +799,7 @@ export default function ChatScreen() {
   }, [endpointHost, endpointPort, stateProjectPath]);
 
   const refreshOutputSnapshot = useCallback(
-    async (purpose: "initial" | "poll" = "poll"): Promise<boolean> => {
+    async (purpose: "initial" | "poll" | "interrupt" = "poll"): Promise<boolean> => {
       if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
         return false;
       }
@@ -791,7 +807,7 @@ export default function ChatScreen() {
         { host: endpointHost, port: endpointPort },
         sessionId,
         transcriptCaptureStartLineRef.current,
-        { token, mode: "chat", purpose },
+        { token, mode: agentOutputMode, purpose },
       );
       if (result.sessionId !== sessionId) return false;
       if (!serviceProjectsTranscript(result.messages)) {
@@ -821,6 +837,7 @@ export default function ChatScreen() {
       endpointHost,
       endpointPort,
       heartbeatReady,
+      agentOutputMode,
       routeSessionMissing,
       sessionId,
       setLastError,
@@ -1024,78 +1041,6 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [pendingComposerAck]);
 
-  const canShowTerminal = outputAvailable || Boolean(output);
-  const usesNativeKeyboardController = Platform.OS !== "web";
-  const compactHeaderActionsWidth = canShowTerminal
-    ? canUseOwnerControls
-      ? 76
-      : 32
-    : canUseOwnerControls
-      ? 32
-      : 0;
-  const viewportWidth =
-    Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
-  const canUseSplitView = viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
-  const effectiveAgentOutputViewMode =
-    agentOutputViewMode === "split" && !canUseSplitView ? "chat" : agentOutputViewMode;
-  const showSplit = canUseSplitView && canShowTerminal && agentOutputViewMode === "split";
-  const showTerminalOnly = canShowTerminal && effectiveAgentOutputViewMode === "terminal";
-  const terminalViewVisible = showSplit || showTerminalOnly;
-  const shouldHydrateTerminalOutputNow = shouldHydrateTerminalOutput({
-    outputAvailable,
-    terminalViewVisible,
-  });
-  useEffect(() => {
-    if (
-      !shouldHydrateTerminalOutputNow ||
-      !endpointHost ||
-      !endpointPort ||
-      !sessionId ||
-      routeSessionMissing
-    ) {
-      return;
-    }
-    const hydrationKey = `${endpointHost}:${endpointPort}:${sessionId}`;
-    if (terminalHydrationKeyRef.current === hydrationKey) return;
-    terminalHydrationKeyRef.current = hydrationKey;
-    let cancelled = false;
-    void getLivePaneOutput(
-      { host: endpointHost, port: endpointPort },
-      sessionId,
-      transcriptCaptureStartLineRef.current,
-      { token, mode: "full", purpose: "terminal" },
-    )
-      .then((result) => {
-        if (cancelled) return;
-        applyOutputSnapshot({
-          sessionId: result.sessionId,
-          output: result.output,
-          outputAnsi: result.outputAnsi,
-          outputAvailable: result.outputAvailable,
-          startLine: result.startLine,
-          messages: result.messages,
-          activity: result.activity,
-          activityText: result.activityText,
-          attention: result.attention,
-        });
-      })
-      .catch(() => {
-        if (terminalHydrationKeyRef.current === hydrationKey)
-          terminalHydrationKeyRef.current = null;
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    applyOutputSnapshot,
-    endpointHost,
-    endpointPort,
-    outputAvailable,
-    routeSessionMissing,
-    sessionId,
-    shouldHydrateTerminalOutputNow,
-    token,
-  ]);
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
   const visibleComposerScrollReserve = composerLayoutHeight + COMPOSER_SCROLL_SAFETY_PADDING;
   const composerVisibilityStyle = useMemo(
@@ -1850,7 +1795,7 @@ export default function ChatScreen() {
     setSendError(null);
     try {
       await interruptLivePane({ host: endpointHost, port: endpointPort }, sessionId, { token });
-      void refreshOutputSnapshot().catch(() => {});
+      void refreshOutputSnapshot("interrupt").catch(() => {});
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not interrupt the agent.");
     } finally {

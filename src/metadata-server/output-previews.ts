@@ -39,6 +39,8 @@ export type MetadataReadAgentOutputResult = {
 export type MetadataReadAgentOutput = (input: {
   sessionId: string;
   startLine?: number;
+  mode?: "full" | "chat";
+  purpose?: AgentOutputReadPurpose;
 }) => Promise<MetadataReadAgentOutputResult> | MetadataReadAgentOutputResult;
 
 type MetadataReadAgentOutputMeasurement = {
@@ -188,7 +190,7 @@ export class ProjectOutputPreviewCoordinator {
       throw new Error("agent output not supported by this service");
     }
     const startedAt = performance.now();
-    const coalesceKey = `${input.sessionId}\0${input.startLine ?? ""}`;
+    const coalesceKey = [input.sessionId, input.startLine ?? "", input.mode ?? "full", input.purpose ?? ""].join("\0");
     const now = Date.now();
     const existing = this.agentOutputReadCoalescer.get(coalesceKey);
     if (existing && existing.expiresAt > now) {

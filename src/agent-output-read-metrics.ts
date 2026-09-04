@@ -4,7 +4,15 @@ export type AgentOutputReadSource =
   | "live-pane-output"
   | "live-pane-attach"
   | "chat-preview";
-export type AgentOutputReadPurpose = "stream" | "initial" | "poll" | "history" | "terminal" | "attach" | "preview";
+export type AgentOutputReadPurpose =
+  | "stream"
+  | "initial"
+  | "poll"
+  | "history"
+  | "terminal"
+  | "attach"
+  | "preview"
+  | "interrupt";
 
 export interface AgentOutputReadMetricInput {
   source: AgentOutputReadSource;

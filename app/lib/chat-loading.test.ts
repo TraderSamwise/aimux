@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentOutputModeForVisiblePane,
   paneOutputSnapshotHasVisibleTranscript,
   shouldForceNativePinnedChatOffset,
   shouldHydrateTerminalOutput,
@@ -78,5 +79,15 @@ describe("shouldHydrateTerminalOutput", () => {
         terminalViewVisible: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("agentOutputModeForVisiblePane", () => {
+  it("uses full output while terminal or split mode is visible", () => {
+    expect(agentOutputModeForVisiblePane({ terminalViewVisible: true })).toBe("full");
+  });
+
+  it("uses projected chat output while terminal mode is hidden", () => {
+    expect(agentOutputModeForVisiblePane({ terminalViewVisible: false })).toBe("chat");
   });
 });

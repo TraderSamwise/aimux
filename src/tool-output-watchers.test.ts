@@ -26,6 +26,16 @@ describe("classifyToolPane", () => {
     expect(classified.interruptedVisible).toBe(true);
   });
 
+  it("keeps an interrupted prompt visible through a stale trailing working status line", () => {
+    const classified = classifyToolPane(
+      "claude",
+      ["Interrupted · What should Claude do instead?", "• Working (12s · esc to interrupt)"].join("\n"),
+    );
+
+    expect(classified.errorVisible).toBe(true);
+    expect(classified.interruptedVisible).toBe(true);
+  });
+
   it("detects Codex update prompts", () => {
     const classified = classifyToolPane(
       "codex",

@@ -267,6 +267,7 @@ const AGENT_OUTPUT_READ_PURPOSES = new Set<AgentOutputReadPurpose>([
   "terminal",
   "attach",
   "preview",
+  "interrupt",
 ]);
 const WORK_OUTLINE_STATUSES = new Set<WorkOutlineStatus>(["active", "done", "superseded", "stale"]);
 
