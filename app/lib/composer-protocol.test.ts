@@ -124,7 +124,128 @@ describe("composer protocol", () => {
     ).toBe(true);
   });
 
-  it("confirms queue-up sends with both text and image parts", () => {
+  it("confirms attachment-only sends from projected attachment ids when filenames are absent", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "image_reference",
+                label: "[image #1]",
+                attachmentId: "att_screenshot",
+              },
+            ],
+          },
+        ],
+        {
+          attachmentIds: ["att_screenshot"],
+          attachmentFilenames: ["IMG_0404.png"],
+          baselineUserMessageCount: 0,
+          text: "",
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("does not confirm attachment-only sends from sparse image parts when pending metadata is known", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "image_reference",
+                label: "[image #1]",
+              },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: ["IMG_0404.png"],
+          baselineUserMessageCount: 0,
+          text: "",
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("confirms sparse attachment-only echoes only when pending metadata is unavailable", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "image_reference",
+                label: "[image #1]",
+              },
+            ],
+          },
+        ],
+        {
+          attachmentCount: 1,
+          attachmentFilenames: [],
+          baselineUserMessageCount: 0,
+          text: "",
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("does not confirm attachment-only sends when the projected attachment id is wrong", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "image_reference",
+                label: "[image #1]",
+                attachmentId: "att_other",
+              },
+            ],
+          },
+        ],
+        {
+          attachmentIds: ["att_screenshot"],
+          attachmentFilenames: [],
+          baselineUserMessageCount: 0,
+          text: "",
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("does not confirm attachment-only sends when the projected filename is wrong", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "image_reference",
+                label: "[image #1]",
+                filename: "IMG_other.png",
+              },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: ["IMG_0404.png"],
+          baselineUserMessageCount: 0,
+          text: "",
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("confirms queue-up sends only when both text and image parts match", () => {
     expect(
       userMessageAcknowledgesComposerSend(
         [
@@ -143,5 +264,23 @@ describe("composer protocol", () => {
         },
       ),
     ).toBe(true);
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              { type: "text", text: "Queue up: msg echo ack needs to work" },
+              { type: "image_reference", label: "[image #1]", filename: "IMG_other.png" },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: ["IMG_0407.png"],
+          baselineUserMessageCount: 0,
+          text: "Queue up: msg echo ack needs to work",
+        },
+      ),
+    ).toBe(false);
   });
 });

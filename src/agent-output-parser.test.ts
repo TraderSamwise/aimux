@@ -203,6 +203,32 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toContain("sam@host ~/repo/test3");
   });
 
+  it("projects Claude screenshot-only prompts as user attachment messages", () => {
+    const raw = [
+      "❯ Please review the attached file(s).",
+      "",
+      "  Attached files:",
+      "  - IMG_0404.png (image/png, 342090 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_244fe94fc3264ab9b5f8e7365f1a33db.png",
+      "",
+      "⏺ I can see the screenshot.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+    const messages = messagesFromParsedAgentOutput(parsed);
+
+    expect(messages[0]).toMatchObject({
+      role: "user",
+      parts: [
+        { type: "text", text: "Please review the attached file(s)." },
+        {
+          type: "image_reference",
+          attachmentId: "att_244fe94fc3264ab9b5f8e7365f1a33db",
+          filename: "IMG_0404.png",
+        },
+      ],
+    });
+  });
+
   it("keeps wrapped Codex prompts together instead of turning continuations into replies", () => {
     const raw = [
       "› This is a very very long input message I am testing how this",
@@ -221,6 +247,32 @@ describe("parseAgentOutput", () => {
         "  don’t bother responding",
     );
     expect(parsed.blocks[1]?.text).toBe("Got it.");
+  });
+
+  it("projects Codex screenshot-only prompts as user attachment messages", () => {
+    const raw = [
+      "› Please review the attached file(s).",
+      "",
+      "  Attached files:",
+      "  - IMG_0404.png (image/png, 342090 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_244fe94fc3264ab9b5f8e7365f1a33db.png",
+      "",
+      "• I can see the screenshot.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+    const messages = messagesFromParsedAgentOutput(parsed);
+
+    expect(messages[0]).toMatchObject({
+      role: "user",
+      parts: [
+        { type: "text", text: "Please review the attached file(s)." },
+        {
+          type: "image_reference",
+          attachmentId: "att_244fe94fc3264ab9b5f8e7365f1a33db",
+          filename: "IMG_0404.png",
+        },
+      ],
+    });
   });
 
   it("parses Codex spinner/progress rows as status instead of assistant chat", () => {

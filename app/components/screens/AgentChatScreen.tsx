@@ -309,6 +309,8 @@ type ComposerDraftSnapshot = {
 };
 
 type PendingComposerAck = {
+  attachmentCount: number;
+  attachmentIds: string[];
   baselineUserMessageCount: number;
   id: number;
   text: string;
@@ -1705,6 +1707,10 @@ export default function ChatScreen() {
         ...(sharedChatActor ? { sharedChatActor } : {}),
       });
       setPendingComposerAck({
+        attachmentCount: attachments.length,
+        attachmentIds: attachments
+          .map((attachment) => attachment.uploadedAttachmentId)
+          .filter((id): id is string => Boolean(id)),
         attachmentFilenames: attachments.map((attachment) => attachment.filename),
         baselineUserMessageCount,
         id: Date.now(),
@@ -1717,6 +1723,10 @@ export default function ChatScreen() {
       setPendingComposerAck(
         isTransientRequestError(err)
           ? {
+              attachmentCount: attachments.length,
+              attachmentIds: attachments
+                .map((attachment) => attachment.uploadedAttachmentId)
+                .filter((id): id is string => Boolean(id)),
               attachmentFilenames: attachments.map((attachment) => attachment.filename),
               baselineUserMessageCount,
               id: Date.now(),
