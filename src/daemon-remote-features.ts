@@ -1,9 +1,4 @@
-import type {
-  CoreLoginTextPayload,
-  CoreLogoutTextResult,
-  CoreRemoteStatusTextPayload,
-  CoreWhoamiTextPayload,
-} from "./core-text.js";
+import type { CoreLogoutTextResult, CoreRemoteStatusTextPayload, CoreWhoamiTextPayload } from "./core-text.js";
 import type { CoreRelaySnapshot } from "./core-command-contract.js";
 import { parseRemoteActor, type RemoteActor } from "./remote-actor.js";
 import type { RelayNotificationPush } from "./relay-contract.js";

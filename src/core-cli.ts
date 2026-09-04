@@ -319,7 +319,7 @@ async function runRemoteDisable(io: Required<CoreCliIo>, remote: CoreCliRemoteFe
   return 0;
 }
 
-async function enableRelayBestEffort(remote: CoreCliRemoteFeatures): Promise<CoreRelaySnapshot> {
+async function enableRelayBestEffort(): Promise<CoreRelaySnapshot> {
   if (!loadDaemonInfo()) return { status: "off" };
   try {
     const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable, undefined, {
@@ -360,14 +360,14 @@ async function runLogout(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures)
 
 async function runLogin(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
   const { userId } = await remote.runLoginFlow();
-  const relay = await enableRelayBestEffort(remote);
+  const relay = await enableRelayBestEffort();
   renderCoreLoginLines({ userId, relay }).forEach(io.stdout);
   return 0;
 }
 
 async function runSecurityUnlock(io: Required<CoreCliIo>, remote: CoreCliRemoteFeatures): Promise<number> {
   const { userId } = await remote.runLoginFlow({ action: "security-unlock" });
-  const relay = await enableRelayBestEffort(remote);
+  const relay = await enableRelayBestEffort();
   renderCoreSecurityUnlockLines({ userId, relay }).forEach(io.stdout);
   return 0;
 }

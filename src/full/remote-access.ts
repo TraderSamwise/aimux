@@ -1,6 +1,6 @@
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { principalHasGrant, type HostedPrincipal } from "./hosted-principals.js";
-import { type RemoteActor, parseRemoteActor } from "../remote-actor.js";
+import type { RemoteActor } from "../remote-actor.js";
 export type { RemoteActor, RemoteActorRole } from "../remote-actor.js";
 export { parseRemoteActor } from "../remote-actor.js";
 
