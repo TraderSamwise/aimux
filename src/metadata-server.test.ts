@@ -7086,6 +7086,18 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: false, error: "mode must be full or chat" });
   });
 
+  it("rejects malformed events stream purpose values", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/events?sessionId=codex-1&purpose=forever`);
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "purpose is invalid" });
+  });
+
   it("streams project_update invalidations over SSE after API mutations", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
@@ -7458,6 +7470,40 @@ describe("MetadataServer threads API", () => {
     expect(text).not.toContain('"output":"initial output"');
     expect(text).not.toContain('"outputAnsi"');
     expect(text).not.toContain('"parsed"');
+  });
+
+  it("passes events stream purpose and normalized startLine through output reads", async () => {
+    server?.stop();
+    const readAgentOutput = vi.fn(({ sessionId, startLine }) => ({
+      sessionId,
+      startLine,
+      output: "bounded events tail",
+      parsed: { blocks: [{ type: "response", text: "bounded events tail" }] },
+    }));
+    server = new MetadataServer({ lifecycle: { readAgentOutput } });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const res = await fetch(`${base}/events?sessionId=codex-1&startLine=-999999&intervalMs=100&purpose=interrupt`, {
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+
+    const text = await readSseUntil(res.body!, (value) => value.includes('"output":"bounded events tail"'));
+    controller.abort();
+
+    expect(readAgentOutput).toHaveBeenCalledWith({
+      sessionId: "codex-1",
+      startLine: -2000,
+      mode: "full",
+      purpose: "interrupt",
+    });
+    expect(text).toContain('"requestedStartLine":-999999');
+    expect(text).toContain('"startLine":-2000');
   });
 
   it("maps legacy notify calls onto the alert SSE stream", async () => {
@@ -8360,7 +8406,7 @@ describe("MetadataServer threads API", () => {
 
     expect(readAgentOutput).toHaveBeenCalledWith({
       sessionId: "codex-1",
-      startLine: -999999,
+      startLine: -2000,
       mode: "full",
       purpose: "stream",
     });
@@ -8405,6 +8451,41 @@ describe("MetadataServer threads API", () => {
 
     expect(text).toContain('"activity":"running"');
     expect(text).toContain('"activity":"done"');
+  });
+
+  it("streams an activityText change even though the pane has not moved", async () => {
+    server?.stop();
+    let reads = 0;
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => {
+          reads += 1;
+          return {
+            sessionId,
+            startLine: startLine ?? -120,
+            output: "a pane that never changes",
+            parsed: { blocks: [{ type: "response", text: "a pane that never changes" }] },
+            activity: "running" as const,
+            activityText: reads >= 2 ? "Ruminating... (2s)" : "Ruminating... (1s)",
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+    const res = await fetch(`${base}/events?sessionId=codex-1&intervalMs=100`, {
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+
+    const text = await readSseUntil(res.body!, (value) => value.includes('"activityText":"Ruminating... (2s)"'));
+    controller.abort();
+
+    expect(text).toContain('"activityText":"Ruminating... (1s)"');
+    expect(text).toContain('"activityText":"Ruminating... (2s)"');
   });
 
   it("counts unchanged agent output stream polls in diagnostics", async () => {

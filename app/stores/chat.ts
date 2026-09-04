@@ -3,6 +3,7 @@ import { atomFamily } from "jotai/utils";
 import type {
   AgentActivityState,
   AgentAttentionState,
+  AgentOutputEvent,
   AgentTranscriptMessage,
   StreamEvent,
 } from "@/lib/events";
@@ -52,6 +53,25 @@ export const activityTextFamily = atomFamily((_sessionId: string) => atom<string
 // Kept for future stream-token dedup; not wired up yet — see Task 3 deviation #6.
 export const streamTokenFamily = atomFamily((_sessionId: string) => atom<number>(0));
 export const lastErrorFamily = atomFamily((_sessionId: string) => atom<string | null>(null));
+
+export type AgentOutputPayload = {
+  sessionId: string;
+  output?: string;
+  /**
+   * Required, though the value may be undefined: callers build this object
+   * field by field, so an optional key is one a caller can simply forget —
+   * which is how the coloured terminal shipped reading a field nothing ever
+   * set. Spelling it out makes the omission a type error instead of a
+   * silent fall back to the uncoloured text.
+   */
+  outputAnsi: string | undefined;
+  outputAvailable?: boolean;
+  startLine?: number;
+  messages?: AgentTranscriptMessage[];
+  activity?: AgentActivityState;
+  activityText?: string;
+  attention?: AgentAttentionState;
+};
 
 function mergeTranscriptMessages(
   existing: AgentTranscriptMessage[],
@@ -114,60 +134,68 @@ function applyTranscriptMessages(
   );
 }
 
-export const applyOutputSnapshotAtom = atom(
-  null,
-  (
-    get,
-    set,
-    snapshot: {
-      sessionId: string;
-      output?: string;
-      /**
-       * Required, though the value may be undefined: callers build this object
-       * field by field, so an optional key is one a caller can simply forget —
-       * which is how the coloured terminal shipped reading a field nothing ever
-       * set. Spelling it out makes the omission a type error instead of a
-       * silent fall back to the uncoloured text.
-       */
-      outputAnsi: string | undefined;
-      outputAvailable?: boolean;
-      startLine?: number;
-      messages?: AgentTranscriptMessage[];
-      activity?: AgentActivityState;
-      activityText?: string;
-      attention?: AgentAttentionState;
-    },
-  ) => {
-    if (snapshot.output !== undefined) {
-      set(outputBufferFamily(snapshot.sessionId), snapshot.output);
-      set(outputAnsiFamily(snapshot.sessionId), snapshot.outputAnsi ?? snapshot.output);
-      set(
-        outputAvailableFamily(snapshot.sessionId),
-        Boolean(snapshot.output.length || snapshot.outputAvailable),
-      );
-    } else if (snapshot.outputAnsi !== undefined) {
-      set(outputAnsiFamily(snapshot.sessionId), snapshot.outputAnsi);
-      set(
-        outputAvailableFamily(snapshot.sessionId),
-        Boolean(snapshot.outputAnsi.length || snapshot.outputAvailable),
-      );
-    } else if (snapshot.outputAvailable !== undefined) {
-      set(outputAvailableFamily(snapshot.sessionId), snapshot.outputAvailable);
-    }
-    if (snapshot.messages !== undefined) {
-      applyTranscriptMessages(get, set, snapshot.sessionId, snapshot.messages, snapshot.startLine);
-    } else if (snapshot.output !== undefined) {
-      set(transcriptFamily(snapshot.sessionId), []);
-      set(transcriptStartLineFamily(snapshot.sessionId), snapshot.startLine);
-    }
-    set(activityFamily(snapshot.sessionId), snapshot.activity);
-    if (snapshot.activityText !== undefined) {
-      set(activityTextFamily(snapshot.sessionId), snapshot.activityText);
-    }
-    set(attentionFamily(snapshot.sessionId), snapshot.attention);
-    set(lastErrorFamily(snapshot.sessionId), null);
-  },
-);
+function applyAgentOutputPayload(
+  get: Getter,
+  set: Setter,
+  payload: AgentOutputPayload,
+  options: { sparseActivity: boolean },
+) {
+  if (payload.output !== undefined) {
+    set(outputBufferFamily(payload.sessionId), payload.output);
+    set(outputAnsiFamily(payload.sessionId), payload.outputAnsi ?? payload.output);
+    set(
+      outputAvailableFamily(payload.sessionId),
+      Boolean(payload.output.length || payload.outputAvailable),
+    );
+  } else if (payload.outputAnsi !== undefined) {
+    set(outputAnsiFamily(payload.sessionId), payload.outputAnsi);
+    set(
+      outputAvailableFamily(payload.sessionId),
+      Boolean(payload.outputAnsi.length || payload.outputAvailable),
+    );
+  } else if (payload.outputAvailable !== undefined) {
+    set(outputAvailableFamily(payload.sessionId), payload.outputAvailable);
+  }
+  if (payload.messages !== undefined) {
+    applyTranscriptMessages(get, set, payload.sessionId, payload.messages, payload.startLine);
+  } else if (payload.output !== undefined) {
+    set(transcriptFamily(payload.sessionId), []);
+    set(transcriptStartLineFamily(payload.sessionId), payload.startLine);
+  }
+  if (!options.sparseActivity || payload.activity !== undefined) {
+    set(activityFamily(payload.sessionId), payload.activity);
+  }
+  if (payload.activityText !== undefined) {
+    set(activityTextFamily(payload.sessionId), payload.activityText);
+  }
+  if (!options.sparseActivity || payload.attention !== undefined) {
+    set(attentionFamily(payload.sessionId), payload.attention);
+  }
+  set(lastErrorFamily(payload.sessionId), null);
+}
+
+export const applyOutputSnapshotAtom = atom(null, (get, set, snapshot: AgentOutputPayload) => {
+  applyAgentOutputPayload(get, set, snapshot, { sparseActivity: false });
+});
+
+function agentOutputEventPayload(event: AgentOutputEvent): AgentOutputPayload {
+  return {
+    sessionId: event.sessionId,
+    output: event.output,
+    outputAnsi: event.outputAnsi,
+    outputAvailable: event.outputAvailable,
+    startLine: event.startLine,
+    messages: event.messages,
+    activity: event.activity,
+    activityText: event.activityText,
+    attention: event.attention,
+  };
+}
+
+export const applyOutputEventAtom = atom(null, (get, set, event: AgentOutputEvent) => {
+  applyAgentOutputPayload(get, set, agentOutputEventPayload(event), { sparseActivity: true });
+  set(streamingFamily(event.sessionId), true);
+});
 
 // Route a single SSE event into the right per-session family slots.
 // Equivalent to the Zustand `ingestEvent` reducer.
@@ -180,36 +208,7 @@ export const ingestEventAtom = atom(null, (get, set, event: StreamEvent) => {
       }
       return;
     case "agent_output":
-      if (event.output !== undefined) {
-        set(outputBufferFamily(event.sessionId), event.output);
-        set(outputAnsiFamily(event.sessionId), event.outputAnsi ?? event.output);
-        set(
-          outputAvailableFamily(event.sessionId),
-          Boolean(event.output.length || event.outputAvailable),
-        );
-      } else if (event.outputAnsi !== undefined) {
-        set(outputAnsiFamily(event.sessionId), event.outputAnsi);
-        set(
-          outputAvailableFamily(event.sessionId),
-          Boolean(event.outputAnsi.length || event.outputAvailable),
-        );
-      } else if (event.outputAvailable !== undefined) {
-        set(outputAvailableFamily(event.sessionId), event.outputAvailable);
-      }
-      if (event.messages !== undefined) {
-        applyTranscriptMessages(get, set, event.sessionId, event.messages, event.startLine);
-      } else if (event.output !== undefined) {
-        set(transcriptFamily(event.sessionId), []);
-        set(transcriptStartLineFamily(event.sessionId), event.startLine);
-      }
-      // Only overwrite when the service actually reported one. A stream that
-      // stops carrying activity must leave the last known state standing rather
-      // than blanking it, or the indicator flickers off between events.
-      if (event.activity !== undefined) set(activityFamily(event.sessionId), event.activity);
-      if (event.attention !== undefined) set(attentionFamily(event.sessionId), event.attention);
-      if (event.activityText !== undefined)
-        set(activityTextFamily(event.sessionId), event.activityText);
-      set(streamingFamily(event.sessionId), true);
+      set(applyOutputEventAtom, event);
       return;
     case "alert":
       if (!event.sessionId) return;

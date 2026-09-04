@@ -7,7 +7,11 @@
 import { EventSourcePolyfill } from "event-source-polyfill";
 import { getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import { getApiRelay, shouldRouteViaRelay } from "@/lib/api";
-import { PROJECT_API_EVENT_NAMES, PROJECT_API_ROUTES } from "../../src/project-api-contract";
+import {
+  PROJECT_API_EVENT_NAMES,
+  PROJECT_API_ROUTES,
+  type LivePaneOutputInput,
+} from "../../src/project-api-contract";
 import type {
   AgentOutputEvent,
   AlertEvent,
@@ -23,6 +27,7 @@ export interface HeartbeatOptions {
   startLine?: number;
   intervalMs?: number;
   mode?: "full" | "chat";
+  purpose?: LivePaneOutputInput["purpose"];
   token?: string | null;
   onEvent: (event: StreamEvent) => void;
   onError?: (error: Error) => void;
@@ -47,14 +52,24 @@ const SSE_EVENT_NAMES = [
 ] as const;
 
 export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
-  const { serviceEndpoint, sessionId, startLine, intervalMs, mode, token, onEvent, onError } =
-    options;
+  const {
+    serviceEndpoint,
+    sessionId,
+    startLine,
+    intervalMs,
+    mode,
+    purpose,
+    token,
+    onEvent,
+    onError,
+  } = options;
 
   const params = new URLSearchParams();
   if (sessionId) params.set("sessionId", sessionId);
   if (startLine !== undefined) params.set("startLine", String(startLine));
   if (intervalMs !== undefined) params.set("intervalMs", String(intervalMs));
   if (mode) params.set("mode", mode);
+  if (purpose) params.set("purpose", purpose);
   const qs = params.toString();
   const eventPath = `${PROJECT_API_ROUTES.events}${qs ? `?${qs}` : ""}`;
 

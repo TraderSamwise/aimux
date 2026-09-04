@@ -107,10 +107,8 @@ import {
   type ChatScrollCommand,
   type ChatScrollPolicyState,
 } from "@/lib/chat-scroll-model";
-import {
-  agentOutputModeForVisiblePane,
-  paneOutputSnapshotHasVisibleTranscript,
-} from "@/lib/chat-loading";
+import { agentOutputModeForVisiblePane } from "@/lib/chat-loading";
+import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
@@ -121,7 +119,7 @@ import {
   sharedSessionsEqual,
 } from "@/lib/shared-sessions";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
-import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
+import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
@@ -168,8 +166,6 @@ const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
 const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 const MAX_PENDING_ATTACHMENTS = 4;
-const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
-const CHAT_INITIAL_SNAPSHOT_TIMEOUT_MS = 12_000;
 const CHAT_HISTORY_LOAD_SCROLL_THRESHOLD = 120;
 const SCROLL_BOTTOM_EPSILON = DEFAULT_CHAT_SCROLL_END_THRESHOLD;
 const SCROLL_BOTTOM_SETTLE_FRAMES = Platform.OS === "web" ? 3 : 1;
@@ -414,7 +410,6 @@ export default function ChatScreen() {
   const activity = useAtomValue(activityFamily(sessionKey));
   const activityText = useAtomValue(activityTextFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
-  const setLastError = useSetAtom(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const activeShare = useRouteShare();
@@ -438,10 +433,6 @@ export default function ChatScreen() {
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
   const [shareSummaryCheckedKey, setShareSummaryCheckedKey] = useState<string | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
-  const [initialTranscriptState, setInitialTranscriptState] = useState<{
-    key: string;
-    status: InitialTranscriptStatus;
-  }>({ key: "", status: "idle" });
   const [draft, setDraft] = useState("");
   const [pendingComposerAck, setPendingComposerAck] = useState<PendingComposerAck | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -798,110 +789,16 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [endpointHost, endpointPort, stateProjectPath]);
 
-  const refreshOutputSnapshot = useCallback(
-    async (purpose: "initial" | "poll" | "interrupt" = "poll"): Promise<boolean> => {
-      if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
-        return false;
-      }
-      const result = await getLivePaneOutput(
-        { host: endpointHost, port: endpointPort },
-        sessionId,
-        transcriptCaptureStartLineRef.current,
-        { token, mode: agentOutputMode, purpose },
-      );
-      if (result.sessionId !== sessionId) return false;
-      if (!serviceProjectsTranscript(result.messages)) {
-        // Not an empty pane — a daemon older than this app, which does not
-        // project the transcript at all. Rendering it as empty would look like a
-        // conversation that vanished.
-        setLastError(
-          "This aimux daemon is older than the app and does not send a transcript. Restart it to pick up the new build.",
-        );
-        return false;
-      }
-      applyOutputSnapshot({
-        sessionId: result.sessionId,
-        output: result.output,
-        outputAnsi: result.outputAnsi,
-        outputAvailable: result.outputAvailable,
-        startLine: result.startLine,
-        messages: result.messages,
-        activity: result.activity,
-        activityText: result.activityText,
-        attention: result.attention,
-      });
-      return paneOutputSnapshotHasVisibleTranscript(result);
-    },
-    [
-      applyOutputSnapshot,
-      endpointHost,
-      endpointPort,
-      heartbeatReady,
-      agentOutputMode,
-      routeSessionMissing,
+  const { initialStatus: visibleInitialTranscriptStatus, refreshOutputSnapshot } =
+    useAgentOutputFeed({
+      appVisible,
+      enabled: heartbeatReady && !routeSessionMissing,
+      endpoint: serviceEndpoint ?? null,
+      mode: agentOutputMode,
       sessionId,
-      setLastError,
+      startLine: transcriptCaptureStartLine,
       token,
-    ],
-  );
-
-  useEffect(() => {
-    if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- no active route means no first transcript request is pending
-      setInitialTranscriptState({ key: "", status: "idle" });
-      return;
-    }
-    if (!appVisible) return;
-    let cancelled = false;
-    let inFlight = false;
-    let firstSnapshotLoaded = false;
-    const snapshotKey = `${endpointHost}:${endpointPort}:${sessionId}`;
-
-    setInitialTranscriptState({ key: snapshotKey, status: "loading" });
-    const initialTimeout = setTimeout(() => {
-      if (cancelled || firstSnapshotLoaded) return;
-      setInitialTranscriptState((current) =>
-        current.key === snapshotKey ? { key: snapshotKey, status: "timed-out" } : current,
-      );
-    }, CHAT_INITIAL_SNAPSHOT_TIMEOUT_MS);
-    const tick = async () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      try {
-        const hasVisibleTranscript = await refreshOutputSnapshot(
-          firstSnapshotLoaded ? "poll" : "initial",
-        );
-        if (hasVisibleTranscript) firstSnapshotLoaded = true;
-        if (!cancelled && hasVisibleTranscript) {
-          setInitialTranscriptState((current) =>
-            current.key === snapshotKey ? { key: snapshotKey, status: "idle" } : current,
-          );
-        }
-      } catch {
-        // Relay/SSE connection state is surfaced elsewhere; snapshot polling is best-effort.
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    void tick();
-    const timer = setInterval(() => {
-      void tick();
-    }, CHAT_OUTPUT_SNAPSHOT_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(initialTimeout);
-      clearInterval(timer);
-    };
-  }, [
-    endpointHost,
-    endpointPort,
-    appVisible,
-    heartbeatReady,
-    refreshOutputSnapshot,
-    routeSessionMissing,
-    sessionId,
-  ]);
+    });
 
   const parsedMessages = useMemo<ChatMessage[]>(
     () =>
@@ -1140,20 +1037,17 @@ export default function ChatScreen() {
     session.restoreState === "blocked"
       ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
       : null;
-  const initialTranscriptStatus =
-    initialTranscriptState.key === `${endpointHost}:${endpointPort}:${sessionId}`
-      ? initialTranscriptState.status
-      : "idle";
-  const visibleInitialTranscriptStatus =
-    initialTranscriptStatus !== "idle" &&
+  const effectiveInitialTranscriptStatus =
+    visibleInitialTranscriptStatus !== "idle" &&
     allMessages.length === 0 &&
     !output &&
+    !outputAvailable &&
     !restoreBlockedReason &&
     !sendError &&
     !visibleLastError
-      ? initialTranscriptStatus
+      ? visibleInitialTranscriptStatus
       : "idle";
-  const showInitialTranscriptOverlay = visibleInitialTranscriptStatus !== "idle";
+  const showInitialTranscriptOverlay = effectiveInitialTranscriptStatus !== "idle";
   const visibleInitialTranscriptNoticeStatus = "idle";
   // The worktree leads, as it does in Exposé: it is what the session is, where the
   // generated id is only how it is addressed. The tone comes from the project's
@@ -2690,7 +2584,7 @@ export default function ChatScreen() {
                       >
                         {chatScroller}
                         {showInitialTranscriptOverlay ? (
-                          <InitialTranscriptOverlay status={visibleInitialTranscriptStatus} />
+                          <InitialTranscriptOverlay status={effectiveInitialTranscriptStatus} />
                         ) : null}
                       </View>
                     )}

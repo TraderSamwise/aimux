@@ -2348,6 +2348,11 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: parsedMode.error });
         return;
       }
+      const parsedPurpose = parseAgentOutputReadPurpose(url.searchParams.get("purpose"));
+      if (!parsedPurpose.ok) {
+        send(res, 400, { ok: false, error: parsedPurpose.error });
+        return;
+      }
       const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
       if (!parsedStartLine.ok) {
         send(res, 400, { ok: false, error: parsedStartLine.error });
@@ -2410,13 +2415,13 @@ export class MetadataServer {
         try {
           const readInput = {
             sessionId: sessionFilter,
-            startLine: parsedStartLine.value,
+            startLine,
             mode: parsedMode.value,
-            purpose: "stream" as const,
+            purpose: parsedPurpose.value ?? ("stream" as const),
           };
           const { result, durationMs, coalesced } = await this.measureAgentOutputRead("events", readInput);
           if (closed) return;
-          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
+          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}:${result.activityText ?? ""}`;
           const changed = result.output !== lastOutput || liveness !== lastLiveness;
           const payload = changed
             ? projectAgentOutputPayload(result, captureWindow, startLine, parsedMode.value)
@@ -2898,6 +2903,11 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: parsedMode.error });
         return;
       }
+      const parsedPurpose = parseAgentOutputReadPurpose(url.searchParams.get("purpose"));
+      if (!parsedPurpose.ok) {
+        send(res, 400, { ok: false, error: parsedPurpose.error });
+        return;
+      }
       if (!sessionId) {
         send(res, 400, { ok: false, error: "sessionId is required" });
         return;
@@ -2961,13 +2971,13 @@ export class MetadataServer {
         try {
           const readInput = {
             sessionId,
-            startLine: parsedStartLine.value,
+            startLine,
             mode: parsedMode.value,
-            purpose: "stream" as const,
+            purpose: parsedPurpose.value ?? ("stream" as const),
           };
           const { result, durationMs, coalesced } = await this.measureAgentOutputRead("output-stream", readInput);
           if (closed) return;
-          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
+          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}:${result.activityText ?? ""}`;
           const changed = result.output !== lastOutput || liveness !== lastLiveness;
           const payload = changed
             ? projectAgentOutputPayload(result, captureWindow, startLine, parsedMode.value)
