@@ -731,6 +731,142 @@ describe("RelayObject owner device security", () => {
     });
   });
 
+  it("rate-limits repeated test pushes before Expo delivery", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const storage = storageWithSockets([]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "ios",
+          name: "iPhone",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+          approvedAt: "2026-05-24T00:01:00.000Z",
+        },
+      },
+      pushTokens: {
+        "user_owner:client_1": {
+          userId: "user_owner",
+          deviceId: "client_1",
+          token: "ExponentPushToken[owner-ios]",
+          platform: "ios",
+          agentAlerts: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      proofNonces: {},
+      events: [],
+    });
+    const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
+
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        const response = await object.fetch(
+          new Request("https://relay.aimux.app/security/test-push", {
+            method: "POST",
+            headers: { "X-Aimux-User-Id": "user_owner" },
+          }),
+        );
+        expect(response.status).toBe(200);
+      }
+      const limited = await object.fetch(
+        new Request("https://relay.aimux.app/security/test-push", {
+          method: "POST",
+          headers: { "X-Aimux-User-Id": "user_owner" },
+        }),
+      );
+
+      expect(limited.status).toBe(429);
+      expect(await limited.json()).toMatchObject({
+        ok: false,
+        reason: "session_rate_limited",
+        error: "Push notification session rate limit exceeded",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(warn).toHaveBeenCalledWith(
+        "notification push suppressed by relay guard",
+        expect.objectContaining({ reason: "session_rate_limited", userId: "user_owner" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("dedupes daemon-originated mobile pushes before Expo delivery", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const daemonSocket = fakeSocket(["daemon", "user:user_owner"]);
+    const storage = storageWithSockets([daemonSocket]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {
+        client_1: {
+          id: "client_1",
+          deviceId: "client_1",
+          kind: "ios",
+          name: "iPhone",
+          firstSeenAt: "2026-05-24T00:00:00.000Z",
+          lastSeenAt: "2026-05-24T00:00:00.000Z",
+          approvedAt: "2026-05-24T00:01:00.000Z",
+        },
+      },
+      pushTokens: {
+        "user_owner:client_1": {
+          userId: "user_owner",
+          deviceId: "client_1",
+          token: "ExponentPushToken[owner-ios]",
+          platform: "ios",
+          agentAlerts: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      proofNonces: {},
+      events: [],
+    });
+    const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
+    const message = JSON.stringify({
+      type: "notification_push",
+      notification: {
+        title: "Agent needs input",
+        body: "claude-1 is waiting",
+        kind: "needs_input",
+        sessionId: "claude-1",
+        dedupeKey: "needs_input:claude-1",
+      },
+    });
+
+    try {
+      await object.webSocketMessage(daemonSocket, message);
+      await object.webSocketMessage(daemonSocket, message);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        "notification push suppressed by relay guard",
+        expect.objectContaining({
+          reason: "dedupe",
+          userId: "user_owner",
+          sessionId: "claude-1",
+          kind: "needs_input",
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("tests shared mobile pushes against the owner delivery path", async () => {
     const fetchMock = vi
       .fn()

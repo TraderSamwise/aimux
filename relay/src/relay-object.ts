@@ -2,6 +2,11 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
 import { createHostedAttachment } from "./attachments.js";
 import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery.js";
+import {
+  checkNotificationPushGuard,
+  notificationPushGuardMessage,
+  type NotificationPushGuardResult,
+} from "./notification-push-guard.js";
 import { deliverShareInvite } from "./sharing-delivery.js";
 import {
   activateSecurityLockdown,
@@ -47,7 +52,12 @@ import {
   upsertAcceptedShare,
 } from "./sharing.js";
 import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
-import type { SecurityDeviceRecord, SecurityEventRecord, VerifiedDeviceProof } from "./security.js";
+import type {
+  SecurityDeviceRecord,
+  SecurityEventRecord,
+  SecurityPushTokenRecord,
+  VerifiedDeviceProof,
+} from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -458,6 +468,22 @@ export class RelayObject extends DurableObject<Env> {
     const notification = message.notification;
     if (!ownerUserId || !notification?.title) return;
     const state = await loadSecurityState(this.ctx.storage);
+    const guard = await checkNotificationPushGuard(this.ctx.storage, {
+      userId: ownerUserId,
+      sessionId: notification.sessionId,
+      kind: notification.kind,
+      title: notification.title,
+      body: notification.body,
+      dedupeKey: notification.dedupeKey,
+    });
+    if (!guard.allowed) {
+      this.logNotificationPushSuppressed(guard, {
+        userId: ownerUserId,
+        sessionId: notification.sessionId,
+        kind: notification.kind,
+      });
+      return;
+    }
     try {
       await deliverNotificationPush({
         userId: ownerUserId,
@@ -701,12 +727,17 @@ export class RelayObject extends DurableObject<Env> {
       }
       if (event.kind === "new_client_detected" || event.kind === "shared_client_connected") {
         this.broadcastToOwnerClients({ type: "security_event", event }, securityRecipientUserId, ws);
+        const pushTokens = await this.securityAlertPushTokens(
+          securityRecipientUserId,
+          event,
+          Object.values(result.state.pushTokens),
+        );
         await deliverSecurityAlert({
           env: this.env,
           userId: securityRecipientUserId,
           event,
           device: result.device,
-          pushTokens: Object.values(result.state.pushTokens),
+          pushTokens,
           emergencyUrl,
         });
       }
@@ -924,12 +955,34 @@ export class RelayObject extends DurableObject<Env> {
         404,
       );
     }
+    const title = "aimux test notification";
+    const body = "Push notifications are working.";
+    const guard = await checkNotificationPushGuard(this.ctx.storage, {
+      userId: targetUserId,
+      sessionId: "_test",
+      kind: "test",
+      title,
+      body,
+      dedupeKey: `test:${targetUserId}:${Date.now()}:${crypto.randomUUID()}`,
+    });
+    if (!guard.allowed) {
+      this.logNotificationPushSuppressed(guard, { userId: targetUserId, sessionId: "_test", kind: "test" });
+      return json(
+        {
+          ok: false,
+          error: notificationPushGuardMessage(guard),
+          reason: guard.reason,
+          retryAfterMs: guard.retryAfterMs,
+        },
+        429,
+      );
+    }
     try {
       const delivered = await deliverNotificationPush({
         userId: targetUserId,
         pushTokens,
-        title: "aimux test notification",
-        body: "Push notifications are working.",
+        title,
+        body,
         kind: "test",
         dedupeKey: `test:${Date.now()}`,
       });
@@ -938,6 +991,19 @@ export class RelayObject extends DurableObject<Env> {
       console.error("test push delivery failed", error);
       return json({ ok: false, error: errorMessage(error, "Push delivery failed") }, 502);
     }
+  }
+
+  private logNotificationPushSuppressed(
+    result: Exclude<NotificationPushGuardResult, { allowed: true }>,
+    context: { userId: string; sessionId?: string; kind?: string },
+  ): void {
+    console.warn("notification push suppressed by relay guard", {
+      reason: result.reason,
+      retryAfterMs: result.retryAfterMs,
+      userId: context.userId,
+      sessionId: context.sessionId,
+      kind: context.kind,
+    });
   }
 
   private async authorizeSharedClientConnect(
@@ -1420,7 +1486,7 @@ export class RelayObject extends DurableObject<Env> {
         env: this.env,
         userId: options.ownerUserId,
         event,
-        pushTokens,
+        pushTokens: await this.securityAlertPushTokens(options.ownerUserId, event, pushTokens),
         emergencyUrl,
       });
     }
@@ -1429,9 +1495,37 @@ export class RelayObject extends DurableObject<Env> {
         env: this.env,
         userId: options.deliverToUserId,
         event,
-        pushTokens,
+        pushTokens: await this.securityAlertPushTokens(options.deliverToUserId, event, pushTokens),
       });
     }
+  }
+
+  private async securityAlertPushTokens(
+    userId: string,
+    event: SecurityEventRecord,
+    pushTokens: SecurityPushTokenRecord[],
+  ): Promise<SecurityPushTokenRecord[]> {
+    const hasEligibleMobileToken = pushTokens.some(
+      (record) =>
+        (!record.userId || record.userId === userId) &&
+        (record.platform === "ios" || record.platform === "android"),
+    );
+    if (!hasEligibleMobileToken) return pushTokens;
+    const guard = await checkNotificationPushGuard(this.ctx.storage, {
+      userId,
+      sessionId: event.sessionId,
+      kind: `security:${event.kind}`,
+      title: event.title,
+      body: event.body,
+      dedupeKey: `security:${event.kind}:${event.deviceId ?? event.shareId ?? event.id}`,
+    });
+    if (guard.allowed) return pushTokens;
+    this.logNotificationPushSuppressed(guard, {
+      userId,
+      sessionId: event.sessionId,
+      kind: `security:${event.kind}`,
+    });
+    return [];
   }
 
   private ensureHeartbeat(): void {
