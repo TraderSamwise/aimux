@@ -13,3 +13,13 @@ export function paneOutputSnapshotHasVisibleTranscript(result: PaneOutputSnapsho
     result.outputAvailable,
   );
 }
+
+export function shouldForceNativePinnedChatOffset({
+  keyboardVisible,
+  pinnedToEnd,
+}: {
+  keyboardVisible: boolean;
+  pinnedToEnd: boolean;
+}): boolean {
+  return pinnedToEnd && !keyboardVisible;
+}

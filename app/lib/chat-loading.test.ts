@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { paneOutputSnapshotHasVisibleTranscript } from "./chat-loading";
+import {
+  paneOutputSnapshotHasVisibleTranscript,
+  shouldForceNativePinnedChatOffset,
+} from "./chat-loading";
 
 describe("paneOutputSnapshotHasVisibleTranscript", () => {
   it("keeps the initial transcript loader visible for fast empty snapshots", () => {
@@ -22,5 +25,31 @@ describe("paneOutputSnapshotHasVisibleTranscript", () => {
     expect(paneOutputSnapshotHasVisibleTranscript({ messages: [], outputAvailable: true })).toBe(
       true,
     );
+  });
+});
+
+describe("shouldForceNativePinnedChatOffset", () => {
+  it("does not override keyboard-controller offsets while the native keyboard is visible", () => {
+    expect(
+      shouldForceNativePinnedChatOffset({
+        keyboardVisible: true,
+        pinnedToEnd: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the native chat pinned when the keyboard is closed", () => {
+    expect(
+      shouldForceNativePinnedChatOffset({
+        keyboardVisible: false,
+        pinnedToEnd: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldForceNativePinnedChatOffset({
+        keyboardVisible: false,
+        pinnedToEnd: false,
+      }),
+    ).toBe(false);
   });
 });

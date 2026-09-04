@@ -96,7 +96,10 @@ import {
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   nextChatOutputCaptureStartLine,
 } from "@/lib/chat-output-constants";
-import { paneOutputSnapshotHasVisibleTranscript } from "@/lib/chat-loading";
+import {
+  paneOutputSnapshotHasVisibleTranscript,
+  shouldForceNativePinnedChatOffset,
+} from "@/lib/chat-loading";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
@@ -373,7 +376,7 @@ type ChatListItem =
     }
   | {
       key: string;
-      type: "history-loading";
+      type: "history-exhausted" | "history-loading";
     };
 
 type UserScrollState = {
@@ -446,6 +449,7 @@ function buildChatListItems({
   restoreBlockedReason,
   sendError,
   initialTranscriptStatus,
+  olderTranscriptExhausted,
   olderTranscriptLoading,
   visibleLastError,
 }: {
@@ -453,6 +457,7 @@ function buildChatListItems({
   restoreBlockedReason: string | null;
   sendError: string | null;
   initialTranscriptStatus: InitialTranscriptStatus;
+  olderTranscriptExhausted: boolean;
   olderTranscriptLoading: boolean;
   visibleLastError: string | null;
 }): ChatListItem[] {
@@ -466,6 +471,11 @@ function buildChatListItems({
     chronological.unshift({
       key: "history-loading",
       type: "history-loading",
+    });
+  } else if (olderTranscriptExhausted && chronological.length > 0) {
+    chronological.unshift({
+      key: "history-exhausted",
+      type: "history-exhausted",
     });
   }
   if (initialTranscriptStatus === "timed-out") {
@@ -1268,11 +1278,18 @@ export default function ChatScreen() {
     [hasMoreTranscriptHistory, loadOlderTranscriptHistory],
   );
   const handleNativeChatContentSizeChange = useCallback(() => {
-    if (!nativeChatPinnedToEndRef.current) return;
+    if (
+      !shouldForceNativePinnedChatOffset({
+        keyboardVisible,
+        pinnedToEnd: nativeChatPinnedToEndRef.current,
+      })
+    ) {
+      return;
+    }
     requestAnimationFrame(() => {
       chatListRef.current?.scrollToOffset({ offset: 0, animated: false });
     });
-  }, []);
+  }, [keyboardVisible]);
   useEffect(() => {
     if (!usesNativeKeyboardController) return;
     // eslint-disable-next-line react-hooks/immutability
@@ -1284,11 +1301,19 @@ export default function ChatScreen() {
     );
   }, [composerScrollReserve, usesNativeKeyboardController, visibleComposerScrollReserve]);
   useEffect(() => {
-    if (!usesNativeKeyboardController || !nativeChatPinnedToEndRef.current) return;
+    if (!usesNativeKeyboardController) return;
+    if (
+      !shouldForceNativePinnedChatOffset({
+        keyboardVisible,
+        pinnedToEnd: nativeChatPinnedToEndRef.current,
+      })
+    ) {
+      return;
+    }
     requestAnimationFrame(() => {
       chatListRef.current?.scrollToOffset({ offset: 0, animated: false });
     });
-  }, [usesNativeKeyboardController, visibleComposerScrollReserve]);
+  }, [keyboardVisible, usesNativeKeyboardController, visibleComposerScrollReserve]);
   const cycleAgentOutputViewMode = useCallback(() => {
     setAgentOutputViewMode((current) => nextAgentOutputViewMode(current, canUseSplitView));
   }, [canUseSplitView, setAgentOutputViewMode]);
@@ -1352,6 +1377,7 @@ export default function ChatScreen() {
   const chatListItems = buildChatListItems({
     initialTranscriptStatus: visibleInitialTranscriptNoticeStatus,
     messages: allMessages,
+    olderTranscriptExhausted,
     olderTranscriptLoading,
     restoreBlockedReason,
     sendError,
@@ -2342,6 +2368,7 @@ export default function ChatScreen() {
           dividerWidth={chatDividerWidth}
           initialTranscriptStatus={visibleInitialTranscriptNoticeStatus}
           messages={allMessages}
+          olderTranscriptExhausted={olderTranscriptExhausted}
           olderTranscriptLoading={olderTranscriptLoading}
           restoreBlockedReason={restoreBlockedReason}
           sendError={sendError}
@@ -3077,6 +3104,9 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
       if (item.type === "history-loading") {
         return <TranscriptHistoryLoadingRow />;
       }
+      if (item.type === "history-exhausted") {
+        return <TranscriptHistoryExhaustedRow />;
+      }
       if (item.type === "restore-blocked") {
         return (
           <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
@@ -3163,6 +3193,7 @@ const TranscriptContent = React.memo(function TranscriptContent({
   messages,
   dividerWidth,
   initialTranscriptStatus,
+  olderTranscriptExhausted,
   olderTranscriptLoading,
   restoreBlockedReason,
   sendError,
@@ -3172,6 +3203,7 @@ const TranscriptContent = React.memo(function TranscriptContent({
   messages: ChatMessage[];
   dividerWidth: number;
   initialTranscriptStatus: InitialTranscriptStatus;
+  olderTranscriptExhausted: boolean;
   olderTranscriptLoading: boolean;
   restoreBlockedReason: string | null;
   sendError: string | null;
@@ -3181,6 +3213,9 @@ const TranscriptContent = React.memo(function TranscriptContent({
   return (
     <>
       {olderTranscriptLoading && messages.length > 0 ? <TranscriptHistoryLoadingRow /> : null}
+      {!olderTranscriptLoading && olderTranscriptExhausted && messages.length > 0 ? (
+        <TranscriptHistoryExhaustedRow />
+      ) : null}
       {initialTranscriptStatus !== "idle" ? (
         <InitialTranscriptNotice status={initialTranscriptStatus} />
       ) : null}
@@ -3213,6 +3248,14 @@ function TranscriptHistoryLoadingRow() {
     <View className="my-2 self-center flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
       <ActivityIndicator size="small" color="#a1a1aa" />
       <Text className="text-xs text-muted-foreground">Loading older history...</Text>
+    </View>
+  );
+}
+
+function TranscriptHistoryExhaustedRow() {
+  return (
+    <View className="my-2 self-center rounded-lg border border-border bg-card px-3 py-2">
+      <Text className="text-xs text-muted-foreground">Start of available chat history</Text>
     </View>
   );
 }
