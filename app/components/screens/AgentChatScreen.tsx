@@ -129,7 +129,6 @@ import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
-import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import {
   activityFamily,
   activityTextFamily,
@@ -448,6 +447,7 @@ export default function ChatScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [composerLayoutHeight, setComposerLayoutHeight] = useState(
     COMPOSER_FOOTER_ESTIMATED_HEIGHT,
   );
@@ -562,6 +562,8 @@ export default function ChatScreen() {
     shareSummaryCheckedKey !== shareSummaryRequestKey,
   );
   const sendBusyRef = useRef(false);
+  const composerInputRef = useRef<TextInput | null>(null);
+  const composerFocusedRef = useRef(false);
   const scrollRef = useRef<ScrollToHandle | null>(null);
   const terminalScrollRef = useRef<ScrollToHandle | null>(null);
   const terminalHydrationKeyRef = useRef<string | null>(null);
@@ -672,6 +674,9 @@ export default function ChatScreen() {
     setComposerInputContentHeight(saved?.inputContentHeight ?? COMPOSER_INPUT_MIN_HEIGHT);
     setPendingComposerAck(null);
     setSendBusy(false);
+    composerInputRef.current?.blur();
+    composerFocusedRef.current = false;
+    setComposerFocused(false);
     sendBusyRef.current = false;
     setSendError(null);
   }, [composerDraftKey]);
@@ -976,6 +981,11 @@ export default function ChatScreen() {
     transcriptCaptureStartLine > CHAT_OUTPUT_MAX_CAPTURE_START_LINE && !olderTranscriptExhausted;
   const composerAwaitingAck = pendingComposerAck !== null && !pendingComposerAck.timedOut;
 
+  const handleComposerFocusChange = useCallback((focused: boolean) => {
+    composerFocusedRef.current = focused;
+    setComposerFocused(focused);
+  }, []);
+
   useEffect(() => {
     if (!pendingComposerAck) return;
     if (!composerSendAcknowledged) return;
@@ -1016,7 +1026,6 @@ export default function ChatScreen() {
 
   const canShowTerminal = outputAvailable || Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
-  const keyboardVisible = useKeyboardVisible(usesNativeKeyboardController);
   const compactHeaderActionsWidth = canShowTerminal
     ? canUseOwnerControls
       ? 76
@@ -1304,12 +1313,12 @@ export default function ChatScreen() {
       if (!usesNativeKeyboardController) return;
       const state = scrollPolicyStateRef.current[pane];
       const presentation = composerPresentation({
-        input: keyboardVisible ? "focused" : "blurred",
+        input: composerFocusedRef.current ? "focused" : "blurred",
         state,
       });
       setNativeComposerHidden(presentation === "scrolled-away");
     },
-    [keyboardVisible, setNativeComposerHidden, usesNativeKeyboardController],
+    [setNativeComposerHidden, usesNativeKeyboardController],
   );
 
   const applyPaneScrollPosition = useCallback(
@@ -1468,6 +1477,11 @@ export default function ChatScreen() {
     (pane: ScrollPaneKey, key: "dragging" | "momentum") => {
       clearScrollIdleTimer(pane);
       pendingBottomPinRef.current[pane] = false;
+      if (usesNativeKeyboardController && key === "dragging") {
+        composerInputRef.current?.blur();
+        composerFocusedRef.current = false;
+        setComposerFocused(false);
+      }
       scrollPolicyStateRef.current[pane] = onUserScrollBegin(scrollPolicyStateRef.current[pane]);
       userScrollStateRef.current[pane] = {
         ...userScrollStateRef.current[pane],
@@ -1475,7 +1489,7 @@ export default function ChatScreen() {
         [key]: true,
       };
     },
-    [clearScrollIdleTimer],
+    [clearScrollIdleTimer, usesNativeKeyboardController],
   );
 
   const handleScroll = useCallback(
@@ -1495,6 +1509,16 @@ export default function ChatScreen() {
         metrics: nextMetrics,
       };
       const preservePendingPin = pendingBottomPinRef.current[pane] && !userActive;
+      const missedUserScroll =
+        scrollInitializedRef.current[pane] &&
+        !userActive &&
+        !preservePendingPin &&
+        !composerFocusedRef.current &&
+        !isAnchoredToEnd({
+          geometry: withMetrics.geometry,
+          metrics: nextMetrics,
+          threshold: SCROLL_BOTTOM_EPSILON,
+        });
 
       if (programmaticScroll) {
         scrollPolicyStateRef.current[pane] = withMetrics;
@@ -1505,12 +1529,13 @@ export default function ChatScreen() {
         return;
       }
 
-      if (userActive) {
+      if (userActive || missedUserScroll) {
+        const stateForUserScroll = missedUserScroll ? onUserScrollBegin(withMetrics) : withMetrics;
         const scrolledState = onUserScroll({
           metrics: nextMetrics,
           state: preservePendingPin
-            ? { ...withMetrics, intent: { kind: "anchored-to-end" } }
-            : withMetrics,
+            ? { ...stateForUserScroll, intent: { kind: "anchored-to-end" } }
+            : stateForUserScroll,
           threshold: SCROLL_BOTTOM_EPSILON,
         });
         scrollPolicyStateRef.current[pane] = scrolledState;
@@ -1527,7 +1552,7 @@ export default function ChatScreen() {
       if (
         pane === "chat" &&
         hasMoreTranscriptHistory &&
-        userActive &&
+        (userActive || missedUserScroll) &&
         offsetY <= CHAT_HISTORY_LOAD_SCROLL_THRESHOLD
       ) {
         void loadOlderTranscriptHistory();
@@ -1604,14 +1629,14 @@ export default function ChatScreen() {
   }, [applyPaneScrollPosition, sessionKey, setNativeComposerHidden]);
 
   useEffect(() => {
-    if (keyboardVisible) {
+    if (composerFocused) {
       requestAnimationFrame(() => setNativeComposerHidden(false));
       return;
     }
     requestAnimationFrame(() => {
       syncNativeComposerForPane(showTerminalOnly ? "terminal" : "chat");
     });
-  }, [keyboardVisible, setNativeComposerHidden, showTerminalOnly, syncNativeComposerForPane]);
+  }, [composerFocused, setNativeComposerHidden, showTerminalOnly, syncNativeComposerForPane]);
 
   useEffect(() => {
     if (
@@ -2098,6 +2123,7 @@ export default function ChatScreen() {
           <ComposerFocusShell
             dragging={dragging}
             sending={sendBusy || composerAwaitingAck}
+            onFocusChange={handleComposerFocusChange}
             onLayout={(event: LayoutChangeEvent) =>
               setComposerWidth(event.nativeEvent.layout.width)
             }
@@ -2105,6 +2131,7 @@ export default function ChatScreen() {
             {({ onBlur, onFocus }) => (
               <>
                 <TextInput
+                  ref={composerInputRef}
                   accessibilityLabel="Message the agent"
                   nativeID={CHAT_INPUT_NATIVE_ID}
                   autoComplete="off"
@@ -2737,17 +2764,25 @@ export default function ChatScreen() {
 function ComposerFocusShell({
   children,
   dragging,
+  onFocusChange,
   onLayout,
   sending = false,
 }: {
   children: (handlers: { onBlur: () => void; onFocus: () => void }) => React.ReactNode;
   dragging?: boolean;
+  onFocusChange?: (focused: boolean) => void;
   onLayout: (event: LayoutChangeEvent) => void;
   sending?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
-  const onFocus = useCallback(() => setFocused(true), []);
-  const onBlur = useCallback(() => setFocused(false), []);
+  const onFocus = useCallback(() => {
+    setFocused(true);
+    onFocusChange?.(true);
+  }, [onFocusChange]);
+  const onBlur = useCallback(() => {
+    setFocused(false);
+    onFocusChange?.(false);
+  }, [onFocusChange]);
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
       onLayout(event);
