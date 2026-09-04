@@ -170,6 +170,66 @@ describe("messagesFromParsedAgentOutput", () => {
     ]);
   });
 
+  it("projects Codex queue-up prompt echoes with image attachments for GUI ack", () => {
+    const [message] = messagesFromAgentOutput({
+      output:
+        "› Queue up: msg echo ack needs to work with images Attached files: " +
+        "- IMG_0407.png (image/png, 314297 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_a081e337abfd430da6b32aadc2e3d793.png",
+      tool: "codex",
+    });
+
+    expect(message).toMatchObject({
+      role: "user",
+      text: "Queue up: msg echo ack needs to work with images",
+    });
+    expect(message!.parts).toEqual([
+      { type: "text", text: "Queue up: msg echo ack needs to work with images" },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_a081e337abfd430da6b32aadc2e3d793",
+        filename: "IMG_0407.png",
+        mimeType: "image/png",
+      },
+    ]);
+  });
+
+  it("projects Claude queue-up prompt echoes with image attachments for GUI ack", () => {
+    const [message] = messagesFromAgentOutput({
+      output:
+        "❯ Queue up: msg echo ack needs to work with images Attached files: " +
+        "- IMG_0407.png (image/png, 314297 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_a081e337abfd430da6b32aadc2e3d793.png",
+      tool: "claude",
+    });
+
+    expect(message).toMatchObject({
+      role: "user",
+      text: "Queue up: msg echo ack needs to work with images",
+    });
+    expect(message!.parts).toEqual([
+      { type: "text", text: "Queue up: msg echo ack needs to work with images" },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_a081e337abfd430da6b32aadc2e3d793",
+        filename: "IMG_0407.png",
+        mimeType: "image/png",
+      },
+    ]);
+  });
+
+  it("projects Claude and Codex queue-up prompt echoes without attachments for GUI ack", () => {
+    const text = "Queue up: msg echo ack needs to work without images";
+    expect(messagesFromAgentOutput({ output: `› ${text}`, tool: "codex" })[0]).toMatchObject({
+      role: "user",
+      text,
+    });
+    expect(messagesFromAgentOutput({ output: `❯ ${text}`, tool: "claude" })[0]).toMatchObject({
+      role: "user",
+      text,
+    });
+  });
+
   it("reads a generic attachment block into a file part", () => {
     const [message] = messagesFromParsedAgentOutput(
       parsed([

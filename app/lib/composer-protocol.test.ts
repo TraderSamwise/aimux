@@ -5,6 +5,7 @@ import {
   formatComposerSendFailure,
   getComposerSendText,
   normalizeComposerDraft,
+  userMessageAcknowledgesComposerSend,
   shouldSubmitComposerKey,
 } from "@/lib/composer-protocol";
 
@@ -64,5 +65,83 @@ describe("composer protocol", () => {
     expect(formatComposerSendFailure("network down")).toBe("Send failed: network down");
     expect(formatComposerSendFailure("")).toBe("Send failed. Check connection and retry.");
     expect(formatComposerSendFailure(undefined)).toBe("Send failed. Check connection and retry.");
+  });
+
+  it("confirms sends against projected transcript text parts", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          { role: "user", parts: [{ type: "text", text: "older prompt" }] },
+          { role: "assistant", parts: [{ type: "text", text: "answer" }] },
+          {
+            role: "user",
+            parts: [{ type: "text", text: "Still scrolling down behind prompt box" }],
+          },
+        ],
+        {
+          attachmentFilenames: [],
+          baselineUserMessageCount: 1,
+          text: "Still scrolling down behind prompt box",
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("does not confirm from old user messages before the send baseline", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [{ role: "user", parts: [{ type: "text", text: "same text" }] }],
+        {
+          attachmentFilenames: [],
+          baselineUserMessageCount: 1,
+          text: "same text",
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("confirms attachment-only sends from projected attachment filenames", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "image_reference",
+                label: "[image #1]",
+                filename: "IMG_0400.png",
+              },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: ["IMG_0400.png"],
+          baselineUserMessageCount: 0,
+          text: "",
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("confirms queue-up sends with both text and image parts", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              { type: "text", text: "Queue up: msg echo ack needs to work" },
+              { type: "image_reference", label: "[image #1]", filename: "IMG_0407.png" },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: ["IMG_0407.png"],
+          baselineUserMessageCount: 0,
+          text: "Queue up: msg echo ack needs to work",
+        },
+      ),
+    ).toBe(true);
   });
 });

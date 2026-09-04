@@ -193,4 +193,12 @@ describe("codex chrome", () => {
     expect(text).toContain("I'm Codex");
     expect(text).not.toContain("usage limit reset");
   });
+
+  it("keeps two queued prompts as two messages", () => {
+    const users = messagesFromParsedAgentOutput(
+      parseAgentOutput(["› first question", "› second question"].join("\n"), { tool: "codex" }),
+    ).filter((message) => message.role === "user");
+
+    expect(users.map((message) => message.text)).toEqual(["first question", "second question"]);
+  });
 });

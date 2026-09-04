@@ -89,6 +89,7 @@ import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
   getComposerSendText,
+  userMessageAcknowledgesComposerSend,
   shouldSubmitComposerKey,
 } from "@/lib/composer-protocol";
 import {
@@ -309,26 +310,6 @@ type PendingComposerAck = {
 type InitialTranscriptStatus = "idle" | "loading" | "timed-out";
 
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
-
-function normalizeComposerAckText(value: string): string {
-  return value.trim().replace(/\s+/g, " ");
-}
-
-function userMessageAcknowledgesComposerSend(
-  messages: ChatMessage[],
-  pending: PendingComposerAck,
-): boolean {
-  const userMessages = messages.filter((message) => message.role === "user");
-  if (userMessages.length <= pending.baselineUserMessageCount) return false;
-  const sentText = normalizeComposerAckText(pending.text);
-  const newMessages = userMessages.slice(pending.baselineUserMessageCount);
-  return newMessages.some((message) => {
-    const messageText = normalizeComposerAckText(message.text ?? "");
-    if (sentText && messageText.includes(sentText)) return true;
-    if (pending.attachmentFilenames.length === 0) return false;
-    return pending.attachmentFilenames.every((filename) => messageText.includes(filename));
-  });
-}
 
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
   if (!key) return;
@@ -699,7 +680,6 @@ export default function ChatScreen() {
   const composerScrollReserve = useSharedValue(
     COMPOSER_FOOTER_ESTIMATED_HEIGHT + COMPOSER_SCROLL_SAFETY_PADDING,
   );
-  const chatKeyboardContentPadding = useSharedValue(0);
   const [composerInteractive, setComposerInteractive] = useState(true);
   const scrollMetricsRef = useRef<Record<ScrollPaneKey, ScrollPaneMetrics>>({
     chat: createScrollPaneMetrics(),
@@ -1796,7 +1776,7 @@ export default function ChatScreen() {
         attachmentFilenames: attachments.map((attachment) => attachment.filename),
         baselineUserMessageCount,
         id: Date.now(),
-        showTimeoutError: false,
+        showTimeoutError: true,
         text,
         timedOut: false,
       });
@@ -2339,9 +2319,8 @@ export default function ChatScreen() {
   const chatScroller = displayServiceEndpoint ? (
     usesNativeKeyboardController ? (
       <MobileTranscriptList
-        composerEndPadding={visibleComposerScrollReserve}
         dividerWidth={chatDividerWidth}
-        extraContentPadding={chatKeyboardContentPadding}
+        extraContentPadding={composerScrollReserve}
         items={chatListItems}
         keyboardOffset={bottomInset}
         listRef={chatListRef}
@@ -3063,7 +3042,6 @@ function KeyboardManagedScrollView({
 }
 
 const MobileTranscriptList = React.memo(function MobileTranscriptList({
-  composerEndPadding,
   dividerWidth,
   extraContentPadding,
   items,
@@ -3075,7 +3053,6 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
   onScrollBeginDrag,
   serviceEndpoint,
 }: {
-  composerEndPadding: number;
   dividerWidth: number;
   extraContentPadding: SharedValue<number>;
   items: ChatListItem[];
@@ -3155,7 +3132,7 @@ const MobileTranscriptList = React.memo(function MobileTranscriptList({
         flexGrow: 1,
         paddingBottom: 8,
         paddingHorizontal: 16,
-        paddingTop: composerEndPadding + 8,
+        paddingTop: 8,
       }}
       renderScrollComponent={renderScrollComponent}
       scrollEventThrottle={16}
