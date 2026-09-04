@@ -30,7 +30,7 @@ interface Props {
 
 const MESSAGE_BASE_STYLE: ViewStyle = {
   flexShrink: 1,
-  overflow: "hidden",
+  overflow: "visible",
 };
 const MESSAGE_ASSISTANT_STYLE: ViewStyle = {
   ...MESSAGE_BASE_STYLE,
@@ -43,7 +43,8 @@ const MESSAGE_USER_STYLE: ViewStyle = {
 const MESSAGE_TEXT_STYLE: TextStyle = {
   flexShrink: 1,
   flexWrap: "wrap",
-  ...(Platform.OS === "web" ? { fontSize: 15, lineHeight: 21 } : {}),
+  fontSize: Platform.OS === "web" ? 15 : 16,
+  lineHeight: Platform.OS === "web" ? 21 : 24,
   maxWidth: "100%",
 };
 
@@ -245,6 +246,10 @@ export function styleForRichTextSpan(span: HistoryTextSpan): TextStyle {
           ? { textDecorationLine: "line-through" as const }
           : {}),
   };
+}
+
+export function messageContainerStyleForRole(role: ChatMessage["role"]): ViewStyle {
+  return role === "user" ? MESSAGE_USER_STYLE : MESSAGE_ASSISTANT_STYLE;
 }
 
 function RichText({
@@ -549,7 +554,7 @@ export const MessageBlock = React.memo(function MessageBlock({
 
   return (
     <View
-      style={isUser ? MESSAGE_USER_STYLE : MESSAGE_ASSISTANT_STYLE}
+      style={messageContainerStyleForRole(role)}
       className={
         isUser
           ? "self-end rounded-lg bg-primary px-3 py-2 my-1"

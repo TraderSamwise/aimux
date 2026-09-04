@@ -10,6 +10,7 @@ vi.mock("react-native", () => ({
 
 import {
   canRenderRichText,
+  messageContainerStyleForRole,
   messageSpeakerLabel,
   resolveImageUrl,
   shouldRenderRichTerminalText,
@@ -180,6 +181,13 @@ describe("MessageBlock rich text guard", () => {
         spans: [{ text: "Building", foreground: { model: "rgb", value: "#56b6c2" } }],
       }),
     ).toBe(true);
+  });
+});
+
+describe("MessageBlock layout", () => {
+  it("does not clip rich terminal spans inside chat bubbles", () => {
+    expect(messageContainerStyleForRole("assistant").overflow).toBe("visible");
+    expect(messageContainerStyleForRole("user").overflow).toBe("visible");
   });
 });
 
