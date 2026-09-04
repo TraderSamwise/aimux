@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   paneOutputSnapshotHasVisibleTranscript,
   shouldForceNativePinnedChatOffset,
+  shouldHydrateTerminalOutput,
 } from "./chat-loading";
 
 describe("paneOutputSnapshotHasVisibleTranscript", () => {
@@ -49,6 +50,32 @@ describe("shouldForceNativePinnedChatOffset", () => {
       shouldForceNativePinnedChatOffset({
         keyboardVisible: false,
         pinnedToEnd: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldHydrateTerminalOutput", () => {
+  it("hydrates terminal mode whenever terminal output is available", () => {
+    expect(
+      shouldHydrateTerminalOutput({
+        outputAvailable: true,
+        terminalViewVisible: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not hydrate when terminal mode is hidden or output is unavailable", () => {
+    expect(
+      shouldHydrateTerminalOutput({
+        outputAvailable: false,
+        terminalViewVisible: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldHydrateTerminalOutput({
+        outputAvailable: true,
+        terminalViewVisible: false,
       }),
     ).toBe(false);
   });

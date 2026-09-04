@@ -23,3 +23,13 @@ export function shouldForceNativePinnedChatOffset({
 }): boolean {
   return pinnedToEnd && !keyboardVisible;
 }
+
+export function shouldHydrateTerminalOutput({
+  outputAvailable,
+  terminalViewVisible,
+}: {
+  outputAvailable: boolean;
+  terminalViewVisible: boolean;
+}): boolean {
+  return terminalViewVisible && outputAvailable;
+}

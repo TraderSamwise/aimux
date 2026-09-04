@@ -100,6 +100,7 @@ import {
 import {
   paneOutputSnapshotHasVisibleTranscript,
   shouldForceNativePinnedChatOffset,
+  shouldHydrateTerminalOutput,
 } from "@/lib/chat-loading";
 import { cn } from "@/lib/utils";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -1136,10 +1137,14 @@ export default function ChatScreen() {
     agentOutputViewMode === "split" && !canUseSplitView ? "chat" : agentOutputViewMode;
   const showSplit = canUseSplitView && canShowTerminal && agentOutputViewMode === "split";
   const showTerminalOnly = canShowTerminal && effectiveAgentOutputViewMode === "terminal";
-  const shouldHydrateTerminalOutput = (showSplit || showTerminalOnly) && outputAvailable && !output;
+  const terminalViewVisible = showSplit || showTerminalOnly;
+  const shouldHydrateTerminalOutputNow = shouldHydrateTerminalOutput({
+    outputAvailable,
+    terminalViewVisible,
+  });
   useEffect(() => {
     if (
-      !shouldHydrateTerminalOutput ||
+      !shouldHydrateTerminalOutputNow ||
       !endpointHost ||
       !endpointPort ||
       !sessionId ||
@@ -1182,11 +1187,10 @@ export default function ChatScreen() {
     applyOutputSnapshot,
     endpointHost,
     endpointPort,
-    output,
     outputAvailable,
     routeSessionMissing,
     sessionId,
-    shouldHydrateTerminalOutput,
+    shouldHydrateTerminalOutputNow,
     token,
   ]);
   const composerHideDistance = Math.max(composerLayoutHeight, COMPOSER_FOOTER_ESTIMATED_HEIGHT);
