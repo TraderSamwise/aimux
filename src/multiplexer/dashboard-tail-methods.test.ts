@@ -1668,13 +1668,19 @@ describe("dashboard lifecycle adapter", () => {
   });
 
   it("interrupts live non-tmux sessions through the session runtime helper", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-interrupt-"));
+    await initPaths(repoRoot);
     const write = vi.fn();
     const host: any = {
       sessions: [{ id: "shell-1", transport: { write }, write }],
+      projectRoot: repoRoot,
+      writeStatuslineFile: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
     };
 
     await expect(agentIoMethods.interruptAgent.call(host, "shell-1")).resolves.toEqual({ sessionId: "shell-1" });
 
     expect(write).toHaveBeenCalledWith("\x1b");
+    rmSync(repoRoot, { recursive: true, force: true });
   });
 });

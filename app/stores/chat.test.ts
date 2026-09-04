@@ -1,9 +1,12 @@
 import { createStore } from "jotai";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyOutputSnapshotAtom,
+  activityFamily,
+  clearLocalInterruptHoldAtom,
   ingestEventAtom,
+  markOutputInterruptedAtom,
   transcriptFamily,
   lastErrorFamily,
   outputAnsiFamily,
@@ -14,6 +17,10 @@ import {
 } from "@/stores/chat";
 
 describe("chat output store", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("applies live-pane snapshots to the same state used by event streaming", () => {
     const store = createStore();
 
@@ -27,6 +34,93 @@ describe("chat output store", () => {
 
     expect(store.get(outputBufferFamily("agent-1"))).toBe("hello");
     expect(store.get(lastErrorFamily("agent-1"))).toBeNull();
+  });
+
+  it("keeps a local interrupt visible through stale running snapshots", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
+    const store = createStore();
+
+    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      activity: "running",
+      activityText: "Working...",
+    });
+
+    expect(store.get(activityFamily("agent-1"))).toBe("interrupted");
+    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+  });
+
+  it("keeps a local interrupt visible through full snapshots that omit activity", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
+    const store = createStore();
+
+    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      output: "stale output",
+      outputAnsi: undefined,
+    });
+
+    expect(store.get(outputBufferFamily("agent-1"))).toBe("stale output");
+    expect(store.get(activityFamily("agent-1"))).toBe("interrupted");
+    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+  });
+
+  it("accepts explicit non-running state during the local interrupt hold", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
+    const store = createStore();
+
+    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      activity: "done",
+      activityText: "",
+    });
+
+    expect(store.get(activityFamily("agent-1"))).toBe("done");
+    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+  });
+
+  it("accepts running snapshots after the local interrupt hold is cleared", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
+    const store = createStore();
+
+    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(clearLocalInterruptHoldAtom, "agent-1");
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      activity: "running",
+      activityText: "Working...",
+    });
+
+    expect(store.get(activityFamily("agent-1"))).toBe("running");
+    expect(store.get(activityTextFamily("agent-1"))).toBe("Working...");
+  });
+
+  it("accepts running snapshots after the local interrupt hold expires", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
+    const store = createStore();
+
+    store.set(markOutputInterruptedAtom, "agent-1");
+    vi.advanceTimersByTime(5_001);
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      activity: "running",
+      activityText: "Working...",
+    });
+
+    expect(store.get(activityFamily("agent-1"))).toBe("running");
+    expect(store.get(activityTextFamily("agent-1"))).toBe("Working...");
   });
 });
 

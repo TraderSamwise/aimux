@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getContextDir, initPaths } from "../paths.js";
-import { updateSessionMetadata, setSessionScribe } from "../metadata-store.js";
+import { loadMetadataState, updateSessionMetadata, setSessionScribe } from "../metadata-store.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import { loadOfflineTopologySessions } from "./runtime-state.js";
 import {
   buildTmuxWindowMetadata,
   handleSessionRuntimeEvent,
+  interruptAgent,
   reconcileAgentActivity,
   registerManagedSession,
   readAgentOutput,
@@ -60,6 +61,41 @@ describe("session runtime prompt submission", () => {
       }),
     ]);
     expect(host.contextWatcher.start).toHaveBeenCalledOnce();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("records interrupted metadata when sending an interrupt", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-interrupt-"));
+    await initPaths(repoRoot);
+    const write = vi.fn();
+    const host: any = {
+      sessions: [{ id: "claude-live", command: "claude", transport: { write }, write }],
+      projectRoot: repoRoot,
+      writeStatuslineFile: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+    updateSessionMetadata(
+      "claude-live",
+      (current) => ({
+        ...current,
+        derived: {
+          ...(current.derived ?? {}),
+          activity: "running",
+          attention: "normal",
+        },
+      }),
+      repoRoot,
+    );
+
+    await expect(interruptAgent(host, "claude-live")).resolves.toEqual({ sessionId: "claude-live" });
+
+    const derived = loadMetadataState(repoRoot).sessions["claude-live"]?.derived;
+    expect(write).toHaveBeenCalledWith("\x1b");
+    expect(derived?.activity).toBe("interrupted");
+    expect(derived?.attention).toBe("normal");
+    expect(derived?.becameIdleAt).toBeTruthy();
+    expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
+    expect(host.metadataServer.notifyChange).toHaveBeenCalledOnce();
     rmSync(repoRoot, { recursive: true, force: true });
   });
 

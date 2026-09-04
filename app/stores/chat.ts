@@ -50,9 +50,12 @@ export const attentionFamily = atomFamily((_sessionId: string) =>
  * does not flicker; explicit empty strings still clear finished turns.
  */
 export const activityTextFamily = atomFamily((_sessionId: string) => atom<string>(""));
+const localInterruptedUntilFamily = atomFamily((_sessionId: string) => atom<number>(0));
 // Kept for future stream-token dedup; not wired up yet — see Task 3 deviation #6.
 export const streamTokenFamily = atomFamily((_sessionId: string) => atom<number>(0));
 export const lastErrorFamily = atomFamily((_sessionId: string) => atom<string | null>(null));
+
+export const LOCAL_INTERRUPT_ACTIVITY_HOLD_MS = 5_000;
 
 export type AgentOutputPayload = {
   sessionId: string;
@@ -140,6 +143,18 @@ function applyAgentOutputPayload(
   payload: AgentOutputPayload,
   options: { sparseActivity: boolean },
 ) {
+  const localInterruptActive =
+    get(activityFamily(payload.sessionId)) === "interrupted" &&
+    get(localInterruptedUntilFamily(payload.sessionId)) > Date.now();
+  const incomingLooksLikeStaleProgress =
+    payload.activity === "running" ||
+    (payload.activity === undefined &&
+      typeof payload.activityText === "string" &&
+      payload.activityText.trim().length > 0);
+  const preserveLocalInterrupt =
+    localInterruptActive &&
+    (incomingLooksLikeStaleProgress || (!options.sparseActivity && payload.activity === undefined));
+
   if (payload.output !== undefined) {
     set(outputBufferFamily(payload.sessionId), payload.output);
     set(outputAnsiFamily(payload.sessionId), payload.outputAnsi ?? payload.output);
@@ -163,9 +178,14 @@ function applyAgentOutputPayload(
     set(transcriptStartLineFamily(payload.sessionId), payload.startLine);
   }
   if (!options.sparseActivity || payload.activity !== undefined) {
-    set(activityFamily(payload.sessionId), payload.activity);
+    if (!preserveLocalInterrupt) {
+      set(activityFamily(payload.sessionId), payload.activity);
+      if (payload.activity !== "interrupted") {
+        set(localInterruptedUntilFamily(payload.sessionId), 0);
+      }
+    }
   }
-  if (payload.activityText !== undefined) {
+  if (payload.activityText !== undefined && !preserveLocalInterrupt) {
     set(activityTextFamily(payload.sessionId), payload.activityText);
   }
   if (!options.sparseActivity || payload.attention !== undefined) {
@@ -176,6 +196,21 @@ function applyAgentOutputPayload(
 
 export const applyOutputSnapshotAtom = atom(null, (get, set, snapshot: AgentOutputPayload) => {
   applyAgentOutputPayload(get, set, snapshot, { sparseActivity: false });
+});
+
+export const markOutputInterruptedAtom = atom(null, (_get, set, sessionId: string) => {
+  set(localInterruptedUntilFamily(sessionId), Date.now() + LOCAL_INTERRUPT_ACTIVITY_HOLD_MS);
+  set(applyOutputSnapshotAtom, {
+    sessionId,
+    outputAnsi: undefined,
+    activity: "interrupted",
+    activityText: "",
+    attention: undefined,
+  });
+});
+
+export const clearLocalInterruptHoldAtom = atom(null, (_get, set, sessionId: string) => {
+  set(localInterruptedUntilFamily(sessionId), 0);
 });
 
 function agentOutputEventPayload(event: AgentOutputEvent): AgentOutputPayload {

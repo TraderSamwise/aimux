@@ -9,7 +9,7 @@ import { isProjectControlSession, loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { withTmuxQueryMemo } from "../tmux/query-memo.js";
-import { loadMetadataState } from "../metadata-store.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { isAgentOutputEventKind } from "../agent-events.js";
 import { loadLastUsedState } from "../last-used.js";
 import { summarizeUnreadNotificationsBySession } from "../notifications.js";
@@ -308,7 +308,35 @@ export async function interruptAgent(host: SessionRuntimeHost, sessionId: string
   } else {
     session.write("\x1b");
   }
+  markSessionInterrupted(host, sessionId);
   return { sessionId };
+}
+
+function markSessionInterrupted(host: SessionRuntimeHost, sessionId: string): void {
+  const projectRoot = projectRootFor(host);
+  const now = new Date().toISOString();
+  updateSessionMetadata(
+    sessionId,
+    (current) => {
+      const derived = current.derived ?? {};
+      return {
+        ...current,
+        derived: {
+          ...derived,
+          activity: "interrupted",
+          attention: "normal",
+          becameIdleAt: derived.activity === "running" ? now : derived.becameIdleAt,
+        },
+      };
+    },
+    projectRoot,
+  );
+  try {
+    host.writeStatuslineFile?.();
+  } catch {}
+  try {
+    host.metadataServer?.notifyChange?.();
+  } catch {}
 }
 
 export async function resizeAgentPane(

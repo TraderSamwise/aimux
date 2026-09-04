@@ -131,7 +131,9 @@ import {
   activityFamily,
   activityTextFamily,
   applyOutputSnapshotAtom,
+  clearLocalInterruptHoldAtom,
   lastErrorFamily,
+  markOutputInterruptedAtom,
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
@@ -403,6 +405,8 @@ export default function ChatScreen() {
   const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
+  const markOutputInterrupted = useSetAtom(markOutputInterruptedAtom);
+  const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
   const outputAvailable = useAtomValue(outputAvailableFamily(sessionKey));
@@ -1540,6 +1544,7 @@ export default function ChatScreen() {
       return;
     }
     sendBusyRef.current = true;
+    clearLocalInterruptHold(sessionId);
     const baselineUserMessageCount = userMessageCount;
     setSendBusy(true);
     setSendError(null);
@@ -1677,13 +1682,7 @@ export default function ChatScreen() {
    */
   async function handleInterrupt() {
     if (!endpointHost || !endpointPort || !sessionId) return;
-    applyOutputSnapshot({
-      sessionId,
-      outputAnsi: undefined,
-      activity: "interrupted",
-      activityText: "",
-      attention: undefined,
-    });
+    markOutputInterrupted(sessionId);
     if (interruptInFlightRef.current) return;
     interruptInFlightRef.current = true;
     setSendError(null);
