@@ -15,6 +15,7 @@ import {
   resolveImageUrl,
   shouldRenderRichTerminalText,
   splitMarkdownTableSegments,
+  splitMessageTextSegments,
 } from "@/components/MessageBlock";
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
@@ -262,6 +263,43 @@ describe("MessageBlock table text", () => {
         ].join("\n"),
       },
       { kind: "text", text: "After" },
+    ]);
+  });
+});
+
+describe("MessageBlock code edit previews", () => {
+  it("splits Codex edit previews so only diff blocks can render smaller", () => {
+    expect(
+      splitMessageTextSegments(
+        [
+          "Before",
+          "",
+          "Edited app/lib/chat-scroll-model.ts (+7 -1)",
+          "  1 export const DEFAULT_CHAT_SCROLL_END_THRESHOLD = 24;",
+          "  2 +export const DEFAULT_CHAT_SCROLL_REANCHOR_THRESHOLD = 8;",
+          "    SCROLL_REANCHOR_THRESHOLD = 8;",
+          "",
+          "After",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "text", text: "Before" },
+      {
+        kind: "code-edit-diff",
+        text: [
+          "Edited app/lib/chat-scroll-model.ts (+7 -1)",
+          "  1 export const DEFAULT_CHAT_SCROLL_END_THRESHOLD = 24;",
+          "  2 +export const DEFAULT_CHAT_SCROLL_REANCHOR_THRESHOLD = 8;",
+          "    SCROLL_REANCHOR_THRESHOLD = 8;",
+        ].join("\n"),
+      },
+      { kind: "text", text: "After" },
+    ]);
+  });
+
+  it("does not treat ordinary colored tool text as code edit previews", () => {
+    expect(splitMessageTextSegments("Bash(yarn test)\nRunning...")).toEqual([
+      { kind: "text", text: "Bash(yarn test)\nRunning..." },
     ]);
   });
 });

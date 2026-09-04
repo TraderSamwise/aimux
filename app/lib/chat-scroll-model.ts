@@ -257,6 +257,9 @@ export function onGeometryChange({
     ...state,
     geometry: normalizeGeometry({ ...state.geometry, ...geometry }),
   };
+  if (nextState.intent.kind === "reading-history") {
+    return { command: { kind: "none" }, state: nextState };
+  }
   return commandForCurrentIntent(nextState, { animated: false });
 }
 
@@ -298,14 +301,7 @@ export function onContentChange({
     };
   }
 
-  return {
-    command: {
-      animated: false,
-      kind: "scroll-to",
-      offset: nextState.intent.frozenOffset,
-    },
-    state: nextState,
-  };
+  return { command: { kind: "none" }, state: nextState };
 }
 
 export function commandForCurrentIntent(
@@ -322,14 +318,7 @@ export function commandForCurrentIntent(
       state,
     };
   }
-  return {
-    command: {
-      animated: false,
-      kind: "scroll-to",
-      offset: state.intent.frozenOffset,
-    },
-    state,
-  };
+  return { command: { kind: "none" }, state };
 }
 
 export function composerPresentation({

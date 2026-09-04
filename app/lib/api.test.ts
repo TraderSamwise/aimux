@@ -120,6 +120,7 @@ function installRelayMock(body: unknown = { ok: true }) {
 
 describe("api relay routing", () => {
   afterEach(() => {
+    vi.useRealTimers();
     setApiRelay(null);
     if (originalConnectionMode === undefined) {
       delete process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
@@ -168,6 +169,21 @@ describe("api relay routing", () => {
       text: "hello",
       sharedChatActor: { role: "owner", displayName: "Sam", email: "sam@example.com" },
     });
+  });
+
+  it("times out relay-routed project requests", async () => {
+    vi.useFakeTimers();
+    const request = vi.fn(() => new Promise(() => {}));
+    setApiRelay({ wsConnected: true, request } as unknown as RelayTransport);
+
+    const promise = sendLivePaneInput(endpoint, "agent-1", "hello", { timeoutMs: 5 });
+    const expectation = expect(promise).rejects.toMatchObject({
+      status: 0,
+      message: expect.stringContaining("Request timed out or was cancelled"),
+    });
+    await vi.advanceTimersByTimeAsync(5);
+    await expectation;
+    vi.useRealTimers();
   });
 
   it("rejects ok-false direct HTTP responses", async () => {

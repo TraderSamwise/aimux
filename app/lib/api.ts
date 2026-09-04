@@ -175,9 +175,13 @@ export class ApiError extends Error {
 
 const DEFAULT_API_TIMEOUT_MS = 10_000;
 
+function apiTimeoutMs(opts?: ApiOpts): number {
+  return Math.max(1, opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
+}
+
 function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => void } {
   const controller = new AbortController();
-  const timeoutMs = Math.max(1, opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
+  const timeoutMs = apiTimeoutMs(opts);
   const timeout = setTimeout(() => {
     controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
   }, timeoutMs);
@@ -234,10 +238,40 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
   }
 }
 
-async function callDaemonViaRelay<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function withRelayRequestTimeout<T>(
+  path: string,
+  request: Promise<T>,
+  opts?: ApiOpts,
+): Promise<T> {
+  const timeoutMs = apiTimeoutMs(opts);
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let abortListener: (() => void) | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    const rejectTimedOut = () => {
+      reject(new ApiError(0, null, `Request timed out or was cancelled (${path})`));
+    };
+    timeout = setTimeout(rejectTimedOut, timeoutMs);
+    abortListener = rejectTimedOut;
+    if (opts?.signal?.aborted) rejectTimedOut();
+    else opts?.signal?.addEventListener("abort", rejectTimedOut, { once: true });
+  });
+  try {
+    return await Promise.race([request, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (abortListener) opts?.signal?.removeEventListener("abort", abortListener);
+  }
+}
+
+async function callDaemonViaRelay<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts?: ApiOpts,
+): Promise<T> {
   const relay = _relay;
   if (!relay) throw new ApiError(0, null, "Relay not connected");
-  const result = await relay.request(method, path, body);
+  const result = await withRelayRequestTimeout(path, relay.request(method, path, body), opts);
   if (result.status >= 400) {
     const b = result.body as { error?: string } | null;
     throw new ApiError(result.status, result.body, b?.error ?? `HTTP ${result.status}`);
@@ -249,10 +283,11 @@ async function callServiceViaRelay<T>(
   endpoint: ServiceEndpoint,
   method: string,
   path: string,
+  opts?: ApiOpts,
   body?: unknown,
 ): Promise<T> {
   const proxyPath = `/proxy/${endpoint.host}/${endpoint.port}${path}`;
-  return callDaemonViaRelay<T>(method, proxyPath, body);
+  return callDaemonViaRelay<T>(method, proxyPath, body, opts);
 }
 
 export function shouldRouteViaRelay(): boolean {
@@ -266,7 +301,7 @@ async function callProjectJson<T>(
   opts?: ApiOpts,
   body?: unknown,
 ): Promise<T> {
-  if (shouldRouteViaRelay()) return callServiceViaRelay<T>(endpoint, method, path, body);
+  if (shouldRouteViaRelay()) return callServiceViaRelay<T>(endpoint, method, path, opts, body);
   return callJson<T>(
     `${getServiceUrl(endpoint)}${path}`,
     {
@@ -336,7 +371,8 @@ export interface DaemonProject {
 }
 
 export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
-  if (shouldRouteViaRelay()) return callDaemonViaRelay<DaemonHealth>("GET", "/health");
+  if (shouldRouteViaRelay())
+    return callDaemonViaRelay<DaemonHealth>("GET", "/health", undefined, opts);
   return callJson<DaemonHealth>(`${getDaemonUrl()}/health`, { method: "GET" }, opts);
 }
 
@@ -345,6 +381,8 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
     const data = await callDaemonViaRelay<{ ok: boolean; projects: DaemonProject[] }>(
       "GET",
       "/projects",
+      undefined,
+      opts,
     );
     return data.projects;
   }
@@ -370,7 +408,7 @@ export async function listGlobalExposeItems(
   if (clientId) params.set("clientId", clientId);
   const path = `${CORE_API_ROUTES.exposeItems}?${params.toString()}`;
   if (shouldRouteViaRelay())
-    return callDaemonViaRelay<{ ok: boolean; items: unknown[] }>("GET", path);
+    return callDaemonViaRelay<{ ok: boolean; items: unknown[] }>("GET", path, undefined, apiOpts);
   return callJson<{ ok: boolean; items: unknown[] }>(
     `${getDaemonUrl()}${path}`,
     { method: "GET" },
@@ -389,7 +427,12 @@ export async function ensureProject(
   opts?: ApiOpts,
 ): Promise<EnsureProjectResponse> {
   if (shouldRouteViaRelay())
-    return callDaemonViaRelay<EnsureProjectResponse>("POST", "/projects/ensure", { projectRoot });
+    return callDaemonViaRelay<EnsureProjectResponse>(
+      "POST",
+      "/projects/ensure",
+      { projectRoot },
+      opts,
+    );
   return callJson<EnsureProjectResponse>(
     `${getDaemonUrl()}/projects/ensure`,
     { method: "POST", body: JSON.stringify({ projectRoot }) },

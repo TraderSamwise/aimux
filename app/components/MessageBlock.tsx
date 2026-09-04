@@ -47,10 +47,17 @@ const MESSAGE_TEXT_STYLE: TextStyle = {
   lineHeight: Platform.OS === "web" ? 21 : 24,
   maxWidth: "100%",
 };
+const MESSAGE_CODE_EDIT_DIFF_STYLE: TextStyle = {
+  ...MESSAGE_TEXT_STYLE,
+  fontSize: 13,
+  lineHeight: 18,
+};
 
-export type TextSegment = { kind: "text" | "table"; text: string };
+export type TextSegment = { kind: "code-edit-diff" | "table" | "text"; text: string };
 type TextSegmentWithRange = TextSegment & { end: number; start: number };
 const BOX_TABLE_CHARS = /[╭╮╰╯┌┐└┘├┤┬┴┼─│═║╔╗╚╝╠╣╦╩╬]/;
+const CODE_EDIT_HEADER = /^Edited\s+\S.+\(\+\d+\s+-\d+\)\s*$/;
+const CODE_EDIT_ROW = /^\s*(?:\d+|\.{2,}|…+|⋮)\s+/;
 
 export function resolveImageUrl(
   part: HistoryImagePart | HistoryImageReferencePart | HistoryAttachmentReferencePart,
@@ -124,6 +131,83 @@ function markdownTableCells(line: string): string[] {
 
 export function splitMarkdownTableSegments(text: string): TextSegment[] {
   return splitMarkdownTableSegmentsWithRanges(text).map(({ kind, text }) => ({ kind, text }));
+}
+
+export function splitMessageTextSegments(text: string): TextSegment[] {
+  return splitMessageTextSegmentsWithRanges(text).map(({ kind, text }) => ({ kind, text }));
+}
+
+function splitMessageTextSegmentsWithRanges(text: string): TextSegmentWithRange[] {
+  return splitCodeEditDiffSegmentsWithRanges(text).flatMap((segment) => {
+    if (segment.kind === "code-edit-diff") return [segment];
+    return splitMarkdownTableSegmentsWithRanges(segment.text).map((inner) => ({
+      ...inner,
+      start: segment.start + inner.start,
+      end: segment.start + inner.end,
+    }));
+  });
+}
+
+function splitCodeEditDiffSegmentsWithRanges(text: string): TextSegmentWithRange[] {
+  const lines = text.split("\n");
+  const lineStarts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
+
+  const segments: TextSegmentWithRange[] = [];
+  let cursor = 0;
+  const pushText = (start: number, end: number) => {
+    let textStart = start;
+    let textEnd = end;
+    while (textStart < textEnd && text[textStart] === "\n") textStart += 1;
+    while (textEnd > textStart && /\s/.test(text[textEnd - 1] ?? "")) textEnd -= 1;
+    if (textStart < textEnd) {
+      segments.push({
+        kind: "text",
+        text: text.slice(textStart, textEnd),
+        start: textStart,
+        end: textEnd,
+      });
+    }
+  };
+  const lineEnd = (index: number) =>
+    (lineStarts[index] ?? text.length) +
+    (lines[index] ?? "").length +
+    (index < lines.length - 1 ? 1 : 0);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (!CODE_EDIT_HEADER.test(line.trim())) continue;
+
+    let endLine = index;
+    let sawDiffRow = false;
+    for (let next = index + 1; next < lines.length; next += 1) {
+      const nextLine = lines[next] ?? "";
+      if (nextLine.trim() === "") break;
+      if (CODE_EDIT_ROW.test(nextLine)) sawDiffRow = true;
+      if (!sawDiffRow) break;
+      endLine = next;
+    }
+    if (!sawDiffRow) continue;
+
+    const start = lineStarts[index] ?? 0;
+    const end = lineEnd(endLine);
+    pushText(cursor, start);
+    segments.push({
+      kind: "code-edit-diff",
+      text: text.slice(start, end).trimEnd(),
+      start,
+      end,
+    });
+    cursor = end;
+    index = endLine;
+  }
+
+  pushText(cursor, text.length);
+  return segments.length > 0 ? segments : [{ kind: "text", text, start: 0, end: text.length }];
 }
 
 function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRange[] {
@@ -201,6 +285,10 @@ function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRang
 
   flushText();
   return segments;
+}
+
+function textStyleForSegmentKind(kind: TextSegment["kind"]): TextStyle {
+  return kind === "code-edit-diff" ? MESSAGE_CODE_EDIT_DIFF_STYLE : MESSAGE_TEXT_STYLE;
 }
 
 function isTerminalBoxTableLine(line: string): boolean {
@@ -302,7 +390,7 @@ function RichTextPart({
   spans: readonly HistoryTextSpan[];
   text: string;
 }) {
-  const segments = React.useMemo(() => splitMarkdownTableSegmentsWithRanges(text), [text]);
+  const segments = React.useMemo(() => splitMessageTextSegmentsWithRanges(text), [text]);
   if (segments.length === 1 && segments[0]?.kind === "text") {
     return (
       <RichText
@@ -325,7 +413,7 @@ function RichTextPart({
             className={className}
             dividerWidth={dividerWidth}
             spans={sliceRichTextSpans(spans, segment.start, segment.end)}
-            textStyle={MESSAGE_TEXT_STYLE}
+            textStyle={textStyleForSegmentKind(segment.kind)}
           />
         ),
       )}
@@ -361,14 +449,14 @@ function PlainTextPart({
   dividerWidth?: number;
   text: string;
 }) {
-  const segments = React.useMemo(() => splitMarkdownTableSegments(text), [text]);
+  const segments = React.useMemo(() => splitMessageTextSegments(text), [text]);
   return (
     <>
       {segments.map((segment, index) =>
         segment.kind === "table" ? (
           <MarkdownTableText key={index} className={className} text={segment.text} />
         ) : (
-          <Text key={index} className={className} style={MESSAGE_TEXT_STYLE}>
+          <Text key={index} className={className} style={textStyleForSegmentKind(segment.kind)}>
             {formatPlainTextForDisplay(segment.text, { dividerWidth })}
           </Text>
         ),

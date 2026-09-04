@@ -245,7 +245,7 @@ describe("composer protocol", () => {
     ).toBe(false);
   });
 
-  it("confirms queue-up sends only when both text and image parts match", () => {
+  it("confirms text plus attachment sends from the echoed text", () => {
     expect(
       userMessageAcknowledgesComposerSend(
         [
@@ -270,8 +270,27 @@ describe("composer protocol", () => {
           {
             role: "user",
             parts: [
-              { type: "text", text: "Queue up: msg echo ack needs to work" },
-              { type: "image_reference", label: "[image #1]", filename: "IMG_other.png" },
+              { type: "text", text: "Queue up. Why didn't this echo ack?" },
+              { type: "image_reference", label: "[image #1]" },
+            ],
+          },
+        ],
+        {
+          attachmentIds: ["att_uploaded"],
+          attachmentFilenames: ["IMG_0428.png"],
+          baselineUserMessageCount: 0,
+          text: "Queue up. Why didn't this echo ack?",
+        },
+      ),
+    ).toBe(true);
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              { type: "text", text: "Different queue item" },
+              { type: "image_reference", label: "[image #1]", filename: "IMG_0407.png" },
             ],
           },
         ],

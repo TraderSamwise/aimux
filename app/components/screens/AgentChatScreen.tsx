@@ -1188,11 +1188,7 @@ export default function ChatScreen() {
         if (isUserScrollActive(pane)) return;
         const latestState = scrollPolicyStateRef.current[pane];
         if (latestState.metrics.viewportLength <= 0) return;
-        if (
-          latestState.intent.kind === "reading-history" ||
-          latestState.intent.kind === "anchored-to-end" ||
-          pendingBottomPinRef.current[pane]
-        )
+        if (latestState.intent.kind === "anchored-to-end" || pendingBottomPinRef.current[pane])
           applyPaneScrollPosition(pane);
         remainingFrames -= 1;
         if (remainingFrames > 0) requestAnimationFrame(settle);
@@ -1387,8 +1383,10 @@ export default function ChatScreen() {
       } else {
         scrollPolicyStateRef.current[pane] = withMetrics;
         scrollInitializedRef.current[pane] = true;
-        const transition = commandForCurrentIntent(withMetrics, { animated: false });
-        applyScrollCommand(pane, transition.command);
+        if (withMetrics.intent.kind === "anchored-to-end" || pendingBottomPinRef.current[pane]) {
+          const transition = commandForCurrentIntent(withMetrics, { animated: false });
+          applyScrollCommand(pane, transition.command);
+        }
         syncNativeComposerForPane(pane);
       }
 

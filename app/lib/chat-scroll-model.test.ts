@@ -83,11 +83,7 @@ describe("chat scroll model", () => {
       frozenOffset: 300,
       kind: "reading-history",
     });
-    expect(next.command).toEqual({
-      animated: false,
-      kind: "scroll-to",
-      offset: 300,
-    });
+    expect(next.command).toEqual({ kind: "none" });
   });
 
   it("restores anchored intent when the user returns to the end", () => {
@@ -141,7 +137,7 @@ describe("chat scroll model", () => {
     expect(atEnd.intent).toEqual({ kind: "anchored-to-end" });
   });
 
-  it("preserves the frozen offset during keyboard or composer geometry changes while reading history", () => {
+  it("does not force-scroll during keyboard or composer geometry changes while reading history", () => {
     const state = onUserScroll({
       metrics: { contentOffset: 250 },
       state: onUserScrollBegin(
@@ -162,11 +158,7 @@ describe("chat scroll model", () => {
       frozenOffset: 250,
       kind: "reading-history",
     });
-    expect(next.command).toEqual({
-      animated: false,
-      kind: "scroll-to",
-      offset: 250,
-    });
+    expect(next.command).toEqual({ kind: "none" });
   });
 
   it("re-pins after keyboard or composer geometry changes while anchored", () => {

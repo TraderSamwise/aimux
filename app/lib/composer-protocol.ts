@@ -149,6 +149,7 @@ export function userMessageAcknowledgesComposerSend(
     const messageText = composerAckMessageText(message);
     const textMatches = !sentText || messageText.includes(sentText);
     if (!textMatches) return false;
+    if (sentText) return true;
     if (!hasPendingAttachments) return Boolean(sentText);
     return messageAcknowledgesAttachments(message, pending);
   });

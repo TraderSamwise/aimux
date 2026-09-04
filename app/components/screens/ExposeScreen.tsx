@@ -611,7 +611,15 @@ export default function ExposeScreen() {
 
   const routeProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const scope = resolveScope(searchParams.scope);
-  const filter = resolveFilter(searchParams.filter);
+  const routeFilter = resolveFilter(searchParams.filter);
+  const [localFilter, setLocalFilter] = useState<{
+    routeFilter: ExposeFilter;
+    value: ExposeFilter;
+  }>({
+    routeFilter,
+    value: routeFilter,
+  });
+  const filter = localFilter.routeFilter === routeFilter ? localFilter.value : routeFilter;
   const currentProjectPath = routeProjectPath ?? selectedProjectPath ?? projects[0]?.path ?? null;
   const currentProject = projects.find((project) => project.path === currentProjectPath) ?? null;
   const projectForRequest = currentProject ?? projects[0] ?? null;
@@ -731,14 +739,8 @@ export default function ExposeScreen() {
   }
 
   function setFilter(nextFilter: ExposeFilter) {
-    router.replace({
-      pathname: "/expose",
-      params: {
-        project: currentProjectPath ?? undefined,
-        scope: scope === "global" ? "global" : undefined,
-        filter: nextFilter === "all" ? undefined : nextFilter,
-      },
-    });
+    blurWebActiveElement();
+    setLocalFilter({ routeFilter, value: nextFilter });
   }
 
   function openTile(tile: ExposeTile) {
