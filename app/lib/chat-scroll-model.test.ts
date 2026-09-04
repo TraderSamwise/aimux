@@ -110,6 +110,37 @@ describe("chat scroll model", () => {
     expect(anchored.intent).toEqual({ kind: "anchored-to-end" });
   });
 
+  it("does not re-anchor from history until the user is very close to the end", () => {
+    const state = createChatScrollPolicyState({
+      pane: "chat",
+      geometry: { composerHeight: 90, endBuffer: 20 },
+      metrics: { contentLength: 1000, contentOffset: 610, viewportLength: 500 },
+    });
+
+    const reading = onUserScroll({
+      metrics: { contentOffset: 500 },
+      state: onUserScrollBegin(state),
+    });
+    const nearEnd = onUserScroll({
+      metrics: { contentOffset: 590 },
+      state: reading,
+      threshold: 24,
+      reanchorThreshold: 8,
+    });
+    const atEnd = onUserScroll({
+      metrics: { contentOffset: 604 },
+      state: nearEnd,
+      threshold: 24,
+      reanchorThreshold: 8,
+    });
+
+    expect(nearEnd.intent).toEqual({
+      frozenOffset: 590,
+      kind: "reading-history",
+    });
+    expect(atEnd.intent).toEqual({ kind: "anchored-to-end" });
+  });
+
   it("preserves the frozen offset during keyboard or composer geometry changes while reading history", () => {
     const state = onUserScroll({
       metrics: { contentOffset: 250 },

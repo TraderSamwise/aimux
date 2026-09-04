@@ -1,4 +1,5 @@
 export const DEFAULT_CHAT_SCROLL_END_THRESHOLD = 24;
+export const DEFAULT_CHAT_SCROLL_REANCHOR_THRESHOLD = 8;
 
 export type ChatPaneKind = "chat" | "terminal";
 export type ChatScrollAxis = "normal" | "inverted";
@@ -215,10 +216,12 @@ export function onUserScrollBegin(state: ChatScrollPolicyState): ChatScrollPolic
 
 export function onUserScroll({
   metrics,
+  reanchorThreshold = DEFAULT_CHAT_SCROLL_REANCHOR_THRESHOLD,
   state,
   threshold,
 }: {
   metrics: Partial<ChatScrollMetrics>;
+  reanchorThreshold?: number;
   state: ChatScrollPolicyState;
   threshold?: number;
 }): ChatScrollPolicyState {
@@ -226,7 +229,10 @@ export function onUserScroll({
   const anchored = isAnchoredToEnd({
     geometry: state.geometry,
     metrics: nextMetrics,
-    threshold,
+    threshold:
+      state.intent.kind === "reading-history"
+        ? Math.min(Math.max(0, reanchorThreshold), threshold ?? DEFAULT_CHAT_SCROLL_END_THRESHOLD)
+        : threshold,
   });
   return {
     ...state,
