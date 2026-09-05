@@ -6,20 +6,71 @@ use aimux::project_service::router::{ProjectServiceRequestContext, route_project
 use aimux::runtime_topology::{
     coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
+use aimux::tmux::TmuxTarget;
 use serde_json::{Value, json};
 use std::fs::remove_dir_all;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default)]
 struct FakeLifecycleRuntime {
+    created: Vec<FakeCreateWindow>,
+    metadata: Vec<(String, Value)>,
+    options: Vec<(String, String, String)>,
     killed: Vec<String>,
     renamed: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FakeCreateWindow {
+    session_name: String,
+    name: String,
+    cwd: String,
+    command: String,
+    args: Vec<String>,
+    detached: bool,
+}
+
 impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
+    fn create_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+        detached: bool,
+    ) -> Result<TmuxTarget, String> {
+        self.created.push(FakeCreateWindow {
+            session_name: session_name.to_owned(),
+            name: name.to_owned(),
+            cwd: cwd.to_owned(),
+            command: command.to_owned(),
+            args: args.to_owned(),
+            detached,
+        });
+        Ok(TmuxTarget {
+            session_name: session_name.to_owned(),
+            window_id: format!("@{}", self.created.len() + 10),
+            window_index: self.created.len() as i64 + 10,
+            window_name: name.to_owned(),
+            pane_dead: None,
+        })
+    }
+
+    fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
+        self.metadata.push((window_id.to_owned(), metadata.clone()));
+        Ok(())
+    }
+
+    fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String> {
+        self.options
+            .push((window_id.to_owned(), key.to_owned(), value.to_owned()));
+        Ok(())
+    }
+
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
         self.killed.push(window_id.to_owned());
         Ok(())
@@ -180,7 +231,8 @@ fn service_stop_and_remove_update_topology_and_kill_live_window() {
     assert_eq!(stopped.body["transition"]["operation"], "service.stop");
     assert_eq!(runtime.killed, vec!["@service"]);
     let topology = read_topology(&state_dir);
-    assert_eq!(service(&topology, "svc-web")["status"], "stopped");
+    let stopped_service = service(&topology, "svc-web");
+    assert_eq!(stopped_service["status"], "stopped");
     assert!(
         topology["bindings"]
             .as_array()
@@ -194,6 +246,11 @@ fn service_stop_and_remove_update_topology_and_kill_live_window() {
             .join("svc-web")
             .exists()
     );
+    let saved = read_state(&state_dir);
+    assert_eq!(saved["cwd"], project.to_string_lossy().as_ref());
+    assert_eq!(saved["services"][0]["id"], "svc-web");
+    assert_eq!(saved["services"][0]["label"], "web");
+    assert_eq!(saved["services"][0]["launchCommandLine"], "yarn dev");
 
     let removed = route_lifecycle_request_with_runtime(
         &context,
@@ -209,6 +266,254 @@ fn service_stop_and_remove_update_topology_and_kill_live_window() {
     let topology = read_topology(&state_dir);
     assert!(find(&topology, "services", "svc-web").is_none());
     assert!(find(&topology, "nodes", "node-service").is_none());
+    assert_eq!(read_state(&state_dir)["services"], json!([]));
+    cleanup(project);
+}
+
+#[test]
+fn service_create_launches_detached_window_with_metadata_policy_and_topology() {
+    let project = temp_project("service-create");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::CREATE,
+        Some(&json!({
+            "serviceId": "svc-dev",
+            "command": "yarn dev",
+            "worktreePath": "/repo/apps/web"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["serviceId"], "svc-dev");
+    assert_eq!(response.body["status"], "running");
+    assert_eq!(response.body["transition"]["operation"], "service.create");
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.name, "yarn");
+    assert_eq!(created.cwd, "/repo/apps/web");
+    assert_eq!(created.command, "env");
+    assert!(created.detached);
+    assert!(
+        created
+            .args
+            .iter()
+            .any(|arg| arg == "AIMUX_SESSION_ID=svc-dev")
+    );
+    assert!(created.args.iter().any(|arg| arg == "AIMUX_TOOL=service"));
+    assert!(created.args.iter().any(|arg| arg == "-ic"));
+    assert!(
+        created
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("Service command exited with status"))
+    );
+    assert!(state_dir.join("shell-integration/.zshrc").exists());
+    assert_eq!(runtime.metadata[0].0, "@11");
+    assert_eq!(runtime.metadata[0].1["kind"], "service");
+    assert_eq!(runtime.metadata[0].1["sessionId"], "svc-dev");
+    assert_eq!(runtime.metadata[0].1["args"], json!(["-lc", "yarn dev"]));
+    assert_eq!(
+        runtime.options,
+        vec![
+            ("@11".into(), "@aimux-tool".into(), "service".into()),
+            ("@11".into(), "allow-passthrough".into(), "on".into()),
+            ("@11".into(), "aggressive-resize".into(), "on".into())
+        ]
+    );
+
+    let topology = read_topology(&state_dir);
+    let service = service(&topology, "svc-dev");
+    assert_eq!(service["status"], "running");
+    assert_eq!(service["command"], runtime.metadata[0].1["command"]);
+    assert_eq!(service["args"], json!(["-lc", "yarn dev"]));
+    assert_eq!(service["launchCommandLine"], "yarn dev");
+    assert_eq!(service["worktreePath"], "/repo/apps/web");
+    assert_eq!(
+        find(&topology, "nodes", "service:svc-dev").unwrap()["label"],
+        "yarn"
+    );
+    let binding = topology["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|binding| binding["nodeId"] == "service:svc-dev")
+        .unwrap();
+    assert_eq!(binding["tmuxWindowId"], "@11");
+    let saved = read_state(&state_dir);
+    assert_eq!(saved["services"][0]["id"], "svc-dev");
+    assert_eq!(saved["services"][0]["cwd"], "/repo/apps/web");
+    assert_eq!(saved["services"][0]["label"], "yarn");
+    assert_eq!(saved["services"][0]["tmuxTarget"]["windowId"], "@11");
+    cleanup(project);
+}
+
+#[test]
+fn service_resume_recreates_stopped_service_from_persisted_launch_state() {
+    let project = temp_project("service-resume");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let stopped = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::STOP,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(stopped.status, 200);
+    runtime.killed.clear();
+
+    let resumed = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::RESUME,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(resumed.status, 200);
+    assert_eq!(resumed.body["serviceId"], "svc-web");
+    assert_eq!(resumed.body["status"], "running");
+    assert_eq!(resumed.body["transition"]["operation"], "service.resume");
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.name, "web");
+    assert_eq!(created.cwd, "/repo");
+    assert_eq!(created.command, "env");
+    assert!(
+        created
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("Service command exited with status"))
+    );
+    assert_eq!(
+        runtime.metadata[0].1["createdAt"],
+        "2026-01-01T00:00:00.000Z"
+    );
+    assert!(runtime.killed.is_empty());
+    let topology = read_topology(&state_dir);
+    let service = service(&topology, "svc-web");
+    assert_eq!(service["status"], "running");
+    assert_eq!(service["createdAt"], "2026-01-01T00:00:00.000Z");
+    assert_eq!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|binding| binding["nodeId"] == "service:svc-web")
+            .unwrap()["tmuxWindowId"],
+        "@11"
+    );
+    let saved = read_state(&state_dir);
+    assert_eq!(saved["services"][0]["id"], "svc-web");
+    assert_eq!(saved["services"][0]["cwd"], "/repo");
+    assert_eq!(saved["services"][0]["tmuxTarget"]["windowId"], "@11");
+    cleanup(project);
+}
+
+#[test]
+fn service_resume_kills_stale_retained_binding_before_recreate() {
+    let project = temp_project("service-resume-stale");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let mut topology = read_topology(&state_dir);
+    topology["services"].as_array_mut().unwrap()[0]["status"] = json!("stopped");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::RESUME,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.killed, vec!["@service"]);
+    let topology = read_topology(&state_dir);
+    assert!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|binding| binding["nodeId"] != "node-service")
+    );
+    assert!(find(&topology, "nodes", "node-service").is_none());
+    assert_eq!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|binding| binding["nodeId"] == "service:svc-web")
+            .unwrap()["tmuxWindowId"],
+        "@11"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn service_remove_kills_retained_saved_target_for_stopped_service() {
+    let project = temp_project("service-remove-retained");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let mut topology = read_topology(&state_dir);
+    topology["services"].as_array_mut().unwrap()[0]["status"] = json!("stopped");
+    topology["bindings"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|binding| binding["nodeId"] != "node-service");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("state.json"),
+        serde_json::to_string_pretty(&json!({
+            "savedAt": "2026-01-01T00:00:00.000Z",
+            "cwd": "/repo",
+            "services": [{
+                "id": "svc-web",
+                "label": "web",
+                "launchCommandLine": "yarn dev",
+                "tmuxTarget": {
+                    "sessionName": "aimux",
+                    "windowId": "@retained",
+                    "windowIndex": 2,
+                    "windowName": "web"
+                }
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::REMOVE,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.killed, vec!["@retained"]);
+    assert_eq!(read_state(&state_dir)["services"], json!([]));
     cleanup(project);
 }
 
@@ -262,6 +567,10 @@ fn write_lifecycle_topology(state_dir: &PathBuf) {
 
 fn read_topology(state_dir: &PathBuf) -> Value {
     read_runtime_topology(runtime_topology_path(state_dir)).unwrap()
+}
+
+fn read_state(state_dir: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(state_dir.join("state.json")).unwrap()).unwrap()
 }
 
 fn session(topology: &Value, id: &str) -> Value {

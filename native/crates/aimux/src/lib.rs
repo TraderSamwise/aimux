@@ -16,6 +16,7 @@ pub mod daemon_state;
 pub mod daemon_supervisor;
 pub mod launcher_env;
 pub mod logs;
+pub mod managed_launch_env;
 pub mod paths;
 pub mod process_inspector;
 pub mod project_api_contract;
@@ -25,6 +26,7 @@ pub mod project_service_manifest;
 pub mod proxy_project_binding;
 pub mod remote_access;
 pub mod runtime_topology;
+pub mod shell_hooks;
 pub mod tmux;
 pub mod translation_plan;
 
