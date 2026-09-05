@@ -10,6 +10,8 @@ use aimux::daemon_state::{
 use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::fs::{self, remove_dir_all};
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -123,6 +125,59 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     assert_eq!(projects_json["projects"].as_array().map(Vec::len), Some(1));
     assert_eq!(projects_json["projects"][0]["name"], "repo");
     assert_eq!(projects_json["projects"][0]["serviceAlive"], false);
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_json_proxy_forwards_loopback_project_service_response() {
+    let fixture = RuntimeFixture::new("json-proxy");
+    let server = OneShotHttpServer::spawn(
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 22\r\n\r\n{\"ok\":true,\"value\":42}".to_vec(),
+    );
+    let mut runtime = fixture.runtime();
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("/proxy/127.0.0.1/{}/health?check=1", server.port),
+        ),
+    );
+    let response_json: Value = serde_json::from_slice(&response.body).expect("response json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response_json, json!({ "ok": true, "value": 42 }));
+    assert!(server.join().contains("GET /health?check=1 HTTP/1.1"));
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_binary_proxy_preserves_content_bytes_and_type() {
+    let fixture = RuntimeFixture::new("binary-proxy");
+    let server = OneShotHttpServer::spawn(
+        b"HTTP/1.1 200 OK\r\ncontent-type: image/png\r\ncontent-length: 4\r\n\r\n\x89PNG".to_vec(),
+    );
+    let mut runtime = fixture.runtime();
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("/proxy/127.0.0.1/{}/attachments/att-1/content", server.port),
+        ),
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.headers.get("content-type").map(String::as_str),
+        Some("image/png")
+    );
+    assert_eq!(response.body, b"\x89PNG");
+    assert!(
+        server
+            .join()
+            .contains("GET /attachments/att-1/content HTTP/1.1")
+    );
     fixture.cleanup();
 }
 
@@ -516,4 +571,28 @@ fn persist_service(
         },
     )
     .expect("daemon state");
+}
+
+struct OneShotHttpServer {
+    port: u16,
+    handle: std::thread::JoinHandle<String>,
+}
+
+impl OneShotHttpServer {
+    fn spawn(response: Vec<u8>) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0_u8; 4096];
+            let count = stream.read(&mut buffer).expect("read request");
+            stream.write_all(&response).expect("write response");
+            String::from_utf8_lossy(&buffer[..count]).into_owned()
+        });
+        Self { port, handle }
+    }
+
+    fn join(self) -> String {
+        self.handle.join().expect("server thread")
+    }
 }

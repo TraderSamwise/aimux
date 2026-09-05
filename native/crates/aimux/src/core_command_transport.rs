@@ -51,6 +51,13 @@ pub struct DaemonJsonResponse {
     pub json: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DaemonBinaryResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+}
+
 #[derive(Debug)]
 pub enum CoreCommandTransportError {
     DaemonNotRunning,
@@ -252,6 +259,31 @@ where
 pub fn execute_loopback_json_request(
     request: &DaemonJsonRequest,
 ) -> Result<DaemonJsonResponse, CoreCommandTransportError> {
+    let response = execute_loopback_http_request(request)?;
+    parse_json_response(&response)
+}
+
+pub fn execute_loopback_binary_request(
+    request: &DaemonJsonRequest,
+    max_bytes: usize,
+) -> Result<DaemonBinaryResponse, CoreCommandTransportError> {
+    let response = execute_loopback_http_request(request)?;
+    let response = parse_response_parts(&response)?;
+    if response.body.len() > max_bytes {
+        return Err(CoreCommandTransportError::InvalidHttpResponse(format!(
+            "daemon HTTP body exceeded {max_bytes} bytes"
+        )));
+    }
+    Ok(DaemonBinaryResponse {
+        status: response.status,
+        content_type: response.headers.get("content-type").cloned(),
+        body: response.body,
+    })
+}
+
+fn execute_loopback_http_request(
+    request: &DaemonJsonRequest,
+) -> Result<Vec<u8>, CoreCommandTransportError> {
     let endpoint = parse_loopback_url(&request.url)?;
     let mut stream = connect_loopback(&endpoint, request.timeout_ms)?;
     let timeout = request
@@ -284,8 +316,7 @@ pub fn execute_loopback_json_request(
     if let Some(body) = request.body.as_ref() {
         write_all(&mut stream, body.as_bytes(), request.timeout_ms)?;
     }
-    let response = read_response_message(&mut stream, request.timeout_ms)?;
-    parse_json_response(&response)
+    read_response_message(&mut stream, request.timeout_ms)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -414,6 +445,25 @@ fn is_timeout(error: &io::Error) -> bool {
 }
 
 fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTransportError> {
+    let response = parse_response_parts(bytes)?;
+    let json = if response.body.iter().all(u8::is_ascii_whitespace) {
+        Value::Object(Default::default())
+    } else {
+        serde_json::from_slice(&response.body)?
+    };
+    Ok(DaemonJsonResponse {
+        status: response.status,
+        json,
+    })
+}
+
+struct HttpResponseParts {
+    status: u16,
+    headers: BTreeMap<String, String>,
+    body: Vec<u8>,
+}
+
+fn parse_response_parts(bytes: &[u8]) -> Result<HttpResponseParts, CoreCommandTransportError> {
     let header_end = find_bytes(bytes, b"\r\n\r\n").ok_or_else(|| {
         CoreCommandTransportError::InvalidHttpResponse(
             "invalid daemon HTTP response: missing header terminator".to_owned(),
@@ -469,12 +519,11 @@ fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTr
     } else {
         raw_body.to_vec()
     };
-    let json = if body.iter().all(u8::is_ascii_whitespace) {
-        Value::Object(Default::default())
-    } else {
-        serde_json::from_slice(&body)?
-    };
-    Ok(DaemonJsonResponse { status, json })
+    Ok(HttpResponseParts {
+        status,
+        headers: response_headers,
+        body,
+    })
 }
 
 fn complete_response_len(bytes: &[u8]) -> Result<Option<usize>, CoreCommandTransportError> {

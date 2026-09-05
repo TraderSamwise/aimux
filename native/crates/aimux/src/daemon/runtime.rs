@@ -1,7 +1,8 @@
 use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_project_service_launch_command};
 use crate::config::load_config_for_project;
 use crate::core_command_transport::{
-    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
+    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
+    execute_loopback_binary_request, execute_loopback_json_request,
 };
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use crate::daemon::json::{
@@ -955,13 +956,34 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
 
     fn proxy_binary_request(
         &mut self,
-        _target_url: &str,
-        _method: &str,
-        _headers: &BTreeMap<String, String>,
-        _timeout_ms: u64,
-        _max_bytes: usize,
+        target_url: &str,
+        method: &str,
+        headers: &BTreeMap<String, String>,
+        timeout_ms: u64,
+        max_bytes: usize,
     ) -> Result<ProxyBinaryResponse, String> {
-        Err(self.unported("binary proxy"))
+        let daemon_method = if method.eq_ignore_ascii_case("POST") {
+            DaemonHttpMethod::Post
+        } else {
+            DaemonHttpMethod::Get
+        };
+        let request = DaemonJsonRequest {
+            url: target_url.to_owned(),
+            method: daemon_method,
+            headers: headers.clone(),
+            body: None,
+            timeout_ms: Some(timeout_ms),
+        };
+        execute_loopback_binary_request(&request, max_bytes)
+            .map(|response| ProxyBinaryResponse {
+                status: response.status,
+                body: response.body,
+                content_type: response.content_type,
+            })
+            .map_err(|error| match error {
+                CoreCommandTransportError::DaemonRequest { message, .. } => message,
+                other => other.to_string(),
+            })
     }
 }
 
