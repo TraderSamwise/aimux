@@ -3,6 +3,7 @@ pub mod attachments;
 pub mod dispatcher;
 pub mod exchange_reads;
 pub mod exchange_retention;
+pub mod expose_ordering;
 pub mod http;
 pub mod library;
 pub mod metadata;

@@ -11,6 +11,10 @@ use crate::runtime_topology::{
 };
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::expose_ordering::{
+    ExposeOrderingOptions, ExposeSublabel, assign_worktree_tones, dashboard_worktree_order_paths,
+    expose_tile_context_for_item, order_expose_items,
+};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
 use super::usage::{load_last_used_state, parse_recency_timestamp};
@@ -74,6 +78,9 @@ pub struct SwitchableAgentItem {
     pub overseer: bool,
     pub scribe: bool,
     pub alive: bool,
+    pub project_id: Option<String>,
+    pub project_root: Option<String>,
+    pub project_name: Option<String>,
 }
 
 pub fn route_switchable_agent_request(
@@ -122,16 +129,51 @@ pub fn route_switchable_agent_request(
     let metadata = load_metadata_state(&project_state_dir);
     let entries = topology_switchable_entries(&topology, &metadata.sessions);
     let last_used = load_last_used_state(&project_state_dir);
-    let items = list_switchable_agent_items(
+    let mut items = list_switchable_agent_items(
         &entries,
         &metadata.sessions,
         &switch_context,
         &options,
         &last_used,
-    )
-    .into_iter()
-    .map(|item| serialize_route_item(&item, options.raw_labels, expose))
-    .collect::<Vec<_>>();
+    );
+    let sublabel = if expose && options.scope == AgentListScope::All {
+        ExposeSublabel::Worktree
+    } else {
+        ExposeSublabel::None
+    };
+    let expose_tones = if expose {
+        let expose_options = ExposeOrderingOptions {
+            worktree_order_by_project_root: BTreeMap::from([(
+                clean_path_string(&switch_context.project_root),
+                dashboard_worktree_order_paths(&switch_context.project_root, &topology),
+            )]),
+            sort_mode_recent_output: params
+                .get("sort")
+                .is_some_and(|value| value == "recent-output"),
+        };
+        items = order_expose_items(
+            &items,
+            &switch_context.project_root,
+            sublabel,
+            &expose_options,
+        );
+        Some(assign_worktree_tones(&items, &switch_context.project_root))
+    } else {
+        None
+    };
+    let route_project_root = switch_context.project_root.clone();
+    let items = items
+        .into_iter()
+        .map(|item| {
+            serialize_route_item(
+                &item,
+                options.raw_labels,
+                sublabel,
+                &route_project_root,
+                expose_tones.as_ref(),
+            )
+        })
+        .collect::<Vec<_>>();
     Some(ProjectServiceDispatchResponse::json(
         200,
         json!({ "ok": true, "items": items }),
@@ -249,6 +291,9 @@ pub fn serialize_fast_control_item(item: &SwitchableAgentItem) -> Value {
     serialized.insert("recentRank".into(), Value::from(item.recent_rank));
     serialized.insert("overseer".into(), Value::Bool(item.overseer));
     serialized.insert("scribe".into(), Value::Bool(item.scribe));
+    insert_optional_string(&mut serialized, "projectId", item.project_id.as_deref());
+    insert_optional_string(&mut serialized, "projectRoot", item.project_root.as_deref());
+    insert_optional_string(&mut serialized, "projectName", item.project_name.as_deref());
     Value::Object(serialized)
 }
 
@@ -354,6 +399,9 @@ fn build_switchable_agent_items(
                 overseer: is_overseer_window(metadata_sessions, &entry.metadata),
                 scribe: is_scribe_window(metadata_sessions, &entry.metadata),
                 alive: entry.alive,
+                project_id: None,
+                project_root: None,
+                project_name: None,
             }
         })
         .collect()
@@ -469,7 +517,13 @@ fn service_switchable_entry(service: &Value) -> Option<ManagedWindowEntry> {
     })
 }
 
-fn serialize_route_item(item: &SwitchableAgentItem, raw_labels: bool, expose: bool) -> Value {
+fn serialize_route_item(
+    item: &SwitchableAgentItem,
+    raw_labels: bool,
+    sublabel: ExposeSublabel,
+    project_root: &str,
+    expose_tones: Option<&BTreeMap<String, i64>>,
+) -> Value {
     let mut serialized = serialize_fast_control_item(item);
     if !raw_labels
         && let Some(last_used_at) = item.last_used_at.as_deref()
@@ -481,7 +535,15 @@ fn serialize_route_item(item: &SwitchableAgentItem, raw_labels: bool, expose: bo
             Value::String(format!("{} · {relative}", item.label)),
         );
     }
-    if expose
+    if let Some(tones) = expose_tones
+        && let Value::Object(map) = &mut serialized
+    {
+        map.insert(
+            "exposeContext".into(),
+            expose_tile_context_for_item(item, sublabel, project_root, tones),
+        );
+    }
+    if expose_tones.is_some()
         && let Some(chip) = agent_status_chip(&item.metadata)
         && let Value::Object(map) = &mut serialized
     {
