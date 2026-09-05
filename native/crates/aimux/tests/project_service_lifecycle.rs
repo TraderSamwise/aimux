@@ -1185,6 +1185,139 @@ fn graveyard_agent_resurrect_allows_missing_graveyarded_worktree() {
     cleanup(project);
 }
 
+#[test]
+fn worktree_graveyard_stops_services_and_moves_topology_entry() {
+    let project = temp_project("worktree-graveyard");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, false);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "graveyarded");
+    assert_eq!(
+        response.body["transition"]["operation"],
+        "worktree.graveyard"
+    );
+    assert_eq!(runtime.killed, vec!["@service"]);
+    let topology = read_topology(&state_dir);
+    assert_eq!(topology["worktrees"][0]["status"], "graveyard");
+    assert!(topology["worktrees"][0]["removedAt"].as_str().is_some());
+    assert_eq!(topology["worktreeGraveyard"][0]["reason"], "user-requested");
+    assert_eq!(topology["services"][0]["status"], "stopped");
+    assert!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|binding| binding["nodeId"] != "service:svc-web")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn worktree_graveyard_rejects_attached_live_agent() {
+    let project = temp_project("worktree-graveyard-attached");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("while agent \"active agent\" is attached")
+    );
+    assert!(runtime.killed.is_empty());
+    assert_eq!(
+        read_topology(&state_dir)["worktrees"][0]["status"],
+        "active"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn graveyard_worktree_resurrect_restores_active_topology_entry() {
+    let project = temp_project("worktree-resurrect");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_graveyard_worktree_topology(&state_dir, &worktree);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_WORKTREE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "active");
+    assert_eq!(
+        response.body["transition"]["operation"],
+        "graveyard.worktree.resurrect"
+    );
+    let topology = read_topology(&state_dir);
+    assert_eq!(topology["worktrees"][0]["status"], "active");
+    assert!(topology["worktrees"][0].get("removedAt").is_none());
+    assert_eq!(topology["worktreeGraveyard"], json!([]));
+    cleanup(project);
+}
+
+#[test]
+fn graveyard_worktree_resurrect_rejects_missing_checkout() {
+    let project = temp_project("worktree-resurrect-missing");
+    let state_dir = project.join("state");
+    let worktree = project.join("missing");
+    write_graveyard_worktree_topology(&state_dir, &worktree);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_WORKTREE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("checkout is missing")
+    );
+    cleanup(project);
+}
+
 fn write_graveyard_agent_topology(
     state_dir: &PathBuf,
     worktree_path: &Path,
@@ -1244,6 +1377,123 @@ fn write_graveyard_agent_topology(
         "services": [],
         "worktrees": [],
         "worktreeGraveyard": worktree_graveyard,
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_active_worktree_topology(state_dir: &PathBuf, worktree_path: &Path, include_agent: bool) {
+    let worktree_path = worktree_path.to_string_lossy();
+    let sessions = if include_agent {
+        json!([{
+            "id": "codex-live",
+            "nodeId": "agent:codex-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "running",
+            "label": "active agent",
+            "worktreePath": worktree_path.as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }])
+    } else {
+        json!([])
+    };
+    let nodes = if include_agent {
+        json!([
+            { "id": "agent:codex-live", "rigId": "rig-1", "logicalId": "codex-live", "toolConfigKey": "codex", "cwd": worktree_path.as_ref(), "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "service:svc-web", "rigId": "rig-1", "logicalId": "svc-web", "role": "service", "runtime": "service", "toolConfigKey": "service", "cwd": worktree_path.as_ref(), "label": "web", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ])
+    } else {
+        json!([
+            { "id": "service:svc-web", "rigId": "rig-1", "logicalId": "svc-web", "role": "service", "runtime": "service", "toolConfigKey": "service", "cwd": worktree_path.as_ref(), "label": "web", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ])
+    };
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": nodes,
+        "edges": [],
+        "bindings": [{
+            "id": "tmux:service:svc-web",
+            "nodeId": "service:svc-web",
+            "tmuxSession": "aimux",
+            "tmuxWindowId": "@service",
+            "tmuxWindowIndex": 2,
+            "tmuxWindowName": "web",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "sessions": sessions,
+        "services": [{
+            "id": "svc-web",
+            "rigId": "rig-1",
+            "nodeId": "service:svc-web",
+            "status": "running",
+            "command": "zsh",
+            "args": ["-lc", "yarn dev"],
+            "launchCommandLine": "yarn dev",
+            "worktreePath": worktree_path.as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "worktrees": [{
+            "id": "wt-1",
+            "rigId": "rig-1",
+            "path": worktree_path.as_ref(),
+            "name": "wt",
+            "branch": "feature/wt",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_graveyard_worktree_topology(state_dir: &PathBuf, worktree_path: &Path) {
+    let worktree_path = worktree_path.to_string_lossy();
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        "worktrees": [{
+            "id": "wt-1",
+            "rigId": "rig-1",
+            "path": worktree_path.as_ref(),
+            "name": "wt",
+            "branch": "feature/wt",
+            "status": "graveyard",
+            "removedAt": "2026-01-01T00:00:10.000Z",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:10.000Z"
+        }],
+        "worktreeGraveyard": [{
+            "id": "graveyard-wt",
+            "rigId": "rig-1",
+            "worktreeId": "wt-1",
+            "path": worktree_path.as_ref(),
+            "name": "wt",
+            "branch": "feature/wt",
+            "graveyardedAt": "2026-01-01T00:00:10.000Z"
+        }],
         "teamRoles": [],
         "remoteClients": [],
         "lifecycleOperations": [],
