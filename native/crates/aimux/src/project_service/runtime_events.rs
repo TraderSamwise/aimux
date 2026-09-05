@@ -1,6 +1,51 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
+use std::path::Path;
 
-use super::notifications::NotificationWriteInput;
+use super::dispatcher::ProjectServiceDispatchResponse;
+use super::metadata::update_session_metadata;
+use super::notification_context::is_session_notification_focused;
+use super::notifications::{NotificationWriteInput, add_notification};
+
+pub fn route_runtime_event(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    event: Value,
+) -> Option<ProjectServiceDispatchResponse> {
+    let project_state_dir = project_state_dir.as_ref();
+    let normalized = normalize_agent_event(event);
+    let focused = is_session_notification_focused(project_state_dir, session_id);
+    if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
+        apply_agent_event(current, normalized.clone(), focused)
+    }) {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    if let Some(notification) = notification_for_event(session_id, &normalized, focused)
+        && let Err(error) = add_notification(project_state_dir, notification)
+    {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    Some(ok())
+}
+
+pub fn route_runtime_set_attention(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    attention: String,
+) -> Option<ProjectServiceDispatchResponse> {
+    let project_state_dir = project_state_dir.as_ref();
+    if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
+        set_derived_attention(current, attention.clone())
+    }) {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    let focused = is_session_notification_focused(project_state_dir, session_id);
+    if let Some(notification) = notification_for_attention(session_id, &attention, focused)
+        && let Err(error) = add_notification(project_state_dir, notification)
+    {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    Some(ok())
+}
 
 pub fn normalize_agent_event(event: Value) -> Value {
     let mut event = object_value(event);
@@ -279,6 +324,16 @@ pub fn notification_for_attention(
     }
 }
 
+fn set_derived_attention(current: Value, attention: String) -> Value {
+    let mut derived = current
+        .get("derived")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    derived.insert("attention".to_owned(), Value::String(attention));
+    object_insert(current, "derived", Value::Object(derived))
+}
+
 fn is_agent_output_event_kind(kind: &str) -> bool {
     kind != "prompt" && kind != "task_assigned"
 }
@@ -348,6 +403,14 @@ fn object_value(value: Value) -> Map<String, Value> {
         Value::Object(map) => map,
         _ => Map::new(),
     }
+}
+
+fn ok() -> ProjectServiceDispatchResponse {
+    json_response(200, json!({ "ok": true }))
+}
+
+fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(status, body)
 }
 
 fn now_iso() -> String {

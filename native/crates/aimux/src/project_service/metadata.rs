@@ -4,9 +4,6 @@ use std::path::Path;
 use crate::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use crate::project_api_contract::routes;
 
-use super::agent_tracker::{
-    apply_agent_event, normalize_agent_event, notification_for_attention, notification_for_event,
-};
 use super::dispatcher::{
     ProjectServiceDispatchResponse, project_service_pathname,
     route_unimplemented_project_service_request,
@@ -14,6 +11,7 @@ use super::dispatcher::{
 use super::notification_context::is_session_notification_focused;
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::router::ProjectServiceRequestContext;
+use super::runtime_events::{route_runtime_event, route_runtime_set_attention};
 use super::runtime_exchange::{
     compact_runtime_exchange_file, inspect_runtime_exchange_store, runtime_exchange_path,
 };
@@ -196,27 +194,6 @@ pub fn route_runtime_metadata_request(
     }
 }
 
-fn route_runtime_event(
-    project_state_dir: impl AsRef<Path>,
-    session_id: &str,
-    event: Value,
-) -> Option<ProjectServiceDispatchResponse> {
-    let project_state_dir = project_state_dir.as_ref();
-    let normalized = normalize_agent_event(event);
-    let focused = is_session_notification_focused(project_state_dir, session_id);
-    if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
-        apply_agent_event(current, normalized.clone(), focused)
-    }) {
-        return Some(json_response(500, json!({ "ok": false, "error": error })));
-    }
-    if let Some(notification) = notification_for_event(session_id, &normalized, focused)
-        && let Err(error) = add_notification(project_state_dir, notification)
-    {
-        return Some(json_response(500, json!({ "ok": false, "error": error })));
-    }
-    Some(ok())
-}
-
 fn route_runtime_notify(
     project_state_dir: impl AsRef<Path>,
     body: &Value,
@@ -250,26 +227,6 @@ fn route_runtime_notify(
         Ok(_) => ok(),
         Err(error) => json_response(500, json!({ "ok": false, "error": error })),
     }
-}
-
-fn route_runtime_set_attention(
-    project_state_dir: impl AsRef<Path>,
-    session_id: &str,
-    attention: String,
-) -> Option<ProjectServiceDispatchResponse> {
-    let project_state_dir = project_state_dir.as_ref();
-    if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
-        set_derived_attention(current, attention.clone())
-    }) {
-        return Some(json_response(500, json!({ "ok": false, "error": error })));
-    }
-    let focused = is_session_notification_focused(project_state_dir, session_id);
-    if let Some(notification) = notification_for_attention(session_id, &attention, focused)
-        && let Err(error) = add_notification(project_state_dir, notification)
-    {
-        return Some(json_response(500, json!({ "ok": false, "error": error })));
-    }
-    Some(ok())
 }
 
 pub fn update_session_metadata(
@@ -368,16 +325,6 @@ fn set_derived_activity(current: Value, activity: String) -> Value {
         derived.insert("becameIdleAt".to_owned(), Value::String(now_iso()));
     }
     derived.insert("activity".to_owned(), Value::String(activity));
-    object_insert(current, "derived", Value::Object(derived))
-}
-
-fn set_derived_attention(current: Value, attention: String) -> Value {
-    let mut derived = current
-        .get("derived")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    derived.insert("attention".to_owned(), Value::String(attention));
     object_insert(current, "derived", Value::Object(derived))
 }
 

@@ -1,6 +1,5 @@
 pub mod agent_controls;
 pub mod agent_output;
-pub mod agent_tracker;
 pub mod agents;
 pub mod attachments;
 pub mod coordination_mutations;
@@ -25,6 +24,7 @@ pub mod project_observability;
 pub mod reads;
 pub mod router;
 pub mod routes;
+pub mod runtime_events;
 pub mod runtime_exchange;
 pub mod server;
 pub mod shell_state;
