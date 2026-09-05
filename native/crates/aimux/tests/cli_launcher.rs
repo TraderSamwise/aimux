@@ -6,18 +6,25 @@ use aimux::cli_launcher::{
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct TestDir(PathBuf);
 
 impl TestDir {
     fn new() -> Self {
+        let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let mut path = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        path.push(format!("aimux-cli-launcher-test-{unique}"));
+        path.push(format!(
+            "aimux-cli-launcher-test-{}-{sequence}-{unique}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).expect("create test dir");
         Self(path)
     }

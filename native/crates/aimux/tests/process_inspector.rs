@@ -1,5 +1,5 @@
 use aimux::process_inspector::{
-    ProjectServiceProcessIdentity, command_arg_value_matches,
+    ProjectServiceProcessIdentity, command_arg_value_matches, is_aimux_daemon_process_args,
     is_aimux_project_service_process_args, is_exited_process_state, is_pid_alive,
     list_process_args, list_process_parents, read_process_args,
 };
@@ -67,6 +67,22 @@ fn project_service_identity_falls_back_to_cwd_for_legacy_processes() {
         "node launcher-bin.js __project-service-internal",
         Some("."),
         &expected
+    ));
+}
+
+#[test]
+fn daemon_process_identity_requires_aimux_daemon_run_command() {
+    assert!(is_aimux_daemon_process_args(
+        "/Users/sam/.aimux/native/current/bin/aimux daemon run"
+    ));
+    assert!(is_aimux_daemon_process_args(
+        "/opt/homebrew/bin/node /Users/sam/.aimux/native/current/dist/launcher-bin.js daemon run daemon"
+    ));
+    assert!(!is_aimux_daemon_process_args(
+        "/opt/homebrew/bin/node /tmp/not-aimux.js daemon run"
+    ));
+    assert!(!is_aimux_daemon_process_args(
+        "/Users/sam/.aimux/native/current/bin/aimux project start"
     ));
 }
 

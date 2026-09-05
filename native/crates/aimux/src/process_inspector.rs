@@ -13,6 +13,13 @@ pub struct ProjectServiceProcessIdentity {
     pub project_root: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessFingerprint {
+    pub pid: i32,
+    pub args: String,
+    pub started_at: String,
+}
+
 fn trim_shell_quotes(value: &str) -> &str {
     if value.len() >= 2
         && ((value.starts_with('"') && value.ends_with('"'))
@@ -138,6 +145,30 @@ fn read_process_state(pid: i32) -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+pub fn read_process_start_time(pid: i32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|started_at| !started_at.is_empty())
+}
+
+pub fn read_process_fingerprint(pid: i32) -> Option<ProcessFingerprint> {
+    Some(ProcessFingerprint {
+        pid,
+        args: read_process_args(pid)?,
+        started_at: read_process_start_time(pid)?,
+    })
+}
+
+pub fn process_fingerprint_matches(expected: &ProcessFingerprint) -> bool {
+    read_process_fingerprint(expected.pid).is_some_and(|actual| actual == *expected)
+}
+
 pub fn is_pid_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
@@ -189,6 +220,26 @@ pub fn is_aimux_project_service_process(
     is_aimux_project_service_process_args(&args, read_process_cwd(pid).as_deref(), expected)
 }
 
+pub fn is_aimux_daemon_process(pid: i32) -> bool {
+    read_process_args(pid).is_some_and(|args| is_aimux_daemon_process_args(&args))
+}
+
+pub fn is_aimux_daemon_process_args(args: &str) -> bool {
+    let executable_matches = args
+        .split_whitespace()
+        .map(trim_shell_quotes)
+        .any(is_aimux_executable_token);
+    executable_matches && has_arg_sequence(args, &["daemon", "run"])
+}
+
+fn is_aimux_executable_token(token: &str) -> bool {
+    let name = Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token);
+    name == "aimux" || name.starts_with("launcher-bin")
+}
+
 pub fn is_aimux_project_service_process_args(
     args: &str,
     cwd: Option<&str>,
@@ -214,6 +265,16 @@ pub fn is_aimux_project_service_process_args(
         return false;
     }
     true
+}
+
+fn has_arg_sequence(args: &str, sequence: &[&str]) -> bool {
+    let tokens = args
+        .split_whitespace()
+        .map(trim_shell_quotes)
+        .collect::<Vec<_>>();
+    tokens
+        .windows(sequence.len())
+        .any(|window| window == sequence)
 }
 
 fn normalize_path(path: &str) -> String {
