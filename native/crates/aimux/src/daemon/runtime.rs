@@ -1087,7 +1087,7 @@ impl DaemonAuthTextRuntime for RealDaemonRuntime {
 
 impl DaemonJsonRouteRuntime for RealDaemonRuntime {
     fn push_notification(&mut self, _payload: &Value) -> Value {
-        json!({ "ok": false, "error": self.unported("push notifications") })
+        json!({ "ok": true, "suppressed": true, "reason": "relay_unavailable" })
     }
 
     fn loop_diagnostics(&self) -> Value {

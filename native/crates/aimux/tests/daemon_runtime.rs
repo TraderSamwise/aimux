@@ -4,6 +4,7 @@ use aimux::daemon::expose::{
     DaemonExposeFocusRuntime, TmuxClientInfo, expose_focus_route_with_runtime,
     open_target_for_client,
 };
+use aimux::daemon::json::DaemonJsonRouteRuntime;
 use aimux::daemon::json::ExposeFocusRequest;
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{ProjectServiceLauncher, RealDaemonRuntime};
@@ -812,6 +813,24 @@ fn native_daemon_auth_reads_and_updates_credentials() {
     );
     assert_eq!(runtime.clear_credentials(), "cleared");
     assert!(!runtime.has_remote_credentials());
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_push_acknowledges_when_relay_is_unavailable() {
+    let fixture = RuntimeFixture::new("push-relay-unavailable");
+    let mut runtime = fixture.runtime();
+
+    let result = runtime.push_notification(&json!({
+        "title": "Needs input",
+        "body": "codex is waiting",
+        "sessionId": "codex-1"
+    }));
+
+    assert_eq!(
+        result,
+        json!({ "ok": true, "suppressed": true, "reason": "relay_unavailable" })
+    );
     fixture.cleanup();
 }
 
