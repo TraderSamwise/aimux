@@ -80,6 +80,8 @@ Animations on interactive app surfaces must run on the native/UI thread. Use
 Reanimated shared values/styles or React Native `Animated` with
 `useNativeDriver: true`; do not introduce JS-driven layout animations for chat,
 keyboard, scrolling, navigation chrome, composer, or other touch-critical paths.
+Do not animate layout dimensions in touch-critical scroll surfaces; snap layout
+state and use one-off native opacity/transform transitions, or skip animation.
 
 ## Shared Chats
 

@@ -10,12 +10,6 @@ import {
 import { usePathname } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { KeyRound, Menu } from "lucide-react-native";
-import Reanimated, {
-  Easing as ReanimatedEasing,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
 import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
@@ -23,17 +17,14 @@ import { SharedSidebar } from "@/components/SharedSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
-import { appChromeCollapsedAtom, sidebarOpenAtom } from "@/stores/ui";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
-const APP_CHROME_COLLAPSE_ANIMATION_MS = 140;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
@@ -41,12 +32,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isDesktop = width >= 1024;
   const isTablet = width >= 640 && width < 1024;
   const isMobile = width < 640;
-  const safeAreaInsets = useSafeAreaInsets();
-  const topInset = resolveChromeTopInset(safeAreaInsets.top);
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
-  const appChromeCollapsed = useAtomValue(appChromeCollapsedAtom) && isMobile;
   const pathname = usePathname();
   const activeShare = useRouteShare();
   const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
@@ -57,8 +45,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
   const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
   const [translateX] = useState(() => new RNAnimated.Value(-DRAWER_WIDTH));
-  const appChromeCollapseProgress = useSharedValue(0);
-  const [appChromeHeight, setAppChromeHeight] = useState(56 + topInset);
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
 
@@ -74,22 +60,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       useNativeDriver: true,
     }).start();
   }, [sidebarOpen, translateX]);
-
-  useEffect(() => {
-    appChromeCollapseProgress.value = withTiming(appChromeCollapsed ? 1 : 0, {
-      duration: APP_CHROME_COLLAPSE_ANIMATION_MS,
-      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
-    });
-  }, [appChromeCollapseProgress, appChromeCollapsed]);
-
-  const appChromeVisibilityStyle = useAnimatedStyle(() => {
-    const progress = appChromeCollapseProgress.value;
-    return {
-      height: appChromeHeight * (1 - progress),
-      opacity: progress < 0.7 ? 1 - (progress / 0.7) * 0.92 : (0.08 * (1 - progress)) / 0.3,
-      transform: [{ translateY: -appChromeHeight * progress }],
-    };
-  }, [appChromeHeight]);
 
   useEffect(() => {
     if (!isDesktopNative) return undefined;
@@ -129,41 +99,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <View className="flex-1 bg-background">
       <View style={shellZoomStyle}>
-        <Reanimated.View
-          pointerEvents={appChromeCollapsed ? "none" : "auto"}
-          style={[{ overflow: "hidden" }, appChromeVisibilityStyle]}
-        >
-          <View
-            onLayout={(event) => {
-              const nextHeight = Math.ceil(event.nativeEvent.layout.height);
-              if (nextHeight > 0) setAppChromeHeight(nextHeight);
-            }}
-          >
-            <TopBar left={hamburger} />
-            {showPairingBanner ? (
-              <Pressable
-                accessibilityLabel="Pair this browser"
-                accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
-                onPress={() => setPairingDialogOpen(true)}
-                className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
-              >
-                <KeyRound size={16} color="#fbbf24" />
-                <View className="ml-2 min-w-0 flex-1">
-                  <Text className="text-[13px] font-semibold text-amber-200">
-                    Approve this browser to connect
-                  </Text>
-                  <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
-                    Run {APPROVE_COMMAND}
-                    {pendingApproval?.approvalCode
-                      ? ` and match code ${pendingApproval.approvalCode}`
-                      : ""}
-                    .
-                  </Text>
-                </View>
-              </Pressable>
-            ) : null}
-          </View>
-        </Reanimated.View>
+        <View style={{ flexShrink: 0 }}>
+          <TopBar left={hamburger} />
+          {showPairingBanner ? (
+            <Pressable
+              accessibilityLabel="Pair this browser"
+              accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
+              onPress={() => setPairingDialogOpen(true)}
+              className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
+            >
+              <KeyRound size={16} color="#fbbf24" />
+              <View className="ml-2 min-w-0 flex-1">
+                <Text className="text-[13px] font-semibold text-amber-200">
+                  Approve this browser to connect
+                </Text>
+                <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
+                  Run {APPROVE_COMMAND}
+                  {pendingApproval?.approvalCode
+                    ? ` and match code ${pendingApproval.approvalCode}`
+                    : ""}
+                  .
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
+        </View>
         <View className="flex-1 flex-row">
           {isDesktop ? <Sidebar /> : null}
           {isTablet && sidebarOpen ? <Sidebar /> : null}
