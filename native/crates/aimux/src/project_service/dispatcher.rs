@@ -18,6 +18,22 @@ pub struct ProjectServiceDispatchResponse {
     pub body: Value,
     pub bytes: Option<Vec<u8>>,
     pub content_type: Option<String>,
+    pub stream: Option<ProjectServiceStreamPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectServiceStreamPlan {
+    pub kind: ProjectServiceStreamKind,
+    pub session_id: Option<String>,
+    pub start_line: Option<i64>,
+    pub interval_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectServiceStreamKind {
+    ProjectEvents,
+    AgentOutput,
+    AgentInteraction,
 }
 
 impl ProjectServiceDispatchResponse {
@@ -27,6 +43,7 @@ impl ProjectServiceDispatchResponse {
             body,
             bytes: None,
             content_type: None,
+            stream: None,
         }
     }
 
@@ -36,15 +53,21 @@ impl ProjectServiceDispatchResponse {
             body: Value::Null,
             bytes: Some(bytes),
             content_type: Some(content_type.into()),
+            stream: None,
         }
     }
 
     pub fn sse_snapshot(bytes: Vec<u8>) -> Self {
+        Self::sse_stream_snapshot(bytes, None)
+    }
+
+    pub fn sse_stream_snapshot(bytes: Vec<u8>, stream: Option<ProjectServiceStreamPlan>) -> Self {
         Self {
             status: 200,
             body: Value::Null,
             bytes: Some(bytes),
             content_type: Some("text/event-stream".to_owned()),
+            stream,
         }
     }
 }

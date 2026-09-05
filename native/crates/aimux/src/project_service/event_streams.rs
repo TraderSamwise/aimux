@@ -6,7 +6,10 @@ use crate::project_api_contract::routes;
 use super::agent_output::{
     agent_output_capture_window, parse_agent_output_read_purpose, parse_agent_output_response_mode,
 };
-use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::dispatcher::{
+    ProjectServiceDispatchResponse, ProjectServiceStreamKind, ProjectServiceStreamPlan,
+    project_service_pathname,
+};
 use super::http::{parse_optional_integer, query_params, trimmed_query};
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
@@ -37,9 +40,10 @@ fn route_project_events_stream(
         Err(error) => return json_response(400, json!({ "ok": false, "error": error })),
     };
     let capture_window = agent_output_capture_window(parsed.start_line);
-    ProjectServiceDispatchResponse::sse_snapshot(encode_sse_event(
-        "ready",
-        &json!({
+    ProjectServiceDispatchResponse::sse_stream_snapshot(
+        encode_sse_event(
+            "ready",
+            &json!({
             "projectId": compute_project_id(context.project_root()),
             "ts": now_iso(),
             "sessionId": parsed.session_id,
@@ -50,8 +54,15 @@ fn route_project_events_stream(
             "outputTailOnly": capture_window.tail_only,
             "outputStartLineClamped": capture_window.clamped,
             "intervalMs": parsed.interval_ms,
+            }),
+        ),
+        Some(ProjectServiceStreamPlan {
+            kind: ProjectServiceStreamKind::ProjectEvents,
+            session_id: parsed.session_id,
+            start_line: Some(capture_window.start_line),
+            interval_ms: parsed.interval_ms,
         }),
-    ))
+    )
 }
 
 fn route_agent_output_stream(path: &str) -> ProjectServiceDispatchResponse {
@@ -61,9 +72,10 @@ fn route_agent_output_stream(path: &str) -> ProjectServiceDispatchResponse {
         Err(error) => return json_response(400, json!({ "ok": false, "error": error })),
     };
     let capture_window = agent_output_capture_window(parsed.start_line);
-    ProjectServiceDispatchResponse::sse_snapshot(encode_sse_event(
-        "ready",
-        &json!({
+    ProjectServiceDispatchResponse::sse_stream_snapshot(
+        encode_sse_event(
+            "ready",
+            &json!({
             "sessionId": parsed.session_id,
             "startLine": capture_window.start_line,
             "requestedStartLine": capture_window.requested_start_line,
@@ -72,17 +84,32 @@ fn route_agent_output_stream(path: &str) -> ProjectServiceDispatchResponse {
             "outputTailOnly": capture_window.tail_only,
             "outputStartLineClamped": capture_window.clamped,
             "intervalMs": parsed.interval_ms,
+            }),
+        ),
+        Some(ProjectServiceStreamPlan {
+            kind: ProjectServiceStreamKind::AgentOutput,
+            session_id: parsed.session_id,
+            start_line: Some(capture_window.start_line),
+            interval_ms: parsed.interval_ms,
         }),
-    ))
+    )
 }
 
 fn route_interaction_stream(
     context: &ProjectServiceRequestContext,
 ) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse::sse_snapshot(encode_sse_event(
-        "ready",
-        &json!({ "pending": pending_interactions_for_stream(context.project_state_dir()) }),
-    ))
+    ProjectServiceDispatchResponse::sse_stream_snapshot(
+        encode_sse_event(
+            "ready",
+            &json!({ "pending": pending_interactions_for_stream(context.project_state_dir()) }),
+        ),
+        Some(ProjectServiceStreamPlan {
+            kind: ProjectServiceStreamKind::AgentInteraction,
+            session_id: None,
+            start_line: None,
+            interval_ms: 500,
+        }),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
