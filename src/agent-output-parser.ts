@@ -94,6 +94,15 @@ const looksLikeToolActionText = (text: string) => {
   );
 };
 
+const looksLikeClaudeCollapsedProgressText = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return (
+    /^(?:Made|Reading)\s+\d+\s+.+(?:ctrl\+o|to expand)/i.test(trimmed) ||
+    /^Read\s*\d+\s*files?\b.*(?:ctrl\+o|to expand)/i.test(trimmed)
+  );
+};
+
 const inferAgentOutputTool = (raw: string): string | null => {
   const text = String(raw || "");
   const hasCodexChrome =
@@ -304,7 +313,11 @@ export function parseAgentOutput(
       /^You have \d+ usage limit resets available\b/i.test(dotBulletText) ||
       looksLikeRanCommandText(trimmed) ||
       looksLikeToolActionText(trimmed) ||
+      (tool === "claude" && looksLikeClaudeCollapsedProgressText(trimmed)) ||
       (/^(?:•|⏺)\s?/.test(trimmed) && looksLikeToolActionText(conversationBulletText)) ||
+      (/^(?:•|⏺)\s?/.test(trimmed) &&
+        tool === "claude" &&
+        looksLikeClaudeCollapsedProgressText(conversationBulletText)) ||
       (/^•\s?/.test(trimmed) && looksLikeActivityProgressText(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||
       (/^\*\s+/.test(trimmed) && looksLikeActivityProgressText(starBulletText)) ||

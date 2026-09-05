@@ -546,6 +546,30 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toBe("All checks are green.");
   });
 
+  it("keeps Claude scratchpad image progress out of assistant chat messages", () => {
+    const withoutRead = ["❯ [Image #17]", "", "⏺ Made 1 scratchpad edit +58 (ctrl+o to expand)"].join("\n");
+    const withRead = [
+      "❯ [Image #17]",
+      "",
+      "⏺ Made 1 scratchpad edit +58 (ctrl+o to expand)",
+      "",
+      "⏺ Reading 1 file... (ctrl+o to expand)",
+      "  ⎿  /private/tmp/claude-501/-Users-sam-cs-thegrand/652d88e4-76d2-460b-ae6a-58ff58a4daed/scratchpad/v5.png",
+    ].join("\n");
+
+    const first = parseAgentOutput(withoutRead, { tool: "claude" });
+    const second = parseAgentOutput(withRead, { tool: "claude" });
+
+    expect(first.blocks.map((block) => block.type)).toEqual(["prompt", "status"]);
+    expect(second.blocks.map((block) => block.type)).toEqual(["prompt", "status"]);
+    expect(second.blocks[1]?.text).toContain("Made 1 scratchpad edit");
+    expect(second.blocks[1]?.text).toContain("Reading 1 file");
+    expect(second.blocks[1]?.text).toContain("scratchpad/v5.png");
+
+    expect(messagesFromParsedAgentOutput(first).map((message) => message.text)).toEqual(["[Image #17]"]);
+    expect(messagesFromParsedAgentOutput(second).map((message) => message.text)).toEqual(["[Image #17]"]);
+  });
+
   it("parses unmarked wrapped Claude tool actions as status without swallowing prose examples", () => {
     const raw = [
       "⏺ Running verification.",
