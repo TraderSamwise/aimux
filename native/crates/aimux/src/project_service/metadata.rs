@@ -146,11 +146,7 @@ pub fn route_runtime_metadata_request(
         routes::runtime::SET_ATTENTION => {
             let session = string_field(body, "session");
             let attention = string_field(body, "attention");
-            metadata_update_response(update_session_metadata(
-                &project_state_dir,
-                &session,
-                |current| set_derived_attention(current, attention),
-            ))
+            route_runtime_set_attention(&project_state_dir, &session, attention)
         }
         routes::runtime::MARK_SEEN => {
             let session = string_field(body, "session");
@@ -251,6 +247,26 @@ fn route_runtime_notify(
         Ok(_) => ok(),
         Err(error) => json_response(500, json!({ "ok": false, "error": error })),
     }
+}
+
+fn route_runtime_set_attention(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    attention: String,
+) -> Option<ProjectServiceDispatchResponse> {
+    let project_state_dir = project_state_dir.as_ref();
+    if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
+        set_derived_attention(current, attention.clone())
+    }) {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    let focused = is_session_notification_focused(project_state_dir, session_id);
+    if let Some(notification) = notification_for_attention(session_id, &attention, focused)
+        && let Err(error) = add_notification(project_state_dir, notification)
+    {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    Some(ok())
 }
 
 pub fn update_session_metadata(
@@ -619,6 +635,44 @@ fn notification_for_event(
             session_id: Some(session_id.to_owned()),
             title: format!("{session_id} errored"),
             body: fallback_string(&message, "Agent reported an error state."),
+            dedupe_key: Some(format!("error:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        _ => None,
+    }
+}
+
+fn notification_for_attention(
+    session_id: &str,
+    attention: &str,
+    focused: bool,
+) -> Option<NotificationWriteInput> {
+    let unread = !focused;
+    match attention {
+        "needs_input" => Some(NotificationWriteInput {
+            kind: Some("needs_input".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} needs input"),
+            body: "Agent is waiting for input.".to_owned(),
+            dedupe_key: Some(format!("needs_input:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        "blocked" => Some(NotificationWriteInput {
+            kind: Some("blocked".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} is blocked"),
+            body: "Agent reported a blocked state.".to_owned(),
+            dedupe_key: Some(format!("blocked:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        "error" => Some(NotificationWriteInput {
+            kind: Some("task_failed".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} errored"),
+            body: "Agent reported an error state.".to_owned(),
             dedupe_key: Some(format!("error:{session_id}")),
             unread,
             ..NotificationWriteInput::default()

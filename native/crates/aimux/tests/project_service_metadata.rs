@@ -328,6 +328,26 @@ fn runtime_set_attention_updates_derived_attention() {
         state.sessions["codex-1"]["derived"]["attention"],
         "needs_input"
     );
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 1);
+    assert_eq!(snapshot.notifications[0]["title"], "codex-1 needs input");
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Agent is waiting for input."
+    );
+    assert_eq!(
+        snapshot.notifications[0]["dedupeKey"],
+        "needs_input:codex-1"
+    );
     cleanup(project);
 }
 
