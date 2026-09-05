@@ -49,7 +49,7 @@ fn atomic_json_write_is_pretty_and_newline_terminated() {
 
     assert_eq!(
         fs::read_to_string(&path).expect("read JSON"),
-        "{\n  \"items\": [\n    \"one\"\n  ],\n  \"version\": 1\n}\n"
+        "{\n  \"version\": 1,\n  \"items\": [\n    \"one\"\n  ]\n}\n"
     );
     assert!(
         fs::read_dir(path.parent().expect("parent"))

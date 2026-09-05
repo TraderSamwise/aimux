@@ -5,6 +5,8 @@ pub mod contracts;
 pub mod core_cli;
 pub mod core_cli_routing;
 pub mod core_command_contract;
+pub mod core_command_transport;
+pub mod core_text;
 pub mod daemon_projects;
 pub mod daemon_state;
 pub mod launcher_env;

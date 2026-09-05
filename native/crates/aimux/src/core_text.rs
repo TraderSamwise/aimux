@@ -1,0 +1,1269 @@
+//! Text renderers translated from `src/core-text.ts`.
+//!
+//! Payloads intentionally remain untyped JSON values at this boundary. The
+//! TypeScript source receives API-shaped objects and applies its own runtime
+//! guards, so adding Rust DTOs here would change that contract prematurely.
+
+use serde_json::Value;
+
+fn field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    value.as_object().and_then(|object| object.get(key))
+}
+
+fn array<'a>(value: &'a Value, key: &str) -> &'a [Value] {
+    field(value, key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+fn object<'a>(value: &'a Value, key: &str) -> Option<&'a serde_json::Map<String, Value>> {
+    field(value, key).and_then(Value::as_object)
+}
+
+fn truthy(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => value.as_f64().is_some_and(|value| value != 0.0),
+        Some(Value::String(value)) => !value.is_empty(),
+        Some(Value::Array(_)) | Some(Value::Object(_)) => true,
+    }
+}
+
+fn js_string(value: Option<&Value>) -> String {
+    match value {
+        None => "undefined".into(),
+        Some(Value::Null) => "null".into(),
+        Some(Value::Bool(value)) => value.to_string(),
+        Some(Value::Number(value)) => value.to_string(),
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| js_string(Some(value)))
+            .collect::<Vec<_>>()
+            .join(","),
+        Some(Value::Object(_)) => "[object Object]".into(),
+    }
+}
+
+fn coalesce_string(value: Option<&Value>, fallback: &str) -> String {
+    match value {
+        None | Some(Value::Null) => fallback.into(),
+        value => js_string(value),
+    }
+}
+
+fn nullish_or<'a>(first: Option<&'a Value>, second: Option<&'a Value>) -> Option<&'a Value> {
+    match first {
+        None | Some(Value::Null) => second,
+        value => value,
+    }
+}
+
+fn nullish_chain<'a>(values: &[Option<&'a Value>]) -> Option<&'a Value> {
+    values
+        .iter()
+        .copied()
+        .find(|value| !matches!(value, None | Some(Value::Null)))
+        .flatten()
+}
+
+fn json_string(value: Option<&Value>) -> String {
+    value
+        .map(serde_json::to_string)
+        .and_then(Result::ok)
+        .unwrap_or_else(|| "undefined".into())
+}
+
+fn pad_end(value: String, width: usize) -> String {
+    format!("{value:<width$}")
+}
+
+fn pad_start(value: String, width: usize) -> String {
+    format!("{value:>width$}")
+}
+
+fn filtered_objects(values: &[Value]) -> Vec<&serde_json::Map<String, Value>> {
+    values.iter().filter_map(Value::as_object).collect()
+}
+
+pub fn render_core_daemon_status_lines(payload: &Value) -> Vec<String> {
+    let Some(daemon) = object(payload, "daemon") else {
+        return vec!["aimux daemon is not running.".into()];
+    };
+    let projects = array(payload, "projects");
+    let relay = object(payload, "relay");
+    let mut lines = vec![format!(
+        "Daemon pid={} port={}",
+        js_string(daemon.get("pid")),
+        js_string(daemon.get("port"))
+    )];
+    lines.push(format!("Known projects: {}", projects.len()));
+    lines.push(format!(
+        "Live project services: {}",
+        projects
+            .iter()
+            .filter(|project| field(project, "serviceAlive").and_then(Value::as_bool) == Some(true))
+            .count()
+    ));
+    let status = relay
+        .and_then(|relay| relay.get("status"))
+        .and_then(Value::as_str);
+    if status.is_some_and(|status| status != "off") {
+        let relay_url = relay
+            .and_then(|relay| relay.get("relayUrl"))
+            .and_then(Value::as_str);
+        lines.push(format!(
+            "Relay: {}{}",
+            status.unwrap(),
+            relay_url.map(|url| format!(" ({url})")).unwrap_or_default()
+        ));
+    } else {
+        lines.push("Relay: off".into());
+    }
+    lines
+}
+
+pub fn render_core_host_status_lines(payload: &Value, known_project: bool) -> Vec<String> {
+    if !known_project {
+        return vec![format!(
+            "No known control service for {}",
+            js_string(field(payload, "projectRoot"))
+        )];
+    }
+    let mut lines = vec![format!(
+        "Service: {}",
+        if field(payload, "serviceAlive").and_then(Value::as_bool) == Some(true) {
+            "live"
+        } else {
+            "idle"
+        }
+    )];
+    if let Some(pid) = field(payload, "projectService")
+        .and_then(|service| field(service, "pid"))
+        .and_then(Value::as_i64)
+    {
+        lines.push(format!("Service pid={pid}"));
+    }
+    lines.push(format!(
+        "Metadata: {}",
+        if truthy(field(payload, "metadataEndpoint")) {
+            json_string(field(payload, "metadataEndpoint"))
+        } else {
+            "not running".into()
+        }
+    ));
+    lines.push(format!(
+        "Expected manifest: {}",
+        json_string(field(payload, "expectedServiceManifest"))
+    ));
+    lines.push(format!(
+        "Tmux session: {}",
+        js_string(field(payload, "sessionName"))
+    ));
+    lines
+}
+
+pub fn render_core_project_ensure_lines(payload: &Value) -> Vec<String> {
+    let project = object(payload, "project");
+    vec![format!(
+        "Ensured project service for {} (pid {})",
+        js_string(project.and_then(|value| value.get("projectRoot"))),
+        js_string(project.and_then(|value| value.get("pid")))
+    )]
+}
+
+pub fn render_core_project_serve_lines(payload: &Value) -> Vec<String> {
+    let project = object(payload, "project");
+    vec![format!(
+        "aimux serve: daemon managing {} (service pid {})",
+        js_string(project.and_then(|value| value.get("projectRoot"))),
+        js_string(project.and_then(|value| value.get("pid")))
+    )]
+}
+
+pub fn render_core_project_stop_lines(payload: &Value) -> Vec<String> {
+    let Some(project) = object(payload, "project") else {
+        return vec!["No live project service to stop.".into()];
+    };
+    vec![format!(
+        "Stopped project service pid {}",
+        js_string(project.get("pid"))
+    )]
+}
+
+pub fn render_core_project_kill_lines(payload: &Value) -> Vec<String> {
+    let Some(project) = object(payload, "project") else {
+        return vec!["No live project service to kill.".into()];
+    };
+    vec![format!(
+        "Killed project service pid {}",
+        js_string(project.get("pid"))
+    )]
+}
+
+pub fn render_core_project_restart_lines(payload: &Value) -> Vec<String> {
+    if let Some(session) = field(payload, "dashboardSessionName").and_then(Value::as_str) {
+        vec![format!("Restarted project service for {session}")]
+    } else {
+        vec![format!(
+            "Restarted project service for {}",
+            js_string(field(payload, "projectRoot"))
+        )]
+    }
+}
+
+pub fn render_core_dashboard_reload_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "Reloaded dashboard for {}",
+        js_string(field(payload, "dashboardSessionName"))
+    )]
+}
+
+pub fn render_core_runtime_restart_lines(payload: &Value) -> Vec<String> {
+    vec![
+        format!(
+            "Restarted project runtime for {}",
+            js_string(field(payload, "projectRoot"))
+        ),
+        format!(
+            "Dashboard: {}:{}",
+            js_string(field(payload, "dashboardSessionName")),
+            js_string(
+                field(payload, "dashboardTarget").and_then(|target| field(target, "windowIndex"))
+            )
+        ),
+    ]
+}
+
+fn render_project_lines(projects: &[Value], live: &str, idle: &str) -> Vec<String> {
+    projects
+        .iter()
+        .map(|project| {
+            format!(
+                "{}  {}  {}",
+                js_string(field(project, "name")),
+                if field(project, "serviceAlive").and_then(Value::as_bool) == Some(true) {
+                    live
+                } else {
+                    idle
+                },
+                js_string(field(project, "path"))
+            )
+        })
+        .collect()
+}
+
+pub fn render_core_daemon_projects_lines(projects: &Value) -> Vec<String> {
+    render_project_lines(
+        projects.as_array().map(Vec::as_slice).unwrap_or_default(),
+        "service",
+        "idle",
+    )
+}
+pub fn render_core_projects_list_lines(projects: &Value) -> Vec<String> {
+    let projects = projects.as_array().map(Vec::as_slice).unwrap_or_default();
+    if projects.is_empty() {
+        vec!["No aimux projects found.".into()]
+    } else {
+        render_project_lines(projects, "live", "idle")
+    }
+}
+
+fn relay_last_error(relay: Option<&serde_json::Map<String, Value>>) -> Option<String> {
+    relay
+        .and_then(|relay| relay.get("lastError"))
+        .and_then(Value::as_str)
+        .filter(|error| !error.is_empty())
+        .map(str::to_owned)
+}
+
+pub fn render_core_remote_status_lines(payload: &Value) -> Vec<String> {
+    let Some(credentials) = object(payload, "credentials") else {
+        return vec!["Not logged in. Run `aimux login` to enable remote access.".into()];
+    };
+    let relay = object(payload, "relay");
+    let mut lines = vec![
+        format!(
+            "Remote access: {}",
+            if credentials.get("remoteEnabled").and_then(Value::as_bool) == Some(true) {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ),
+        format!("Relay: {}", js_string(credentials.get("relayUrl"))),
+        format!(
+            "Connection: {}",
+            coalesce_string(relay.and_then(|relay| relay.get("status")), "unknown")
+        ),
+    ];
+    if let Some(error) = relay_last_error(relay) {
+        lines.push(format!("Last error: {error}"));
+    }
+    lines
+}
+
+pub fn render_core_remote_enable_lines(relay: &Value) -> Vec<String> {
+    vec![format!(
+        "✓ Remote access enabled (connection: {})",
+        coalesce_string(field(relay, "status"), "unknown")
+    )]
+}
+pub fn render_core_remote_disable_lines(daemon_disconnected: bool) -> Vec<String> {
+    vec![if daemon_disconnected {
+        "✓ Remote access disabled. Daemon disconnected from relay.".into()
+    } else {
+        "✓ Remote access disabled.".into()
+    }]
+}
+
+pub fn render_core_whoami_lines(payload: &Value) -> Vec<String> {
+    let Some(credentials) = object(payload, "credentials") else {
+        return vec!["Not logged in. Run `aimux login` to enable remote access.".into()];
+    };
+    vec![
+        format!("Logged in as {}", js_string(credentials.get("userId"))),
+        format!("Relay: {}", js_string(credentials.get("relayUrl"))),
+        format!(
+            "Remote access: {}",
+            if credentials.get("remoteEnabled").and_then(Value::as_bool) == Some(true) {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ),
+    ]
+}
+
+pub fn core_whoami_json(payload: &Value) -> Value {
+    let Some(credentials) = object(payload, "credentials") else {
+        return serde_json::json!({ "loggedIn": false });
+    };
+    serde_json::json!({ "loggedIn": true, "userId": credentials.get("userId").cloned().unwrap_or(Value::Null), "relayUrl": credentials.get("relayUrl").cloned().unwrap_or(Value::Null), "remoteEnabled": credentials.get("remoteEnabled").cloned().unwrap_or(Value::Null) })
+}
+
+pub fn render_core_logout_lines(result: &str) -> Vec<String> {
+    vec![
+        match result {
+            "cleared" => "✓ Logged out. Remote access disabled.",
+            "none" => "Not logged in.",
+            _ => "Failed to remove credentials file — check permissions.",
+        }
+        .into(),
+    ]
+}
+pub fn render_core_login_lines(payload: &Value) -> Vec<String> {
+    let mut lines = vec![
+        "".into(),
+        format!("✓ Logged in as {}", js_string(field(payload, "userId"))),
+    ];
+    lines.extend(render_relay_auth_lines(
+        field(payload, "relay").unwrap_or(&Value::Null),
+    ));
+    lines
+}
+pub fn render_core_security_unlock_lines(payload: &Value) -> Vec<String> {
+    let mut lines = vec![
+        "".into(),
+        format!(
+            "✓ Security unlocked for {}",
+            js_string(field(payload, "userId"))
+        ),
+    ];
+    lines.extend(render_relay_auth_lines(
+        field(payload, "relay").unwrap_or(&Value::Null),
+    ));
+    lines
+}
+
+pub fn render_core_lifecycle_spawn_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "spawned {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+pub fn render_core_lifecycle_stop_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "stopped {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+pub fn render_core_lifecycle_kill_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "graveyarded {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+pub fn render_core_lifecycle_fork_lines(payload: &Value) -> Vec<String> {
+    vec![
+        format!("forked {}", js_string(field(payload, "sessionId"))),
+        format!("thread {}", js_string(field(payload, "threadId"))),
+    ]
+}
+
+pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
+    let agents = array(payload, "agents");
+    if agents.is_empty() {
+        return vec!["no agents".into()];
+    }
+    let mut output = Vec::new();
+    for agent in agents {
+        let id = field(agent, "id").and_then(Value::as_str).unwrap_or("?");
+        let tool = field(agent, "tool").and_then(Value::as_str).unwrap_or("?");
+        let role = field(agent, "role").and_then(Value::as_str).unwrap_or("");
+        let status = field(agent, "status")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        let activity = field(agent, "activity")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let attention = field(agent, "attention")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let loop_value = object(agent, "loop");
+        let task = object(agent, "task");
+        let mut tags = Vec::new();
+        if field(agent, "overseer").and_then(Value::as_bool) == Some(true) {
+            tags.push("overseer".into());
+        }
+        if field(agent, "scribe").and_then(Value::as_bool) == Some(true) {
+            tags.push("scribe".into());
+        }
+        if loop_value
+            .and_then(|loop_value| loop_value.get("active"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            tags.push(format!(
+                "loop{}",
+                loop_value
+                    .and_then(|loop_value| loop_value.get("goal"))
+                    .and_then(Value::as_str)
+                    .map(|goal| format!(":{goal}"))
+                    .unwrap_or_default()
+            ));
+        }
+        let state = [activity, attention]
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join("/");
+        output.push(format!(
+            "{id}  [{tool}{}]  {status}{}{}",
+            if role.is_empty() {
+                "".into()
+            } else {
+                format!(":{role}")
+            },
+            if state.is_empty() {
+                "".into()
+            } else {
+                format!("  {state}")
+            },
+            if tags.is_empty() {
+                "".into()
+            } else {
+                format!("  {{{}}}", tags.join(" "))
+            }
+        ));
+        if let Some(path) = field(agent, "worktreePath").and_then(Value::as_str) {
+            output.push(format!("    worktree: {path}"));
+        }
+        if let Some(task) = task
+            && let (Some(description), Some(status)) = (
+                task.get("description").and_then(Value::as_str),
+                task.get("status").and_then(Value::as_str),
+            )
+        {
+            output.push(format!("    task: {description} ({status})"));
+        }
+    }
+    output
+}
+
+pub fn render_core_agent_input_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "delivered to {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+pub fn render_core_agent_rename_lines(payload: &Value) -> Vec<String> {
+    vec![
+        format!(
+            "renamed {} -> {}",
+            js_string(field(payload, "sessionId")),
+            coalesce_string(field(payload, "label"), "")
+        )
+        .trim()
+        .into(),
+    ]
+}
+pub fn render_core_agent_migrate_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "migrated {} -> {}",
+        js_string(field(payload, "sessionId")),
+        js_string(field(payload, "worktreePath"))
+    )]
+}
+pub fn render_core_loop_add_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "loop on {}{}",
+        js_string(field(payload, "sessionId")),
+        field(payload, "goal")
+            .and_then(Value::as_str)
+            .filter(|goal| !goal.is_empty())
+            .map(|goal| format!(" — {goal}"))
+            .unwrap_or_default()
+    )]
+}
+pub fn render_core_loop_remove_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "loop off {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+fn render_loop_completion(payload: &Value, status: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(warning) = field(payload, "eventWarning")
+        .and_then(Value::as_str)
+        .filter(|warning| !warning.is_empty())
+    {
+        lines.push(warning.into());
+    }
+    lines.push(format!(
+        "loop {status} {}",
+        js_string(field(payload, "sessionId"))
+    ));
+    lines
+}
+pub fn render_core_loop_done_lines(payload: &Value) -> Vec<String> {
+    render_loop_completion(payload, "done")
+}
+pub fn render_core_loop_block_lines(payload: &Value) -> Vec<String> {
+    render_loop_completion(payload, "blocked")
+}
+pub fn render_core_overseer_start_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "overseer {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+pub fn render_core_overseer_clear_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "overseer cleared {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+
+fn required_team_role(payload: &Value) -> Option<&str> {
+    field(payload, "role")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+}
+fn role_entries(payload: &Value) -> Vec<(&String, &serde_json::Map<String, Value>)> {
+    object(payload, "config")
+        .and_then(|config| config.get("roles"))
+        .and_then(Value::as_object)
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(|(name, role)| role.as_object().map(|role| (name, role)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+pub fn render_core_team_show_lines(payload: &Value) -> Vec<String> {
+    let mut lines = vec!["Team Roles:".into()];
+    for (name, role) in role_entries(payload) {
+        let mut flags = Vec::new();
+        if let Some(reviewed_by) = role.get("reviewedBy").and_then(Value::as_str) {
+            flags.push(format!("reviewed by: {reviewed_by}"));
+        }
+        if role.get("canEdit").and_then(Value::as_bool) == Some(true) {
+            flags.push("can edit".into());
+        }
+        lines.push(format!(
+            "  {name}: {}{}",
+            js_string(role.get("description")),
+            if flags.is_empty() {
+                "".into()
+            } else {
+                format!(" ({})", flags.join(", "))
+            }
+        ));
+    }
+    lines.push("".into());
+    lines.push(format!(
+        "Default role: {}",
+        js_string(object(payload, "config").and_then(|config| config.get("defaultRole")))
+    ));
+    lines
+}
+pub fn render_core_team_add_lines(payload: &Value) -> Vec<String> {
+    render_team_mutation(payload, "saved")
+}
+pub fn render_core_team_remove_lines(payload: &Value) -> Vec<String> {
+    render_team_mutation(payload, "removed")
+}
+fn render_team_mutation(payload: &Value, action: &str) -> Vec<String> {
+    required_team_role(payload)
+        .map(|role| vec![format!("Role \"{role}\" {action}.")])
+        .unwrap_or_else(|| vec!["Error: role is required for this operation.".into()])
+}
+pub fn render_core_team_default_lines(payload: &Value) -> Vec<String> {
+    required_team_role(payload)
+        .map(|role| vec![format!("Default role set to \"{role}\".")])
+        .unwrap_or_else(|| vec!["Error: role is required for this operation.".into()])
+}
+pub fn render_core_team_init_lines(payload: &Value) -> Vec<String> {
+    let mut lines = vec!["Team config initialized with default roles:".into()];
+    for (name, role) in role_entries(payload) {
+        lines.push(format!("  {name}: {}", js_string(role.get("description"))));
+    }
+    lines
+}
+
+pub fn render_core_notifications_list_lines(payload: &Value) -> Vec<String> {
+    let notifications = array(payload, "notifications");
+    if notifications.is_empty() {
+        return vec!["No notifications.".into()];
+    };
+    notifications
+        .iter()
+        .map(|notification| {
+            format!(
+                "{} {}{} {}: {}",
+                js_string(field(notification, "id")),
+                if field(notification, "unread").and_then(Value::as_bool) == Some(true) {
+                    "unread"
+                } else {
+                    "read"
+                },
+                field(notification, "sessionId")
+                    .and_then(Value::as_str)
+                    .map(|session| format!(" [{session}]"))
+                    .unwrap_or_default(),
+                js_string(field(notification, "title")),
+                js_string(field(notification, "body"))
+            )
+        })
+        .collect()
+}
+pub fn render_core_notification_send_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "Queued notification \"{}\".",
+        js_string(field(payload, "title"))
+    )]
+}
+pub fn render_core_notification_read_lines(payload: &Value) -> Vec<String> {
+    let updated = js_string(field(payload, "updated"));
+    vec![format!(
+        "Marked {updated} notification{} as read.",
+        if updated == "1" { "" } else { "s" }
+    )]
+}
+pub fn render_core_notification_clear_lines(payload: &Value) -> Vec<String> {
+    let cleared = js_string(field(payload, "cleared"));
+    vec![format!(
+        "Cleared {cleared} notification{}.",
+        if cleared == "1" { "" } else { "s" }
+    )]
+}
+
+fn render_worktree_table_lines(
+    worktrees: Vec<&serde_json::Map<String, Value>>,
+    fallback: &str,
+) -> Vec<String> {
+    let mut lines = vec![
+        format!(
+            "{}{}Path",
+            pad_end("Name".into(), 30),
+            pad_end("Branch".into(), 35)
+        ),
+        "-".repeat(95),
+    ];
+    for worktree in worktrees {
+        lines.push(format!(
+            "{}{}{}",
+            pad_end(coalesce_string(worktree.get("name"), fallback), 30),
+            pad_end(coalesce_string(worktree.get("branch"), ""), 35),
+            coalesce_string(worktree.get("path"), fallback)
+        ));
+    }
+    lines
+}
+pub fn render_core_worktree_list_lines(payload: &Value) -> Vec<String> {
+    let worktrees = filtered_objects(array(payload, "worktrees"));
+    if worktrees.is_empty() {
+        vec!["No worktrees found.".into()]
+    } else {
+        render_worktree_table_lines(worktrees, "")
+    }
+}
+pub fn render_core_worktree_create_lines(payload: &Value) -> Vec<String> {
+    if field(payload, "status").and_then(Value::as_str) == Some("creating") {
+        vec![format!(
+            "Creating worktree \"{}\"{}.",
+            js_string(field(payload, "name")),
+            field(payload, "path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.is_empty())
+                .map(|path| format!(" ({path})"))
+                .unwrap_or_default()
+        )]
+    } else {
+        vec![format!(
+            "Created worktree \"{}\" at {}",
+            js_string(field(payload, "name")),
+            js_string(field(payload, "path"))
+        )]
+    }
+}
+pub fn render_core_worktree_remove_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "{} {}",
+        if field(payload, "status").and_then(Value::as_str) == Some("removing") {
+            "removing"
+        } else {
+            "removed"
+        },
+        js_string(field(payload, "path"))
+    )]
+}
+pub fn render_core_worktree_graveyard_lines(payload: &Value) -> Vec<String> {
+    vec![format!("graveyarded {}", js_string(field(payload, "path")))]
+}
+pub fn render_core_worktree_resurrect_lines(payload: &Value) -> Vec<String> {
+    vec![format!("resurrected {}", js_string(field(payload, "path")))]
+}
+pub fn render_core_worktree_delete_graveyard_lines(payload: &Value) -> Vec<String> {
+    vec![format!("deleted {}", js_string(field(payload, "path")))]
+}
+
+fn format_worktree_cache_bytes(bytes: f64) -> String {
+    if !bytes.is_finite() || bytes <= 0.0 {
+        return "0B".into();
+    }
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes;
+    let mut index = 0;
+    while value >= 1024.0 && index < units.len() - 1 {
+        value /= 1024.0;
+        index += 1;
+    }
+    if value >= 10.0 || index == 0 {
+        format!("{:.0}{}", value.round(), units[index])
+    } else {
+        format!("{:.1}{}", (value * 10.0).round() / 10.0, units[index])
+    }
+}
+pub fn render_core_worktree_cache_cleanup_lines(payload: &Value) -> Vec<String> {
+    let targets = array(payload, "targets");
+    let dry_run = field(payload, "dryRun").and_then(Value::as_bool) == Some(true);
+    let bytes = if dry_run {
+        field(payload, "reclaimableBytes")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+    } else {
+        field(payload, "reclaimedBytes")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+    };
+    let failed = array(payload, "results")
+        .iter()
+        .filter(|result| field(result, "status").and_then(Value::as_str) == Some("failed"))
+        .count();
+    let mut lines = vec![format!(
+        "Worktree cache cleanup {} {} item(s), {}; {failed} failed.",
+        if dry_run { "would remove" } else { "removed" },
+        targets.len(),
+        format_worktree_cache_bytes(bytes)
+    )];
+    let mut by_worktree: Vec<(String, f64, usize)> = Vec::new();
+    for target in targets {
+        let path = coalesce_string(
+            nullish_or(field(target, "worktreePath"), field(target, "path")),
+            "undefined",
+        );
+        let size = field(target, "sizeBytes")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        if let Some((_, total, count)) = by_worktree
+            .iter_mut()
+            .find(|(worktree_path, _, _)| *worktree_path == path)
+        {
+            *total += size;
+            *count += 1;
+        } else {
+            by_worktree.push((path, size, 1));
+        }
+    }
+    by_worktree.sort_by(|left, right| right.1.total_cmp(&left.1));
+    if !by_worktree.is_empty() {
+        lines.push("By worktree:".into());
+        for (path, size, count) in by_worktree.iter().take(12) {
+            lines.push(format!(
+                "{}  {} item(s)  {path}",
+                pad_start(format_worktree_cache_bytes(*size), 7),
+                pad_start(count.to_string(), 4)
+            ));
+        }
+        if by_worktree.len() > 12 {
+            lines.push(format!(
+                "... {} more worktree(s) hidden; use --json for full detail.",
+                by_worktree.len() - 12
+            ));
+        }
+    }
+    if !targets.is_empty() && targets.len() <= 20 {
+        lines.push("Targets:".into());
+        for target in targets {
+            lines.push(format!(
+                "{}  {}",
+                pad_start(
+                    format_worktree_cache_bytes(
+                        field(target, "sizeBytes")
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0)
+                    ),
+                    7
+                ),
+                js_string(field(target, "path"))
+            ));
+        }
+    } else if targets.len() > 20 {
+        lines.push(format!(
+            "Targets hidden ({}); use --json for full detail.",
+            targets.len()
+        ));
+    }
+    let skipped = array(payload, "skipped");
+    if !skipped.is_empty() {
+        let active = skipped
+            .iter()
+            .filter(|entry| {
+                field(entry, "reason").and_then(Value::as_str) == Some("active-runtime")
+            })
+            .count();
+        lines.push(format!(
+            "Skipped {} worktree(s){}.",
+            skipped.len(),
+            if active > 0 {
+                format!(" ({active} active-runtime)")
+            } else {
+                "".into()
+            }
+        ));
+    }
+    lines
+}
+
+pub fn render_core_graveyard_lines(payload: &Value) -> Vec<String> {
+    let entries = filtered_objects(array(payload, "entries"));
+    let worktrees = filtered_objects(array(payload, "worktrees"));
+    if entries.is_empty() && worktrees.is_empty() {
+        return vec!["Graveyard is empty.".into()];
+    };
+    let mut lines = Vec::new();
+    if !worktrees.is_empty() {
+        lines.push("Worktrees".into());
+        lines.extend(render_worktree_table_lines(worktrees, "?"));
+    }
+    if !entries.is_empty() {
+        if !lines.is_empty() {
+            lines.push("".into());
+        }
+        lines.extend([
+            "Agents".into(),
+            format!(
+                "{}{}Backend Session ID",
+                pad_end("ID".into(), 25),
+                pad_end("Tool".into(), 15)
+            ),
+            "-".repeat(70),
+        ]);
+        for session in entries {
+            lines.push(format!(
+                "{}{}{}",
+                pad_end(coalesce_string(session.get("id"), "?"), 25),
+                pad_end(
+                    coalesce_string(nullish_or(session.get("command"), session.get("tool")), "?"),
+                    15
+                ),
+                coalesce_string(session.get("backendSessionId"), "(none)")
+            ));
+        }
+    }
+    lines
+}
+pub fn render_core_graveyard_agent_lines(payload: &Value) -> Vec<String> {
+    let status = field(payload, "status").and_then(Value::as_str);
+    vec![format!(
+        "{} {}",
+        if status == Some("graveyard") || status == Some("graveyarded") {
+            "graveyarded"
+        } else {
+            "resurrected"
+        },
+        js_string(field(payload, "sessionId"))
+    )]
+}
+pub fn render_core_graveyard_cleanup_lines(payload: &Value) -> Vec<String> {
+    let result = object(payload, "result");
+    let plan = result
+        .and_then(|result| result.get("plan"))
+        .and_then(Value::as_object);
+    if plan
+        .and_then(|plan| plan.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return vec!["Graveyard cleanup is disabled.".into()];
+    };
+    let records = result
+        .and_then(|result| result.get("results"))
+        .and_then(Value::as_array)
+        .map(|items| filtered_objects(items))
+        .unwrap_or_default();
+    let removed = records
+        .iter()
+        .filter(|item| item.get("status").and_then(Value::as_str) == Some("removed"))
+        .count();
+    let dry_run_count = records
+        .iter()
+        .filter(|item| item.get("status").and_then(Value::as_str) == Some("dry-run"))
+        .count();
+    let failed = records
+        .iter()
+        .filter(|item| item.get("status").and_then(Value::as_str) == Some("failed"))
+        .count();
+    let dry_run = result
+        .and_then(|result| result.get("dryRun"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let mut lines = vec![format!(
+        "Graveyard cleanup {} {} item(s); {failed} failed. Retention: {} day(s).",
+        if dry_run { "would remove" } else { "removed" },
+        if dry_run { dry_run_count } else { removed },
+        coalesce_string(plan.and_then(|plan| plan.get("retentionDays")), "?")
+    )];
+    for item in records {
+        let status = if item.get("status").and_then(Value::as_str) == Some("failed") {
+            format!("failed: {}", coalesce_string(item.get("error"), ""))
+        } else {
+            coalesce_string(item.get("status"), "?")
+        };
+        lines.push(format!(
+            "{} {}: {status}",
+            coalesce_string(item.get("kind"), "?"),
+            coalesce_string(item.get("id"), "?")
+        ));
+    }
+    lines
+}
+
+pub fn render_core_thread_list_lines(payload: &Value) -> Vec<String> {
+    let summaries = filtered_objects(array(payload, "summaries"));
+    if summaries.is_empty() {
+        return vec!["No threads found.".into()];
+    };
+    let mut lines = Vec::new();
+    for summary in summaries {
+        let thread = summary.get("thread").and_then(Value::as_object);
+        let latest = summary.get("latestMessage").and_then(Value::as_object);
+        let unread = thread
+            .and_then(|thread| thread.get("unreadBy"))
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        let waiting = thread
+            .and_then(|thread| thread.get("waitingOn"))
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        lines.push(format!(
+            "{}  {}  {}{}{}",
+            coalesce_string(thread.and_then(|thread| thread.get("id")), "?"),
+            coalesce_string(thread.and_then(|thread| thread.get("kind")), "?"),
+            coalesce_string(thread.and_then(|thread| thread.get("status")), "?"),
+            if unread > 0 {
+                format!(" unread={unread}")
+            } else {
+                "".into()
+            },
+            if waiting.is_empty() {
+                "".into()
+            } else {
+                format!(
+                    " waiting={}",
+                    waiting
+                        .iter()
+                        .map(|value| js_string(Some(value)))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            }
+        ));
+        lines.push(format!(
+            "  {}",
+            coalesce_string(thread.and_then(|thread| thread.get("title")), "")
+        ));
+        if let Some(message) = latest {
+            lines.push(format!(
+                "  latest: {} [{}] {}",
+                coalesce_string(message.get("from"), "?"),
+                coalesce_string(message.get("kind"), "?"),
+                coalesce_string(message.get("body"), "")
+            ));
+        }
+    }
+    lines
+}
+pub fn render_core_thread_show_lines(payload: &Value) -> Vec<String> {
+    let thread = object(payload, "thread");
+    let participants = thread
+        .and_then(|thread| thread.get("participants"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let waiting = thread
+        .and_then(|thread| thread.get("waitingOn"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut lines = vec![
+        format!(
+            "{} ({})",
+            coalesce_string(thread.and_then(|thread| thread.get("title")), ""),
+            coalesce_string(thread.and_then(|thread| thread.get("kind")), "?")
+        ),
+        format!(
+            "id: {}",
+            coalesce_string(thread.and_then(|thread| thread.get("id")), "?")
+        ),
+        format!(
+            "status: {}",
+            coalesce_string(thread.and_then(|thread| thread.get("status")), "?")
+        ),
+        format!(
+            "participants: {}",
+            participants
+                .iter()
+                .map(|value| js_string(Some(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ];
+    if truthy(thread.and_then(|thread| thread.get("owner"))) {
+        lines.push(format!(
+            "owner: {}",
+            js_string(thread.and_then(|thread| thread.get("owner")))
+        ));
+    }
+    if !waiting.is_empty() {
+        lines.push(format!(
+            "waitingOn: {}",
+            waiting
+                .iter()
+                .map(|value| js_string(Some(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    lines.push("".into());
+    for message in filtered_objects(array(payload, "messages")) {
+        lines.push(format!(
+            "{}  {} [{}]",
+            coalesce_string(message.get("ts"), "?"),
+            coalesce_string(message.get("from"), "?"),
+            coalesce_string(message.get("kind"), "?")
+        ));
+        lines.push(format!("  {}", coalesce_string(message.get("body"), "")));
+    }
+    lines
+}
+pub fn render_core_thread_open_lines(payload: &Value) -> Vec<String> {
+    vec![js_string(
+        field(payload, "thread").and_then(|thread| field(thread, "id")),
+    )]
+}
+pub fn render_core_thread_send_lines(payload: &Value) -> Vec<String> {
+    vec![js_string(
+        field(payload, "message").and_then(|message| field(message, "id")),
+    )]
+}
+pub fn render_core_thread_mark_seen_lines() -> Vec<String> {
+    vec!["ok".into()]
+}
+pub fn render_core_thread_status_lines(payload: &Value) -> Vec<String> {
+    vec![
+        format!(
+            "thread {}",
+            js_string(field(payload, "thread").and_then(|thread| field(thread, "id")))
+        ),
+        format!(
+            "status {}",
+            js_string(field(payload, "thread").and_then(|thread| field(thread, "status")))
+        ),
+    ]
+}
+pub fn render_core_message_send_lines(payload: &Value) -> Vec<String> {
+    let mut lines = vec![
+        format!(
+            "thread {}",
+            js_string(field(payload, "thread").and_then(|thread| field(thread, "id")))
+        ),
+        format!(
+            "message {}",
+            js_string(field(payload, "message").and_then(|message| field(message, "id")))
+        ),
+    ];
+    let delivered = array(payload, "deliveredTo");
+    if !delivered.is_empty() {
+        lines.push(format!(
+            "delivered {}",
+            delivered
+                .iter()
+                .map(|value| js_string(Some(value)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    lines
+}
+pub fn render_core_handoff_send_lines(payload: &Value) -> Vec<String> {
+    render_core_message_send_lines(payload)
+}
+pub fn render_core_handoff_mutation_lines(payload: &Value) -> Vec<String> {
+    vec![
+        format!(
+            "thread {}",
+            js_string(field(payload, "thread").and_then(|thread| field(thread, "id")))
+        ),
+        format!(
+            "message {}",
+            js_string(field(payload, "message").and_then(|message| field(message, "id")))
+        ),
+    ]
+}
+
+pub fn render_core_task_list_lines(payload: &Value) -> Vec<String> {
+    let tasks = filtered_objects(array(payload, "tasks"));
+    if tasks.is_empty() {
+        return vec!["No tasks found.".into()];
+    };
+    let mut lines = Vec::new();
+    for task in tasks {
+        let target = nullish_chain(&[
+            task.get("assignedTo"),
+            task.get("assignee"),
+            task.get("tool"),
+        ])
+        .map(|value| js_string(Some(value)))
+        .unwrap_or_else(|| "unassigned".into());
+        let thread = if truthy(task.get("threadId")) {
+            format!(" thread={}", js_string(task.get("threadId")))
+        } else {
+            "".into()
+        };
+        lines.push(format!(
+            "{}  {}  {}  target={target}{thread}",
+            js_string(task.get("id")),
+            coalesce_string(task.get("type"), "task"),
+            js_string(task.get("status"))
+        ));
+        lines.push(format!(
+            "  {}",
+            coalesce_string(task.get("description"), "")
+        ));
+    }
+    lines
+}
+pub fn render_core_task_show_lines(payload: &Value) -> Vec<String> {
+    let task = object(payload, "task");
+    let mut lines = vec![
+        format!(
+            "{} ({})",
+            coalesce_string(task.and_then(|task| task.get("description")), ""),
+            coalesce_string(task.and_then(|task| task.get("type")), "task")
+        ),
+        format!("id: {}", js_string(task.and_then(|task| task.get("id")))),
+        format!(
+            "status: {}",
+            js_string(task.and_then(|task| task.get("status")))
+        ),
+        format!(
+            "assignedBy: {}",
+            js_string(task.and_then(|task| task.get("assignedBy")))
+        ),
+    ];
+    for (key, label) in [
+        ("assignedTo", "assignedTo"),
+        ("assignee", "assignee"),
+        ("tool", "tool"),
+        ("threadId", "thread"),
+        ("reviewStatus", "reviewStatus"),
+        ("reviewFeedback", "reviewFeedback"),
+        ("result", "result"),
+        ("error", "error"),
+    ] {
+        if truthy(task.and_then(|task| task.get(key))) {
+            lines.push(format!(
+                "{label}: {}",
+                js_string(task.and_then(|task| task.get(key)))
+            ));
+        }
+    }
+    lines.push("".into());
+    lines.push(coalesce_string(
+        task.and_then(|task| task.get("prompt")),
+        "",
+    ));
+    lines
+}
+pub fn render_core_task_mutation_lines(payload: &Value) -> Vec<String> {
+    let task = object(payload, "task");
+    let thread = object(payload, "thread");
+    let mut lines = vec![format!(
+        "task {}",
+        js_string(task.and_then(|task| task.get("id")))
+    )];
+    if truthy(thread.and_then(|thread| thread.get("id"))) {
+        lines.push(format!(
+            "thread {}",
+            js_string(thread.and_then(|thread| thread.get("id")))
+        ));
+    }
+    lines
+}
+pub fn render_core_review_request_changes_lines(payload: &Value) -> Vec<String> {
+    let mut lines = render_core_task_mutation_lines(payload);
+    if truthy(field(payload, "followUpTask").and_then(|task| field(task, "id"))) {
+        lines.insert(
+            1,
+            format!(
+                "follow-up {}",
+                js_string(field(payload, "followUpTask").and_then(|task| field(task, "id")))
+            ),
+        );
+    }
+    lines
+}
+
+fn render_relay_auth_lines(relay: &Value) -> Vec<String> {
+    let status = coalesce_string(field(relay, "status"), "unknown");
+    let mut lines = vec![match status.as_str() {
+        "off" => "Remote access is enabled. The daemon will connect on next start.".into(),
+        "connected" | "connecting" | "reconnecting" => {
+            format!("Remote access is enabled (connection: {status}).")
+        }
+        _ => format!("Remote access credentials were saved, but relay is {status}."),
+    }];
+    if let Some(error) = relay_last_error(relay.as_object()) {
+        lines.push(format!("Last error: {error}"));
+    }
+    lines
+}
