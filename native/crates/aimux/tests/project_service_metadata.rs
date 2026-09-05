@@ -521,13 +521,128 @@ fn runtime_event_suppresses_unseen_and_unread_when_session_is_focused() {
 }
 
 #[test]
+fn runtime_notify_maps_legacy_body_to_notification_record() {
+    let project = temp_project("notify");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::NOTIFY,
+        Some(&json!({
+            "kind": "complete",
+            "title": "claude-1 finished",
+            "subtitle": "Done",
+            "message": "Finished parser audit.",
+            "worktreePath": "/repo/wt",
+            "worktreeName": "wt",
+            "branch": "feature"
+        })),
+    )
+    .expect("notify route");
+    assert_eq!(response.status, 200);
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: None,
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 1);
+    let record = &snapshot.notifications[0];
+    assert_eq!(record["title"], "claude-1 finished");
+    assert_eq!(record["body"], "Done — Finished parser audit.");
+    assert_eq!(record["kind"], "task_done");
+    assert_eq!(record["dedupeKey"], "notify:complete:claude-1 finished");
+    assert_eq!(record["worktreePath"], "/repo/wt");
+    assert_eq!(record["worktreeName"], "wt");
+    assert_eq!(record["branch"], "feature");
+    cleanup(project);
+}
+
+#[test]
+fn runtime_notify_honors_focused_session_unless_forced() {
+    let project = temp_project("notify-focused");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_notification_context(
+        &state_dir,
+        NotificationContextSource::Desktop,
+        NotificationContextPatch {
+            focused: Some(true),
+            screen: Some(Some("session".into())),
+            session_id: Some(Some("codex-1".into())),
+            panel_open: Some(false),
+        },
+    );
+
+    let focused = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::NOTIFY,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "kind": "blocked",
+            "message": "Need credentials"
+        })),
+    )
+    .expect("notify route");
+    assert_eq!(focused.status, 200);
+
+    let forced = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::NOTIFY,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "kind": "blocked",
+            "message": "Still blocked",
+            "force": true
+        })),
+    )
+    .expect("notify route");
+    assert_eq!(forced.status, 200);
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 2);
+    assert_eq!(snapshot.unread_count, 1);
+    assert_eq!(snapshot.notifications[0]["body"], "Still blocked");
+    assert_eq!(
+        snapshot.notifications[0]["dedupeKey"],
+        serde_json::Value::Null
+    );
+    assert_eq!(snapshot.notifications[0]["unread"], true);
+    assert_eq!(snapshot.notifications[1]["body"], "Need credentials");
+    assert_eq!(snapshot.notifications[1]["dedupeKey"], "blocked:codex-1");
+    assert_eq!(snapshot.notifications[1]["unread"], false);
+    cleanup(project);
+}
+
+#[test]
 fn unported_runtime_metadata_routes_stay_explicit() {
     let project = temp_project("unported");
     let context =
         ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
-    let response =
-        route_runtime_metadata_request(&context, "POST", routes::runtime::NOTIFY, Some(&json!({})))
-            .expect("known runtime route");
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SHELL_STATE,
+        Some(&json!({})),
+    )
+    .expect("known runtime route");
     assert_eq!(response.status, 501);
     assert_eq!(response.body["group"], "runtime");
     cleanup(project);

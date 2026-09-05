@@ -168,6 +168,7 @@ pub fn route_runtime_metadata_request(
                 .unwrap_or_else(|| Value::Object(Map::new()));
             route_runtime_event(&project_state_dir, &session, event)
         }
+        routes::runtime::NOTIFY => Some(route_runtime_notify(&project_state_dir, body)),
         routes::runtime::COMPACT_EXCHANGE => {
             let path = runtime_exchange_path(&project_state_dir);
             let result = compact_runtime_exchange_file(&path);
@@ -183,8 +184,7 @@ pub fn route_runtime_metadata_request(
                 Err(error) => json_response(500, json!({ "ok": false, "error": error })),
             })
         }
-        routes::runtime::NOTIFY
-        | routes::runtime::NOTIFICATION_CONTEXT
+        routes::runtime::NOTIFICATION_CONTEXT
         | routes::runtime::SHELL_STATE
         | routes::runtime::USAGE_MARK
         | routes::hooks::CLAUDE
@@ -216,6 +216,41 @@ fn route_runtime_event(
         return Some(json_response(500, json!({ "ok": false, "error": error })));
     }
     Some(ok())
+}
+
+fn route_runtime_notify(
+    project_state_dir: impl AsRef<Path>,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let project_state_dir = project_state_dir.as_ref();
+    let kind = normalize_notify_kind(event_string(body, "kind").as_deref());
+    let session_id = trimmed_event_string(body, "sessionId");
+    let title = body
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let message = notify_message(body);
+    let force = body.get("force") == Some(&Value::Bool(true));
+    let focused = session_id
+        .as_deref()
+        .is_some_and(|session_id| is_session_notification_focused(project_state_dir, session_id));
+    let notification = NotificationWriteInput {
+        kind: Some(kind.clone()),
+        session_id: session_id.clone(),
+        title: title.clone(),
+        body: message,
+        worktree_path: trimmed_event_string(body, "worktreePath"),
+        worktree_name: trimmed_event_string(body, "worktreeName"),
+        branch: trimmed_event_string(body, "branch"),
+        dedupe_key: notify_dedupe_key(&kind, session_id.as_deref(), &title, body),
+        unread: force || !focused,
+        ..NotificationWriteInput::default()
+    };
+    match add_notification(project_state_dir, notification) {
+        Ok(_) => ok(),
+        Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+    }
 }
 
 pub fn update_session_metadata(
@@ -592,6 +627,59 @@ fn notification_for_event(
     }
 }
 
+fn normalize_notify_kind(kind: Option<&str>) -> String {
+    match kind.map(str::trim).unwrap_or_default() {
+        "notification" | "generic" => "notification",
+        "task_done" | "complete" => "task_done",
+        "next_step" => "next_step",
+        "task_failed" | "error" => "task_failed",
+        "blocked" => "blocked",
+        "message_waiting" => "message_waiting",
+        "handoff_waiting" => "handoff_waiting",
+        "task_assigned" => "task_assigned",
+        "review_waiting" => "review_waiting",
+        _ => "needs_input",
+    }
+    .to_owned()
+}
+
+fn notify_message(body: &Value) -> String {
+    let main = trimmed_event_string(body, "message")
+        .or_else(|| trimmed_event_string(body, "title"))
+        .unwrap_or_else(|| "aimux".to_owned());
+    [trimmed_event_string(body, "subtitle"), Some(main)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" — ")
+}
+
+fn notify_dedupe_key(
+    kind: &str,
+    session_id: Option<&str>,
+    title: &str,
+    body: &Value,
+) -> Option<String> {
+    if body.get("force") == Some(&Value::Bool(true)) {
+        return None;
+    }
+    match (kind, session_id) {
+        ("needs_input", Some(session_id)) => Some(format!("needs_input:{session_id}")),
+        ("next_step", Some(session_id)) => Some(format!("idle-needs-input:{session_id}")),
+        ("blocked", Some(session_id)) => Some(format!("blocked:{session_id}")),
+        ("task_failed", Some(session_id)) => Some(format!("error:{session_id}")),
+        ("task_done", _) => {
+            let subject = body
+                .get("title")
+                .and_then(Value::as_str)
+                .or_else(|| body.get("message").and_then(Value::as_str))
+                .unwrap_or(if title.is_empty() { "aimux" } else { title });
+            Some(format!("notify:complete:{subject}"))
+        }
+        _ => None,
+    }
+}
+
 fn increment_unseen(current: i64, suppress_unseen: bool) -> i64 {
     if suppress_unseen {
         current
@@ -867,6 +955,15 @@ fn string_field(value: &Value, field: &str) -> String {
 
 fn event_string(value: &Value, field: &str) -> Option<String> {
     value.get(field).and_then(Value::as_str).map(str::to_owned)
+}
+
+fn trimmed_event_string(value: &Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn string_field_with_default(value: &Value, field: &str, default_value: &str) -> String {
