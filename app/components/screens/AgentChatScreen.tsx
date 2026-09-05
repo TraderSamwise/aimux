@@ -130,11 +130,14 @@ const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 type ChatScrollHandle = Pick<ScrollView, "scrollToEnd">;
 const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
+const COMPOSER_INPUT_MAX_LINES = 4;
 const COMPOSER_INPUT_VERTICAL_PADDING = 6;
+const COMPOSER_INPUT_HEIGHT_SLOP = 4;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_MAX_HEIGHT =
-  COMPOSER_INPUT_LINE_HEIGHT * 4 + COMPOSER_INPUT_VERTICAL_PADDING * 2;
-const COMPOSER_INPUT_HEIGHT_SLOP = 4;
+  COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES +
+  COMPOSER_INPUT_VERTICAL_PADDING * 2 +
+  COMPOSER_INPUT_HEIGHT_SLOP;
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
@@ -1531,6 +1534,7 @@ export default function ChatScreen() {
                   placeholder="Ask the agent…"
                   placeholderTextColor="#71717a"
                   multiline
+                  numberOfLines={COMPOSER_INPUT_MAX_LINES}
                   lineBreakStrategyIOS="standard"
                   editable={!sendBusy && !composerAwaitingAck}
                   scrollEnabled={composerInputScrollEnabled}
