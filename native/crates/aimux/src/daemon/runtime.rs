@@ -39,7 +39,7 @@ use crate::daemon::text::params::ProjectServiceJsonResult;
 use crate::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use crate::daemon::text::team::DaemonTeamTextRuntime;
 use crate::daemon::text::worktrees::{CLI_PROJECT_MUTATION_TIMEOUT_MS, DaemonWorktreeTextRuntime};
-use crate::daemon::tmux_doctor::system_tmux_doctor_report;
+use crate::daemon::tmux_doctor::{system_tmux_doctor_report, system_tmux_repair_result};
 use crate::daemon_projects::{ProjectsRouteProject, build_projects_route_projects};
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, clear_daemon_info,
@@ -574,10 +574,11 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
 
     fn repair_tmux_runtime(
         &mut self,
-        _project_root: &str,
-        _open: bool,
+        project_root: &str,
+        open: bool,
     ) -> Result<(Value, String), String> {
-        Err(self.unported("tmux repair"))
+        <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
+        system_tmux_repair_result(&mut self.resolver, project_root, open)
     }
 
     fn restart_control_plane(

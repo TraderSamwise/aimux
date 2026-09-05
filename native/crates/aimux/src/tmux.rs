@@ -12,6 +12,9 @@ pub const MANAGED_TMUX_TERMINAL_FEATURES: [&str; 5] = [
     "xterm*:extkeys",
     "xterm*:hyperlinks",
 ];
+pub const TMUX_RUNTIME_OWNER_OPTION: &str = "@aimux-runtime-owner";
+pub const TMUX_RUNTIME_CONTRACT_OPTION: &str = "@aimux-runtime-contract";
+pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManagedTmuxSessionOptions {
@@ -525,6 +528,26 @@ pub fn set_session_option_argv(session_name: &str, key: &str, value: &str) -> Ve
         session_name.to_owned(),
         key.to_owned(),
         value.to_owned(),
+    ]
+}
+
+pub fn append_session_option_argv(session_name: &str, key: &str, value: &str) -> Vec<String> {
+    vec![
+        "set-option".to_owned(),
+        "-as".to_owned(),
+        "-t".to_owned(),
+        session_name.to_owned(),
+        key.to_owned(),
+        value.to_owned(),
+    ]
+}
+
+pub fn rename_session_argv(from: &str, to: &str) -> Vec<String> {
+    vec![
+        "rename-session".to_owned(),
+        "-t".to_owned(),
+        from.to_owned(),
+        to.to_owned(),
     ]
 }
 
