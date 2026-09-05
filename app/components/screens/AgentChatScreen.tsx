@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   AppState,
   Image,
+  InteractionManager,
   Platform,
   Pressable,
   ScrollView,
@@ -10,10 +11,11 @@ import {
   useWindowDimensions,
   View,
   type NativeSyntheticEvent,
+  type NativeScrollEvent,
   type TextInputContentSizeChangeEventData,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   ArrowUp,
@@ -32,6 +34,7 @@ import { AgentManagementPanel } from "@/components/agent-management-panel";
 import { TeammatePanel } from "@/components/teammate-panel";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
+import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import { useAuth, useUser } from "@/lib/auth";
@@ -64,9 +67,20 @@ import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
   normalizeComposerDraft,
-  userMessageAcknowledgesComposerSend,
   shouldSubmitComposerKey,
+  userMessageAcknowledgesComposerSend,
 } from "@/lib/composer-protocol";
+import {
+  chatCommandForContentChange,
+  chatCommandForInitialLayout,
+  chatCommandForNavigationFocus,
+  chatPolicyAfterNavigationFocus,
+  chatPolicyAfterUserScroll,
+  createChatScrollPolicy,
+  type ChatScrollCommand,
+  type ChatScrollMetrics,
+  type ChatScrollPolicy,
+} from "@/lib/chat-scroll-policy";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
@@ -103,6 +117,12 @@ import {
 import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
+const CHAT_SCROLL_HORIZONTAL_PADDING = 32;
+const CHAT_ASSISTANT_BUBBLE_MAX_RATIO = 0.9;
+const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 12.4;
+const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
+const MIN_CHAT_DIVIDER_WIDTH = 16;
+const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
 const COMPOSER_INPUT_VERTICAL_PADDING = 6;
@@ -560,6 +580,15 @@ export default function ChatScreen() {
   );
   const sendBusyRef = useRef(false);
   const composerInputRef = useRef<TextInput | null>(null);
+  const chatScrollRef = useRef<ScrollView | null>(null);
+  const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
+    contentHeight: 0,
+    offsetY: 0,
+    viewportHeight: 0,
+  });
+  const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+  const chatScrollFrameRef = useRef<number | null>(null);
+  const chatInitialLayoutKeyRef = useRef<string | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
   const interruptInFlightRef = useRef(false);
@@ -691,6 +720,103 @@ export default function ChatScreen() {
   const serviceDisconnected =
     !routeSessionMissing && !serviceEndpoint && Boolean(displayServiceEndpoint);
   const useScrollableNativeHeader = Platform.OS !== "web";
+  const chatBubbleMaxWidth = Math.max(
+    260,
+    Math.floor((width - CHAT_SCROLL_HORIZONTAL_PADDING) * CHAT_ASSISTANT_BUBBLE_MAX_RATIO),
+  );
+  const chatDividerWidth = Math.max(
+    MIN_CHAT_DIVIDER_WIDTH,
+    Math.min(
+      MAX_CHAT_DIVIDER_WIDTH,
+      Math.floor(
+        (chatBubbleMaxWidth - CHAT_SCROLL_HORIZONTAL_PADDING) / CHAT_DIVIDER_APPROX_CHAR_WIDTH -
+          CHAT_DIVIDER_WIDTH_SAFETY,
+      ),
+    ),
+  );
+
+  const cancelPendingChatScroll = useCallback(() => {
+    if (chatScrollFrameRef.current === null) return;
+    cancelAnimationFrame(chatScrollFrameRef.current);
+    chatScrollFrameRef.current = null;
+  }, []);
+
+  const executeChatScrollCommand = useCallback(
+    (command: ChatScrollCommand) => {
+      if (command.kind === "none") return;
+      cancelPendingChatScroll();
+      chatScrollFrameRef.current = requestAnimationFrame(() => {
+        chatScrollFrameRef.current = null;
+        if (
+          command.reason !== "initial" &&
+          command.reason !== "navigation" &&
+          chatScrollPolicyRef.current.intent !== "pinned"
+        ) {
+          return;
+        }
+        chatScrollRef.current?.scrollToEnd({ animated: command.animated });
+      });
+    },
+    [cancelPendingChatScroll],
+  );
+
+  useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
+
+  useFocusEffect(
+    useCallback(() => {
+      chatInitialLayoutKeyRef.current = sessionId ?? null;
+      chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+      const interaction = InteractionManager.runAfterInteractions(() => {
+        executeChatScrollCommand(chatCommandForNavigationFocus());
+      });
+      return () => interaction.cancel();
+    }, [executeChatScrollCommand, sessionId]),
+  );
+
+  const handleChatLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      chatScrollMetricsRef.current = {
+        ...chatScrollMetricsRef.current,
+        viewportHeight: event.nativeEvent.layout.height,
+      };
+      const layoutKey = sessionId ?? "unscoped";
+      if (chatInitialLayoutKeyRef.current !== layoutKey) {
+        chatInitialLayoutKeyRef.current = layoutKey;
+        executeChatScrollCommand(chatCommandForInitialLayout());
+        return;
+      }
+      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current));
+    },
+    [executeChatScrollCommand, sessionId],
+  );
+
+  const handleChatContentSizeChange = useCallback(
+    (_contentWidth: number, contentHeight: number) => {
+      chatScrollMetricsRef.current = {
+        ...chatScrollMetricsRef.current,
+        contentHeight,
+      };
+      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current));
+    },
+    [executeChatScrollCommand],
+  );
+
+  const handleChatScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const metrics: ChatScrollMetrics = {
+        contentHeight: event.nativeEvent.contentSize.height,
+        offsetY: event.nativeEvent.contentOffset.y,
+        viewportHeight: event.nativeEvent.layoutMeasurement.height,
+      };
+      chatScrollMetricsRef.current = metrics;
+      const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
+      if (nextPolicy.intent === "reading") {
+        cancelPendingChatScroll();
+      }
+      chatScrollPolicyRef.current = nextPolicy;
+    },
+    [cancelPendingChatScroll],
+  );
 
   useEffect(() => {
     if (!endpointHost || !endpointPort) return;
@@ -1953,7 +2079,15 @@ export default function ChatScreen() {
               </View>
             ) : (
               <View className="flex-1 bg-background">
-                <View className="flex-1" />
+                <AgentChatTranscript
+                  messages={allMessages}
+                  onContentSizeChange={handleChatContentSizeChange}
+                  onLayout={handleChatLayout}
+                  onScroll={handleChatScroll}
+                  ref={chatScrollRef}
+                  serviceEndpoint={displayServiceEndpoint}
+                  dividerWidth={chatDividerWidth}
+                />
                 {composerFooter}
               </View>
             )}
@@ -1963,6 +2097,59 @@ export default function ChatScreen() {
     </View>
   );
 }
+
+const AgentChatTranscript = React.forwardRef<
+  ScrollView,
+  {
+    dividerWidth: number;
+    messages: readonly ChatMessage[];
+    onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
+    onLayout: (event: LayoutChangeEvent) => void;
+    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+    serviceEndpoint: ServiceEndpoint;
+  }
+>(function AgentChatTranscript(
+  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
+  ref,
+) {
+  return (
+    <ScrollView
+      ref={ref}
+      className="flex-1 bg-background"
+      contentContainerStyle={{
+        flexGrow: 1,
+        justifyContent: "flex-end",
+        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 18,
+      }}
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      keyboardShouldPersistTaps="handled"
+      onContentSizeChange={onContentSizeChange}
+      onLayout={onLayout}
+      onScroll={onScroll}
+      scrollEventThrottle={16}
+      showsVerticalScrollIndicator
+    >
+      {messages.length === 0 ? null : (
+        <View className="w-full gap-1">
+          {messages.map((message, index) => (
+            <View
+              key={message.id ?? message.clientMessageId ?? `message:${index}`}
+              style={{ flexShrink: 0 }}
+            >
+              <MessageBlock
+                dividerWidth={dividerWidth}
+                message={message}
+                serviceEndpoint={serviceEndpoint}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+});
 
 function ComposerFocusShell({
   children,
