@@ -57,14 +57,8 @@ pub fn get_aimux_project_service_launch_command(
     project_root: &str,
     options: AimuxCliLaunchOptions,
 ) -> AimuxCliLaunchCommand {
-    resolve_aimux_cli_launch_command(
-        vec![
-            "__project-service-internal".into(),
-            "--project-id".into(),
-            project_id.into(),
-            "--project-root".into(),
-            project_root.into(),
-        ],
+    resolve_current_entry_launch_command(
+        project_service_launch_args(project_id, project_root),
         options,
     )
 }
@@ -104,6 +98,35 @@ pub fn resolve_aimux_cli_launch_command(
         current_entry_path,
         stable_shim_path,
     }
+}
+
+fn resolve_current_entry_launch_command(
+    args: Vec<String>,
+    options: AimuxCliLaunchOptions,
+) -> AimuxCliLaunchCommand {
+    let env = options.env;
+    let home_dir = options.home_dir.unwrap_or_else(home_dir);
+    let stable_shim_path = get_aimux_stable_shim_path_from(&env, home_dir);
+    let current_entry_path = options
+        .current_entry_path
+        .unwrap_or_else(current_entry_path);
+    AimuxCliLaunchCommand {
+        command: current_entry_path.clone(),
+        args,
+        source: AimuxCliLaunchSource::CurrentEntry,
+        current_entry_path,
+        stable_shim_path,
+    }
+}
+
+fn project_service_launch_args(project_id: &str, project_root: &str) -> Vec<String> {
+    vec![
+        "__project-service-internal".into(),
+        "--project-id".into(),
+        project_id.into(),
+        "--project-root".into(),
+        project_root.into(),
+    ]
 }
 
 struct ShouldUseStableShimInput<'a> {

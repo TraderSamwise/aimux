@@ -160,3 +160,47 @@ fn project_service_and_identity_args_match_typescript_helpers() {
     assert_eq!(identity.args, Vec::<String>::new());
     assert_eq!(identity.source, AimuxCliLaunchSource::CurrentEntry);
 }
+
+#[test]
+fn project_service_launch_uses_native_current_entry_even_from_native_install_root() {
+    let test_dir = TestDir::new();
+    let stable = test_dir.0.join("bin/aimux");
+    let native_entry = test_dir.0.join("native/bin/aimux");
+    fs::create_dir_all(stable.parent().expect("stable parent")).expect("create stable parent");
+    fs::create_dir_all(native_entry.parent().expect("native parent"))
+        .expect("create native parent");
+    fs::write(&stable, "#!/bin/sh\n").expect("write stable shim");
+    fs::write(&native_entry, "#!/bin/sh\n").expect("write native entry");
+
+    let command = get_aimux_project_service_launch_command(
+        "project-1",
+        "/repo",
+        options(
+            &test_dir,
+            BTreeMap::from([
+                (
+                    "AIMUX_CLI_BIN".into(),
+                    stable.to_string_lossy().into_owned(),
+                ),
+                (
+                    "AIMUX_INSTALL_ROOT".into(),
+                    test_dir.0.join("native").to_string_lossy().into_owned(),
+                ),
+            ]),
+            Some(native_entry.to_string_lossy().into_owned()),
+        ),
+    );
+
+    assert_eq!(command.source, AimuxCliLaunchSource::CurrentEntry);
+    assert_eq!(command.command, command.current_entry_path);
+    assert_eq!(
+        command.args,
+        vec![
+            "__project-service-internal",
+            "--project-id",
+            "project-1",
+            "--project-root",
+            "/repo"
+        ]
+    );
+}
