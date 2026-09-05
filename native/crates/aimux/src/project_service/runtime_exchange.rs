@@ -6,6 +6,10 @@ use std::time::{Duration, SystemTime};
 
 use crate::atomic_write::write_text_atomic;
 
+use super::exchange_retention::{
+    compact_runtime_exchange, count_runtime_exchange_bytes, count_runtime_exchange_records,
+};
+
 pub const RUNTIME_EXCHANGE_VERSION: u8 = 1;
 const UPDATE_LOCK_TIMEOUT_MS: u64 = 5_000;
 const UPDATE_LOCK_RETRY_MS: u64 = 25;
@@ -44,8 +48,85 @@ pub fn read_runtime_exchange(path: impl AsRef<Path>) -> Value {
 }
 
 pub fn write_runtime_exchange(path: impl AsRef<Path>, exchange: &Value) -> std::io::Result<()> {
-    let text = serialize_runtime_exchange(exchange);
+    let retained = retained_runtime_exchange(exchange);
+    let text = serialize_runtime_exchange(&retained);
     write_text_atomic(path, text)
+}
+
+pub fn compact_runtime_exchange_file(path: impl AsRef<Path>) -> Result<Value, String> {
+    let path = path.as_ref();
+    let _lock = RuntimeExchangeLock::acquire(path)?;
+    let current = read_runtime_exchange(path);
+    let before_text = serialize_runtime_exchange(&current);
+    let compaction = compact_runtime_exchange(&current);
+    let retained = compaction
+        .get("retained")
+        .cloned()
+        .unwrap_or_else(|| current.clone());
+    let after_text = serialize_runtime_exchange(&retained);
+    if before_text != after_text {
+        write_text_atomic(path, after_text.clone()).map_err(|error| error.to_string())?;
+    }
+    Ok(json!({
+        "path": path.to_string_lossy(),
+        "changed": compaction.get("changed").cloned().unwrap_or(Value::Bool(false)),
+        "bytesBefore": before_text.len(),
+        "bytesAfter": after_text.len(),
+        "before": compaction.get("before").cloned().unwrap_or_else(|| count_runtime_exchange_records(&current)),
+        "after": compaction.get("after").cloned().unwrap_or_else(|| count_runtime_exchange_records(&retained)),
+        "removed": compaction.get("removed").cloned().unwrap_or_else(|| count_runtime_exchange_records(&empty_runtime_exchange())),
+        "byteCounts": compaction.get("bytes").cloned().unwrap_or_else(|| json!({
+            "before": count_runtime_exchange_bytes(&current),
+            "after": count_runtime_exchange_bytes(&retained),
+            "removed": count_runtime_exchange_bytes(&empty_runtime_exchange()),
+        })),
+        "retention": compaction.get("retention").cloned().unwrap_or(Value::Null),
+    }))
+}
+
+pub fn inspect_runtime_exchange_store(path: impl AsRef<Path>) -> Value {
+    let path = path.as_ref();
+    let exists = path.exists();
+    let bytes = fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let exchange = read_runtime_exchange(path);
+    let report = compact_runtime_exchange(&exchange);
+    let retained = report
+        .get("retained")
+        .cloned()
+        .unwrap_or_else(empty_runtime_exchange);
+    json!({
+        "path": path.to_string_lossy(),
+        "exists": exists,
+        "bytes": bytes,
+        "counts": count_runtime_exchange_records(&exchange),
+        "byteCounts": count_runtime_exchange_bytes(&exchange),
+        "compactableByteCounts": report
+            .get("bytes")
+            .and_then(|bytes| bytes.get("removed"))
+            .cloned()
+            .unwrap_or_else(|| count_runtime_exchange_bytes(&empty_runtime_exchange())),
+        "messageDelivery": summarize_message_delivery(&exchange),
+        "retainedCounts": count_runtime_exchange_records(&retained),
+        "retainedByteCounts": count_runtime_exchange_bytes(&retained),
+        "retainedMessageDelivery": summarize_message_delivery(&retained),
+        "largestThreads": largest_threads(&exchange),
+        "largestRetainedThreads": largest_threads(&retained),
+        "retention": report.get("retention").cloned().unwrap_or(Value::Null),
+        "telemetry": {
+            "reads": 0,
+            "parses": 0,
+            "readCacheHits": 0,
+            "readCacheMisses": 0,
+            "writes": 0,
+            "writeNoops": 0,
+            "slowReads": 0,
+            "slowReadSuppressed": 0,
+            "compactions": 0,
+            "compactedRecords": 0,
+        },
+    })
 }
 
 pub fn update_runtime_exchange(
@@ -55,8 +136,9 @@ pub fn update_runtime_exchange(
     let path = path.as_ref();
     let _lock = RuntimeExchangeLock::acquire(path)?;
     let current = read_runtime_exchange(path);
-    let next = normalize_runtime_exchange(mutator(current))?;
-    write_runtime_exchange(path, &next).map_err(|error| error.to_string())?;
+    let next = retained_runtime_exchange(&normalize_runtime_exchange(mutator(current))?);
+    let text = serialize_runtime_exchange(&next);
+    write_text_atomic(path, text).map_err(|error| error.to_string())?;
     Ok(next)
 }
 
@@ -100,6 +182,13 @@ fn serialize_runtime_exchange(exchange: &Value) -> String {
     serde_yaml::to_string(exchange).unwrap_or_else(|_| "--- {}\n".into())
 }
 
+fn retained_runtime_exchange(exchange: &Value) -> Value {
+    compact_runtime_exchange(exchange)
+        .get("retained")
+        .cloned()
+        .unwrap_or_else(|| exchange.clone())
+}
+
 fn required_string(value: Option<&Value>, context: &str) -> Result<Value, String> {
     match value.and_then(Value::as_str) {
         Some(value) if !value.trim().is_empty() => Ok(Value::String(value.to_owned())),
@@ -115,6 +204,135 @@ fn array_value(value: Option<&Value>) -> Value {
         .cloned()
         .map(Value::Array)
         .unwrap_or_else(|| Value::Array(Vec::new()))
+}
+
+fn summarize_message_delivery(exchange: &Value) -> Value {
+    let mut pending_messages = 0usize;
+    let mut pending_message_body_bytes = 0usize;
+    let mut delivered_messages = 0usize;
+    let mut delivered_message_body_bytes = 0usize;
+    let mut no_recipient_messages = 0usize;
+    let mut no_recipient_message_body_bytes = 0usize;
+    for message in array_field(exchange, "messages") {
+        let body_bytes = text_bytes(string_field(message, "body"));
+        let recipients = string_array(message, "to");
+        if message_has_pending_delivery(message) {
+            pending_messages += 1;
+            pending_message_body_bytes += body_bytes;
+        } else if !recipients.is_empty() {
+            delivered_messages += 1;
+            delivered_message_body_bytes += body_bytes;
+        } else {
+            no_recipient_messages += 1;
+            no_recipient_message_body_bytes += body_bytes;
+        }
+    }
+    json!({
+        "pendingMessages": pending_messages,
+        "pendingMessageBodyBytes": pending_message_body_bytes,
+        "deliveredMessages": delivered_messages,
+        "deliveredMessageBodyBytes": delivered_message_body_bytes,
+        "noRecipientMessages": no_recipient_messages,
+        "noRecipientMessageBodyBytes": no_recipient_message_body_bytes,
+    })
+}
+
+fn largest_threads(exchange: &Value) -> Value {
+    let mut telemetry: Vec<(String, usize, usize, usize, usize)> = Vec::new();
+    for message in array_field(exchange, "messages") {
+        let Some(thread_id) = string_field(message, "threadId") else {
+            continue;
+        };
+        let body_bytes = text_bytes(string_field(message, "body"));
+        let pending = message_has_pending_delivery(message);
+        let entry = if let Some(entry) = telemetry.iter_mut().find(|entry| entry.0 == thread_id) {
+            entry
+        } else {
+            telemetry.push((thread_id.to_owned(), 0, 0, 0, 0));
+            telemetry.last_mut().expect("telemetry entry")
+        };
+        entry.1 += 1;
+        entry.2 += body_bytes;
+        if pending {
+            entry.3 += 1;
+            entry.4 += body_bytes;
+        }
+    }
+    telemetry.sort_by(|left, right| right.2.cmp(&left.2));
+    Value::Array(
+        telemetry
+            .into_iter()
+            .take(8)
+            .map(
+                |(
+                    id,
+                    message_count,
+                    message_body_bytes,
+                    pending_message_count,
+                    pending_message_body_bytes,
+                )| {
+                    let thread = find_thread(exchange, &id);
+                    json!({
+                        "id": id,
+                        "messageCount": message_count,
+                        "messageBodyBytes": message_body_bytes,
+                        "pendingMessageCount": pending_message_count,
+                        "pendingMessageBodyBytes": pending_message_body_bytes,
+                        "title": thread.and_then(|thread| string_field(thread, "title")).unwrap_or(""),
+                        "kind": thread.and_then(|thread| string_field(thread, "kind")).unwrap_or("conversation"),
+                        "status": thread.and_then(|thread| string_field(thread, "status")).unwrap_or("open"),
+                        "updatedAt": thread.and_then(|thread| string_field(thread, "updatedAt")).unwrap_or(""),
+                    })
+                },
+            )
+            .collect(),
+    )
+}
+
+fn find_thread<'a>(exchange: &'a Value, thread_id: &str) -> Option<&'a Value> {
+    array_field(exchange, "threads")
+        .iter()
+        .find(|thread| string_field(thread, "id") == Some(thread_id))
+}
+
+fn message_has_pending_delivery(message: &Value) -> bool {
+    let recipients = string_array(message, "to");
+    if recipients.is_empty() {
+        return false;
+    }
+    let delivered_to = string_array(message, "deliveredTo");
+    recipients
+        .iter()
+        .any(|recipient| !delivered_to.iter().any(|delivered| delivered == recipient))
+}
+
+fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
+fn string_array(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn text_bytes(value: Option<&str>) -> usize {
+    value.unwrap_or("").len()
 }
 
 struct RuntimeExchangeLock {

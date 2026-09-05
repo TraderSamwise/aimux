@@ -9,6 +9,9 @@ use super::dispatcher::{
     route_unimplemented_project_service_request,
 };
 use super::router::ProjectServiceRequestContext;
+use super::runtime_exchange::{
+    compact_runtime_exchange_file, inspect_runtime_exchange_store, runtime_exchange_path,
+};
 
 const MAX_SEGMENT_DATA_BYTES: usize = 4096;
 const MAX_SEGMENT_TTL_SECONDS: f64 = 86_400.0;
@@ -117,6 +120,21 @@ pub fn route_runtime_metadata_request(
             });
             Some(ok())
         }
+        routes::runtime::COMPACT_EXCHANGE => {
+            let path = runtime_exchange_path(&project_state_dir);
+            let result = compact_runtime_exchange_file(&path);
+            Some(match result {
+                Ok(result) => json_response(
+                    200,
+                    json!({
+                        "ok": true,
+                        "result": result,
+                        "runtimeExchange": inspect_runtime_exchange_store(path),
+                    }),
+                ),
+                Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+            })
+        }
         routes::runtime::SET_ACTIVITY
         | routes::runtime::SET_ATTENTION
         | routes::runtime::EVENT
@@ -125,7 +143,6 @@ pub fn route_runtime_metadata_request(
         | routes::runtime::NOTIFICATION_CONTEXT
         | routes::runtime::SHELL_STATE
         | routes::runtime::USAGE_MARK
-        | routes::runtime::COMPACT_EXCHANGE
         | routes::hooks::CLAUDE
         | routes::hooks::CODEX
         | routes::STATUSLINE_REFRESH
