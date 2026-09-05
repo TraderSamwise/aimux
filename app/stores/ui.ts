@@ -14,3 +14,7 @@ export const sidebarShowProjectPickerAtom = atom<boolean>(false);
 
 // Ephemeral — the project picker defaults to active projects on every app load.
 export const sidebarProjectPickerShowAllAtom = atom<boolean>(false);
+
+// Ephemeral route chrome hint. Chat owns this while mounted; AppShell consumes it
+// for the global header so scrollback can use the whole screen on phones.
+export const appChromeCollapsedAtom = atom<boolean>(false);

@@ -17,14 +17,17 @@ import { SharedSidebar } from "@/components/SharedSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
+import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
-import { sidebarOpenAtom } from "@/stores/ui";
+import { appChromeCollapsedAtom, sidebarOpenAtom } from "@/stores/ui";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const DRAWER_WIDTH = 320;
+const APP_CHROME_COLLAPSE_ANIMATION_MS = 140;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
@@ -32,9 +35,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isDesktop = width >= 1024;
   const isTablet = width >= 640 && width < 1024;
   const isMobile = width < 640;
+  const safeAreaInsets = useSafeAreaInsets();
+  const topInset = resolveChromeTopInset(safeAreaInsets.top);
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
+  const appChromeCollapsed = useAtomValue(appChromeCollapsedAtom) && isMobile;
   const pathname = usePathname();
   const activeShare = useRouteShare();
   const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
@@ -45,6 +51,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
   const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
   const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
+  const [appChromeCollapseProgress] = useState(() => new Animated.Value(0));
+  const [appChromeHeight, setAppChromeHeight] = useState(56 + topInset);
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
 
@@ -60,6 +68,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       useNativeDriver: true,
     }).start();
   }, [sidebarOpen, translateX]);
+
+  useEffect(() => {
+    Animated.timing(appChromeCollapseProgress, {
+      toValue: appChromeCollapsed ? 1 : 0,
+      duration: APP_CHROME_COLLAPSE_ANIMATION_MS,
+      useNativeDriver: false,
+    }).start();
+  }, [appChromeCollapseProgress, appChromeCollapsed]);
 
   useEffect(() => {
     if (!isDesktopNative) return undefined;
@@ -99,29 +115,59 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <View className="flex-1 bg-background">
       <View style={shellZoomStyle}>
-        <TopBar left={hamburger} />
-        {showPairingBanner ? (
-          <Pressable
-            accessibilityLabel="Pair this browser"
-            accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
-            onPress={() => setPairingDialogOpen(true)}
-            className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
+        <Animated.View
+          pointerEvents={appChromeCollapsed ? "none" : "auto"}
+          style={{
+            height: appChromeCollapseProgress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [appChromeHeight, 0],
+            }),
+            opacity: appChromeCollapseProgress.interpolate({
+              inputRange: [0, 0.7, 1],
+              outputRange: [1, 0.08, 0],
+            }),
+            overflow: "hidden",
+            transform: [
+              {
+                translateY: appChromeCollapseProgress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, -Math.max(1, appChromeHeight)],
+                }),
+              },
+            ],
+          }}
+        >
+          <View
+            onLayout={(event) => {
+              const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+              if (nextHeight > 0) setAppChromeHeight(nextHeight);
+            }}
           >
-            <KeyRound size={16} color="#fbbf24" />
-            <View className="ml-2 min-w-0 flex-1">
-              <Text className="text-[13px] font-semibold text-amber-200">
-                Approve this browser to connect
-              </Text>
-              <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
-                Run {APPROVE_COMMAND}
-                {pendingApproval?.approvalCode
-                  ? ` and match code ${pendingApproval.approvalCode}`
-                  : ""}
-                .
-              </Text>
-            </View>
-          </Pressable>
-        ) : null}
+            <TopBar left={hamburger} />
+            {showPairingBanner ? (
+              <Pressable
+                accessibilityLabel="Pair this browser"
+                accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
+                onPress={() => setPairingDialogOpen(true)}
+                className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
+              >
+                <KeyRound size={16} color="#fbbf24" />
+                <View className="ml-2 min-w-0 flex-1">
+                  <Text className="text-[13px] font-semibold text-amber-200">
+                    Approve this browser to connect
+                  </Text>
+                  <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
+                    Run {APPROVE_COMMAND}
+                    {pendingApproval?.approvalCode
+                      ? ` and match code ${pendingApproval.approvalCode}`
+                      : ""}
+                    .
+                  </Text>
+                </View>
+              </Pressable>
+            ) : null}
+          </View>
+        </Animated.View>
         <View className="flex-1 flex-row">
           {isDesktop ? <Sidebar /> : null}
           {isTablet && sidebarOpen ? <Sidebar /> : null}
