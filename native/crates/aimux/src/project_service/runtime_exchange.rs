@@ -135,11 +135,23 @@ pub fn update_runtime_exchange(
 ) -> Result<Value, String> {
     let path = path.as_ref();
     let _lock = RuntimeExchangeLock::acquire(path)?;
-    let current = read_runtime_exchange(path);
+    let current = read_runtime_exchange_for_update(path)?;
     let next = retained_runtime_exchange(&normalize_runtime_exchange(mutator(current))?);
     let text = serialize_runtime_exchange(&next);
     write_text_atomic(path, text).map_err(|error| error.to_string())?;
     Ok(next)
+}
+
+fn read_runtime_exchange_for_update(path: &Path) -> Result<Value, String> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(empty_runtime_exchange());
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let value = serde_yaml::from_str::<Value>(&contents).map_err(|error| error.to_string())?;
+    normalize_runtime_exchange(value)
 }
 
 pub fn normalize_runtime_exchange(value: Value) -> Result<Value, String> {

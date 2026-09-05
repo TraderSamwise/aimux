@@ -674,7 +674,7 @@ fn input_live_pane_route(
     )
 }
 
-fn resolve_live_window_id(
+pub(super) fn resolve_live_window_id(
     context: &ProjectServiceRequestContext,
     session_id: &str,
 ) -> Option<String> {
@@ -715,7 +715,7 @@ fn resolve_session_window_id(topology: &Value, session_id: &str) -> Option<Strin
         })
 }
 
-fn send_prompt_to_tmux(
+pub(super) fn send_prompt_to_tmux(
     runtime: &mut impl AgentOutputCaptureRuntime,
     window_id: &str,
     text: &str,

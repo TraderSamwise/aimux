@@ -8,6 +8,7 @@ use super::agent_controls::route_agent_control_request;
 use super::agent_output::route_agent_output_request;
 use super::agents::route_agent_read_request;
 use super::attachments::route_attachment_request;
+use super::coordination_mutations::route_coordination_mutation_request;
 use super::coordination_worklist::route_coordination_worklist_request;
 use super::desktop_state::route_desktop_state_request;
 use super::dispatcher::{
@@ -183,6 +184,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_interaction_request(context, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_coordination_mutation_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_runtime_metadata_request(context, method, path, body) {

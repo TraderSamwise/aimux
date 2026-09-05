@@ -3,6 +3,7 @@ pub mod agent_output;
 pub mod agent_tracker;
 pub mod agents;
 pub mod attachments;
+pub mod coordination_mutations;
 pub mod coordination_worklist;
 pub mod desktop_state;
 pub mod dispatcher;
