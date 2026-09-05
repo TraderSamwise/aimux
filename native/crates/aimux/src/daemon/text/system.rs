@@ -54,6 +54,9 @@ pub fn route_system_text_request(
     if method == "POST" && pathname == CORE_API_ROUTES.project_serve_text {
         return Some(project_serve_text_route(runtime, &route_url, body));
     }
+    if method == "POST" && pathname == CORE_API_ROUTES.project_ensure_text {
+        return Some(project_ensure_text_route(runtime, &route_url));
+    }
     if method == "POST" && pathname == CORE_API_ROUTES.project_stop_text {
         return Some(project_stop_text_route(runtime, &route_url, body));
     }
@@ -126,6 +129,27 @@ pub fn project_serve_text_route(
                 route_url,
                 payload.clone(),
                 &render_core_project_serve_lines(&payload),
+            )
+        }
+        Err(error) => text_error(500, format!("Error: {error}")),
+    }
+}
+
+pub fn project_ensure_text_route(
+    runtime: &mut impl DaemonSystemTextRuntime,
+    route_url: &DaemonRouteUrl,
+) -> DaemonRouteResponse {
+    let Some(project) = route_url.search_param("project") else {
+        return text_error(400, "project query is required");
+    };
+    let project_root = runtime.resolve_project_root(project);
+    match runtime.ensure_project(&project_root) {
+        Ok(project) => {
+            let payload = json!({ "project": project });
+            text_or_json_lines(
+                route_url,
+                payload.clone(),
+                &crate::core_text::render_core_project_ensure_lines(&payload),
             )
         }
         Err(error) => text_error(500, format!("Error: {error}")),

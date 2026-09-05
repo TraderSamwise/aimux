@@ -4,6 +4,7 @@ pub mod collaboration;
 pub mod host_agent;
 pub mod metadata;
 pub mod notifications;
+pub mod operations;
 pub mod overseer;
 pub mod params;
 pub mod system;

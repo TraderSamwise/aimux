@@ -169,6 +169,18 @@ fn project_lifecycle_text_routes_resolve_project_and_render_text() {
         "aimux serve: daemon managing /repo (service pid 9200)\n"
     );
 
+    let ensured = route_system_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?project=.", CORE_API_ROUTES.project_ensure_text),
+        None,
+    )
+    .expect("project ensure");
+    assert_eq!(
+        text_body(ensured),
+        "Ensured project service for /repo (pid 9200)\n"
+    );
+
     let stop = route_system_text_request(
         &mut runtime,
         "POST",
@@ -190,6 +202,7 @@ fn project_lifecycle_text_routes_resolve_project_and_render_text() {
     assert_eq!(
         runtime.calls,
         [
+            "ensure:/repo",
             "ensure:/repo",
             "stop:/resolved/abc:false",
             "stop:/resolved/abc:true"
