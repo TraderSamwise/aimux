@@ -129,23 +129,6 @@ fn log_route_keeps_last_twenty_entries() {
 }
 
 #[test]
-fn unported_runtime_metadata_routes_stay_explicit() {
-    let project = temp_project("unported");
-    let context =
-        ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
-    let response = route_runtime_metadata_request(
-        &context,
-        "POST",
-        routes::runtime::SET_ACTIVITY,
-        Some(&json!({})),
-    )
-    .expect("known runtime route");
-    assert_eq!(response.status, 501);
-    assert_eq!(response.body["group"], "runtime");
-    cleanup(project);
-}
-
-#[test]
 fn statusline_segment_posts_to_default_bottom_and_replaces_by_id() {
     let project = temp_project("statusline-post");
     let state_dir = project.join("state");
@@ -276,6 +259,122 @@ fn statusline_segment_validates_body_like_typescript() {
     .expect("statusline route");
     assert_eq!(response.status, 405);
     assert_eq!(response.body["error"], "use POST or DELETE");
+    cleanup(project);
+}
+
+#[test]
+fn runtime_set_activity_tracks_idle_transitions() {
+    let project = temp_project("activity");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let running = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ACTIVITY,
+        Some(&json!({ "session": "codex-1", "activity": "running" })),
+    )
+    .expect("set activity");
+    assert_eq!(running.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-1"]["derived"]["activity"], "running");
+    assert!(
+        state.sessions["codex-1"]["derived"]["becameIdleAt"].is_null(),
+        "running clears the idle timestamp"
+    );
+
+    let idle = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ACTIVITY,
+        Some(&json!({ "session": "codex-1", "activity": "idle" })),
+    )
+    .expect("set activity");
+    assert_eq!(idle.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-1"]["derived"]["activity"], "idle");
+    assert!(
+        state.sessions["codex-1"]["derived"]["becameIdleAt"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z')),
+        "leaving running stamps becameIdleAt"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_set_attention_updates_derived_attention() {
+    let project = temp_project("attention");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ATTENTION,
+        Some(&json!({ "session": "codex-1", "attention": "needs_input" })),
+    )
+    .expect("set attention");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(
+        state.sessions["codex-1"]["derived"]["attention"],
+        "needs_input"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_mark_seen_clears_unseen_and_dismisses_actionable_attention() {
+    let project = temp_project("mark-seen");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "unseenCount": 9,
+                "attention": "needs_input",
+                "activity": "waiting",
+                "services": [{ "label": "web" }]
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::MARK_SEEN,
+        Some(&json!({ "session": "codex-1" })),
+    )
+    .expect("mark seen");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["unseenCount"], 0);
+    assert_eq!(derived["attention"], "normal");
+    assert_eq!(derived["activity"], "idle");
+    assert_eq!(derived["services"], json!([{ "label": "web" }]));
+    cleanup(project);
+}
+
+#[test]
+fn unported_runtime_metadata_routes_stay_explicit() {
+    let project = temp_project("unported");
+    let context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
+    let response =
+        route_runtime_metadata_request(&context, "POST", routes::runtime::EVENT, Some(&json!({})))
+            .expect("known runtime route");
+    assert_eq!(response.status, 501);
+    assert_eq!(response.body["group"], "runtime");
     cleanup(project);
 }
 

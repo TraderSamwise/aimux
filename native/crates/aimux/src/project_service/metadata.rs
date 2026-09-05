@@ -48,35 +48,41 @@ pub fn route_runtime_metadata_request(
             let session = string_field(body, "session");
             let text = string_field(body, "text");
             let tone = body.get("tone").cloned();
-            let _ = update_session_metadata(&project_state_dir, &session, |current| {
-                object_insert(
-                    current,
-                    "status",
-                    object_from_entries([
-                        ("text", Value::String(text)),
-                        ("tone", optional_value(tone)),
-                    ]),
-                )
-            });
-            Some(ok())
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |current| {
+                    object_insert(
+                        current,
+                        "status",
+                        object_from_entries([
+                            ("text", Value::String(text)),
+                            ("tone", optional_value(tone)),
+                        ]),
+                    )
+                },
+            ))
         }
         routes::runtime::SET_PROGRESS => {
             let session = string_field(body, "session");
             let current_value = body.get("current").cloned().unwrap_or(Value::Null);
             let total = body.get("total").cloned().unwrap_or(Value::Null);
             let label = body.get("label").cloned();
-            let _ = update_session_metadata(&project_state_dir, &session, |current| {
-                object_insert(
-                    current,
-                    "progress",
-                    object_from_entries([
-                        ("current", current_value),
-                        ("total", total),
-                        ("label", optional_value(label)),
-                    ]),
-                )
-            });
-            Some(ok())
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |current| {
+                    object_insert(
+                        current,
+                        "progress",
+                        object_from_entries([
+                            ("current", current_value),
+                            ("total", total),
+                            ("label", optional_value(label)),
+                        ]),
+                    )
+                },
+            ))
         }
         routes::runtime::SET_CONTEXT => {
             let session = string_field(body, "session");
@@ -84,18 +90,20 @@ pub fn route_runtime_metadata_request(
                 .get("context")
                 .cloned()
                 .unwrap_or(Value::Object(Map::new()));
-            let _ = update_session_metadata(&project_state_dir, &session, |current| {
-                merge_session_context(current, input)
-            });
-            Some(ok())
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |current| merge_session_context(current, input),
+            ))
         }
         routes::runtime::SET_SERVICES => {
             let session = string_field(body, "session");
             let services = body.get("services").cloned().unwrap_or(Value::Null);
-            let _ = update_session_metadata(&project_state_dir, &session, |current| {
-                set_derived_services(current, services)
-            });
-            Some(ok())
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |current| set_derived_services(current, services),
+            ))
         }
         routes::runtime::LOG => {
             let session = string_field(body, "session");
@@ -105,20 +113,50 @@ pub fn route_runtime_metadata_request(
                 ("tone", optional_value(body.get("tone").cloned())),
                 ("ts", Value::String(now_iso())),
             ]);
-            let _ = update_session_metadata(&project_state_dir, &session, |current| {
-                append_log(current, entry)
-            });
-            Some(ok())
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |current| append_log(current, entry),
+            ))
         }
         routes::runtime::CLEAR_LOG => {
             let session = string_field(body, "session");
-            let _ = update_session_metadata(&project_state_dir, &session, |mut current| {
-                if let Value::Object(map) = &mut current {
-                    map.remove("logs");
-                }
-                current
-            });
-            Some(ok())
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |mut current| {
+                    if let Value::Object(map) = &mut current {
+                        map.remove("logs");
+                    }
+                    current
+                },
+            ))
+        }
+        routes::runtime::SET_ACTIVITY => {
+            let session = string_field(body, "session");
+            let activity = string_field(body, "activity");
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |current| set_derived_activity(current, activity),
+            ))
+        }
+        routes::runtime::SET_ATTENTION => {
+            let session = string_field(body, "session");
+            let attention = string_field(body, "attention");
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                |current| set_derived_attention(current, attention),
+            ))
+        }
+        routes::runtime::MARK_SEEN => {
+            let session = string_field(body, "session");
+            metadata_update_response(update_session_metadata(
+                &project_state_dir,
+                &session,
+                mark_seen,
+            ))
         }
         routes::runtime::COMPACT_EXCHANGE => {
             let path = runtime_exchange_path(&project_state_dir);
@@ -135,10 +173,7 @@ pub fn route_runtime_metadata_request(
                 Err(error) => json_response(500, json!({ "ok": false, "error": error })),
             })
         }
-        routes::runtime::SET_ACTIVITY
-        | routes::runtime::SET_ATTENTION
-        | routes::runtime::EVENT
-        | routes::runtime::MARK_SEEN
+        routes::runtime::EVENT
         | routes::runtime::NOTIFY
         | routes::runtime::NOTIFICATION_CONTEXT
         | routes::runtime::SHELL_STATE
@@ -184,6 +219,15 @@ pub fn update_session_metadata(
     })
 }
 
+fn metadata_update_response(
+    result: Result<MetadataUpdateResult, String>,
+) -> Option<ProjectServiceDispatchResponse> {
+    Some(match result {
+        Ok(_) => ok(),
+        Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+    })
+}
+
 fn merge_session_context(mut current: Value, input: Value) -> Value {
     let existing_context = current
         .get("context")
@@ -219,6 +263,57 @@ fn set_derived_services(current: Value, services: Value) -> Value {
         .cloned()
         .unwrap_or_default();
     derived.insert("services".to_owned(), services);
+    object_insert(current, "derived", Value::Object(derived))
+}
+
+fn set_derived_activity(current: Value, activity: String) -> Value {
+    let previous_activity = current
+        .get("derived")
+        .and_then(Value::as_object)
+        .and_then(|derived| derived.get("activity"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut derived = current
+        .get("derived")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if activity == "running" {
+        derived.remove("becameIdleAt");
+    } else if previous_activity.as_deref() == Some("running") {
+        derived.insert("becameIdleAt".to_owned(), Value::String(now_iso()));
+    }
+    derived.insert("activity".to_owned(), Value::String(activity));
+    object_insert(current, "derived", Value::Object(derived))
+}
+
+fn set_derived_attention(current: Value, attention: String) -> Value {
+    let mut derived = current
+        .get("derived")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    derived.insert("attention".to_owned(), Value::String(attention));
+    object_insert(current, "derived", Value::Object(derived))
+}
+
+fn mark_seen(current: Value) -> Value {
+    let mut derived = current
+        .get("derived")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let clear_attention = matches!(
+        derived.get("attention").and_then(Value::as_str),
+        Some("needs_input" | "needs_response")
+    );
+    derived.insert("unseenCount".to_owned(), Value::Number(0.into()));
+    if clear_attention {
+        derived.insert("attention".to_owned(), Value::String("normal".to_owned()));
+        if derived.get("activity").and_then(Value::as_str) == Some("waiting") {
+            derived.insert("activity".to_owned(), Value::String("idle".to_owned()));
+        }
+    }
     object_insert(current, "derived", Value::Object(derived))
 }
 
@@ -259,8 +354,10 @@ fn route_statusline_segment_request(
         if id.is_empty() {
             return json_response(400, json!({ "ok": false, "error": "id is required" }));
         }
-        let _ = drop_statusline_segment(project_state_dir, &session, &id, line);
-        return ok();
+        return match drop_statusline_segment(project_state_dir, &session, &id, line) {
+            Ok(_) => ok(),
+            Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+        };
     }
 
     if !method.eq_ignore_ascii_case("POST") {
@@ -302,8 +399,10 @@ fn route_statusline_segment_request(
     if let Some(rejection) = segment_rejection(&segment) {
         return json_response(400, json!({ "ok": false, "error": rejection }));
     }
-    let _ = put_statusline_segment(project_state_dir, &session, line, segment);
-    ok()
+    match put_statusline_segment(project_state_dir, &session, line, segment) {
+        Ok(_) => ok(),
+        Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+    }
 }
 
 fn put_statusline_segment(
