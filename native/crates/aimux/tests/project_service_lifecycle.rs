@@ -1509,6 +1509,134 @@ fn worktree_cache_cleanup_apply_removes_validated_cache_targets() {
 }
 
 #[test]
+fn agent_restore_previous_without_offer_returns_not_accepted() {
+    let project = temp_project("restore-previous-none");
+    let state_dir = project.join("state");
+    write_restore_previous_topology(&state_dir, &project);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESTORE_PREVIOUS,
+        Some(&json!({})),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["accepted"], false);
+    assert_eq!(response.body["total"], 0);
+    assert!(runtime.created.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn agent_restore_previous_reconciles_offer_restores_ready_sessions_and_writes_retry_offer() {
+    let project = temp_project("restore-previous-accepted");
+    std::fs::create_dir_all(&project).unwrap();
+    let aimux_home = project.join("aimux-home");
+    let state_dir = aimux_home
+        .join("projects")
+        .join(aimux::paths::compute_project_id(&project));
+    write_restore_previous_topology(&state_dir, &project);
+    write_restore_previous_offer_and_gate(&aimux_home, &state_dir, &project);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESTORE_PREVIOUS,
+        Some(&json!({})),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["accepted"], true);
+    assert_eq!(response.body["total"], 2);
+    assert_eq!(response.body["restored"][0]["sessionId"], "codex-ready");
+    assert_eq!(response.body["restored"][0]["status"], "running");
+    assert_eq!(response.body["failed"][0]["sessionId"], "codex-blocked");
+    assert!(
+        response.body["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("without an exact resumable backend session id")
+    );
+    assert_eq!(response.body["transitions"].as_array().unwrap().len(), 2);
+    assert!(
+        response.body["transitions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|transition| transition["operation"] == "agent.restore"
+                && transition["phase"] == "queued")
+    );
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.created[0].name, "codex");
+    let ack: Value = serde_json::from_str(
+        &std::fs::read_to_string(state_dir.join("agent-restore-offer-ack.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ack["snapshotId"], "snapshot-old");
+    let retry: Value = serde_json::from_str(
+        &std::fs::read_to_string(state_dir.join("agent-restore-offer.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(retry["sessionIds"], json!(["codex-blocked"]));
+    assert_eq!(
+        retry["worktreeGroups"],
+        json!([{ "name": "Main Checkout", "count": 1 }])
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_restore_previous_dismiss_acknowledges_and_removes_offer() {
+    let project = temp_project("restore-previous-dismiss");
+    let state_dir = project.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("agent-restore-offer.json"),
+        json!({
+            "version": 1,
+            "id": "restore-snapshot-old",
+            "snapshotId": "snapshot-old",
+            "snapshotUpdatedAt": "2026-01-01T00:00:00.000Z",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "updatedAt": "2026-01-01T00:00:01.000Z",
+            "sessions": [{ "id": "codex-ready", "command": "codex" }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::DISMISS_RESTORE_PREVIOUS,
+        Some(&json!({})),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, json!({ "ok": true }));
+    assert!(!state_dir.join("agent-restore-offer.json").exists());
+    let ack: Value = serde_json::from_str(
+        &std::fs::read_to_string(state_dir.join("agent-restore-offer-ack.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ack["snapshotId"], "snapshot-old");
+    cleanup(project);
+}
+
+#[test]
 fn worktree_graveyard_stops_services_and_moves_topology_entry() {
     let project = temp_project("worktree-graveyard");
     let state_dir = project.join("state");
@@ -1988,6 +2116,84 @@ fn write_cache_cleanup_single_worktree_topology(state_dir: &PathBuf, project: &P
     }))
     .unwrap();
     write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_restore_previous_topology(state_dir: &PathBuf, project: &Path) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "aimux",
+            "projectRoot": project.to_string_lossy().as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "nodes": [
+            { "id": "node-ready", "rigId": "rig-1", "logicalId": "codex-ready", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-blocked", "rigId": "rig-1", "logicalId": "codex-blocked", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-stale", "rigId": "rig-1", "logicalId": "codex-stale", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [],
+        "sessions": [
+            { "id": "codex-ready", "nodeId": "node-ready", "tool": "codex", "toolConfigKey": "codex", "command": "codex", "args": [], "backendSessionId": "backend-ready", "status": "offline", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "codex-blocked", "nodeId": "node-blocked", "tool": "codex", "toolConfigKey": "codex", "command": "codex", "args": [], "status": "offline", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "codex-stale", "nodeId": "node-stale", "tool": "codex", "toolConfigKey": "codex", "command": "codex", "args": [], "backendSessionId": "backend-stale", "status": "running", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_restore_previous_offer_and_gate(aimux_home: &Path, state_dir: &Path, project: &Path) {
+    std::fs::create_dir_all(state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("agent-restore-offer.json"),
+        json!({
+            "version": 1,
+            "id": "restore-snapshot-old",
+            "snapshotId": "snapshot-old",
+            "snapshotUpdatedAt": "2026-01-01T00:00:00.000Z",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "updatedAt": "2026-01-01T00:00:01.000Z",
+            "sessions": [
+                { "id": "codex-ready", "command": "codex" },
+                { "id": "codex-blocked", "command": "codex" },
+                { "id": "codex-stale", "command": "codex" }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        aimux_home.join("restore-prompt-gates.json"),
+        json!({
+            "version": 1,
+            "daemonBootId": "boot-1",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "projects": {
+                aimux::paths::compute_project_id(project): {
+                    "version": 1,
+                    "projectId": aimux::paths::compute_project_id(project),
+                    "projectRoot": project.to_string_lossy().as_ref(),
+                    "daemonBootId": "boot-1",
+                    "snapshotId": "snapshot-old",
+                    "snapshotUpdatedAt": "2026-01-01T00:00:00.000Z",
+                    "createdAt": "2026-01-01T00:00:00.000Z"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
 }
 
 fn write_active_worktree_topology(state_dir: &PathBuf, worktree_path: &Path, include_agent: bool) {
