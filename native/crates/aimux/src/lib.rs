@@ -22,6 +22,7 @@ pub mod project_api_contract;
 pub mod project_catalog;
 pub mod project_service_manifest;
 pub mod proxy_project_binding;
+pub mod remote_access;
 pub mod tmux;
 pub mod translation_plan;
 

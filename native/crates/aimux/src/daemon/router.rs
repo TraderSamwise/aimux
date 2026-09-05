@@ -20,6 +20,7 @@ use crate::daemon::text::overseer::{DaemonOverseerTextRuntime, route_overseer_te
 use crate::daemon::text::system::{DaemonSystemTextRuntime, route_system_text_request};
 use crate::daemon::text::team::{DaemonTeamTextRuntime, route_team_text_request};
 use crate::daemon::text::worktrees::{DaemonWorktreeTextRuntime, route_worktree_text_request};
+use crate::remote_access::RemoteAccessDecision;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -63,6 +64,7 @@ impl<T> DaemonRouteRuntime for T where
 pub struct DaemonRouteRequestContext {
     pub actor_present: bool,
     pub headers: BTreeMap<String, String>,
+    pub access_decision: Option<RemoteAccessDecision>,
 }
 
 pub fn route_daemon_request(
@@ -75,6 +77,15 @@ pub fn route_daemon_request(
 ) -> DaemonRouteResponse {
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
+
+    if let Some(access) = &context.access_decision
+        && !access.ok
+    {
+        return DaemonRouteResponse::json(
+            access.status.unwrap_or(403),
+            json!({ "ok": false, "error": access.error.as_deref().unwrap_or("remote access denied") }),
+        );
+    }
 
     if method == "POST" && local_auth_routes().contains(&pathname) && context.actor_present {
         return DaemonRouteResponse::text(403, "auth routes are loopback-only\n");

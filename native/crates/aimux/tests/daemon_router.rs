@@ -627,6 +627,7 @@ fn unified_router_preserves_local_cli_and_auth_guards() {
     let actor_context = DaemonRouteRequestContext {
         actor_present: true,
         headers: BTreeMap::new(),
+        access_decision: None,
     };
     let auth = route_daemon_request(
         &mut runtime,
@@ -648,6 +649,7 @@ fn unified_router_preserves_local_cli_and_auth_guards() {
         &DaemonRouteRequestContext {
             actor_present: false,
             headers: BTreeMap::from([("origin".into(), "http://localhost:8081".into())]),
+            access_decision: None,
         },
     );
     assert_eq!(cli.status, 403);
@@ -744,6 +746,31 @@ fn unified_router_dispatches_json_proxy_routes_after_split_modules() {
     );
     assert_eq!(blocked.status, 403);
     assert_eq!(json_body(blocked)["error"], "proxy host not allowed");
+}
+
+#[test]
+fn unified_router_applies_remote_access_decision_before_route_dispatch() {
+    let mut runtime = FakeRouterRuntime::default();
+    let response = route_daemon_request(
+        &mut runtime,
+        "GET",
+        "/health",
+        None,
+        "issued",
+        &DaemonRouteRequestContext {
+            actor_present: true,
+            headers: BTreeMap::new(),
+            access_decision: Some(aimux::remote_access::RemoteAccessDecision::deny(
+                418,
+                "remote denied",
+            )),
+        },
+    );
+    assert_eq!(response.status, 418);
+    assert_eq!(
+        json_body(response),
+        json!({ "ok": false, "error": "remote denied" })
+    );
 }
 
 #[test]
