@@ -3,14 +3,16 @@ use aimux::tmux::{
     MANAGED_TMUX_TERMINAL_FEATURES, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxCommandSpec,
     attach_session_argv, build_default_root_mouse_bindings_config, capture_pane_argv,
     clear_history_argv, is_dashboard_window_name, is_meta_dashboard_window_name,
-    is_tmux_client_session_for_host, is_tmux_client_session_name, kill_window_argv,
-    legacy_project_session_name, new_dashboard_window_argv, new_session_argv, new_window_argv,
-    packed_argv_bytes, project_client_session_name, project_session, resize_window_argv,
-    respawn_window_argv, select_window_argv, send_carriage_return_argv,
-    send_client_carriage_return_argv, send_client_enter_argv, send_enter_argv, send_escape_argv,
-    send_key_argv, send_modified_enter_argv, send_text_argv, session_window_id_target,
-    session_window_target, split_text_for_tmux_send_keys, start_pane_pipe_argv,
-    stop_pane_pipe_argv, switch_client_argv, switch_client_to_target_argv, unlink_window_argv,
+    is_tmux_client_session_for_host, is_tmux_client_session_name, kill_session_argv,
+    kill_window_argv, legacy_project_session_name, link_window_argv, list_clients_argv,
+    list_windows_argv, move_window_argv, new_dashboard_window_argv, new_session_argv,
+    new_window_argv, packed_argv_bytes, project_client_session_name, project_session,
+    refresh_status_argv, resize_window_argv, respawn_window_argv, select_window_argv,
+    send_carriage_return_argv, send_client_carriage_return_argv, send_client_enter_argv,
+    send_enter_argv, send_escape_argv, send_focus_in_argv, send_key_argv, send_modified_enter_argv,
+    send_text_argv, session_window_id_target, session_window_target, set_session_option_argv,
+    split_text_for_tmux_send_keys, start_pane_pipe_argv, stop_pane_pipe_argv, swap_window_argv,
+    switch_client_argv, switch_client_to_target_argv, unlink_window_argv,
 };
 use serde_json::Value;
 
@@ -112,6 +114,24 @@ fn argv_builders_match_shared_contract_fixture() {
                 input["sessionName"].as_str().expect("session name"),
                 input["windowIndex"].as_i64().expect("window index"),
                 input["clientTty"].as_str(),
+            ),
+            Some("listClients") => list_clients_argv(),
+            Some("listWindows") => {
+                list_windows_argv(input["sessionName"].as_str().expect("session name"))
+            }
+            Some("linkWindow") => link_window_argv(
+                input["windowId"].as_str().expect("window id"),
+                input["destination"].as_str().expect("destination"),
+            ),
+            Some("moveWindow") => move_window_argv(
+                input["sessionName"].as_str().expect("session name"),
+                input["windowId"].as_str().expect("window id"),
+                input["windowIndex"].as_i64().expect("window index"),
+            ),
+            Some("swapWindow") => swap_window_argv(
+                input["sessionName"].as_str().expect("session name"),
+                input["windowId"].as_str().expect("window id"),
+                input["windowIndex"].as_i64().expect("window index"),
             ),
             Some("unlinkWindow") => unlink_window_argv(
                 input["sessionName"].as_str().expect("session name"),
@@ -255,10 +275,32 @@ fn mirrors_remaining_low_level_command_vectors() {
         send_escape_argv("@3"),
         ["send-keys", "-t", "@3", "-H", "1b"]
     );
+    assert_eq!(
+        send_focus_in_argv("@3"),
+        ["send-keys", "-t", "@3", "-H", "1b", "5b", "49"]
+    );
     assert_eq!(send_key_argv("@3", "C-j"), ["send-keys", "-t", "@3", "C-j"]);
     assert_eq!(
         switch_client_to_target_argv("/dev/ttys001", "@3"),
         ["switch-client", "-c", "/dev/ttys001", "-t", "@3"]
+    );
+    assert_eq!(
+        list_clients_argv(),
+        [
+            "list-clients",
+            "-F",
+            "#{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}"
+        ]
+    );
+    assert_eq!(
+        list_windows_argv("aimux-mobile-abc"),
+        [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+        ]
     );
     assert_eq!(
         attach_session_argv("aimux-mobile-abc", None),
@@ -268,6 +310,45 @@ fn mirrors_remaining_low_level_command_vectors() {
         attach_session_argv("aimux-mobile-abc", Some(3)),
         ["attach-session", "-t", "aimux-mobile-abc:3"]
     );
+    assert_eq!(
+        link_window_argv("@3", "aimux-mobile-abc:0"),
+        ["link-window", "-d", "-s", "@3", "-t", "aimux-mobile-abc:0"]
+    );
+    assert_eq!(
+        move_window_argv("aimux-mobile-abc", "@3", 0),
+        [
+            "move-window",
+            "-s",
+            "aimux-mobile-abc:@3",
+            "-t",
+            "aimux-mobile-abc:0"
+        ]
+    );
+    assert_eq!(
+        swap_window_argv("aimux-mobile-abc", "@3", 0),
+        [
+            "swap-window",
+            "-s",
+            "aimux-mobile-abc:@3",
+            "-t",
+            "aimux-mobile-abc:0"
+        ]
+    );
+    assert_eq!(
+        set_session_option_argv("aimux-mobile-abc", "renumber-windows", "off"),
+        [
+            "set-option",
+            "-t",
+            "aimux-mobile-abc",
+            "renumber-windows",
+            "off"
+        ]
+    );
+    assert_eq!(
+        kill_session_argv("aimux-mobile-abc"),
+        ["kill-session", "-t", "aimux-mobile-abc"]
+    );
+    assert_eq!(refresh_status_argv(), ["refresh-client", "-S"]);
     assert_eq!(kill_window_argv("@3"), ["kill-window", "-t", "@3"]);
     assert_eq!(clear_history_argv("@3"), ["clear-history", "-t", "@3"]);
     assert_eq!(select_window_argv("@3"), ["select-window", "-t", "@3"]);

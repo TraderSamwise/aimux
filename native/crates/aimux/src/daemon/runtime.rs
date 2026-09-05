@@ -10,6 +10,7 @@ use crate::core_command_transport::{
     execute_loopback_binary_request, execute_loopback_json_request,
 };
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
+use crate::daemon::disk_doctor::build_disk_doctor_report;
 use crate::daemon::expose::{expose_focus_route, expose_items_route};
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
@@ -37,7 +38,8 @@ use crate::daemon::text::overseer::DaemonOverseerTextRuntime;
 use crate::daemon::text::params::ProjectServiceJsonResult;
 use crate::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use crate::daemon::text::team::DaemonTeamTextRuntime;
-use crate::daemon::text::worktrees::DaemonWorktreeTextRuntime;
+use crate::daemon::text::worktrees::{CLI_PROJECT_MUTATION_TIMEOUT_MS, DaemonWorktreeTextRuntime};
+use crate::daemon::tmux_doctor::system_tmux_doctor_report;
 use crate::daemon_projects::{ProjectsRouteProject, build_projects_route_projects};
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, clear_daemon_info,
@@ -46,6 +48,7 @@ use crate::daemon_state::{
 };
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
+use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
 use anyhow::{Context, Result};
@@ -539,21 +542,34 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
 
     fn doctor_disk_report(
         &mut self,
-        _project_roots: Vec<String>,
-        _include_active_measurement: bool,
-        _skipped_stale_project_roots: Vec<String>,
-        _generated_at: String,
+        project_roots: Vec<String>,
+        include_active_measurement: bool,
+        skipped_stale_project_roots: Vec<String>,
+        generated_at: String,
     ) -> Result<(Value, String), String> {
-        Err(self.unported("doctor disk"))
+        build_disk_doctor_report(
+            project_roots,
+            include_active_measurement,
+            skipped_stale_project_roots,
+            generated_at,
+            |project_root, include_active| {
+                self.request_project_service_json(
+                    project_root,
+                    project_routes::worktree_actions::CACHE_CLEANUP,
+                    Some(json!({ "dryRun": true, "includeActive": include_active })),
+                    Some(CLI_PROJECT_MUTATION_TIMEOUT_MS),
+                )
+            },
+        )
     }
 
     fn doctor_tmux_report(
         &mut self,
-        _project_root: &str,
-        _session_name: Option<&str>,
-        _window_id: Option<&str>,
+        project_root: &str,
+        session_name: Option<&str>,
+        window_id: Option<&str>,
     ) -> Result<(Value, String), String> {
-        Err(self.unported("doctor tmux"))
+        system_tmux_doctor_report(&mut self.resolver, project_root, session_name, window_id)
     }
 
     fn repair_tmux_runtime(

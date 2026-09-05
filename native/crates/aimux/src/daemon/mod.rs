@@ -1,5 +1,6 @@
 pub mod access;
 pub mod core_commands;
+pub mod disk_doctor;
 pub mod expose;
 pub mod http;
 pub mod json;
@@ -12,3 +13,4 @@ pub mod server;
 pub mod status;
 pub mod stream;
 pub mod text;
+pub mod tmux_doctor;

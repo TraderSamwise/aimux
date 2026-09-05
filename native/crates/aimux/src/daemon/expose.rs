@@ -12,49 +12,125 @@ use crate::project_service::switchable_agents::{
 };
 use crate::project_service::usage::load_last_used_state;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
-use crate::tmux::{select_window_argv, switch_client_argv, switch_client_to_target_argv};
+use crate::tmux::{
+    TmuxTarget, attach_session_argv, is_dashboard_window_name, is_tmux_client_session_for_host,
+    list_clients_argv, list_windows_argv, refresh_status_argv, send_focus_in_argv,
+    switch_client_argv, switch_client_to_target_argv,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxClientInfo {
+    pub tty: String,
+    pub session_name: String,
+    pub window_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxWindowInfo {
+    pub id: String,
+    pub index: i64,
+    pub name: String,
+    pub pane_dead: bool,
+}
+
 pub trait DaemonExposeFocusRuntime {
-    fn open_target(
+    fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String>;
+    fn target_by_window_id(
         &mut self,
-        target: &Value,
-        current_client_session: Option<&str>,
-        client_tty: Option<&str>,
-    ) -> Result<Value, String>;
+        session_name: &str,
+        window_id: &str,
+    ) -> Result<Option<TmuxTarget>, String>;
+    fn switch_client_to_target(&mut self, client_tty: &str, window_id: &str) -> Result<(), String>;
+    fn switch_client(&mut self, session_name: &str, window_index: i64) -> Result<(), String>;
+    fn attach_session(
+        &mut self,
+        session_name: &str,
+        window_index: Option<i64>,
+    ) -> Result<(), String>;
+    fn refresh_status(&mut self);
+    fn send_focus_in(&mut self, window_id: &str) -> Result<(), String>;
 }
 
 pub struct SystemDaemonExposeFocusRuntime;
 
 impl DaemonExposeFocusRuntime for SystemDaemonExposeFocusRuntime {
-    fn open_target(
+    fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String> {
+        let raw = run_tmux_argv_output(list_clients_argv(), "tmux list-clients failed".to_owned())?;
+        Ok(parse_tmux_clients(&raw))
+    }
+
+    fn target_by_window_id(
         &mut self,
-        target: &Value,
-        current_client_session: Option<&str>,
-        client_tty: Option<&str>,
-    ) -> Result<Value, String> {
-        let window_id = target_string_field(target, "windowId")
-            .ok_or_else(|| "target window id is missing".to_owned())?;
-        let window_index = target_number_field(target, "windowIndex").unwrap_or_default();
-        let argv = if let Some(client_tty) = client_tty {
-            switch_client_to_target_argv(client_tty, window_id)
-        } else if let Some(current_client_session) = current_client_session {
-            switch_client_argv(current_client_session, window_index, None)
-        } else {
-            select_window_argv(window_id)
-        };
-        run_tmux_argv(argv, format!("failed to focus window {window_id}"))?;
-        let focus_mode = if client_tty.is_some() {
-            "client-tty"
-        } else if current_client_session.is_some() {
-            "linked-client-session"
-        } else {
-            "open-target"
-        };
-        Ok(json!({ "focused": true, "focusMode": focus_mode }))
+        session_name: &str,
+        window_id: &str,
+    ) -> Result<Option<TmuxTarget>, String> {
+        let raw = run_tmux_argv_output(
+            list_windows_argv(session_name),
+            format!("tmux list-windows failed for {session_name}"),
+        )?;
+        Ok(parse_tmux_windows(&raw)
+            .into_iter()
+            .find(|window| window.id == window_id)
+            .map(|window| TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: window.id,
+                window_index: window.index,
+                window_name: window.name,
+                pane_dead: Some(window.pane_dead),
+            }))
+    }
+
+    fn switch_client_to_target(&mut self, client_tty: &str, window_id: &str) -> Result<(), String> {
+        run_tmux_argv(
+            switch_client_to_target_argv(client_tty, window_id),
+            format!("failed to focus window {window_id}"),
+        )
+    }
+
+    fn switch_client(&mut self, session_name: &str, window_index: i64) -> Result<(), String> {
+        run_tmux_argv(
+            switch_client_argv(session_name, window_index, None),
+            format!("failed to switch client to {session_name}:{window_index}"),
+        )
+    }
+
+    fn attach_session(
+        &mut self,
+        session_name: &str,
+        window_index: Option<i64>,
+    ) -> Result<(), String> {
+        let target = window_index
+            .map(|index| format!("{session_name}:{index}"))
+            .unwrap_or_else(|| session_name.to_owned());
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            return Err(format!(
+                "cannot attach to tmux session {target} without a terminal; run \"tmux attach -t {target}\" yourself"
+            ));
+        }
+        run_tmux_argv(
+            attach_session_argv(session_name, window_index),
+            format!("tmux attach -t {target} failed"),
+        )
+    }
+
+    fn refresh_status(&mut self) {
+        let _ = run_tmux_argv(
+            refresh_status_argv(),
+            "tmux refresh-client failed".to_owned(),
+        );
+    }
+
+    fn send_focus_in(&mut self, window_id: &str) -> Result<(), String> {
+        run_tmux_argv(
+            send_focus_in_argv(window_id),
+            format!("tmux send focus-in failed for {window_id}"),
+        )
     }
 }
 
@@ -99,8 +175,10 @@ pub fn expose_focus_route_with_runtime<R: DaemonExposeFocusRuntime>(
     }) else {
         return Err("window not found".to_owned());
     };
-    let focus_result = runtime.open_target(
-        &item.target,
+    let target = tmux_target_from_value(&item.target)?;
+    let focus_result = open_target_for_client(
+        runtime,
+        &target,
         request.current_client_session.as_deref(),
         request.client_tty.as_deref(),
     )?;
@@ -115,6 +193,91 @@ pub fn expose_focus_route_with_runtime<R: DaemonExposeFocusRuntime>(
         "projectRoot": item.project_root,
         "target": item.target,
     }))
+}
+
+pub fn open_target_for_client<R: DaemonExposeFocusRuntime>(
+    runtime: &mut R,
+    target: &TmuxTarget,
+    current_client_session: Option<&str>,
+    client_tty: Option<&str>,
+) -> Result<Value, String> {
+    let live_client_tty =
+        match resolve_live_client_tty(runtime, current_client_session, client_tty)? {
+            Some(client_tty) => Some(client_tty),
+            None => attached_client_for_target(runtime, target)?,
+        };
+    if let Some(live_client_tty) = live_client_tty {
+        runtime.switch_client_to_target(&live_client_tty, &target.window_id)?;
+        runtime.refresh_status();
+        send_dashboard_focus_in(runtime, target)?;
+        return Ok(json!({ "focused": true, "focusMode": "client-tty" }));
+    }
+    if let Some(current_client_session) = current_client_session
+        && let Some(linked_target) =
+            runtime.target_by_window_id(current_client_session, &target.window_id)?
+    {
+        runtime.switch_client(current_client_session, linked_target.window_index)?;
+        runtime.refresh_status();
+        send_dashboard_focus_in(runtime, &linked_target)?;
+        return Ok(json!({ "focused": true, "focusMode": "linked-client-session" }));
+    }
+    runtime.attach_session(&target.session_name, Some(target.window_index))?;
+    runtime.refresh_status();
+    Ok(json!({ "focused": true, "focusMode": "open-target" }))
+}
+
+fn resolve_live_client_tty<R: DaemonExposeFocusRuntime>(
+    runtime: &mut R,
+    current_client_session: Option<&str>,
+    preferred_client_tty: Option<&str>,
+) -> Result<Option<String>, String> {
+    let clients = runtime.list_clients()?;
+    if let Some(normalized_tty) = preferred_client_tty
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && clients.iter().any(|client| client.tty == normalized_tty)
+    {
+        return Ok(Some(normalized_tty.to_owned()));
+    }
+    let Some(normalized_session) = current_client_session
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    Ok(clients
+        .into_iter()
+        .find(|client| client.session_name == normalized_session)
+        .map(|client| client.tty))
+}
+
+fn attached_client_for_target<R: DaemonExposeFocusRuntime>(
+    runtime: &mut R,
+    target: &TmuxTarget,
+) -> Result<Option<String>, String> {
+    let clients = runtime
+        .list_clients()?
+        .into_iter()
+        .filter(|client| {
+            client.session_name == target.session_name
+                || is_tmux_client_session_for_host(&client.session_name, &target.session_name)
+        })
+        .collect::<Vec<_>>();
+    Ok(clients
+        .iter()
+        .find(|client| client.window_id == target.window_id)
+        .or_else(|| clients.first())
+        .map(|client| client.tty.clone()))
+}
+
+fn send_dashboard_focus_in<R: DaemonExposeFocusRuntime>(
+    runtime: &mut R,
+    target: &TmuxTarget,
+) -> Result<(), String> {
+    if is_dashboard_window_name(&target.window_name) {
+        runtime.send_focus_in(&target.window_id)?;
+    }
+    Ok(())
 }
 
 pub fn list_all_projects_expose_items(
@@ -250,13 +413,74 @@ fn target_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn target_number_field(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(Value::as_i64)
+    value.get(key).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| value.as_f64().map(|value| value as i64))
+    })
+}
+
+fn tmux_target_from_value(value: &Value) -> Result<TmuxTarget, String> {
+    Ok(TmuxTarget {
+        session_name: target_string_field(value, "sessionName")
+            .ok_or_else(|| "target session name is missing".to_owned())?
+            .to_owned(),
+        window_id: target_string_field(value, "windowId")
+            .ok_or_else(|| "target window id is missing".to_owned())?
+            .to_owned(),
+        window_index: target_number_field(value, "windowIndex")
+            .ok_or_else(|| "target window index is missing".to_owned())?,
+        window_name: target_string_field(value, "windowName")
+            .ok_or_else(|| "target window name is missing".to_owned())?
+            .to_owned(),
+        pane_dead: value.get("paneDead").and_then(Value::as_bool),
+    })
+}
+
+fn parse_tmux_clients(raw: &str) -> Vec<TmuxClientInfo> {
+    raw.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut parts = line.split('\t');
+            TmuxClientInfo {
+                tty: parts.next().unwrap_or_default().to_owned(),
+                session_name: parts.next().unwrap_or_default().to_owned(),
+                window_id: parts.next().unwrap_or_default().to_owned(),
+                name: parts.next().unwrap_or_default().to_owned(),
+            }
+        })
+        .collect()
+}
+
+fn parse_tmux_windows(raw: &str) -> Vec<TmuxWindowInfo> {
+    raw.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut parts = line.split('\t');
+            TmuxWindowInfo {
+                id: parts.next().unwrap_or_default().to_owned(),
+                index: parts
+                    .next()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or_default(),
+                name: parts.next().unwrap_or_default().to_owned(),
+                pane_dead: parts.nth(2) == Some("1"),
+            }
+        })
+        .collect()
 }
 
 fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
+    run_tmux_argv_output(argv, fallback_error).map(|_| ())
+}
+
+fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<String, String> {
     let output = Command::new("tmux").args(argv).output();
     match output {
-        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             if stderr.is_empty() {

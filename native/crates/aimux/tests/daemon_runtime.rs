@@ -1,6 +1,9 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::core_commands::DaemonCoreCommandRuntime;
-use aimux::daemon::expose::{DaemonExposeFocusRuntime, expose_focus_route_with_runtime};
+use aimux::daemon::expose::{
+    DaemonExposeFocusRuntime, TmuxClientInfo, expose_focus_route_with_runtime,
+    open_target_for_client,
+};
 use aimux::daemon::json::ExposeFocusRequest;
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{ProjectServiceLauncher, RealDaemonRuntime};
@@ -12,6 +15,7 @@ use aimux::daemon_state::{
 };
 use aimux::paths::PathResolver;
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
+use aimux::tmux::TmuxTarget;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs::{self, remove_dir_all};
@@ -228,7 +232,15 @@ fn native_daemon_expose_focus_resolves_global_item_and_delegates_tmux_focus() {
         &daemon_expose_topology(&project, "aimux-focus", "focus-agent", "@7", 7),
     )
     .expect("write topology");
-    let mut fake = FakeExposeFocusRuntime::default();
+    let mut fake = FakeExposeFocusRuntime {
+        clients: vec![TmuxClientInfo {
+            tty: "/dev/ttys123".into(),
+            session_name: "client-session".into(),
+            window_id: "@old".into(),
+            name: "client".into(),
+        }],
+        ..FakeExposeFocusRuntime::default()
+    };
 
     let body = expose_focus_route_with_runtime(
         &mut resolver,
@@ -252,13 +264,81 @@ fn native_daemon_expose_focus_resolves_global_item_and_delegates_tmux_focus() {
     assert_eq!(body["target"]["windowId"], "@7");
     assert_eq!(
         fake.calls,
-        vec![json!({
-            "windowId": "@7",
-            "currentClientSession": "client-session",
-            "clientTty": "/dev/ttys123"
-        })]
+        vec![
+            json!({
+                "op": "switch-client-to-target",
+                "clientTty": "/dev/ttys123",
+                "windowId": "@7"
+            }),
+            json!({ "op": "refresh-status" })
+        ]
     );
     fixture.cleanup();
+}
+
+#[test]
+fn native_open_target_for_client_uses_attached_client_before_linked_session() {
+    let target = tmux_target("aimux-repo", "@7", 7, "codex");
+    let mut fake = FakeExposeFocusRuntime {
+        clients: vec![TmuxClientInfo {
+            tty: "/dev/attached".into(),
+            session_name: "aimux-repo-client-feedbeef".into(),
+            window_id: "@7".into(),
+            name: "client".into(),
+        }],
+        linked_targets: vec![tmux_target("client-session", "@7", 3, "codex")],
+        ..FakeExposeFocusRuntime::default()
+    };
+
+    let result = open_target_for_client(&mut fake, &target, Some("client-session"), None)
+        .expect("open target");
+
+    assert_eq!(result["focusMode"], "client-tty");
+    assert_eq!(
+        fake.calls,
+        vec![
+            json!({ "op": "switch-client-to-target", "clientTty": "/dev/attached", "windowId": "@7" }),
+            json!({ "op": "refresh-status" }),
+        ]
+    );
+}
+
+#[test]
+fn native_open_target_for_client_uses_linked_session_then_attach_fallback() {
+    let target = tmux_target("aimux-repo", "@7", 7, "dashboard");
+    let linked = tmux_target("client-session", "@7", 3, "dashboard");
+    let mut linked_fake = FakeExposeFocusRuntime {
+        linked_targets: vec![linked],
+        ..FakeExposeFocusRuntime::default()
+    };
+
+    let linked_result =
+        open_target_for_client(&mut linked_fake, &target, Some("client-session"), None)
+            .expect("linked focus");
+
+    assert_eq!(linked_result["focusMode"], "linked-client-session");
+    assert_eq!(
+        linked_fake.calls,
+        vec![
+            json!({ "op": "switch-client", "sessionName": "client-session", "windowIndex": 3 }),
+            json!({ "op": "refresh-status" }),
+            json!({ "op": "send-focus-in", "windowId": "@7" }),
+        ]
+    );
+
+    let mut attach_fake = FakeExposeFocusRuntime::default();
+    let attach_result =
+        open_target_for_client(&mut attach_fake, &target, Some("client-session"), None)
+            .expect("attach focus");
+
+    assert_eq!(attach_result["focusMode"], "open-target");
+    assert_eq!(
+        attach_fake.calls,
+        vec![
+            json!({ "op": "attach-session", "sessionName": "aimux-repo", "windowIndex": 7 }),
+            json!({ "op": "refresh-status" }),
+        ]
+    );
 }
 
 #[test]
@@ -286,22 +366,67 @@ fn native_daemon_json_proxy_forwards_loopback_project_service_response() {
 
 #[derive(Debug, Default)]
 struct FakeExposeFocusRuntime {
+    clients: Vec<TmuxClientInfo>,
+    linked_targets: Vec<TmuxTarget>,
     calls: Vec<Value>,
 }
 
 impl DaemonExposeFocusRuntime for FakeExposeFocusRuntime {
-    fn open_target(
+    fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String> {
+        Ok(self.clients.clone())
+    }
+
+    fn target_by_window_id(
         &mut self,
-        target: &Value,
-        current_client_session: Option<&str>,
-        client_tty: Option<&str>,
-    ) -> Result<Value, String> {
+        session_name: &str,
+        window_id: &str,
+    ) -> Result<Option<TmuxTarget>, String> {
+        Ok(self
+            .linked_targets
+            .iter()
+            .find(|target| target.session_name == session_name && target.window_id == window_id)
+            .cloned())
+    }
+
+    fn switch_client_to_target(&mut self, client_tty: &str, window_id: &str) -> Result<(), String> {
         self.calls.push(json!({
-            "windowId": target["windowId"],
-            "currentClientSession": current_client_session,
+            "op": "switch-client-to-target",
             "clientTty": client_tty,
+            "windowId": window_id,
         }));
-        Ok(json!({ "focused": true, "focusMode": "client-tty" }))
+        Ok(())
+    }
+
+    fn switch_client(&mut self, session_name: &str, window_index: i64) -> Result<(), String> {
+        self.calls.push(json!({
+            "op": "switch-client",
+            "sessionName": session_name,
+            "windowIndex": window_index,
+        }));
+        Ok(())
+    }
+
+    fn attach_session(
+        &mut self,
+        session_name: &str,
+        window_index: Option<i64>,
+    ) -> Result<(), String> {
+        self.calls.push(json!({
+            "op": "attach-session",
+            "sessionName": session_name,
+            "windowIndex": window_index,
+        }));
+        Ok(())
+    }
+
+    fn refresh_status(&mut self) {
+        self.calls.push(json!({ "op": "refresh-status" }));
+    }
+
+    fn send_focus_in(&mut self, window_id: &str) -> Result<(), String> {
+        self.calls
+            .push(json!({ "op": "send-focus-in", "windowId": window_id }));
+        Ok(())
     }
 }
 
@@ -789,6 +914,21 @@ fn daemon_expose_topology(
         "lifecycleOperations": [],
         "exchangeRefs": []
     })
+}
+
+fn tmux_target(
+    session_name: &str,
+    window_id: &str,
+    window_index: i64,
+    window_name: &str,
+) -> TmuxTarget {
+    TmuxTarget {
+        session_name: session_name.into(),
+        window_id: window_id.into(),
+        window_index,
+        window_name: window_name.into(),
+        pane_dead: Some(false),
+    }
 }
 
 #[derive(Debug)]

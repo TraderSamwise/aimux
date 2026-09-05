@@ -385,6 +385,18 @@ pub fn send_escape_argv(window_id: &str) -> Vec<String> {
     ]
 }
 
+pub fn send_focus_in_argv(window_id: &str) -> Vec<String> {
+    vec![
+        "send-keys".to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+        "-H".to_owned(),
+        "1b".to_owned(),
+        "5b".to_owned(),
+        "49".to_owned(),
+    ]
+}
+
 pub fn send_modified_enter_argv(window_id: &str) -> Vec<String> {
     [
         "send-keys",
@@ -453,12 +465,83 @@ pub fn switch_client_to_target_argv(client_tty: &str, window_id: &str) -> Vec<St
     ]
 }
 
+pub fn list_clients_argv() -> Vec<String> {
+    vec![
+        "list-clients".to_owned(),
+        "-F".to_owned(),
+        "#{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}".to_owned(),
+    ]
+}
+
+pub fn list_windows_argv(session_name: &str) -> Vec<String> {
+    vec![
+        "list-windows".to_owned(),
+        "-t".to_owned(),
+        session_name.to_owned(),
+        "-F".to_owned(),
+        WINDOW_LIST_FORMAT.to_owned(),
+    ]
+}
+
+pub fn refresh_status_argv() -> Vec<String> {
+    vec!["refresh-client".to_owned(), "-S".to_owned()]
+}
+
+pub fn link_window_argv(window_id: &str, destination: &str) -> Vec<String> {
+    vec![
+        "link-window".to_owned(),
+        "-d".to_owned(),
+        "-s".to_owned(),
+        window_id.to_owned(),
+        "-t".to_owned(),
+        destination.to_owned(),
+    ]
+}
+
+pub fn move_window_argv(session_name: &str, window_id: &str, window_index: i64) -> Vec<String> {
+    vec![
+        "move-window".to_owned(),
+        "-s".to_owned(),
+        session_window_id_target(session_name, window_id),
+        "-t".to_owned(),
+        session_window_target(session_name, window_index),
+    ]
+}
+
+pub fn swap_window_argv(session_name: &str, window_id: &str, window_index: i64) -> Vec<String> {
+    vec![
+        "swap-window".to_owned(),
+        "-s".to_owned(),
+        session_window_id_target(session_name, window_id),
+        "-t".to_owned(),
+        session_window_target(session_name, window_index),
+    ]
+}
+
+pub fn set_session_option_argv(session_name: &str, key: &str, value: &str) -> Vec<String> {
+    vec![
+        "set-option".to_owned(),
+        "-t".to_owned(),
+        session_name.to_owned(),
+        key.to_owned(),
+        value.to_owned(),
+    ]
+}
+
 pub fn attach_session_argv(session_name: &str, window_index: Option<i64>) -> Vec<String> {
     let target = window_index.map_or_else(
         || session_name.to_owned(),
         |index| session_window_target(session_name, index),
     );
     vec!["attach-session".to_owned(), "-t".to_owned(), target]
+}
+
+pub fn kill_session_argv(session_name: &str) -> Vec<String> {
+    vec![
+        "kill-session".to_owned(),
+        "-t".to_owned(),
+        session_name.to_owned(),
+    ]
 }
 
 pub fn unlink_window_argv(session_name: &str, window_id: &str) -> Vec<String> {
