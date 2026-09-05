@@ -4,18 +4,23 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::atomic_write::write_json_atomic;
+use crate::config::load_config_for_project;
+use crate::daemon_state::{load_metadata_state, save_metadata_state};
+use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
 use crate::paths::compute_project_id;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
-    read_runtime_topology, runtime_topology_path, update_runtime_topology,
+    read_runtime_topology, runtime_topology_path, topology_session_to_session_state,
+    update_runtime_topology,
 };
 use crate::shell_hooks::{
     wrap_command_with_shell_integration, wrap_interactive_shell_with_integration,
 };
 use crate::tmux::{
-    MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget, kill_window_argv, new_window_argv,
-    project_session, rename_window_argv, set_window_option_argv,
+    MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget, clear_history_argv, kill_window_argv,
+    new_window_argv, project_session, rename_window_argv, set_window_option_argv,
 };
+use crate::tool_hooks::{codex_launch_hook_args, inject_claude_hook_args, install_codex_hooks};
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
@@ -36,6 +41,7 @@ pub trait ProjectLifecycleRuntime {
     ) -> Result<TmuxTarget, String>;
     fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String>;
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String>;
+    fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
     fn kill_window(&mut self, window_id: &str) -> Result<(), String>;
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String>;
 }
@@ -68,6 +74,13 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
         run_tmux_argv(
             set_window_option_argv(window_id, key, value),
             format!("tmux set-window-option {key} failed for {window_id}"),
+        )
+    }
+
+    fn clear_history(&mut self, window_id: &str) -> Result<(), String> {
+        run_tmux_argv(
+            clear_history_argv(window_id),
+            format!("tmux clear-history failed for {window_id}"),
         )
     }
 
@@ -112,6 +125,7 @@ pub fn route_lifecycle_request_with_runtime(
         routes::agents::STOP => Some(route_agent_stop(context, body, runtime)),
         routes::agents::KILL => Some(route_agent_kill(context, body, runtime)),
         routes::agents::RENAME => Some(route_agent_rename(context, body, runtime)),
+        routes::agents::RESUME => Some(route_agent_resume(context, body, runtime)),
         routes::agents::RECORD_BACKEND_SESSION => Some(route_record_backend_session(context, body)),
         routes::services::CREATE => Some(route_service_create(context, body, runtime)),
         routes::services::RESUME => Some(route_service_resume(context, body, runtime)),
@@ -303,6 +317,535 @@ fn route_record_backend_session(
         200,
         json!({ "ok": true, "sessionId": session_id, "backendSessionId": backend_session_id }),
     )
+}
+
+fn route_agent_resume(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) = trimmed_string(body.get("sessionId")) else {
+        return json_error(400, "sessionId is required");
+    };
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(topology_session) = find_by_id(&topology, "sessions", &session_id) else {
+        return json_error(404, format!("Session \"{session_id}\" not found"));
+    };
+    if LIVE_STATUSES.contains(&string_field(&topology_session, "status").as_str()) {
+        return lifecycle_response(
+            json!({ "sessionId": session_id, "status": "running" }),
+            "agent.resume",
+            "agent",
+            Some(&session_id),
+        );
+    }
+    if string_field(&topology_session, "status") != "offline" {
+        return json_error(404, format!("Session \"{session_id}\" not found"));
+    }
+
+    let session = topology_session_to_session_state(&topology_session, &topology);
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    let config = load_config_for_project(context.project_root());
+    let Some(tool_key) = tool_config_key_for_session(&session) else {
+        return json_error(400, "unknown agent tool");
+    };
+    let Some(tool_config) = config
+        .get("tools")
+        .and_then(Value::as_object)
+        .and_then(|tools| tools.get(&tool_key))
+    else {
+        return json_error(400, "unknown agent tool");
+    };
+    let command = trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.clone());
+    let backend_session_id = trimmed_string(session.get("backendSessionId"));
+    let metadata_state = load_metadata_state(&project_state_dir);
+    let derived = metadata_state
+        .sessions
+        .get(&session_id)
+        .and_then(|session| session.get("derived"));
+    let relaunch_fresh = should_relaunch_agent_fresh(&session, derived);
+    let use_backend_resume = !relaunch_fresh
+        && can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
+    let action_args = if use_backend_resume {
+        resume_args(
+            tool_config,
+            backend_session_id.as_deref().unwrap_or_default(),
+        )
+    } else if relaunch_fresh {
+        Vec::new()
+    } else {
+        return json_error(
+            500,
+            format!(
+                "Cannot restore session \"{session_id}\" without an exact resumable backend session id for \"{tool_key}\""
+            ),
+        );
+    };
+    let saved_args = string_array_field(session.get("args"));
+    let (launch_args, persist_args) = compose_tool_launch(tool_config, &action_args, &saved_args);
+    if relaunch_fresh {
+        clear_session_derived_metadata(&project_state_dir, &session_id);
+    } else if use_backend_resume {
+        settle_running_activity_to_idle(&project_state_dir, &session_id);
+    }
+    let worktree_path = trimmed_string(session.get("worktreePath"));
+    let launch_cwd = worktree_path
+        .clone()
+        .unwrap_or_else(|| project_root.clone());
+    let label = trimmed_string(session.get("label")).unwrap_or_else(|| command.clone());
+    let (launch_command, final_args) = match wrap_agent_launch(AgentLaunchWrapInput {
+        project_state_dir: &project_state_dir,
+        session_id: &session_id,
+        tool_key: &tool_key,
+        command: &command,
+        launch_args,
+        backend_session_id: backend_session_id.as_deref().filter(|_| use_backend_resume),
+        tool_config,
+        project_root: &project_root,
+    }) {
+        Ok(wrapped) => wrapped,
+        Err(error) => return json_error(500, error),
+    };
+    let session_name = project_session(&project_root, "aimux").session_name;
+    let target = match runtime.create_window(
+        &session_name,
+        &label,
+        &launch_cwd,
+        &launch_command,
+        &final_args,
+        true,
+    ) {
+        Ok(target) => target,
+        Err(error) => return json_error(500, error),
+    };
+    let _ = runtime.clear_history(&target.window_id);
+    let metadata = agent_window_metadata(
+        &session,
+        &session_id,
+        &tool_key,
+        &command,
+        persist_args,
+        backend_session_id.as_deref().filter(|_| use_backend_resume),
+    );
+    if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
+        let _ = runtime.kill_window(&target.window_id);
+        return json_error(500, error);
+    }
+    if let Err(error) = apply_agent_window_policy(runtime, &target.window_id, &tool_key) {
+        return json_error(500, error);
+    }
+    if let Err(error) =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+            upsert_agent_topology(
+                topology,
+                &metadata,
+                worktree_path.as_deref(),
+                &target,
+                "running",
+                &project_root,
+            )
+        })
+    {
+        return json_error(500, error);
+    }
+    lifecycle_response(
+        json!({ "sessionId": session_id, "status": "running" }),
+        "agent.resume",
+        "agent",
+        Some(&session_id),
+    )
+}
+
+fn tool_config_key_for_session(session: &Value) -> Option<String> {
+    trimmed_string(session.get("toolConfigKey"))
+        .or_else(|| trimmed_string(session.get("tool")))
+        .or_else(|| trimmed_string(session.get("command")))
+}
+
+fn should_relaunch_agent_fresh(session: &Value, derived: Option<&Value>) -> bool {
+    if string_field_value(derived.and_then(|derived| derived.get("activity"))) == Some("error")
+        || string_field_value(derived.and_then(|derived| derived.get("attention"))) == Some("error")
+    {
+        return true;
+    }
+    trimmed_string(session.get("backendSessionId")).is_none()
+        && session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
+}
+
+fn can_resume_with_backend_session_id(
+    tool_config: &Value,
+    backend_session_id: Option<&str>,
+) -> bool {
+    backend_session_id.is_some_and(|id| !id.trim().is_empty())
+        && tool_config
+            .get("resumeArgs")
+            .and_then(Value::as_array)
+            .is_some_and(|args| {
+                args.iter()
+                    .any(|arg| arg.as_str().is_some_and(|arg| arg.contains("{sessionId}")))
+            })
+        && tool_config
+            .get("resumeByBackendSessionId")
+            .and_then(Value::as_bool)
+            != Some(false)
+}
+
+fn resume_args(tool_config: &Value, backend_session_id: &str) -> Vec<String> {
+    string_array_field(tool_config.get("resumeArgs"))
+        .into_iter()
+        .map(|arg| arg.replace("{sessionId}", backend_session_id))
+        .collect()
+}
+
+fn compose_tool_launch(
+    tool_config: &Value,
+    action_args: &[String],
+    saved_args: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let configured = strip_tool_action_args(tool_config, saved_args);
+    (
+        compose_tool_args(tool_config, action_args, &configured),
+        compose_tool_args(tool_config, &[], &configured),
+    )
+}
+
+fn compose_tool_args(
+    tool_config: &Value,
+    action_args: &[String],
+    saved_args: &[String],
+) -> Vec<String> {
+    let base_args = string_array_field(tool_config.get("args"));
+    let trailing_args = if !base_args.is_empty()
+        && saved_args.len() >= base_args.len()
+        && base_args
+            .iter()
+            .enumerate()
+            .all(|(index, arg)| saved_args.get(index) == Some(arg))
+    {
+        saved_args[base_args.len()..].to_vec()
+    } else {
+        saved_args.to_vec()
+    };
+    base_args
+        .into_iter()
+        .chain(action_args.iter().cloned())
+        .chain(trailing_args)
+        .collect()
+}
+
+fn strip_tool_action_args(tool_config: &Value, args: &[String]) -> Vec<String> {
+    let patterns = ["resumeArgs", "forkArgs"]
+        .into_iter()
+        .filter_map(|key| tool_config.get(key))
+        .map(|value| string_array_field(Some(value)))
+        .filter(|pattern| !pattern.is_empty())
+        .collect::<Vec<_>>();
+    if patterns.is_empty() {
+        return args.to_vec();
+    }
+    let mut kept = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let consumed = patterns
+            .iter()
+            .map(|pattern| matched_action_arg_length(pattern, args, index))
+            .max()
+            .unwrap_or(0);
+        if consumed > 0 {
+            index += consumed;
+        } else {
+            kept.push(args[index].clone());
+            index += 1;
+        }
+    }
+    kept
+}
+
+fn matched_action_arg_length(pattern: &[String], args: &[String], index: usize) -> usize {
+    let mut matched = 0;
+    while matched < pattern.len() && index + matched < args.len() {
+        let expected = &pattern[matched];
+        let actual = &args[index + matched];
+        let is_placeholder = expected == "{sessionId}";
+        if if is_placeholder {
+            actual.starts_with('-')
+        } else {
+            actual != expected
+        } {
+            break;
+        }
+        matched += 1;
+    }
+    matched
+}
+
+struct AgentLaunchWrapInput<'a> {
+    project_state_dir: &'a Path,
+    session_id: &'a str,
+    tool_key: &'a str,
+    command: &'a str,
+    launch_args: Vec<String>,
+    backend_session_id: Option<&'a str>,
+    tool_config: &'a Value,
+    project_root: &'a str,
+}
+
+fn wrap_agent_launch(input: AgentLaunchWrapInput<'_>) -> Result<(String, Vec<String>), String> {
+    let AgentLaunchWrapInput {
+        project_state_dir,
+        session_id,
+        tool_key,
+        command,
+        launch_args,
+        backend_session_id,
+        tool_config,
+        project_root,
+    } = input;
+    let is_configured_tool_command =
+        trimmed_string(tool_config.get("command")).is_some_and(|configured| configured == command);
+    let configured_executable = Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command);
+    let wrapper_enabled = tool_config.get("wrapperEnabled").and_then(Value::as_bool) != Some(false);
+    if !is_configured_tool_command || !wrapper_enabled {
+        return wrap_command_with_shell_integration(
+            project_state_dir,
+            session_id,
+            tool_key,
+            command,
+            &launch_args,
+            std::env::var("SHELL")
+                .unwrap_or_else(|_| "zsh".to_owned())
+                .as_str(),
+        );
+    }
+    if configured_executable == "claude" {
+        let args = inject_claude_hook_args(
+            launch_args,
+            project_state_dir,
+            session_id,
+            backend_session_id,
+        )?;
+        return Ok(wrap_command_with_managed_launch_env_extra(
+            command,
+            args,
+            [
+                (
+                    "AIMUX_METADATA_ENDPOINT_FILE",
+                    path_string(project_state_dir.join("metadata-api.txt")),
+                ),
+                ("AIMUX_SESSION_ID", session_id.to_owned()),
+                ("AIMUX_TOOL", tool_key.to_owned()),
+            ],
+        ));
+    }
+    if configured_executable == "codex" {
+        let _ = install_codex_hooks(None);
+        let args = codex_launch_hook_args()
+            .into_iter()
+            .chain(launch_args)
+            .collect::<Vec<_>>();
+        return Ok(wrap_command_with_managed_launch_env_extra(
+            command,
+            args,
+            [
+                ("TERM", "tmux-256color".to_owned()),
+                (
+                    "AIMUX_METADATA_ENDPOINT_FILE",
+                    path_string(project_state_dir.join("metadata-api.txt")),
+                ),
+                ("AIMUX_SESSION_ID", session_id.to_owned()),
+                ("AIMUX_PROJECT_ROOT", project_root.to_owned()),
+                ("AIMUX_TOOL", tool_key.to_owned()),
+            ],
+        ));
+    }
+    wrap_command_with_shell_integration(
+        project_state_dir,
+        session_id,
+        tool_key,
+        command,
+        &launch_args,
+        std::env::var("SHELL")
+            .unwrap_or_else(|_| "zsh".to_owned())
+            .as_str(),
+    )
+}
+
+fn clear_session_derived_metadata(project_state_dir: &Path, session_id: &str) {
+    let mut state = load_metadata_state(project_state_dir);
+    if let Some(Value::Object(session)) = state.sessions.get_mut(session_id) {
+        session.remove("derived");
+        session.remove("status");
+        session.remove("progress");
+        let _ = save_metadata_state(project_state_dir, &state);
+    }
+}
+
+fn settle_running_activity_to_idle(project_state_dir: &Path, session_id: &str) {
+    let mut state = load_metadata_state(project_state_dir);
+    let mut changed = false;
+    if let Some(Value::Object(session)) = state.sessions.get_mut(session_id)
+        && let Some(Value::Object(derived)) = session.get_mut("derived")
+        && derived.get("activity").and_then(Value::as_str) == Some("running")
+    {
+        derived.insert("activity".into(), Value::String("idle".into()));
+        changed = true;
+    }
+    if changed {
+        let _ = save_metadata_state(project_state_dir, &state);
+    }
+}
+
+fn agent_window_metadata(
+    session: &Value,
+    session_id: &str,
+    tool_key: &str,
+    command: &str,
+    persist_args: Vec<String>,
+    backend_session_id: Option<&str>,
+) -> Value {
+    let mut metadata = Map::new();
+    metadata.insert("kind".into(), Value::String("agent".into()));
+    metadata.insert("sessionId".into(), Value::String(session_id.to_owned()));
+    metadata.insert("command".into(), Value::String(command.to_owned()));
+    metadata.insert(
+        "args".into(),
+        Value::Array(persist_args.into_iter().map(Value::String).collect()),
+    );
+    metadata.insert("toolConfigKey".into(), Value::String(tool_key.to_owned()));
+    if let Some(backend_session_id) = backend_session_id {
+        metadata.insert(
+            "backendSessionId".into(),
+            Value::String(backend_session_id.to_owned()),
+        );
+    }
+    for key in ["team", "worktreePath", "label", "headline", "createdAt"] {
+        if let Some(value) = session.get(key).cloned().filter(|value| !value.is_null()) {
+            metadata.insert(key.into(), value);
+        }
+    }
+    if !metadata.contains_key("createdAt") {
+        metadata.insert("createdAt".into(), Value::String(now_iso()));
+    }
+    Value::Object(metadata)
+}
+
+fn apply_agent_window_policy(
+    runtime: &mut impl ProjectLifecycleRuntime,
+    window_id: &str,
+    tool_key: &str,
+) -> Result<(), String> {
+    runtime.set_window_option(window_id, "@aimux-tool", tool_key)?;
+    runtime.set_window_option(
+        window_id,
+        "allow-passthrough",
+        MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allow_passthrough,
+    )?;
+    runtime.set_window_option(
+        window_id,
+        "aggressive-resize",
+        MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressive_resize,
+    )
+}
+
+fn upsert_agent_topology(
+    mut topology: Value,
+    metadata: &Value,
+    worktree_path: Option<&str>,
+    target: &TmuxTarget,
+    status: &str,
+    project_root: &str,
+) -> Value {
+    let now = now_iso();
+    let rig_id = ensure_rig(&mut topology, project_root, &now);
+    let session_id = string_field(metadata, "sessionId");
+    let node_id = format!("agent:{session_id}");
+    let mut node = Map::new();
+    node.insert("id".into(), Value::String(node_id.clone()));
+    node.insert("rigId".into(), Value::String(rig_id.clone()));
+    node.insert("logicalId".into(), Value::String(session_id.clone()));
+    if let Some(role) = metadata
+        .get("team")
+        .and_then(|team| team.get("role"))
+        .and_then(Value::as_str)
+    {
+        node.insert("role".into(), Value::String(role.to_owned()));
+    }
+    node.insert(
+        "runtime".into(),
+        Value::String(
+            metadata["toolConfigKey"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_owned(),
+        ),
+    );
+    node.insert("toolConfigKey".into(), metadata["toolConfigKey"].clone());
+    if let Some(worktree_path) = worktree_path {
+        node.insert("cwd".into(), Value::String(worktree_path.to_owned()));
+    }
+    if let Some(label) = metadata
+        .get("label")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        node.insert("label".into(), label);
+    }
+    node.insert(
+        "createdAt".into(),
+        Value::String(
+            existing_node_created_at(&topology, &node_id)
+                .or_else(|| trimmed_string(metadata.get("createdAt")))
+                .unwrap_or_else(|| now.clone()),
+        ),
+    );
+    upsert_array_item(&mut topology, "nodes", Value::Object(node));
+
+    let mut session = Map::new();
+    session.insert("id".into(), Value::String(session_id.clone()));
+    session.insert("nodeId".into(), Value::String(node_id.clone()));
+    session.insert("status".into(), Value::String(status.to_owned()));
+    session.insert("tool".into(), metadata["toolConfigKey"].clone());
+    session.insert("command".into(), metadata["command"].clone());
+    session.insert("args".into(), metadata["args"].clone());
+    if let Some(backend_session_id) = metadata
+        .get("backendSessionId")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        session.insert("backendSessionId".into(), backend_session_id);
+    }
+    for key in ["team", "worktreePath", "label", "headline"] {
+        if let Some(value) = metadata.get(key).cloned().filter(|value| !value.is_null()) {
+            session.insert(key.into(), value);
+        }
+    }
+    session.insert("createdAt".into(), metadata["createdAt"].clone());
+    session.insert("updatedAt".into(), Value::String(now.clone()));
+    session.insert("lastSeenAt".into(), Value::String(now.clone()));
+    upsert_array_item(&mut topology, "sessions", Value::Object(session));
+
+    upsert_array_item(
+        &mut topology,
+        "bindings",
+        json!({
+            "id": format!("tmux:{session_id}"),
+            "nodeId": node_id,
+            "tmuxSession": target.session_name,
+            "tmuxWindowId": target.window_id,
+            "tmuxWindowIndex": target.window_index,
+            "tmuxWindowName": target.window_name,
+            "updatedAt": now,
+        }),
+    );
+    object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
+    topology
 }
 
 fn route_service_create(
@@ -832,6 +1375,10 @@ fn read_json_object(path: &Path) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
+fn path_string(path: impl AsRef<Path>) -> String {
+    path.as_ref().to_string_lossy().into_owned()
+}
+
 fn saved_service_tmux_window_id(project_state_dir: &Path, service_id: &str) -> Option<String> {
     read_json_object(&project_state_dir.join("state.json"))
         .get("services")
@@ -1098,6 +1645,23 @@ fn array_field(value: &Value, key: &str) -> Vec<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+fn string_array_field(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn string_field_value(value: Option<&Value>) -> Option<&str> {
+    value.and_then(Value::as_str)
 }
 
 fn object_insert_mut(value: &mut Value, key: &str, inserted: Value) {

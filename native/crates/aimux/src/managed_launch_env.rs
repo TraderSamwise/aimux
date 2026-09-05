@@ -63,12 +63,25 @@ pub fn wrap_command_with_managed_launch_env(
     command: impl Into<String>,
     args: Vec<String>,
 ) -> (String, Vec<String>) {
+    wrap_command_with_managed_launch_env_extra(command, args, Vec::<(String, String)>::new())
+}
+
+pub fn wrap_command_with_managed_launch_env_extra(
+    command: impl Into<String>,
+    args: Vec<String>,
+    extra_env: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+) -> (String, Vec<String>) {
     let managed_env = build_managed_launch_env(std::env::vars());
     let mut env_args = vec!["-i".to_owned()];
     env_args.extend(
         managed_env
             .into_iter()
             .map(|(key, value)| format!("{key}={value}")),
+    );
+    env_args.extend(
+        extra_env
+            .into_iter()
+            .map(|(key, value)| format!("{}={}", key.into(), value.into())),
     );
     env_args.push(command.into());
     env_args.extend(args);

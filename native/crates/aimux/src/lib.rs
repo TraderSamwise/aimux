@@ -28,6 +28,7 @@ pub mod remote_access;
 pub mod runtime_topology;
 pub mod shell_hooks;
 pub mod tmux;
+pub mod tool_hooks;
 pub mod translation_plan;
 
 pub use build_info::{BuildInfo, build_info};

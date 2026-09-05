@@ -1,4 +1,7 @@
 use serde_json::{Map, Number, Value, json};
+use std::path::Path;
+
+use crate::paths::PathResolver;
 
 /// Return a fresh JSON representation of the TypeScript `DEFAULT_CONFIG`.
 pub fn default_config() -> Value {
@@ -153,6 +156,13 @@ pub fn merge_config_layers(global: Option<&Value>, project: Option<&Value>) -> V
     normalize_config(config)
 }
 
+pub fn load_config_for_project(project_root: impl AsRef<Path>) -> Value {
+    let mut resolver = PathResolver::from_env();
+    let global = read_json_file(resolver.global_config_path());
+    let project = read_json_file(resolver.config_path_for(project_root));
+    merge_config_layers(global.as_ref(), project.as_ref())
+}
+
 /// Normalize compatibility-sensitive config fields like `src/config.ts`.
 pub fn normalize_config(mut config: Value) -> Value {
     let defaults = default_config();
@@ -167,6 +177,12 @@ pub fn normalize_config(mut config: Value) -> Value {
     normalize_tool_resume(config_object);
 
     config
+}
+
+fn read_json_file(path: impl AsRef<Path>) -> Option<Value> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
 }
 
 fn normalize_worktrees(config: &mut Map<String, Value>, defaults: &Value) {

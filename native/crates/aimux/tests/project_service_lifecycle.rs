@@ -17,6 +17,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Default)]
 struct FakeLifecycleRuntime {
     created: Vec<FakeCreateWindow>,
+    cleared: Vec<String>,
     metadata: Vec<(String, Value)>,
     options: Vec<(String, String, String)>,
     killed: Vec<String>,
@@ -68,6 +69,11 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String> {
         self.options
             .push((window_id.to_owned(), key.to_owned(), value.to_owned()));
+        Ok(())
+    }
+
+    fn clear_history(&mut self, window_id: &str) -> Result<(), String> {
+        self.cleared.push(window_id.to_owned());
         Ok(())
     }
 
@@ -267,6 +273,214 @@ fn service_stop_and_remove_update_topology_and_kill_live_window() {
     assert!(find(&topology, "services", "svc-web").is_none());
     assert!(find(&topology, "nodes", "node-service").is_none());
     assert_eq!(read_state(&state_dir)["services"], json!([]));
+    cleanup(project);
+}
+
+#[test]
+fn agent_resume_launches_exact_backend_resume_and_updates_topology_metadata() {
+    let project = temp_project("agent-resume");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-offline",
+            "nodeId": "agent:mock-offline",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base", "--resume", "stale-backend"],
+            "backendSessionId": "backend-123",
+            "worktreePath": "/repo/worktree",
+            "label": "mock lane",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    std::fs::write(
+        state_dir.join("metadata.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {
+                "mock-offline": {
+                    "derived": { "activity": "running", "attention": "normal" }
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-offline" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-offline");
+    assert_eq!(response.body["status"], "running");
+    assert_eq!(response.body["transition"]["operation"], "agent.resume");
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.name, "mock lane");
+    assert_eq!(created.cwd, "/repo/worktree");
+    assert_eq!(created.command, "env");
+    assert!(
+        created
+            .args
+            .iter()
+            .any(|arg| arg == "AIMUX_SESSION_ID=mock-offline")
+    );
+    assert!(
+        created
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("'--resume' 'backend-123'"))
+    );
+    assert_eq!(runtime.cleared, vec!["@11"]);
+    assert_eq!(runtime.metadata[0].0, "@11");
+    assert_eq!(runtime.metadata[0].1["kind"], "agent");
+    assert_eq!(runtime.metadata[0].1["sessionId"], "mock-offline");
+    assert_eq!(runtime.metadata[0].1["toolConfigKey"], "mock");
+    assert_eq!(runtime.metadata[0].1["backendSessionId"], "backend-123");
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--base"]));
+    assert_eq!(
+        runtime.options,
+        vec![
+            ("@11".into(), "@aimux-tool".into(), "mock".into()),
+            ("@11".into(), "allow-passthrough".into(), "on".into()),
+            ("@11".into(), "aggressive-resize".into(), "on".into())
+        ]
+    );
+
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-offline");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["args"], json!(["--base"]));
+    assert_eq!(session["backendSessionId"], "backend-123");
+    assert_eq!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|binding| binding["nodeId"] == "agent:mock-offline")
+            .unwrap()["tmuxWindowId"],
+        "@11"
+    );
+    let metadata: Value =
+        serde_json::from_str(&std::fs::read_to_string(state_dir.join("metadata.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        metadata["sessions"]["mock-offline"]["derived"]["activity"],
+        "idle"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_resume_refuses_missing_exact_backend_resume() {
+    let project = temp_project("agent-resume-refuse");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-offline",
+            "nodeId": "agent:mock-offline",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "worktreePath": "/repo/worktree",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-offline" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("without an exact resumable backend session id")
+    );
+    assert!(runtime.created.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn agent_resume_fresh_relaunch_clears_error_metadata_without_backend_id() {
+    let project = temp_project("agent-resume-fresh");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-error",
+            "nodeId": "agent:mock-error",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "freshRelaunchAllowed": true,
+            "worktreePath": "/repo/worktree",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    std::fs::write(
+        state_dir.join("metadata.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {
+                "mock-error": {
+                    "status": "error",
+                    "progress": "failed",
+                    "derived": { "activity": "error", "attention": "error" }
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-error" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.metadata[0].1["backendSessionId"], Value::Null);
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--base"]));
+    let metadata: Value =
+        serde_json::from_str(&std::fs::read_to_string(state_dir.join("metadata.json")).unwrap())
+            .unwrap();
+    assert!(metadata["sessions"]["mock-error"].get("derived").is_none());
+    assert!(metadata["sessions"]["mock-error"].get("status").is_none());
+    assert!(metadata["sessions"]["mock-error"].get("progress").is_none());
     cleanup(project);
 }
 
@@ -563,6 +777,59 @@ fn write_lifecycle_topology(state_dir: &PathBuf) {
     }))
     .unwrap();
     write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_agent_resume_topology(state_dir: &PathBuf, session: Value) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [{
+            "id": session["nodeId"],
+            "rigId": "rig-1",
+            "logicalId": session["id"],
+            "runtime": session["tool"],
+            "toolConfigKey": session["tool"],
+            "cwd": session["worktreePath"],
+            "label": session["label"],
+            "createdAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "edges": [],
+        "bindings": [],
+        "sessions": [session],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_project_tool_config(project: &Path) {
+    let aimux_dir = project.join(".aimux");
+    std::fs::create_dir_all(&aimux_dir).unwrap();
+    std::fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({
+            "tools": {
+                "mock": {
+                    "command": "/bin/mock",
+                    "args": ["--base"],
+                    "enabled": true,
+                    "wrapperEnabled": true,
+                    "resumeArgs": ["--resume", "{sessionId}"],
+                    "forkArgs": ["--fork", "{sessionId}"],
+                    "resumeByBackendSessionId": true
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 }
 
 fn read_topology(state_dir: &PathBuf) -> Value {
