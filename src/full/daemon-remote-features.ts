@@ -17,14 +17,12 @@ import { countActiveHostedPrincipals } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
 import { runLoginFlow } from "./login-flow.js";
 import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
-import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { RelayClient } from "./relay-client.js";
 import { assertOperatorStreamAllowed, assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 
 export function createFullDaemonRemoteFeatures(): DaemonRemoteFeatures {
   let relayClient: RelayClient | null = null;
   let hostedServer: HostedServerHandle | null = null;
-  const pushThrottle = new MobilePushThrottle();
 
   const getRelayStatus = (): RelayStatusSnapshot | { status: "off" } => relayClient?.getStatus() ?? { status: "off" };
 
@@ -152,18 +150,11 @@ export function createFullDaemonRemoteFeatures(): DaemonRemoteFeatures {
     },
     pushNotification(payload: RelayNotificationPush) {
       if (relayClient?.getStatus().status !== "connected") {
-        log.warn("mobile push suppressed because relay is unavailable", "remote", {
+        log.warn("mobile push could not be sent because relay is unavailable", "remote", {
           kind: payload.kind,
           sessionId: payload.sessionId,
         });
         return { ok: true, suppressed: true, reason: "relay_unavailable" };
-      }
-      if (!pushThrottle.allow(payload)) {
-        log.warn("mobile push suppressed by daemon throttle", "remote", {
-          kind: payload.kind,
-          sessionId: payload.sessionId,
-        });
-        return { ok: true, suppressed: true, reason: "daemon_throttle" };
       }
       relayClient.pushNotification(payload);
       return { ok: true };

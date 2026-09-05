@@ -335,7 +335,7 @@ describe("notification policy", () => {
     });
   });
 
-  it("caps polled notification catch-up to the newest unobserved browser notification", () => {
+  it("emits every unobserved browser notification during polled catch-up", () => {
     const result = evaluateNotificationRecordBatch(
       [
         {
@@ -364,12 +364,19 @@ describe("notification policy", () => {
       enabledSettings,
     );
 
-    expect(result.events).toHaveLength(1);
-    expect(result.events[0]).toMatchObject({
-      id: "notice-newest",
-      title: "Newest",
-      target: { sessionId: "codex-2" },
-    });
+    expect(result.events).toHaveLength(2);
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        id: "notice-newest",
+        title: "Newest",
+        target: { sessionId: "codex-2" },
+      }),
+      expect.objectContaining({
+        id: "notice-older",
+        title: "Older",
+        target: { sessionId: "codex-1" },
+      }),
+    ]);
     expect(result.observedIds).toEqual(["notice-newest", "notice-older"]);
   });
 

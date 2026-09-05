@@ -42,7 +42,6 @@ type RelayMessage = RelayRequest | RelayProjectEventsSubscribe | RelayProjectEve
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
 const MAX_HANDSHAKE_FAILURES = 5;
-const REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS = 5 * 60 * 1000;
 const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
 export class RelayClient {
@@ -56,7 +55,6 @@ export class RelayClient {
   private readonly relayUrl: string;
   private handshakeFailures = 0;
   private authFailureNotified = false;
-  private readonly recentRemoteClientNotifications = new Map<string, number>();
   private readonly projectEventSubscriptions = new Map<string, AbortController>();
 
   constructor(
@@ -190,13 +188,10 @@ export class RelayClient {
 
     if (msg.type === "security_event") {
       if (msg.event?.kind === "new_client_detected" || msg.event?.kind === "shared_client_connected") {
-        const dedupeKey = `${msg.event.kind}:${msg.event.deviceId ?? `${msg.event.title}:${msg.event.body}`}`;
-        if (this.shouldNotifyRemoteClientConnected(dedupeKey)) {
-          notifyRemoteClientConnected({
-            title: msg.event.title,
-            body: msg.event.body,
-          });
-        }
+        notifyRemoteClientConnected({
+          title: msg.event.title,
+          body: msg.event.body,
+        });
       }
       return;
     }
@@ -383,19 +378,6 @@ export class RelayClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(data);
     }
-  }
-
-  private shouldNotifyRemoteClientConnected(key: string): boolean {
-    const now = Date.now();
-    for (const [existingKey, lastNotifiedAt] of this.recentRemoteClientNotifications) {
-      if (now - lastNotifiedAt > REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS) {
-        this.recentRemoteClientNotifications.delete(existingKey);
-      }
-    }
-    const previous = this.recentRemoteClientNotifications.get(key);
-    if (previous && now - previous <= REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS) return false;
-    this.recentRemoteClientNotifications.set(key, now);
-    return true;
   }
 
   private markAuthFailed(message: string): void {

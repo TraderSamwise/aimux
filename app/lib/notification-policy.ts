@@ -139,7 +139,7 @@ export function evaluateNotificationRecordBatch(
   settings: NotificationSettings,
   context: SessionNotificationContext = {},
   observedIds: ReadonlySet<string> = new Set(),
-  maxEvents = 1,
+  maxEvents = Number.POSITIVE_INFINITY,
 ): NotificationRecordBatchEvaluation {
   const nextObservedIds: string[] = [];
   const events: ClientNotificationEvent[] = [];

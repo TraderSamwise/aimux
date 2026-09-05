@@ -2,11 +2,6 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
 import { createHostedAttachment } from "./attachments.js";
 import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery.js";
-import {
-  checkNotificationPushGuard,
-  notificationPushGuardMessage,
-  type NotificationPushGuardResult,
-} from "./notification-push-guard.js";
 import { deliverShareInvite } from "./sharing-delivery.js";
 import {
   activateSecurityLockdown,
@@ -468,22 +463,6 @@ export class RelayObject extends DurableObject<Env> {
     const notification = message.notification;
     if (!ownerUserId || !notification?.title) return;
     const state = await loadSecurityState(this.ctx.storage);
-    const guard = await checkNotificationPushGuard(this.ctx.storage, {
-      userId: ownerUserId,
-      sessionId: notification.sessionId,
-      kind: notification.kind,
-      title: notification.title,
-      body: notification.body,
-      dedupeKey: notification.dedupeKey,
-    });
-    if (!guard.allowed) {
-      this.logNotificationPushSuppressed(guard, {
-        userId: ownerUserId,
-        sessionId: notification.sessionId,
-        kind: notification.kind,
-      });
-      return;
-    }
     try {
       await deliverNotificationPush({
         userId: ownerUserId,
@@ -957,26 +936,6 @@ export class RelayObject extends DurableObject<Env> {
     }
     const title = "aimux test notification";
     const body = "Push notifications are working.";
-    const guard = await checkNotificationPushGuard(this.ctx.storage, {
-      userId: targetUserId,
-      sessionId: "_test",
-      kind: "test",
-      title,
-      body,
-      dedupeKey: `test:${targetUserId}:${Date.now()}:${crypto.randomUUID()}`,
-    });
-    if (!guard.allowed) {
-      this.logNotificationPushSuppressed(guard, { userId: targetUserId, sessionId: "_test", kind: "test" });
-      return json(
-        {
-          ok: false,
-          error: notificationPushGuardMessage(guard),
-          reason: guard.reason,
-          retryAfterMs: guard.retryAfterMs,
-        },
-        429,
-      );
-    }
     try {
       const delivered = await deliverNotificationPush({
         userId: targetUserId,
@@ -991,19 +950,6 @@ export class RelayObject extends DurableObject<Env> {
       console.error("test push delivery failed", error);
       return json({ ok: false, error: errorMessage(error, "Push delivery failed") }, 502);
     }
-  }
-
-  private logNotificationPushSuppressed(
-    result: Exclude<NotificationPushGuardResult, { allowed: true }>,
-    context: { userId: string; sessionId?: string; kind?: string },
-  ): void {
-    console.warn("notification push suppressed by relay guard", {
-      reason: result.reason,
-      retryAfterMs: result.retryAfterMs,
-      userId: context.userId,
-      sessionId: context.sessionId,
-      kind: context.kind,
-    });
   }
 
   private async authorizeSharedClientConnect(
@@ -1037,9 +983,7 @@ export class RelayObject extends DurableObject<Env> {
     if (!shareId) {
       const bodyPatch = await this.hostedAttachmentPatchForClientRequest(request, undefined);
       if (!bodyPatch.ok) return bodyPatch;
-      return bodyPatch.body === undefined
-        ? { ok: true }
-        : { ok: true, requestPatch: { body: bodyPatch.body } };
+      return bodyPatch.body === undefined ? { ok: true } : { ok: true, requestPatch: { body: bodyPatch.body } };
     }
     const userId = tagValue(tags, "user:");
     if (!userId) return { ok: false, status: 401, error: "Missing shared user context" };
@@ -1127,7 +1071,8 @@ export class RelayObject extends DurableObject<Env> {
         },
       };
     } catch (error) {
-      if (!share) return bodyWithoutHostedAttachment === body ? { ok: true } : { ok: true, body: bodyWithoutHostedAttachment };
+      if (!share)
+        return bodyWithoutHostedAttachment === body ? { ok: true } : { ok: true, body: bodyWithoutHostedAttachment };
       return { ok: false, status: 400, error: error instanceof Error ? error.message : "invalid attachment" };
     }
   }
@@ -1501,31 +1446,11 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   private async securityAlertPushTokens(
-    userId: string,
-    event: SecurityEventRecord,
+    _userId: string,
+    _event: SecurityEventRecord,
     pushTokens: SecurityPushTokenRecord[],
   ): Promise<SecurityPushTokenRecord[]> {
-    const hasEligibleMobileToken = pushTokens.some(
-      (record) =>
-        (!record.userId || record.userId === userId) &&
-        (record.platform === "ios" || record.platform === "android"),
-    );
-    if (!hasEligibleMobileToken) return pushTokens;
-    const guard = await checkNotificationPushGuard(this.ctx.storage, {
-      userId,
-      sessionId: event.sessionId,
-      kind: `security:${event.kind}`,
-      title: event.title,
-      body: event.body,
-      dedupeKey: `security:${event.kind}:${event.deviceId ?? event.shareId ?? event.id}`,
-    });
-    if (guard.allowed) return pushTokens;
-    this.logNotificationPushSuppressed(guard, {
-      userId,
-      sessionId: event.sessionId,
-      kind: `security:${event.kind}`,
-    });
-    return [];
+    return pushTokens;
   }
 
   private ensureHeartbeat(): void {

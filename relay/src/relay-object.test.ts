@@ -32,7 +32,11 @@ class MemoryStorage {
 class FakeR2Bucket {
   objects = new Map<string, { body: Uint8Array; customMetadata?: Record<string, string> }>();
 
-  async put(key: string, value: ArrayBuffer | ArrayBufferView | string, options?: { customMetadata?: Record<string, string> }) {
+  async put(
+    key: string,
+    value: ArrayBuffer | ArrayBufferView | string,
+    options?: { customMetadata?: Record<string, string> },
+  ) {
     const body =
       typeof value === "string"
         ? new TextEncoder().encode(value)
@@ -731,12 +735,11 @@ describe("RelayObject owner device security", () => {
     });
   });
 
-  it("rate-limits repeated test pushes before Expo delivery", async () => {
+  it("delivers every repeated test push to Expo", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const storage = storageWithSockets([]);
     await storage.put("security-state:v1", {
       version: 1,
@@ -768,45 +771,23 @@ describe("RelayObject owner device security", () => {
     });
     const object = createObject(storage, { SECURITY_DEVICE_POLICY: "enforce" } as unknown as Env);
 
-    try {
-      for (let i = 0; i < 5; i += 1) {
-        const response = await object.fetch(
-          new Request("https://relay.aimux.app/security/test-push", {
-            method: "POST",
-            headers: { "X-Aimux-User-Id": "user_owner" },
-          }),
-        );
-        expect(response.status).toBe(200);
-      }
-      const limited = await object.fetch(
+    for (let i = 0; i < 6; i += 1) {
+      const response = await object.fetch(
         new Request("https://relay.aimux.app/security/test-push", {
           method: "POST",
           headers: { "X-Aimux-User-Id": "user_owner" },
         }),
       );
-
-      expect(limited.status).toBe(429);
-      expect(await limited.json()).toMatchObject({
-        ok: false,
-        reason: "session_rate_limited",
-        error: "Push notification session rate limit exceeded",
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(5);
-      expect(warn).toHaveBeenCalledWith(
-        "notification push suppressed by relay guard",
-        expect.objectContaining({ reason: "session_rate_limited", userId: "user_owner" }),
-      );
-    } finally {
-      warn.mockRestore();
+      expect(response.status).toBe(200);
     }
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
-  it("dedupes daemon-originated mobile pushes before Expo delivery", async () => {
+  it("delivers every daemon-originated mobile push to Expo", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const daemonSocket = fakeSocket(["daemon", "user:user_owner"]);
     const storage = storageWithSockets([daemonSocket]);
     await storage.put("security-state:v1", {
@@ -849,22 +830,9 @@ describe("RelayObject owner device security", () => {
       },
     });
 
-    try {
-      await object.webSocketMessage(daemonSocket, message);
-      await object.webSocketMessage(daemonSocket, message);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(warn).toHaveBeenCalledWith(
-        "notification push suppressed by relay guard",
-        expect.objectContaining({
-          reason: "dedupe",
-          userId: "user_owner",
-          sessionId: "claude-1",
-          kind: "needs_input",
-        }),
-      );
-    } finally {
-      warn.mockRestore();
-    }
+    await object.webSocketMessage(daemonSocket, message);
+    await object.webSocketMessage(daemonSocket, message);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("tests shared mobile pushes against the owner delivery path", async () => {

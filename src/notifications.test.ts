@@ -239,7 +239,7 @@ describe("notifications store", () => {
     expect(unreadNotificationCount({ sessionId: "codex-1" })).toBe(0);
   });
 
-  it("coalesces duplicate alert sources into one session notification", () => {
+  it("records every alert source as its own session notification", () => {
     const bus = new ProjectEventBus();
 
     expect(
@@ -260,12 +260,59 @@ describe("notifications store", () => {
     ).toBe(true);
 
     const notifications = listNotifications({ includeCleared: true, sessionId: "claude-1" });
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]).toMatchObject({
-      title: "Claude Code",
-      body: "from terminal notification",
-      targetKey: "session:claude-1",
-    });
+    expect(notifications).toHaveLength(2);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        title: "Claude Code",
+        body: "from terminal notification",
+        targetKey: "session:claude-1",
+      }),
+      expect.objectContaining({
+        title: "claude-1 needs input",
+        body: "from hook",
+        targetKey: "session:claude-1",
+      }),
+    ]);
+  });
+
+  it("does not suppress repeated alert dedupe keys", () => {
+    const bus = new ProjectEventBus();
+
+    expect(
+      bus.publishAlert({
+        kind: "needs_input",
+        sessionId: "claude-1",
+        title: "claude-1 needs input",
+        message: "first",
+        dedupeKey: "needs_input:claude-1",
+        cooldownMs: 60_000,
+      }),
+    ).toBe(true);
+    expect(
+      bus.publishAlert({
+        kind: "needs_input",
+        sessionId: "claude-1",
+        title: "claude-1 needs input",
+        message: "second",
+        dedupeKey: "needs_input:claude-1",
+        cooldownMs: 60_000,
+      }),
+    ).toBe(true);
+
+    expect(listNotifications({ includeCleared: true, sessionId: "claude-1" })).toEqual([
+      expect.objectContaining({
+        title: "claude-1 needs input",
+        body: "second",
+        dedupeKey: "needs_input:claude-1",
+        targetKey: "session:claude-1",
+      }),
+      expect.objectContaining({
+        title: "claude-1 needs input",
+        body: "first",
+        dedupeKey: "needs_input:claude-1",
+        targetKey: "session:claude-1",
+      }),
+    ]);
   });
 
   it("preserves interaction metadata from alert events", () => {

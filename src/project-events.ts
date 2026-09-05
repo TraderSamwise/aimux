@@ -1,5 +1,5 @@
 import { getProjectId } from "./paths.js";
-import { upsertNotification } from "./notifications.js";
+import { addNotification } from "./notifications.js";
 import { isSessionNotificationFocused } from "./notification-context.js";
 import type { InteractionType } from "./interaction-requests.js";
 import {
@@ -62,7 +62,6 @@ type ProjectEventListener = (event: ProjectStreamEvent) => void;
 
 export class ProjectEventBus {
   private listeners = new Set<ProjectEventListener>();
-  private alertCooldowns = new Map<string, number>();
 
   subscribe(listener: ProjectEventListener): () => void {
     this.listeners.add(listener);
@@ -100,23 +99,15 @@ export class ProjectEventBus {
   publishAlert(
     alert: Omit<AlertEvent, "type" | "projectId" | "ts"> & {
       dedupeKey?: string;
+      /** Deprecated: accepted from older call sites, but notification fanout no longer suppresses repeats. */
       cooldownMs?: number;
       forceNotify?: boolean;
     },
   ): boolean {
-    const cooldownMs = alert.cooldownMs ?? 15_000;
     const dedupeKey = alert.dedupeKey?.trim() || undefined;
-    if (dedupeKey) {
-      const now = Date.now();
-      const until = this.alertCooldowns.get(dedupeKey) ?? 0;
-      if (until > now) {
-        return false;
-      }
-      this.alertCooldowns.set(dedupeKey, now + cooldownMs);
-    }
 
     const ts = new Date().toISOString();
-    const notification = upsertNotification({
+    const notification = addNotification({
       title: alert.title,
       body: alert.message,
       sessionId: alert.sessionId,

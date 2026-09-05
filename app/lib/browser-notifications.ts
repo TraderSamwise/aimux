@@ -5,8 +5,6 @@ export type BrowserNotificationPermission = "default" | "denied" | "granted" | "
 
 interface BrowserNotificationOptions {
   body?: string;
-  tag?: string;
-  renotify?: boolean;
 }
 
 type BrowserNotificationConstructor = {
@@ -43,8 +41,6 @@ export function showBrowserNotification(event: ClientNotificationEvent): boolean
   try {
     new api(event.title, {
       body: event.body,
-      tag: event.dedupeKey,
-      renotify: false,
     });
     return true;
   } catch {

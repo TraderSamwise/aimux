@@ -90,9 +90,7 @@ describe("RelayClient runtime compatibility", () => {
     });
   });
 
-  it("dedupes repeated new-client notifications for a bouncing remote client", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-30T00:00:00.000Z"));
+  it("notifies every repeated new-client security event", async () => {
     const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
     const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
     const message = JSON.stringify({
@@ -110,12 +108,9 @@ describe("RelayClient runtime compatibility", () => {
     await (client as unknown as { handleMessage(data: string): Promise<void> }).handleMessage(message);
     await (client as unknown as { handleMessage(data: string): Promise<void> }).handleMessage(message);
 
-    expect(notifyRemoteClientConnected).toHaveBeenCalledTimes(1);
-
-    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
     await (client as unknown as { handleMessage(data: string): Promise<void> }).handleMessage(message);
 
-    expect(notifyRemoteClientConnected).toHaveBeenCalledTimes(2);
+    expect(notifyRemoteClientConnected).toHaveBeenCalledTimes(3);
   });
 
   it("turns shared participant security events into distinct local owner notifications", async () => {
