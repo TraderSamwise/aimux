@@ -14,6 +14,7 @@ use super::desktop_state::route_desktop_state_request;
 use super::dispatcher::{
     ProjectServiceDispatchResponse, route_unimplemented_project_service_request,
 };
+use super::event_streams::route_event_stream_request;
 use super::exchange_reads::route_exchange_read_request;
 use super::hooks::route_hook_request;
 use super::interactions::route_interaction_request;
@@ -119,6 +120,9 @@ pub fn route_project_service_request(
     path: &str,
     body: Option<&Value>,
 ) -> ProjectServiceDispatchResponse {
+    if let Some(response) = route_event_stream_request(context, method, path) {
+        return response;
+    }
     if let Some(response) = route_team_request(context, method, path, body) {
         return response;
     }

@@ -9,18 +9,70 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn stream_routes_remain_unported_until_live_sse_writer_owns_the_socket() {
-    let project = temp_project("unported");
+fn project_events_stream_returns_ready_snapshot() {
+    let project = temp_project("events");
     let context = ProjectServiceRequestContext::new(&project);
-    for path in [
-        routes::EVENTS,
-        routes::agents::OUTPUT_STREAM,
-        routes::agents::INTERACTION_STREAM,
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/events?sessionId=codex-1&startLine=-9999&intervalMs=250&mode=chat&purpose=stream",
+        None,
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.content_type.as_deref(), Some("text/event-stream"));
+    let body = String::from_utf8(response.bytes.unwrap()).unwrap();
+    assert!(body.starts_with("event: ready\n"));
+    assert!(body.contains("\"sessionId\":\"codex-1\""));
+    assert!(body.contains("\"startLine\":-2000"));
+    assert!(body.contains("\"requestedStartLine\":-9999"));
+    assert!(body.contains("\"outputStartLineClamped\":true"));
+    assert!(body.contains("\"intervalMs\":250"));
+    cleanup(project);
+}
+
+#[test]
+fn output_and_interaction_streams_return_ready_snapshots() {
+    let project = temp_project("output");
+    let context = ProjectServiceRequestContext::new(&project);
+    let output = route_project_service_request(
+        &context,
+        "GET",
+        "/agents/output/stream?sessionId=codex-1&startLine=5",
+        None,
+    );
+    assert_eq!(output.status, 200);
+    let output_body = String::from_utf8(output.bytes.unwrap()).unwrap();
+    assert!(output_body.contains("\"sessionId\":\"codex-1\""));
+    assert!(output_body.contains("\"startLine\":5"));
+    assert!(output_body.contains("\"endLine\":2004"));
+
+    let interaction =
+        route_project_service_request(&context, "GET", routes::agents::INTERACTION_STREAM, None);
+    assert_eq!(interaction.status, 200);
+    assert_eq!(
+        String::from_utf8(interaction.bytes.unwrap()).unwrap(),
+        "event: ready\ndata: {\"pending\":[]}\n\n"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn stream_routes_validate_query_like_typescript() {
+    let project = temp_project("validation");
+    let context = ProjectServiceRequestContext::new(&project);
+    for (path, error) in [
+        ("/events?mode=raw", "mode must be full or chat"),
+        ("/events?purpose=nope", "purpose is invalid"),
+        ("/events?startLine=x", "startLine must be an integer"),
+        (
+            "/events?intervalMs=99",
+            "intervalMs must be an integer >= 100",
+        ),
+        (routes::agents::OUTPUT_STREAM, "sessionId is required"),
     ] {
         let response = route_project_service_request(&context, "GET", path, None);
-        assert_eq!(response.status, 501, "{path}");
-        assert_eq!(response.body["error"], "project service route not ported");
-        assert_eq!(response.body["group"], "events");
+        assert_eq!(response.status, 400, "{path}");
+        assert_eq!(response.body["error"], error);
     }
     cleanup(project);
 }
