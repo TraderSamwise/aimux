@@ -2,8 +2,8 @@ use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::text::host_agent::{
-    DaemonHostAgentTextRuntime, HostAgentStreamResolution, resolve_host_agent_stream_text_route,
-    route_host_agent_text_request,
+    AgentOutputSseTextHandler, DaemonHostAgentTextRuntime, HostAgentStreamResolution,
+    resolve_host_agent_stream_text_route, route_host_agent_text_request,
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_state::MetadataApiEndpoint;
@@ -187,6 +187,23 @@ fn host_agent_stream_resolves_upstream_url_after_local_preflight_and_ensure() {
             route_path: None,
         }]
     );
+
+    let default_resolution = resolve_host_agent_stream_text_route(
+        &mut runtime,
+        "/core/host-agent-stream-text?project=.&sessionId=claude-1",
+        None,
+        false,
+    );
+    assert_eq!(
+        default_resolution,
+        HostAgentStreamResolution::Ok {
+            session_id: "claude-1".into(),
+            url: format!(
+                "http://127.0.0.1:44291{}?sessionId=claude-1&startLine=-2000&intervalMs=500",
+                project_routes::agents::OUTPUT_STREAM
+            ),
+        }
+    );
 }
 
 #[test]
@@ -265,5 +282,64 @@ fn host_agent_stream_reports_missing_endpoint_after_ensure() {
             project: "/repo".into(),
             route_path: None,
         }]
+    );
+}
+
+#[test]
+fn agent_output_sse_handler_matches_plain_text_delta_contract() {
+    let mut handler = AgentOutputSseTextHandler::new("claude-1");
+    assert_eq!(handler.push_chunk_text("event: ready\n\n").unwrap(), "");
+    assert_eq!(
+        handler
+            .push_chunk_text("event: output\ndata: {\"output\":\"one\"}\n\n")
+            .unwrap(),
+        "one\n"
+    );
+    assert_eq!(
+        handler
+            .push_chunk_text("event: output\ndata: {\"output\":\"one\\ntwo\"}\n\n")
+            .unwrap(),
+        "\ntwo\n"
+    );
+    assert_eq!(
+        handler
+            .push_chunk_text("event: output\ndata: {\"output\":\"two\\nthree\"}\n\n")
+            .unwrap(),
+        "\nthree\n"
+    );
+    assert_eq!(
+        handler
+            .push_chunk_text("event: output\ndata: {\"output\":\"fresh\"}\n\n")
+            .unwrap(),
+        "\n[aimux stream resync]\nfresh\n"
+    );
+}
+
+#[test]
+fn agent_output_sse_handler_reports_tail_notice_and_errors() {
+    let mut handler = AgentOutputSseTextHandler::new("claude-1");
+    assert_eq!(
+        handler
+            .push_chunk_text(
+                "event: output\ndata: {\"output\":\"tail\",\"outputTailOnly\":true,\"captureLineLimit\":2000}\n\n",
+            )
+            .unwrap(),
+        "[aimux showing last 2000 lines]\ntail\n"
+    );
+    assert_eq!(
+        handler
+            .push_chunk_text("event: error\ndata: {\"error\":\"stream failed\"}\n\n")
+            .unwrap_err()
+            .to_string(),
+        "stream failed"
+    );
+
+    let mut fallback = AgentOutputSseTextHandler::new("codex-1");
+    assert_eq!(
+        fallback
+            .push_chunk_text("event: error\n\n")
+            .unwrap_err()
+            .to_string(),
+        "stream error for codex-1"
     );
 }

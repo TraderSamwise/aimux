@@ -138,6 +138,37 @@ fn metadata_parser_matches_status_context_and_terminator_contracts() {
     assert_eq!(
         parse_runtime_metadata_cli_args(&args(&[
             "metadata",
+            "set-progress",
+            "claude-1",
+            "0x10",
+            "1e3",
+            "--label",
+            "boot"
+        ])),
+        MetadataCliResult::Post {
+            route_path: project_routes::runtime::SET_PROGRESS.into(),
+            body: json!({ "session": "claude-1", "current": 16, "total": 1000.0, "label": "boot" }),
+        }
+    );
+    assert_eq!(
+        parse_runtime_metadata_cli_args(&args(&[
+            "metadata",
+            "set-context",
+            "claude-1",
+            "--pr-number",
+            "not-a-number"
+        ])),
+        MetadataCliResult::Post {
+            route_path: project_routes::runtime::SET_CONTEXT.into(),
+            body: json!({
+                "session": "claude-1",
+                "context": { "pr": { "number": null } }
+            }),
+        }
+    );
+    assert_eq!(
+        parse_runtime_metadata_cli_args(&args(&[
+            "metadata",
             "set-context",
             "claude-1",
             "--cwd",
@@ -201,6 +232,28 @@ fn metadata_parser_matches_event_services_and_rejection_contracts() {
                 "services": [
                     { "label": "web", "port": 3000, "url": "http://127.0.0.1:3000" },
                     { "label": "web", "port": 3001, "url": "http://127.0.0.1:3001/path" }
+                ]
+            }),
+        }
+    );
+    assert_eq!(
+        parse_runtime_metadata_cli_args(&args(&[
+            "metadata",
+            "set-services",
+            "claude-1",
+            "--url",
+            "http://127.0.0.1:3000?x=1",
+            "http://127.0.0.1:3001#hash",
+            "http://127.0.0.1:3002abc"
+        ])),
+        MetadataCliResult::Post {
+            route_path: project_routes::runtime::SET_SERVICES.into(),
+            body: json!({
+                "session": "claude-1",
+                "services": [
+                    { "url": "http://127.0.0.1:3000?x=1" },
+                    { "url": "http://127.0.0.1:3001#hash" },
+                    { "url": "http://127.0.0.1:3002abc" }
                 ]
             }),
         }

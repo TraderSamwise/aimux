@@ -193,8 +193,8 @@ fn parse_set_status(args: &[String]) -> MetadataCliResult {
 
 fn parse_set_progress(args: &[String]) -> MetadataCliResult {
     let session = args.get(1).map(String::as_str);
-    let current = args.get(2).and_then(|value| parse_js_number(value));
-    let total = args.get(3).and_then(|value| parse_js_number(value));
+    let current = args.get(2).and_then(|value| parse_js_finite_number(value));
+    let total = args.get(3).and_then(|value| parse_js_finite_number(value));
     if !valid_required(session) || current.is_none() || total.is_none() {
         return MetadataCliResult::Error(
             "metadata set-progress requires <session> <current> <total>".into(),
@@ -261,12 +261,8 @@ fn parse_set_context(args: &[String]) -> MetadataCliResult {
         || values.contains_key("prUrl")
     {
         let mut pr = Map::new();
-        if let Some(number) = values
-            .get("prNumber")
-            .and_then(Value::as_str)
-            .and_then(parse_js_number)
-        {
-            pr.insert("number".into(), number);
+        if let Some(value) = values.get("prNumber").and_then(Value::as_str) {
+            pr.insert("number".into(), parse_js_number(value));
         }
         copy_string_as(&values, &mut pr, "prTitle", "title");
         copy_string_as(&values, &mut pr, "prUrl", "url");
@@ -447,9 +443,6 @@ fn valid_required(value: Option<&str>) -> bool {
 
 fn compact_record(record: Map<String, Value>) -> Map<String, Value> {
     record
-        .into_iter()
-        .filter(|(_, value)| !value.is_null())
-        .collect()
 }
 
 fn copy_string(from: &Map<String, Value>, to: &mut Map<String, Value>, key: &str) {
@@ -467,27 +460,69 @@ fn copy_string_as(
     }
 }
 
-fn parse_js_number(value: &str) -> Option<Value> {
-    let parsed = if value.is_empty() {
+fn parse_js_finite_number(value: &str) -> Option<Value> {
+    let parsed = parse_js_number(value);
+    match parsed {
+        Value::Number(_) => Some(parsed),
+        _ => None,
+    }
+}
+
+fn parse_js_number(value: &str) -> Value {
+    let trimmed = value.trim();
+    if let Some(number) = parse_js_prefixed_integer(trimmed) {
+        return Value::Number(Number::from(number));
+    }
+    if matches!(trimmed, "Infinity" | "+Infinity" | "-Infinity" | "NaN") {
+        return Value::Null;
+    }
+    let parsed = if trimmed.is_empty() {
         0.0
     } else {
-        value.parse::<f64>().ok()?
+        match trimmed.parse::<f64>() {
+            Ok(value) => value,
+            Err(_) => return Value::Null,
+        }
     };
     if !parsed.is_finite() {
-        return None;
+        return Value::Null;
     }
-    Number::from_f64(parsed).map(Value::Number)
+    Number::from_f64(parsed)
+        .map(Value::Number)
+        .unwrap_or(Value::Null)
+}
+
+fn parse_js_prefixed_integer(value: &str) -> Option<u64> {
+    let (radix, digits) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .map(|digits| (16, digits))
+        .or_else(|| value.strip_prefix("0b").map(|digits| (2, digits)))
+        .or_else(|| value.strip_prefix("0B").map(|digits| (2, digits)))
+        .or_else(|| value.strip_prefix("0o").map(|digits| (8, digits)))
+        .or_else(|| value.strip_prefix("0O").map(|digits| (8, digits)))?;
+    (!digits.is_empty())
+        .then(|| u64::from_str_radix(digits, radix).ok())
+        .flatten()
 }
 
 fn port_from_url_text(url: &str) -> Option<u64> {
-    let colon = url.rfind(':')?;
-    let after_colon = &url[colon + 1..];
-    let digits = after_colon
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .chars()
-        .take_while(|char| char.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
+    let bytes = url.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b':' {
+            index += 1;
+            continue;
+        }
+        let start = index + 1;
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > start && (end == bytes.len() || bytes[end] == b'/') {
+            return url[start..end].parse().ok();
+        }
+        index += 1;
+    }
+    None
 }
