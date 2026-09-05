@@ -28,6 +28,7 @@ pub mod routes;
 pub mod runtime_exchange;
 pub mod server;
 pub mod shell_state;
+pub mod statusline;
 pub mod switchable_agents;
 pub mod team;
 pub mod topology;
