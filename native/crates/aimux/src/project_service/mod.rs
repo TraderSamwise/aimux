@@ -10,6 +10,7 @@ pub mod exchange_retention;
 pub mod expose_ordering;
 pub mod hooks;
 pub mod http;
+pub mod interactions;
 pub mod library;
 pub mod metadata;
 pub mod notification_context;
