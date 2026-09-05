@@ -1,6 +1,6 @@
 use aimux::daemon::core_commands::DaemonCoreCommandRuntime;
 use aimux::daemon::process::handle_daemon_runtime_request;
-use aimux::daemon::runtime::RealDaemonRuntime;
+use aimux::daemon::runtime::{ProjectServiceLauncher, RealDaemonRuntime};
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::auth::DaemonAuthTextRuntime;
 use aimux::daemon_state::{
@@ -10,8 +10,9 @@ use aimux::daemon_state::{
 use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::fs::{self, remove_dir_all};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -136,6 +137,120 @@ fn native_daemon_core_command_ids_are_unique() {
 }
 
 #[test]
+fn ensure_project_launches_service_and_persists_starting_state() {
+    let fixture = RuntimeFixture::new("ensure-launch");
+    let project = fixture.project("repo");
+    let launcher = Arc::new(FakeLauncher::new(87_654));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let project_json = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect("ensure project");
+
+    assert_eq!(
+        launcher.calls(),
+        vec![project.to_string_lossy().into_owned()]
+    );
+    assert_eq!(
+        project_json["projectRoot"],
+        json!(project.to_string_lossy())
+    );
+    assert_eq!(project_json["pid"], json!(87_654));
+    assert_eq!(project_json["status"], "starting");
+    let state = fixture.resolver().load_registry().expect("registry");
+    assert_eq!(state.projects.len(), 1);
+    let daemon_state = fixture.runtime().daemon_state();
+    assert_eq!(daemon_state.projects.len(), 1);
+    assert_eq!(
+        daemon_state
+            .projects
+            .values()
+            .next()
+            .and_then(|value| value.get("status")),
+        Some(&json!("starting"))
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn ensure_project_reuses_existing_live_state_without_launching() {
+    let fixture = RuntimeFixture::new("ensure-reuse");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let service = ProjectServiceState {
+        project_id: entry.id.clone(),
+        project_root: project.to_string_lossy().into_owned(),
+        pid: std::process::id() as i32,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: Some(ProjectServiceStatus::Running),
+        restart_count: Some(3),
+        last_restart_at: Some("restart".into()),
+        last_exit: None,
+    };
+    save_daemon_state(
+        resolver.daemon_state_path(),
+        &DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: Map::from_iter([(
+                entry.id.clone(),
+                serde_json::to_value(&service).expect("service json"),
+            )]),
+        },
+    )
+    .expect("daemon state");
+    let launcher = Arc::new(FakeLauncher::new(87_655));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let project_json = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect("ensure project");
+
+    assert!(launcher.calls().is_empty());
+    assert_eq!(project_json["pid"], json!(std::process::id() as i32));
+    assert_eq!(project_json["status"], "running");
+    assert_eq!(project_json["restartCount"], json!(3));
+    fixture.cleanup();
+}
+
+#[test]
+fn core_projects_ensure_route_uses_native_supervision_runtime() {
+    let fixture = RuntimeFixture::new("ensure-route");
+    let project = fixture.project("repo");
+    let launcher = Arc::new(FakeLauncher::new(87_656));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+    let body = format!(r#"{{"projectRoot":{}}}"#, json!(project.to_string_lossy()));
+    let mut request = request("POST", "/projects/ensure");
+    request
+        .headers
+        .insert("content-type".into(), "application/json".into());
+    request
+        .headers
+        .insert("content-length".into(), body.len().to_string());
+    request.body_chunks = vec![body.into_bytes()];
+
+    let response = handle_daemon_runtime_request(&mut runtime, request);
+    let response_json: Value = serde_json::from_slice(&response.body).expect("response json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response_json["project"]["projectRoot"],
+        json!(project.to_string_lossy())
+    );
+    assert_eq!(response_json["project"]["pid"], json!(87_656));
+    assert_eq!(
+        launcher.calls(),
+        vec![project.to_string_lossy().into_owned()]
+    );
+    fixture.cleanup();
+}
+
+#[test]
 fn native_daemon_auth_reports_local_logged_out_state() {
     let fixture = RuntimeFixture::new("auth");
     let runtime = fixture.runtime();
@@ -195,6 +310,19 @@ impl RuntimeFixture {
         RealDaemonRuntime::new(self.resolver(), self.info.clone())
     }
 
+    fn runtime_with_launcher(
+        &self,
+        launcher: Arc<dyn ProjectServiceLauncher>,
+        startup_timeout_ms: u64,
+    ) -> RealDaemonRuntime {
+        RealDaemonRuntime::with_project_service_launcher(
+            self.resolver(),
+            self.info.clone(),
+            launcher,
+            startup_timeout_ms,
+        )
+    }
+
     fn project(&self, name: &str) -> PathBuf {
         let project = self.root.join(name);
         fs::create_dir_all(project.join(".git")).expect("project git");
@@ -214,5 +342,39 @@ fn request(method: &str, path: &str) -> aimux::daemon::server::DaemonHttpRequest
         body_chunks: Vec::new(),
         stopping: false,
         issued_at: "issued".into(),
+    }
+}
+
+#[derive(Debug)]
+struct FakeLauncher {
+    pid: i32,
+    calls: Mutex<Vec<String>>,
+}
+
+impl FakeLauncher {
+    fn new(pid: i32) -> Self {
+        Self {
+            pid,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().expect("calls").clone()
+    }
+}
+
+impl ProjectServiceLauncher for FakeLauncher {
+    fn launch(
+        &self,
+        _project_id: &str,
+        project_root: &Path,
+        _project_state_dir: &Path,
+    ) -> Result<i32, String> {
+        self.calls
+            .lock()
+            .expect("calls")
+            .push(project_root.to_string_lossy().into_owned());
+        Ok(self.pid)
     }
 }

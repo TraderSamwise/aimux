@@ -1,3 +1,4 @@
+use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_project_service_launch_command};
 use crate::config::load_config_for_project;
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
@@ -29,32 +30,124 @@ use crate::daemon_projects::{ProjectsRouteProject, build_projects_route_projects
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, clear_daemon_info,
     get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state, load_metadata_endpoint,
-    save_daemon_info,
+    save_daemon_info, save_daemon_state,
 };
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
-use crate::paths::PathResolver;
+use crate::paths::{PathResolver, compute_project_id};
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::{self, Formatter};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
-#[derive(Debug)]
+pub const PROJECT_SERVICE_STARTUP_TIMEOUT_MS: u64 = 10_000;
+
+pub trait ProjectServiceLauncher: Send + Sync {
+    fn launch(
+        &self,
+        project_id: &str,
+        project_root: &Path,
+        project_state_dir: &Path,
+    ) -> Result<i32, String>;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemProjectServiceLauncher;
+
+impl ProjectServiceLauncher for SystemProjectServiceLauncher {
+    fn launch(
+        &self,
+        project_id: &str,
+        project_root: &Path,
+        _project_state_dir: &Path,
+    ) -> Result<i32, String> {
+        let project_root_text = project_root.to_string_lossy().into_owned();
+        let launch = get_aimux_project_service_launch_command(
+            project_id,
+            &project_root_text,
+            AimuxCliLaunchOptions {
+                env: std::env::vars().collect(),
+                current_argv_entry: std::env::args().next(),
+                current_entry_path: None,
+                home_dir: None,
+            },
+        );
+        let mut command = Command::new(&launch.command);
+        command
+            .args(&launch.args)
+            .current_dir(project_root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+        let child = command.spawn().map_err(|error| error.to_string())?;
+        i32::try_from(child.id()).map_err(|_| "project service pid overflow".to_owned())
+    }
+}
+
 pub struct RealDaemonRuntime {
     resolver: PathResolver,
     info: AimuxDaemonInfo,
     next_command: AtomicU64,
+    project_service_launcher: Arc<dyn ProjectServiceLauncher>,
+    project_service_startup_timeout_ms: u64,
+}
+
+impl fmt::Debug for RealDaemonRuntime {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RealDaemonRuntime")
+            .field("resolver", &self.resolver)
+            .field("info", &self.info)
+            .field("next_command", &self.next_command)
+            .field(
+                "project_service_startup_timeout_ms",
+                &self.project_service_startup_timeout_ms,
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl RealDaemonRuntime {
     pub fn new(resolver: PathResolver, info: AimuxDaemonInfo) -> Self {
+        Self::with_project_service_launcher(
+            resolver,
+            info,
+            Arc::new(SystemProjectServiceLauncher),
+            PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+        )
+    }
+
+    pub fn with_project_service_launcher(
+        resolver: PathResolver,
+        info: AimuxDaemonInfo,
+        project_service_launcher: Arc<dyn ProjectServiceLauncher>,
+        project_service_startup_timeout_ms: u64,
+    ) -> Self {
         Self {
             resolver,
             info,
             next_command: AtomicU64::new(0),
+            project_service_launcher,
+            project_service_startup_timeout_ms,
         }
     }
 
@@ -134,6 +227,47 @@ impl RealDaemonRuntime {
             .projects
             .into_iter()
             .collect()
+    }
+
+    fn live_project_service_state(&self, project_id: &str) -> Option<ProjectServiceState> {
+        let state = load_daemon_state(self.resolver.daemon_state_path());
+        let service = state.projects.get(project_id)?;
+        serde_json::from_value::<ProjectServiceState>(service.clone())
+            .ok()
+            .filter(|service| is_pid_alive(service.pid))
+    }
+
+    fn save_project_service_state(&self, service: &ProjectServiceState) -> Result<(), String> {
+        let mut state = load_daemon_state(self.resolver.daemon_state_path());
+        state.updated_at = Some(Value::String(service.updated_at.clone()));
+        state.projects.insert(
+            service.project_id.clone(),
+            serde_json::to_value(service).map_err(|error| error.to_string())?,
+        );
+        save_daemon_state(self.resolver.daemon_state_path(), &state)
+            .map_err(|error| error.to_string())
+    }
+
+    fn wait_for_live_project_service(
+        &self,
+        project_state_dir: &Path,
+        pid: i32,
+    ) -> Option<MetadataApiEndpoint> {
+        let deadline = current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
+        loop {
+            if let Some(endpoint) =
+                load_metadata_endpoint(project_state_dir).filter(|endpoint| endpoint.pid == pid)
+            {
+                return Some(endpoint);
+            }
+            if self.project_service_startup_timeout_ms == 0
+                || current_unix_millis() >= deadline
+                || !is_pid_alive(pid)
+            {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn service_endpoints_by_id(&self) -> HashMap<String, Value> {
@@ -243,14 +377,43 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
 
     fn ensure_project(&mut self, project_root: &str) -> Result<Value, String> {
         let mut resolver = self.resolver.clone();
-        let project_root = resolver
-            .resolve_repo_root(project_root)
-            .to_string_lossy()
-            .into_owned();
+        let project_root_path = resolver.resolve_repo_root(project_root);
+        let project_root = project_root_path.to_string_lossy().into_owned();
+        let project_id = compute_project_id(&project_root_path);
         resolver
             .register_project(&project_root)
             .map_err(|error| error.to_string())?;
-        Err(self.unported("project service supervision"))
+        if let Some(service) = self.live_project_service_state(&project_id) {
+            return serde_json::to_value(service).map_err(|error| error.to_string());
+        }
+        let project_state_dir = resolver.project_state_dir_for(&project_root);
+        let pid = self.project_service_launcher.launch(
+            &project_id,
+            &project_root_path,
+            &project_state_dir,
+        )?;
+        let now = now_iso();
+        let mut service = ProjectServiceState {
+            project_id,
+            project_root,
+            pid,
+            started_at: now.clone(),
+            updated_at: now,
+            status: Some(crate::daemon_state::ProjectServiceStatus::Starting),
+            restart_count: Some(0),
+            last_restart_at: None,
+            last_exit: None,
+        };
+        self.save_project_service_state(&service)?;
+        if self
+            .wait_for_live_project_service(&project_state_dir, pid)
+            .is_some()
+        {
+            service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
+            service.updated_at = now_iso();
+            self.save_project_service_state(&service)?;
+        }
+        serde_json::to_value(service).map_err(|error| error.to_string())
     }
 
     fn stop_project(&mut self, _project_root: &str, _force: bool) -> Result<Value, String> {
@@ -773,4 +936,11 @@ fn now_iso() -> String {
         now.second(),
         now.millisecond()
     )
+}
+
+fn current_unix_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
