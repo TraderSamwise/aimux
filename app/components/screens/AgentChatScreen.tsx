@@ -17,7 +17,17 @@ import {
 import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
+import { useColorScheme } from "nativewind";
 import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
+import Reanimated, {
+  Easing as ReanimatedEasing,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowUp,
@@ -40,7 +50,7 @@ import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import { useAuth, useUser } from "@/lib/auth";
-import { agentActivityLabel } from "@/lib/activity-label";
+import { agentActivityLabel, shouldShimmerAgentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   createShareInvite,
@@ -141,6 +151,14 @@ const COMPOSER_INPUT_MAX_HEIGHT =
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
+const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
+/** How much of the label the travelling highlight covers, as a fraction of its width. */
+const FOOTER_LABEL_SHIMMER_BAND = 0.3;
+/** muted-foreground -> foreground, per theme (see app/global.css). */
+const FOOTER_LABEL_SHIMMER_COLORS = {
+  dark: { base: "#a1a1aa", highlight: "#fafafa" },
+  light: { base: "#71717a", highlight: "#09090b" },
+} as const;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 const COMPOSER_WEB_INPUT_PROPS =
@@ -712,6 +730,7 @@ export default function ChatScreen() {
     () => agentActivityLabel(activity, activityText),
     [activity, activityText],
   );
+  const activityLabelShimmer = shouldShimmerAgentActivityLabel(activity, activityLabel);
 
   const wideControls = composerWidth >= COMPOSER_CONTROL_LABEL_WIDTH;
   const compactHeaderActions = width < 430;
@@ -1591,7 +1610,7 @@ export default function ChatScreen() {
                         </Text>
                       </View>
                     ) : activityLabel ? (
-                      <ActivityFooterLabel label={activityLabel} />
+                      <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
                     ) : null}
                   </View>
                   {/*
@@ -2257,14 +2276,6 @@ function ComposerFocusShell({
   );
 }
 
-function ActivityFooterLabel({ label }: { label: string }) {
-  return (
-    <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-      {label}
-    </Text>
-  );
-}
-
 function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSession {
   const worktreeName = activeShare.projectRoot.split("/").filter(Boolean).pop() || "Shared project";
   return {
@@ -2276,4 +2287,82 @@ function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSessio
     worktreeName,
     label: "Shared session",
   };
+}
+
+function ActivityFooterLabel({ label, shimmer }: { label: string; shimmer: boolean }) {
+  const { colorScheme } = useColorScheme();
+  const palette = FOOTER_LABEL_SHIMMER_COLORS[colorScheme === "light" ? "light" : "dark"];
+  const sweep = useSharedValue(0);
+
+  useEffect(() => {
+    if (!shimmer) {
+      sweep.value = 0;
+      return;
+    }
+    sweep.value = 0;
+    sweep.value = withRepeat(
+      withTiming(1, {
+        duration: FOOTER_LABEL_SHIMMER_DURATION_MS,
+        easing: ReanimatedEasing.linear,
+      }),
+      -1,
+      false,
+    );
+    return () => {
+      sweep.value = 0;
+    };
+  }, [shimmer, sweep]);
+
+  if (!shimmer) {
+    return (
+      <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+        {label}
+      </Text>
+    );
+  }
+
+  const characters = Array.from(label);
+  return (
+    <Text
+      accessibilityLabel={label}
+      className="text-xs"
+      numberOfLines={1}
+      style={{ color: palette.base }}
+    >
+      {characters.map((character, index) => (
+        <ActivityFooterLabelCharacter
+          key={`${index}-${character}`}
+          character={character}
+          palette={palette}
+          phase={characters.length > 1 ? index / (characters.length - 1) : 0}
+          sweep={sweep}
+        />
+      ))}
+    </Text>
+  );
+}
+
+function ActivityFooterLabelCharacter({
+  character,
+  palette,
+  phase,
+  sweep,
+}: {
+  character: string;
+  palette: { base: string; highlight: string };
+  phase: number;
+  sweep: SharedValue<number>;
+}) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const center = sweep.value * (1 + 2 * FOOTER_LABEL_SHIMMER_BAND) - FOOTER_LABEL_SHIMMER_BAND;
+    const distance = Math.abs(phase - center);
+    const intensity = Math.max(0, 1 - distance / FOOTER_LABEL_SHIMMER_BAND);
+    return { color: interpolateColor(intensity, [0, 1], [palette.base, palette.highlight]) };
+  }, [palette.base, palette.highlight, phase]);
+
+  return (
+    <Reanimated.Text style={[{ fontSize: 12, lineHeight: 16 }, animatedStyle]}>
+      {character}
+    </Reanimated.Text>
+  );
 }
