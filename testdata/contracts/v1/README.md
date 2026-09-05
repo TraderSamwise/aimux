@@ -9,7 +9,8 @@ that intentionally support rewriting expected outputs.
 Priority fixture groups:
 
 1. `project-api`: route shapes, mutation invalidations, HTTP/SSE payloads.
-2. `agent-output`: parser fixtures, streaming diffs, liveness transitions.
-3. `ansi`: SGR spans and terminal display formatting.
-4. `tmux`: command argv, inventory rows, pane captures, statusline artifacts.
-5. `project-catalog`: registry, topology, desktop-state project summaries.
+2. `core-command`: daemon command names and core HTTP route shapes.
+3. `agent-output`: parser fixtures, streaming diffs, liveness transitions.
+4. `ansi`: SGR spans and terminal display formatting.
+5. `tmux`: command argv, inventory rows, pane captures, statusline artifacts.
+6. `project-catalog`: registry, topology, desktop-state project summaries.

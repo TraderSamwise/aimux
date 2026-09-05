@@ -7,7 +7,8 @@ Statuses: `not-started`, `contract-locked`, `rust-mirrored`,
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | CLI-001 | `aimux ps` text/json | `src/main.ts`, `src/core-command-contract.ts` | pending | pending | not-started | none | none | capture stdout/stderr/status |
 | CLI-002 | daemon lifecycle commands | `src/main.ts`, `src/daemon.ts` | pending | pending | not-started | none | none | capture status/ensure/restart behavior |
-| API-001 | project API route list | `src/project-api-contract.ts` | `testdata/contracts/v1/project-api/routes.json` | pending | contract-locked | seed fixture added | none | fill generated route list |
+| CORE-001 | core command routes/names | `src/core-command-contract.ts` | `testdata/contracts/v1/core-command/*.json` | `yarn native:test` | rust-mirrored | Rust constants, fixture tests, and TS differential pass | pending | response structs still partial |
+| API-001 | project API route list | `src/project-api-contract.ts` | `testdata/contracts/v1/project-api/routes.json` | `yarn native:test` | rust-mirrored | Rust constants, fixture tests, and TS differential pass | pending | response structs still partial |
 | API-002 | project SSE events | `src/metadata-server.ts`, `app/lib/heartbeat.ts` | pending | pending | not-started | none | none | capture ready/update/error frames |
 | TMUX-001 | tmux command argv | `src/tmux/runtime-manager.ts` | `testdata/contracts/v1/tmux/command-argv.json` | pending | contract-locked | seed fixture added | none | expand cases |
 | TMUX-002 | tmux metadata and topology | `src/tmux/*`, `src/runtime-core/topology-store.ts` | pending | pending | not-started | none | none | capture option names and YAML schema |
