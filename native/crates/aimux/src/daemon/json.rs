@@ -245,7 +245,7 @@ pub fn resolve_project_event_stream(
             json!({ "ok": false, "error": "proxy host not allowed" }),
         ));
     }
-    if proxy.sub_path != project_routes::EVENTS {
+    if !is_project_stream_sub_path(&proxy.sub_path) {
         return Err(DaemonRouteResponse::json(
             403,
             json!({ "ok": false, "error": "route is not a project event stream" }),
@@ -261,6 +261,15 @@ pub fn resolve_project_event_stream(
         ),
         headers: headers.clone(),
     })
+}
+
+pub fn is_project_stream_sub_path(sub_path: &str) -> bool {
+    matches!(
+        sub_path,
+        project_routes::EVENTS
+            | project_routes::agents::OUTPUT_STREAM
+            | project_routes::agents::INTERACTION_STREAM
+    )
 }
 
 fn route_binary_proxy(

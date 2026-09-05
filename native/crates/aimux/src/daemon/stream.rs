@@ -1,5 +1,5 @@
 use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_daemon_response};
-use crate::daemon::json::ProjectEventStreamTarget;
+use crate::daemon::json::{ProjectEventStreamTarget, is_project_stream_sub_path};
 use crate::daemon::listener::prepared_response_bytes;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::DaemonHttpRequest;
@@ -9,7 +9,8 @@ use crate::daemon::text::host_agent::{
 };
 use crate::remote_access::{RemoteAccessContext, assert_remote_access_allowed, parse_remote_actor};
 use crate::{
-    daemon::access::resolve_authorized_project_event_stream, project_api_contract::routes,
+    daemon::access::resolve_authorized_project_event_stream,
+    proxy_project_binding::parse_proxy_target,
 };
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -188,10 +189,10 @@ pub fn maybe_handle_project_event_stream_request(
     writer: &mut impl Write,
 ) -> Result<bool, HostAgentStreamError> {
     let route_url = DaemonRouteUrl::parse(&request.path);
-    if request.method != "GET"
-        || !route_url.pathname().starts_with("/proxy/")
-        || !route_url.pathname().ends_with(routes::EVENTS)
-    {
+    let project_stream = parse_proxy_target(route_url.pathname())
+        .as_ref()
+        .is_some_and(|target| is_project_stream_sub_path(&target.sub_path));
+    if request.method != "GET" || !project_stream {
         return Ok(false);
     }
     match resolve_authorized_project_event_stream(&request.path, &request.headers) {

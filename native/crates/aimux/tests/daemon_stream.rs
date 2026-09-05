@@ -238,6 +238,32 @@ fn project_event_stream_interceptor_pipes_authorized_proxy_route() {
 }
 
 #[test]
+fn project_event_stream_interceptor_pipes_output_stream_proxy_route() {
+    let (url, join) = serve_once(|mut stream| {
+        let request = read_request_text(&mut stream);
+        assert!(request.starts_with("GET /agents/output/stream?sessionId=s1 HTTP/1.1\r\n"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 29\r\n\r\nevent: output\ndata: {\"n\":1}\n\n",
+            )
+            .expect("write upstream");
+    });
+    let port = url.rsplit_once(':').unwrap().1;
+    let request = request(
+        "GET",
+        &format!("/proxy/127.0.0.1/{port}/agents/output/stream?sessionId=s1"),
+    );
+    let mut output = Vec::new();
+
+    let handled = maybe_handle_project_event_stream_request(&request, &mut output).expect("stream");
+    join.join().expect("upstream");
+    let response = String::from_utf8(output).unwrap();
+
+    assert!(handled);
+    assert!(response.ends_with("event: output\ndata: {\"n\":1}\n\n"));
+}
+
+#[test]
 fn project_event_stream_interceptor_ignores_other_proxy_routes() {
     let request = request("GET", "/proxy/127.0.0.1/43210/health");
     let mut output = Vec::new();

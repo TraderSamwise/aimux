@@ -552,6 +552,26 @@ fn project_event_stream_resolution_preserves_headers_and_rejects_non_event_route
     );
     assert_eq!(resolved.headers, headers);
 
+    let output = resolve_project_event_stream(
+        "/proxy/127.0.0.1/4321/agents/output/stream?sessionId=claude-1",
+        &BTreeMap::new(),
+    )
+    .expect("output stream");
+    assert_eq!(
+        output.url,
+        "http://127.0.0.1:4321/agents/output/stream?sessionId=claude-1"
+    );
+
+    let interaction = resolve_project_event_stream(
+        "/proxy/127.0.0.1/4321/agents/interaction/stream",
+        &BTreeMap::new(),
+    )
+    .expect("interaction stream");
+    assert_eq!(
+        interaction.url,
+        "http://127.0.0.1:4321/agents/interaction/stream"
+    );
+
     let missing = resolve_project_event_stream("/health", &BTreeMap::new()).unwrap_err();
     assert_eq!(missing.status, 404);
 
