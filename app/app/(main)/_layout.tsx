@@ -34,7 +34,7 @@ import {
   shouldApplySharedSessionHydrate,
 } from "@/lib/shared-sessions";
 import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
-import { projectPathFromSearchOrLocation } from "@/lib/view-location";
+import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
 import {
   applyDesktopStateFailureAtom,
   applyDesktopStateSuccessAtom,
@@ -56,6 +56,7 @@ import {
   explicitProjectSelectionAtom,
   projectsAtom,
   reconcileProjectsAtom,
+  rememberProjectViewPath,
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
   selectedSessionIdAtom,
@@ -125,8 +126,8 @@ export default function MainLayout() {
   const getTokenRef = useRef(getToken);
   const stackScreenOptions = useAppStackScreenOptions();
   const pathname = usePathname();
-  const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
-  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
+  const searchParams = useGlobalSearchParams();
+  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project as SearchValue);
   const effectiveProjectPath = activeShare?.projectRoot ?? urlProjectPath ?? selectedProjectPath;
   const effectiveProject = activeShare
     ? projectFromActiveShare(activeShare)
@@ -191,6 +192,18 @@ export default function MainLayout() {
       `${url.pathname}${url.search}${url.hash}`,
     );
   });
+
+  useEffect(() => {
+    if (activeShare || !effectiveProjectPath || !isProjectScopedPath(pathname)) return;
+    rememberProjectViewPath(
+      effectiveProjectPath,
+      projectViewPathForCurrentRoute(
+        pathname,
+        effectiveProjectPath,
+        searchParams as Record<string, string | string[] | undefined>,
+      ),
+    );
+  }, [activeShare, effectiveProjectPath, pathname, searchParams]);
 
   // Relay transport lifecycle: connect when a relay URL is configured, mirror
   // its status into the store, and register it with the API layer so requests
@@ -667,4 +680,25 @@ function isProjectScopedPath(pathname: string) {
   return PROJECT_SCOPED_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || (prefix !== "/" && pathname.startsWith(`${prefix}/`)),
   );
+}
+
+function projectViewPathForCurrentRoute(
+  pathname: string,
+  projectPath: string,
+  searchParams: Record<string, string | string[] | undefined>,
+) {
+  const query = new URLSearchParams();
+  query.set("project", projectPath);
+  for (const key of ["mode", "lens", "section", "document", "threadId"] as const) {
+    const value = firstSearchParam(searchParams[key]);
+    if (value) query.set(key, value);
+  }
+  const search = query.toString();
+  return `${pathname}${search ? `?${search}` : ""}`;
+}
+
+function firstSearchParam(value: string | string[] | undefined): string | null {
+  const first = Array.isArray(value) ? value[0] : value;
+  const trimmed = first?.trim();
+  return trimmed ? trimmed : null;
 }

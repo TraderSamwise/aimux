@@ -202,3 +202,84 @@ describe("codex chrome", () => {
     expect(users.map((message) => message.text)).toEqual(["first question", "second question"]);
   });
 });
+
+describe("gui parser stress cases", () => {
+  function wrapPromptLine(marker: string, text: string, width: number): string[] {
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines: string[] = [];
+    let current = "";
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > width && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    if (current) lines.push(current);
+    const [first = "", ...rest] = lines;
+    return [`${marker} ${first}`, ...rest.map((line) => `  ${line}`)];
+  }
+
+  const longPrompt = [
+    "Please inspect the full GUI chat parser flow for long prompt inputs with no images,",
+    "then repeat the same check with images and queued follow-up messages while the agent is still working.",
+    "The user-facing invariant is that the composer resolves once the service accepts the send,",
+    "and the transcript should never synthesize blank bubbles or split one long prompt into stale fragments.",
+  ].join(" ");
+
+  it("projects a long Claude prompt with an image and queued follow-up without blank bubbles", () => {
+    const pane = [
+      ...wrapPromptLine("❯", longPrompt, 106),
+      "",
+      "  Attached files:",
+      "  - IMG_0457.png (image/png, 592725 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_447cc84c36c24c04b57661d5be57b66b.png",
+      "",
+      "⏺ I am checking the parser path now.",
+      "",
+      "✻ Whatchamacalliting... (51s · ↓ 3.8k tokens)",
+      "",
+      "❯ Ensure this is fixed",
+    ].join("\n");
+
+    const messages = messagesFromParsedAgentOutput(parseAgentOutput(pane, { tool: "claude" }));
+    const users = messages.filter((message) => message.role === "user");
+
+    expect(users).toHaveLength(2);
+    expect(users[0]!.text.replace(/\s+/g, " ")).toBe(longPrompt);
+    expect(users[1]!.text).toBe("Ensure this is fixed");
+    expect(users[0]!.parts).toContainEqual(
+      expect.objectContaining({
+        type: "image_reference",
+        attachmentId: "att_447cc84c36c24c04b57661d5be57b66b",
+        filename: "IMG_0457.png",
+      }),
+    );
+    expect(messages.every((message) => message.text.trim().length > 0 || message.parts.length > 0)).toBe(true);
+  });
+
+  it("projects a long Codex prompt with queued follow-up and interrupt status as one prompt per turn", () => {
+    const pane = [
+      ...wrapPromptLine("›", longPrompt, 110),
+      "",
+      "• Parser checks are running.",
+      "",
+      "* Working (18s • esc to interrupt)",
+      "",
+      "› second queued prompt after interrupt signal",
+      "",
+      "* Interrupted · What should Codex do instead?",
+    ].join("\n");
+
+    const messages = messagesFromParsedAgentOutput(parseAgentOutput(pane, { tool: "codex" }));
+    const users = messages.filter((message) => message.role === "user");
+
+    expect(users).toHaveLength(2);
+    expect(users[0]!.text.replace(/\s+/g, " ")).toBe(longPrompt);
+    expect(users[1]!.text).toBe("second queued prompt after interrupt signal");
+    expect(messages.filter((message) => message.role === "assistant").map((message) => message.text)).toEqual([
+      "Parser checks are running.",
+    ]);
+  });
+});

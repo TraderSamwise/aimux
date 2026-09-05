@@ -15,6 +15,9 @@ export interface PickedAttachment {
 }
 
 export type PickedImageAttachment = PickedAttachment;
+export interface PickAttachmentOptions {
+  selectionLimit?: number;
+}
 export type ClipboardFileSource = {
   files?: ArrayLike<File> | Iterable<File> | null;
   items?:
@@ -60,6 +63,12 @@ export async function pickAttachment(): Promise<PickedAttachment | null> {
   return null;
 }
 
+export async function pickAttachments(
+  options: PickAttachmentOptions = {},
+): Promise<PickedAttachment[]> {
+  return pickImageAttachments(options);
+}
+
 export async function pickFileAttachment(): Promise<PickedAttachment | null> {
   const result = await DocumentPicker.getDocumentAsync({
     copyToCacheDirectory: true,
@@ -86,17 +95,10 @@ export async function pickFileAttachment(): Promise<PickedAttachment | null> {
   };
 }
 
-export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
-  const result = await ImagePicker.launchImageLibraryAsync({
-    allowsMultipleSelection: false,
-    base64: true,
-    mediaTypes: "images",
-    quality: 1,
-  });
-  if (result.canceled) return null;
-
-  const asset = result.assets[0];
-  if (!asset?.uri) throw new Error("Could not read image.");
+async function pickedImageAttachmentFromAsset(
+  asset: ImagePicker.ImagePickerAsset,
+): Promise<PickedImageAttachment> {
+  if (!asset.uri) throw new Error("Could not read image.");
   const filename = asset.fileName || "image.jpg";
   const mimeType = asset.mimeType ?? mimeTypeFromName(filename);
   const dataBase64 =
@@ -114,6 +116,31 @@ export async function pickImageAttachment(): Promise<PickedImageAttachment | nul
     previewUri: asset.uri,
     sizeBytes: asset.fileSize,
   };
+}
+
+export async function pickImageAttachments(
+  options: PickAttachmentOptions = {},
+): Promise<PickedImageAttachment[]> {
+  const selectionLimit =
+    typeof options.selectionLimit === "number"
+      ? Math.max(1, Math.floor(options.selectionLimit))
+      : 0;
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsMultipleSelection: true,
+    base64: true,
+    mediaTypes: "images",
+    quality: 1,
+    ...(selectionLimit > 0 ? { selectionLimit } : {}),
+  });
+  if (result.canceled) return [];
+
+  return Promise.all(
+    result.assets.filter((asset) => Boolean(asset.uri)).map(pickedImageAttachmentFromAsset),
+  );
+}
+
+export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {
+  return (await pickImageAttachments({ selectionLimit: 1 }))[0] ?? null;
 }
 
 export async function attachmentsFromFiles(_files: Iterable<File>): Promise<PickedAttachment[]> {

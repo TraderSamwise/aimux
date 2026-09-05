@@ -8,7 +8,7 @@ import {
   View,
   type GestureResponderEvent,
 } from "react-native";
-import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
+import { useGlobalSearchParams, usePathname, useRouter, type Href } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
@@ -50,6 +50,7 @@ import {
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
   selectedSessionIdAtom,
+  rememberedProjectViewPath,
   selectProjectAtom,
 } from "@/stores/projects";
 import {
@@ -558,8 +559,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     }
     selectProject(path);
     setShowPicker(false);
-    // Selecting a project always lands on the Project screen's Dashboard section.
-    router.replace(buildMainTabHref("project", path));
+    router.replace((rememberedProjectViewPath(path) ?? buildMainTabHref("project", path)) as Href);
   }
 
   function handlePickSession(sessionId: string, sessionProjectPath = routeProjectPath) {

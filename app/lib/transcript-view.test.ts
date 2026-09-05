@@ -230,6 +230,53 @@ describe("toChatMessages", () => {
     expect(chat!.parts).toEqual([{ type: "text", text: "hello" }]);
   });
 
+  it("drops whitespace-only text messages before rendering chat bubbles", () => {
+    const chat = toChatMessages(
+      [
+        message({
+          id: "user:blank",
+          role: "user",
+          parts: [{ type: "text", text: "\n\n      \n\t\n" }],
+        }),
+        message({
+          id: "assistant:real",
+          parts: [{ type: "text", text: "real reply" }],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat).toHaveLength(1);
+    expect(chat[0]!.parts).toEqual([{ type: "text", text: "real reply" }]);
+  });
+
+  it("collapses excessive blank lines in chat text", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          role: "user",
+          parts: [{ type: "text", text: "top\n\n\n\n\n\nbottom" }],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts).toEqual([{ type: "text", text: "top\n\n\nbottom" }]);
+  });
+
+  it("preserves intentional multiline indentation", () => {
+    const [chat] = toChatMessages(
+      [
+        message({
+          parts: [{ type: "text", text: "```ts\n  const value = 1;\n```" }],
+        }),
+      ],
+      "codex-1",
+    );
+
+    expect(chat!.parts).toEqual([{ type: "text", text: "```ts\n  const value = 1;\n```" }]);
+  });
+
   it("normalizes legacy shared prompts for shared chat display", () => {
     const [spaced, inline] = toChatMessages(
       [

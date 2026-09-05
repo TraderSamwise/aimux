@@ -19,8 +19,19 @@ export type ClipboardFileSource = {
     | null;
 };
 
+export interface PickAttachmentOptions {
+  selectionLimit?: number;
+}
+
 export async function pickAttachment(): Promise<PickedAttachment | null> {
   throw new Error("File picker is not available for this platform.");
+}
+
+export async function pickAttachments(
+  _options: PickAttachmentOptions = {},
+): Promise<PickedAttachment[]> {
+  const attachment = await pickAttachment();
+  return attachment ? [attachment] : [];
 }
 
 export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {

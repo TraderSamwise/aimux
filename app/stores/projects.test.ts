@@ -6,6 +6,8 @@ import {
   explicitProjectSelectionAtom,
   projectsAtom,
   reconcileProjectsAtom,
+  rememberedProjectViewPath,
+  rememberProjectViewPath,
   selectedProjectPathAtom,
   selectedSessionIdAtom,
   selectProjectAtom,
@@ -105,5 +107,14 @@ describe("project selection store", () => {
     expect(store.get(selectedSessionIdAtom)).toBeNull();
     expect(store.get(explicitProjectSelectionAtom)).toMatchObject({ path: "/thegrand" });
     expect(store.get(explicitProjectSelectionAtom)?.expiresAt ?? 0).toBeGreaterThan(before);
+  });
+
+  it("keeps per-project view memory in process only", () => {
+    rememberProjectViewPath("/thegrand", "/agent/claude-1/chat?project=%2Fthegrand");
+    rememberProjectViewPath("/aimux", "/project?project=%2Faimux&section=queue");
+
+    expect(rememberedProjectViewPath("/thegrand")).toBe("/agent/claude-1/chat?project=%2Fthegrand");
+    expect(rememberedProjectViewPath("/aimux")).toBe("/project?project=%2Faimux&section=queue");
+    expect(rememberedProjectViewPath("/missing")).toBeNull();
   });
 });

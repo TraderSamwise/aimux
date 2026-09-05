@@ -11,6 +11,9 @@ export interface PickedAttachment {
 }
 
 export type PickedImageAttachment = PickedAttachment;
+export interface PickAttachmentOptions {
+  selectionLimit?: number;
+}
 
 function localId(): string {
   return `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
@@ -26,29 +29,38 @@ function kindFromMimeType(mimeType: string): PickedAttachmentKind {
 }
 
 export async function pickAttachment(): Promise<PickedAttachment | null> {
-  if (typeof document === "undefined") return null;
+  return (await pickAttachments({ selectionLimit: 1 }))[0] ?? null;
+}
+
+export async function pickAttachments(
+  options: PickAttachmentOptions = {},
+): Promise<PickedAttachment[]> {
+  if (typeof document === "undefined") return [];
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
+  input.multiple = true;
 
-  const file = await new Promise<File | null>((resolve) => {
+  const files = await new Promise<File[]>((resolve) => {
     const cleanup = () => {
       input.removeEventListener("change", handleChange);
       input.removeEventListener("cancel", handleCancel);
     };
-    const finish = (file: File | null) => {
+    const finish = (files: File[]) => {
       cleanup();
-      resolve(file);
+      resolve(files);
     };
-    const handleChange = () => finish(input.files?.[0] ?? null);
-    const handleCancel = () => finish(null);
+    const handleChange = () => finish(Array.from(input.files ?? []));
+    const handleCancel = () => finish([]);
     input.addEventListener("change", handleChange);
     input.addEventListener("cancel", handleCancel);
     input.click();
   });
-  if (!file) return null;
+  if (files.length === 0) return [];
 
-  return attachmentFromFile(file);
+  const selectionLimit = Math.max(0, Math.floor(options.selectionLimit ?? 0));
+  const selected = selectionLimit > 0 ? files.slice(0, selectionLimit) : files;
+  return Promise.all(selected.filter(isAcceptedAttachmentFile).map(attachmentFromFile));
 }
 
 export async function pickImageAttachment(): Promise<PickedImageAttachment | null> {

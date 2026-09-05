@@ -78,7 +78,7 @@ import {
 import {
   attachmentsFromClipboardData,
   clipboardDataHasFile,
-  pickAttachment,
+  pickAttachments,
   type ClipboardFileSource,
   type PickedAttachment,
 } from "@/lib/image-picker";
@@ -149,7 +149,7 @@ import {
   type ActiveSharedSession,
   type AgentOutputViewMode,
 } from "@/stores/settings";
-import type { ChatMessage } from "@/lib/events";
+import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const SPLIT_VIEW_MIN_WIDTH = 900;
 const NARROW_TERMINAL_DIVIDER_WIDTH = Platform.OS === "web" ? 36 : 24;
@@ -316,6 +316,14 @@ type PendingComposerAck = {
   timedOut: boolean;
 };
 
+type AcceptedComposerMessage = {
+  baselineMessageCount: number;
+  clientMessageId: string;
+  message: ChatMessage;
+  pending: PendingComposerAck;
+  settled?: boolean;
+};
+
 type InitialTranscriptStatus = "idle" | "loading" | "timed-out";
 
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
@@ -330,6 +338,130 @@ function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapsh
     ...snapshot,
     pendingAttachments: [...snapshot.pendingAttachments],
   });
+}
+
+function attachmentHistoryPartsFromUploads(
+  attachments: readonly PendingAttachment[],
+  sessionKey: string,
+): HistoryPart[] {
+  let imageCount = 1;
+  let fileCount = 1;
+  return attachments
+    .filter((attachment) => Boolean(attachment.uploadedAttachmentId))
+    .map((attachment): HistoryPart => {
+      const attachmentId = attachment.uploadedAttachmentId!;
+      const contentUrl = `/attachments/${attachmentId}/content?sessionId=${encodeURIComponent(sessionKey)}`;
+      if (attachment.kind === "image" || attachment.mimeType.startsWith("image/")) {
+        return {
+          type: "image_reference",
+          label: `[image #${imageCount++}]`,
+          attachmentId,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          contentUrl,
+        };
+      }
+      return {
+        type: "attachment_reference",
+        label: `[file #${fileCount++}]`,
+        attachmentId,
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        kind: attachment.kind,
+        contentUrl,
+      };
+    });
+}
+
+function buildAcceptedComposerMessage(opts: {
+  attachments: readonly PendingAttachment[];
+  clientMessageId: string;
+  sessionKey: string;
+  text: string;
+}): ChatMessage {
+  const parts: HistoryPart[] = [];
+  const text = opts.text.trim();
+  if (text) parts.push({ type: "text", text });
+  parts.push(...attachmentHistoryPartsFromUploads(opts.attachments, opts.sessionKey));
+  return {
+    clientMessageId: opts.clientMessageId,
+    id: opts.clientMessageId,
+    role: "user",
+    parts,
+    text,
+  };
+}
+
+function messageAcknowledgesPendingComposerMessage(
+  message: ChatMessage,
+  pending: PendingComposerAck,
+): boolean {
+  return userMessageAcknowledgesComposerSend([message], {
+    ...pending,
+    baselineUserMessageCount: 0,
+  });
+}
+
+function acceptedComposerMatchIndex(
+  messages: readonly ChatMessage[],
+  pending: PendingComposerAck,
+  replacedIndexes?: ReadonlySet<number>,
+): number {
+  let userIndex = -1;
+  return messages.findIndex((message, index) => {
+    if (replacedIndexes?.has(index) || message.role !== "user") return false;
+    userIndex += 1;
+    return (
+      userIndex >= pending.baselineUserMessageCount &&
+      messageAcknowledgesPendingComposerMessage(message, pending)
+    );
+  });
+}
+
+function mergeAcceptedComposerMessage(parsed: ChatMessage, accepted: ChatMessage): ChatMessage {
+  const acceptedParts = accepted.parts ?? [];
+  const parsedParts = parsed.parts ?? [];
+  const acceptedTextParts = acceptedParts.filter((part) => part.type === "text");
+  const acceptedAttachmentParts = acceptedParts.filter((part) => part.type !== "text");
+  const parsedAttachmentParts = parsedParts.filter(
+    (part) => part.type === "image_reference" || part.type === "attachment_reference",
+  );
+  return {
+    ...accepted,
+    id: parsed.id ?? accepted.id,
+    latest: parsed.latest,
+    parts: [
+      ...acceptedTextParts,
+      ...(parsedAttachmentParts.length > 0 ? parsedAttachmentParts : acceptedAttachmentParts),
+    ],
+  };
+}
+
+function mergeAcceptedComposerMessages(
+  parsedMessages: readonly ChatMessage[],
+  acceptedMessages: readonly AcceptedComposerMessage[],
+): ChatMessage[] {
+  if (acceptedMessages.length === 0) return [...parsedMessages];
+  const next = [...parsedMessages];
+  const replacedIndexes = new Set<number>();
+  let inserted = 0;
+
+  for (const accepted of acceptedMessages) {
+    const replacement = accepted.message;
+    const matchIndex = acceptedComposerMatchIndex(next, accepted.pending, replacedIndexes);
+    if (matchIndex >= 0) {
+      next[matchIndex] = mergeAcceptedComposerMessage(next[matchIndex]!, replacement);
+      replacedIndexes.add(matchIndex);
+      continue;
+    }
+
+    if (accepted.settled) continue;
+    const insertAt = Math.min(accepted.baselineMessageCount + inserted, next.length);
+    next.splice(insertAt, 0, replacement);
+    inserted += 1;
+  }
+
+  return next;
 }
 
 type ScrollPaneKey = "chat" | "terminal";
@@ -391,10 +523,12 @@ function estimateComposerInputContentHeight(draft: string, composerWidth: number
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{
+    focusToken?: string | string[];
     ownerUserId?: string | string[];
     sessionId?: string | string[];
     shareId?: string | string[];
   }>();
+  const routeFocusToken = singleRouteParam(params.focusToken);
   const routeOwnerUserId = singleRouteParam(params.ownerUserId);
   const sessionId = singleRouteParam(params.sessionId);
   const routeShareId = singleRouteParam(params.shareId);
@@ -439,6 +573,9 @@ export default function ChatScreen() {
   const [shareAction, setShareAction] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingComposerAck, setPendingComposerAck] = useState<PendingComposerAck | null>(null);
+  const [acceptedComposerMessages, setAcceptedComposerMessages] = useState<
+    AcceptedComposerMessage[]
+  >([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
@@ -667,6 +804,7 @@ export default function ChatScreen() {
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
     setComposerInputContentHeight(saved?.inputContentHeight ?? COMPOSER_INPUT_MIN_HEIGHT);
     setPendingComposerAck(null);
+    setAcceptedComposerMessages([]);
     setSendBusy(false);
     composerInputRef.current?.blur();
     composerFocusedRef.current = false;
@@ -809,7 +947,27 @@ export default function ChatScreen() {
   const visibleLastError = lastError && !isTransientRequestError(lastError) ? lastError : null;
 
   const allMessages = useMemo<ChatMessage[]>(() => {
-    return parsedMessages;
+    return mergeAcceptedComposerMessages(parsedMessages, acceptedComposerMessages);
+  }, [acceptedComposerMessages, parsedMessages]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
+    setAcceptedComposerMessages((current) => {
+      let changed = false;
+      const next = current.flatMap((accepted) => {
+        const hasParsedMatch = acceptedComposerMatchIndex(parsedMessages, accepted.pending) >= 0;
+        if (hasParsedMatch && !accepted.settled) {
+          changed = true;
+          return [{ ...accepted, settled: true }];
+        }
+        if (!hasParsedMatch && accepted.settled) {
+          changed = true;
+          return [];
+        }
+        return [accepted];
+      });
+      return changed ? next : current;
+    });
   }, [parsedMessages]);
 
   const loadOlderTranscriptHistory = useCallback(async () => {
@@ -1449,7 +1607,7 @@ export default function ChatScreen() {
     [scheduleScrollIdleRelease],
   );
 
-  useEffect(() => {
+  const resetScrollPanesToBottom = useCallback(() => {
     for (const pane of ["chat", "terminal"] as const) {
       const idleTimer = userScrollIdleTimerRef.current[pane];
       if (idleTimer) clearTimeout(idleTimer);
@@ -1482,7 +1640,11 @@ export default function ChatScreen() {
       applyPaneScrollPosition("chat");
       applyPaneScrollPosition("terminal");
     });
-  }, [applyPaneScrollPosition, keyboardScrollFrozen, sessionKey, setNativeComposerHidden]);
+  }, [applyPaneScrollPosition, keyboardScrollFrozen, setNativeComposerHidden]);
+
+  useEffect(() => {
+    resetScrollPanesToBottom();
+  }, [resetScrollPanesToBottom, routeFocusToken, sessionKey]);
 
   useEffect(() => {
     if (composerFocused) {
@@ -1588,7 +1750,7 @@ export default function ChatScreen() {
           .filter((id): id is string => Boolean(id)),
         ...(sharedChatActor ? { sharedChatActor } : {}),
       });
-      setPendingComposerAck({
+      const acceptedPending: PendingComposerAck = {
         attachmentCount: attachments.length,
         attachmentIds: attachments
           .map((attachment) => attachment.uploadedAttachmentId)
@@ -1596,10 +1758,32 @@ export default function ChatScreen() {
         attachmentFilenames: attachments.map((attachment) => attachment.filename),
         baselineUserMessageCount,
         id: Date.now(),
-        showTimeoutError: true,
+        showTimeoutError: false,
         text,
         timedOut: false,
-      });
+      };
+      const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
+      setAcceptedComposerMessages((current) =>
+        [
+          ...current,
+          {
+            baselineMessageCount: allMessages.length,
+            clientMessageId,
+            message: buildAcceptedComposerMessage({
+              attachments,
+              clientMessageId,
+              sessionKey,
+              text,
+            }),
+            pending: acceptedPending,
+          },
+        ].slice(-20),
+      );
+      setDraft("");
+      setPendingAttachments([]);
+      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
+      setPendingComposerAck(null);
+      if (composerDraftKey) composerDraftsByKey.delete(composerDraftKey);
       void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
       setPendingComposerAck(
@@ -1631,9 +1815,13 @@ export default function ChatScreen() {
     if (sendBusy || sendBusyRef.current || composerAwaitingAck) return;
     setSendError(null);
     try {
-      const picked = await pickAttachment();
-      if (!picked) return;
-      appendPendingAttachments([picked]);
+      const remainingSlots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
+      if (remainingSlots <= 0) {
+        setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} files.`);
+        return;
+      }
+      const picked = await pickAttachments({ selectionLimit: remainingSlots });
+      appendPendingAttachments(picked);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
     }

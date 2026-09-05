@@ -13,6 +13,7 @@ interface ChatMessageOptions {
 const LEGACY_SHARED_MESSAGE_RE = /^Message from ([^\n]+?) via Aimux shared chat:\s*([\s\S]*)$/;
 const BRACKETED_SHARED_MESSAGE_RE = /^\[[^\]\n]{1,120}\]\s+[\s\S]+$/;
 const LEGACY_ATTACHMENTS_HEADER = /\bAttached (?:image )?files:\s*/i;
+const EXCESSIVE_BLANK_LINES = /\n(?:[ \t]*\n){3,}/g;
 const LEGACY_ATTACHMENT_ITEM = new RegExp(
   `-\\s+(.+?)\\s+\\((${ATTACHMENT_MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(\\S*?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)`,
   "g",
@@ -26,6 +27,14 @@ function normalizeSharedText(text: string): string {
   const body = match[2]?.trim();
   if (!speaker || !body) return text;
   return `[${speaker}] ${body}`;
+}
+
+function normalizeChatText(text: string, shared: boolean): string {
+  const normalized = shared ? normalizeSharedText(text) : text;
+  return normalized
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(EXCESSIVE_BLANK_LINES, "\n\n\n")
+    .trim();
 }
 
 function attachmentKindForMimeType(mimeType?: string): HistoryAttachmentReferencePart["kind"] {
@@ -153,7 +162,7 @@ function normalizeLegacyAttachmentParts(
 
 function toHistoryPart(part: HistoryPart, sessionId: string, shared: boolean): HistoryPart {
   if (part.type === "text") {
-    const text = shared ? normalizeSharedText(part.text) : part.text;
+    const text = normalizeChatText(part.text, shared);
     if (text === part.text) return part;
     return { type: "text", text };
   }
@@ -178,18 +187,24 @@ export function toChatMessages(
   options: ChatMessageOptions = {},
 ): ChatMessage[] {
   const shared = options.shared === true;
-  return transcript.map((message) => ({
-    // Keyed by position while it is the newest. Its content changes as the
-    // agent writes into it, so a content-derived key would tear the bubble
-    // down and build a new one on every poll, mid-read.
-    id: message.latest ? `${sessionId}:latest` : message.id,
-    role: message.role,
-    parts: normalizeLegacyAttachmentParts(message.parts)
-      .map(normalizeAttachmentReferencePart)
-      .map(
-        (part): HistoryPart => toHistoryPart(part, sessionId, shared && message.role === "user"),
-      ),
-  }));
+  return transcript
+    .map((message) => {
+      const parts = normalizeLegacyAttachmentParts(message.parts)
+        .map(normalizeAttachmentReferencePart)
+        .map(
+          (part): HistoryPart => toHistoryPart(part, sessionId, shared && message.role === "user"),
+        )
+        .filter((part) => part.type !== "text" || part.text.length > 0);
+      return {
+        // Keyed by position while it is the newest. Its content changes as the
+        // agent writes into it, so a content-derived key would tear the bubble
+        // down and build a new one on every poll, mid-read.
+        id: message.latest ? `${sessionId}:latest` : message.id,
+        role: message.role,
+        parts,
+      };
+    })
+    .filter((message) => message.parts.length > 0);
 }
 
 /**

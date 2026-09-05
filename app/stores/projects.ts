@@ -23,6 +23,8 @@ export const explicitProjectSelectionAtom = atom<{ path: string; expiresAt: numb
 export const selectedSessionIdAtom = atom<string | null>(null);
 export const lastSyncAtAtom = atom<number | null>(null);
 
+const projectViewPathByProjectPath = new Map<string, string>();
+
 // ─── Derived atoms ─────────────────────────────────────────────────────────
 
 export const selectedProjectAtom = atom<DaemonProject | null>((get) => {
@@ -92,6 +94,15 @@ export const selectProjectAtom = atom(null, (_get, set, path: string | null) => 
   set(selectedProjectPathAtom, path);
   set(selectedSessionIdAtom, null);
 });
+
+export function rememberProjectViewPath(projectPath: string, viewPath: string): void {
+  if (!projectPath || !viewPath) return;
+  projectViewPathByProjectPath.set(projectPath, viewPath);
+}
+
+export function rememberedProjectViewPath(projectPath: string): string | null {
+  return projectViewPathByProjectPath.get(projectPath) ?? null;
+}
 
 export function reconcileProjectList(
   previous: readonly DaemonProject[],

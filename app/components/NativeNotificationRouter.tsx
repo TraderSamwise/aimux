@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { useSetAtom } from "jotai";
 import * as Notifications from "expo-notifications";
 import { ensureSecurityNotificationChannel } from "@/lib/push-registration";
-import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
+import { buildViewHref } from "@/lib/view-location";
 import { selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 if (Platform.OS !== "web") {
@@ -46,7 +46,14 @@ export function NativeNotificationRouter() {
       if (projectRoot) selectProject(projectRoot);
       if (sessionId) {
         selectSession(sessionId);
-        router.navigate(detailHrefForPath("/project", "agent", sessionId, projectRoot));
+        router.navigate({
+          pathname: "/agent/[sessionId]/chat",
+          params: {
+            focusToken: Date.now().toString(36),
+            project: projectRoot,
+            sessionId,
+          },
+        });
         return;
       }
       router.navigate(buildViewHref("/notifications", { project: projectRoot }));
