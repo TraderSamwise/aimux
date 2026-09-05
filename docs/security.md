@@ -108,6 +108,33 @@ client from claiming another approved `deviceId` for notifications.
 Shared-chat push registration remains governed by share participation. Shared
 guests are not owner devices and do not use owner device proof.
 
+## Desktop Notification Click Routing
+
+There are two notification owners on macOS:
+
+- CLI/local daemon desktop alerts are local macOS notifications emitted by the
+  packaged `aimux-notifier.app` helper. They are owned by the helper bundle and
+  are currently title/body/sound only. They should be treated as desktop alerts,
+  not as Aimux app navigation events.
+- iOS/Android app notifications are Expo/APNs/FCM pushes owned by the native app
+  bundle. The app can route a tapped notification to a project/session when the
+  payload includes `projectRoot` and `sessionId`.
+
+An iOS app installed on an Apple silicon Mac through iPhone/iPad compatibility
+does not make CLI-owned local notifications tap into that app. To make desktop
+notification taps reliably open the correct Aimux chat, the notification needs
+to be owned by an app that can handle the tap and open an `aimux://` or universal
+link route.
+
+Supported paths are:
+
+- Keep CLI notifications as non-navigating desktop toasts, and rely on native
+  push notifications for cross-device app routing.
+- Extend the macOS helper into a tiny click launcher that carries a route URL in
+  notification `userInfo` and opens that URL when macOS launches it from a tap.
+- Build a real macOS/Catalyst desktop app so desktop notifications, push
+  registration, and notification tap routing all live under the Aimux app bundle.
+
 ## Emergency Lockdown
 
 Security alert links may offer emergency lockdown. The destructive action must
