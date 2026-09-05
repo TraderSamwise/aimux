@@ -6,6 +6,7 @@ use crate::paths::PathResolver;
 
 use super::agents::route_agent_read_request;
 use super::attachments::route_attachment_request;
+use super::desktop_state::route_desktop_state_request;
 use super::dispatcher::{
     ProjectServiceDispatchResponse, route_unimplemented_project_service_request,
 };
@@ -131,6 +132,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_worktree_read_request(context, method, path) {
+        return response;
+    }
+    if let Some(response) = route_desktop_state_request(context, method, path) {
         return response;
     }
     if let Some(response) = route_switchable_agent_request(context, method, path) {
