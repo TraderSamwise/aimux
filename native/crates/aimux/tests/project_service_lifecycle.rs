@@ -1,3 +1,4 @@
+use aimux::daemon_state::load_metadata_state;
 use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
@@ -1318,6 +1319,108 @@ fn graveyard_worktree_resurrect_rejects_missing_checkout() {
     cleanup(project);
 }
 
+#[test]
+fn graveyard_worktree_delete_removes_dependents_assets_and_marks_entry_deleted() {
+    let project = temp_project("worktree-delete");
+    let state_dir = project.join("state");
+    let worktree = project.join("missing");
+    write_graveyard_worktree_with_dependents_topology(&state_dir, &worktree);
+    let context_dir = project.join(".aimux/context/codex-old");
+    std::fs::create_dir_all(&context_dir).unwrap();
+    std::fs::create_dir_all(project.join(".aimux/recordings")).unwrap();
+    std::fs::create_dir_all(project.join(".aimux/history")).unwrap();
+    std::fs::create_dir_all(project.join(".aimux/plans")).unwrap();
+    std::fs::create_dir_all(project.join(".aimux/status")).unwrap();
+    std::fs::create_dir_all(state_dir.join("claude-settings")).unwrap();
+    std::fs::write(context_dir.join("live.md"), "live\n").unwrap();
+    std::fs::write(project.join(".aimux/recordings/codex-old.log"), "raw\n").unwrap();
+    std::fs::write(project.join(".aimux/recordings/codex-old.txt"), "text\n").unwrap();
+    std::fs::write(project.join(".aimux/history/codex-old.jsonl"), "{}\n").unwrap();
+    std::fs::write(project.join(".aimux/plans/codex-old.md"), "# plan\n").unwrap();
+    std::fs::write(project.join(".aimux/status/codex-old.md"), "status\n").unwrap();
+    std::fs::write(state_dir.join("claude-settings/codex-old.json"), "{}\n").unwrap();
+    std::fs::write(
+        state_dir.join("metadata.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {
+                "codex-old": { "updatedAt": "2026-01-01T00:00:00.000Z" }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::DELETE_WORKTREE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "removed");
+    assert_eq!(
+        response.body["transition"]["operation"],
+        "graveyard.worktree.delete"
+    );
+    let topology = read_topology(&state_dir);
+    assert_eq!(topology["worktrees"], json!([]));
+    assert_eq!(topology["sessions"], json!([]));
+    assert_eq!(topology["services"], json!([]));
+    assert_eq!(topology["nodes"], json!([]));
+    assert!(
+        topology["worktreeGraveyard"][0]["deletedAt"]
+            .as_str()
+            .is_some()
+    );
+    assert!(
+        !load_metadata_state(&state_dir)
+            .sessions
+            .contains_key("codex-old")
+    );
+    assert!(!context_dir.exists());
+    assert!(!project.join(".aimux/recordings/codex-old.log").exists());
+    assert!(!project.join(".aimux/recordings/codex-old.txt").exists());
+    assert!(!project.join(".aimux/history/codex-old.jsonl").exists());
+    assert!(!project.join(".aimux/plans/codex-old.md").exists());
+    assert!(!project.join(".aimux/status/codex-old.md").exists());
+    assert!(!state_dir.join("claude-settings/codex-old.json").exists());
+    cleanup(project);
+}
+
+#[test]
+fn graveyard_worktree_delete_rejects_missing_graveyard_entry() {
+    let project = temp_project("worktree-delete-missing");
+    let state_dir = project.join("state");
+    let worktree = project.join("missing");
+    write_active_worktree_topology(&state_dir, &worktree, false);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::DELETE_WORKTREE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 404);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("Graveyard worktree")
+    );
+    cleanup(project);
+}
+
 fn write_graveyard_agent_topology(
     state_dir: &PathBuf,
     worktree_path: &Path,
@@ -1498,6 +1601,105 @@ fn write_graveyard_worktree_topology(state_dir: &PathBuf, worktree_path: &Path) 
         "remoteClients": [],
         "lifecycleOperations": [],
         "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_graveyard_worktree_with_dependents_topology(state_dir: &PathBuf, worktree_path: &Path) {
+    let worktree_path = worktree_path.to_string_lossy();
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [
+            { "id": "node-agent", "rigId": "rig-1", "logicalId": "codex-old", "toolConfigKey": "codex", "cwd": worktree_path.as_ref(), "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-service", "rigId": "rig-1", "logicalId": "svc-old", "role": "service", "runtime": "service", "toolConfigKey": "service", "cwd": worktree_path.as_ref(), "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [
+            { "id": "edge-old", "rigId": "rig-1", "sourceNodeId": "node-agent", "targetNodeId": "node-service", "kind": "uses", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "bindings": [{
+            "id": "tmux:codex-old",
+            "nodeId": "node-agent",
+            "tmuxSession": "aimux",
+            "tmuxWindowId": "@old",
+            "tmuxWindowIndex": 1,
+            "tmuxWindowName": "codex",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "sessions": [{
+            "id": "codex-old",
+            "nodeId": "node-agent",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "graveyard",
+            "worktreePath": worktree_path.as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "services": [{
+            "id": "svc-old",
+            "rigId": "rig-1",
+            "nodeId": "node-service",
+            "status": "stopped",
+            "command": "zsh",
+            "args": ["-lc", "yarn dev"],
+            "launchCommandLine": "yarn dev",
+            "worktreePath": worktree_path.as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "worktrees": [{
+            "id": "wt-1",
+            "rigId": "rig-1",
+            "path": worktree_path.as_ref(),
+            "name": "missing",
+            "branch": "feature/missing",
+            "status": "graveyard",
+            "removedAt": "2026-01-01T00:00:10.000Z",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:10.000Z"
+        }],
+        "worktreeGraveyard": [{
+            "id": "graveyard-wt",
+            "rigId": "rig-1",
+            "worktreeId": "wt-1",
+            "path": worktree_path.as_ref(),
+            "name": "missing",
+            "branch": "feature/missing",
+            "graveyardedAt": "2026-01-01T00:00:10.000Z"
+        }],
+        "teamRoles": [{
+            "id": "role-old",
+            "rigId": "rig-1",
+            "nodeId": "node-agent",
+            "role": "reviewer",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "remoteClients": [{
+            "id": "remote-old",
+            "rigId": "rig-1",
+            "label": "phone",
+            "ownsSessionIds": ["codex-old"],
+            "lastSeenAt": "2026-01-01T00:00:00.000Z",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "lifecycleOperations": [],
+        "exchangeRefs": [{
+            "id": "ref-old",
+            "rigId": "rig-1",
+            "nodeId": "node-agent",
+            "sessionId": "codex-old",
+            "kind": "task",
+            "exchangeId": "task-1",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }]
     }))
     .unwrap();
     write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();

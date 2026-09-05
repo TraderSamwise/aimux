@@ -153,6 +153,9 @@ pub fn route_lifecycle_request_with_runtime(
         routes::graveyard_actions::RESURRECT_WORKTREE => {
             Some(route_graveyard_worktree_resurrect(context, body))
         }
+        routes::graveyard_actions::DELETE_WORKTREE => {
+            Some(route_graveyard_worktree_delete(context, body))
+        }
         _ => None,
     }
 }
@@ -2611,6 +2614,68 @@ fn route_graveyard_worktree_resurrect(
     )
 }
 
+fn route_graveyard_worktree_delete(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(path) = trimmed_string(body.get("path")) else {
+        return json_error(400, "path is required");
+    };
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    if path == project_root {
+        return json_error(500, "Cannot remove the main checkout");
+    }
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    if !worktree_path_is_graveyarded(&topology, &path) {
+        return json_error(404, format!("Graveyard worktree \"{path}\" not found"));
+    }
+    if Path::new(&path).exists() {
+        if let Err(error) = remove_git_worktree_checkout(&project_root, &path) {
+            return json_error(500, error);
+        }
+    } else {
+        prune_git_worktrees(&project_root);
+    }
+
+    let removed_session_ids = session_ids_for_worktree(&topology, &path);
+    for session_id in &removed_session_ids {
+        delete_agent_assets(context.project_root(), &project_state_dir, session_id);
+    }
+    if let Err(error) =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
+            let now = now_iso();
+            remove_worktree_dependents(&mut topology, &path);
+            let mut worktrees = array_field(&topology, "worktrees");
+            worktrees.retain(|worktree| string_field(worktree, "path") != path);
+            object_insert_mut(&mut topology, "worktrees", Value::Array(worktrees));
+            let mut graveyard = array_field(&topology, "worktreeGraveyard");
+            for entry in &mut graveyard {
+                if string_field(entry, "path") == path
+                    && entry.get("deletedAt").and_then(Value::as_str).is_none()
+                {
+                    object_insert_mut(entry, "deletedAt", Value::String(now.clone()));
+                }
+            }
+            object_insert_mut(&mut topology, "worktreeGraveyard", Value::Array(graveyard));
+            object_insert_mut(&mut topology, "generatedAt", Value::String(now));
+            topology
+        })
+    {
+        return json_error(500, error);
+    }
+    prune_git_worktrees(&project_root);
+    lifecycle_response(
+        json!({ "path": path, "status": "removed" }),
+        "graveyard.worktree.delete",
+        "worktree",
+        Some(&path),
+    )
+}
+
 fn apply_service_window_policy(
     runtime: &mut impl ProjectLifecycleRuntime,
     window_id: &str,
@@ -2686,6 +2751,165 @@ fn worktree_name_from_path(path: &str) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or(path)
         .to_owned()
+}
+
+fn session_ids_for_worktree(topology: &Value, worktree_path: &str) -> Vec<String> {
+    let node_by_id = array_field(topology, "nodes")
+        .into_iter()
+        .map(|node| (string_field(&node, "id"), node))
+        .collect::<Map<_, _>>();
+    array_field(topology, "sessions")
+        .into_iter()
+        .filter(|session| {
+            topology_item_worktree_path(session, &node_by_id).as_deref() == Some(worktree_path)
+        })
+        .map(|session| string_field(&session, "id"))
+        .collect()
+}
+
+fn remove_worktree_dependents(topology: &mut Value, worktree_path: &str) {
+    let node_by_id = array_field(topology, "nodes")
+        .into_iter()
+        .map(|node| (string_field(&node, "id"), node))
+        .collect::<Map<_, _>>();
+    let removing_sessions = array_field(topology, "sessions")
+        .into_iter()
+        .filter(|session| {
+            topology_item_worktree_path(session, &node_by_id).as_deref() == Some(worktree_path)
+        })
+        .collect::<Vec<_>>();
+    let removing_services = array_field(topology, "services")
+        .into_iter()
+        .filter(|service| {
+            topology_item_worktree_path(service, &node_by_id).as_deref() == Some(worktree_path)
+        })
+        .collect::<Vec<_>>();
+    let removing_session_ids = removing_sessions
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<Vec<_>>();
+    let removing_service_ids = removing_services
+        .iter()
+        .map(|service| string_field(service, "id"))
+        .collect::<Vec<_>>();
+    let removing_node_ids = removing_sessions
+        .iter()
+        .chain(removing_services.iter())
+        .map(|item| string_field(item, "nodeId"))
+        .collect::<Vec<_>>();
+
+    let mut sessions = array_field(topology, "sessions");
+    sessions.retain(|session| !removing_session_ids.contains(&string_field(session, "id")));
+    object_insert_mut(topology, "sessions", Value::Array(sessions));
+    let mut services = array_field(topology, "services");
+    services.retain(|service| !removing_service_ids.contains(&string_field(service, "id")));
+    object_insert_mut(topology, "services", Value::Array(services));
+    let mut bindings = array_field(topology, "bindings");
+    bindings.retain(|binding| !removing_node_ids.contains(&string_field(binding, "nodeId")));
+    object_insert_mut(topology, "bindings", Value::Array(bindings));
+    let mut nodes = array_field(topology, "nodes");
+    nodes.retain(|node| !removing_node_ids.contains(&string_field(node, "id")));
+    object_insert_mut(topology, "nodes", Value::Array(nodes));
+    let mut edges = array_field(topology, "edges");
+    edges.retain(|edge| {
+        !removing_node_ids.contains(&string_field(edge, "sourceNodeId"))
+            && !removing_node_ids.contains(&string_field(edge, "targetNodeId"))
+    });
+    object_insert_mut(topology, "edges", Value::Array(edges));
+    let mut team_roles = array_field(topology, "teamRoles");
+    team_roles.retain(|role| {
+        !removing_node_ids.contains(&string_field(role, "nodeId"))
+            && !removing_node_ids.contains(&string_field(role, "parentNodeId"))
+    });
+    object_insert_mut(topology, "teamRoles", Value::Array(team_roles));
+    let remote_clients = array_field(topology, "remoteClients")
+        .into_iter()
+        .map(|mut client| {
+            if let Value::Object(map) = &mut client
+                && let Some(Value::Array(ids)) = map.get_mut("ownsSessionIds")
+            {
+                ids.retain(|id| {
+                    id.as_str()
+                        .is_none_or(|id| !removing_session_ids.contains(&id.to_owned()))
+                });
+            }
+            client
+        })
+        .collect::<Vec<_>>();
+    object_insert_mut(topology, "remoteClients", Value::Array(remote_clients));
+    let mut lifecycle_operations = array_field(topology, "lifecycleOperations");
+    lifecycle_operations.retain(|operation| {
+        !((string_field(operation, "targetKind") == "session"
+            && removing_session_ids.contains(&string_field(operation, "targetId")))
+            || (string_field(operation, "targetKind") == "service"
+                && removing_service_ids.contains(&string_field(operation, "targetId")))
+            || (string_field(operation, "targetKind") == "worktree"
+                && string_field(operation, "targetId") == worktree_path))
+    });
+    object_insert_mut(
+        topology,
+        "lifecycleOperations",
+        Value::Array(lifecycle_operations),
+    );
+    let mut exchange_refs = array_field(topology, "exchangeRefs");
+    exchange_refs.retain(|reference| {
+        !removing_session_ids.contains(&string_field(reference, "sessionId"))
+            && !removing_node_ids.contains(&string_field(reference, "nodeId"))
+    });
+    object_insert_mut(topology, "exchangeRefs", Value::Array(exchange_refs));
+}
+
+fn topology_item_worktree_path(item: &Value, node_by_id: &Map<String, Value>) -> Option<String> {
+    trimmed_string(item.get("worktreePath")).or_else(|| {
+        trimmed_string(item.get("nodeId"))
+            .and_then(|node_id| node_by_id.get(&node_id))
+            .and_then(|node| trimmed_string(node.get("cwd")))
+    })
+}
+
+fn delete_agent_assets(project_root: &Path, project_state_dir: &Path, session_id: &str) {
+    let aimux_dir = project_root.join(".aimux");
+    remove_file_if_exists(
+        aimux_dir
+            .join("recordings")
+            .join(format!("{session_id}.log")),
+    );
+    remove_file_if_exists(
+        aimux_dir
+            .join("recordings")
+            .join(format!("{session_id}.txt")),
+    );
+    remove_file_if_exists(
+        aimux_dir
+            .join("history")
+            .join(format!("{session_id}.jsonl")),
+    );
+    remove_dir_if_exists(aimux_dir.join("context").join(session_id));
+    remove_file_if_exists(aimux_dir.join("plans").join(format!("{session_id}.md")));
+    remove_file_if_exists(aimux_dir.join("status").join(format!("{session_id}.md")));
+    remove_file_if_exists(
+        project_state_dir
+            .join("claude-settings")
+            .join(format!("{session_id}.json")),
+    );
+    let mut state = load_metadata_state(project_state_dir);
+    if state.sessions.remove(session_id).is_some() {
+        let _ = save_metadata_state(project_state_dir, &state);
+    }
+}
+
+fn remove_file_if_exists(path: impl AsRef<Path>) {
+    let path = path.as_ref();
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn remove_dir_if_exists(path: impl AsRef<Path>) {
+    let path = path.as_ref();
+    if path.exists() {
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
 
 fn upsert_service_topology(
@@ -3231,6 +3455,37 @@ fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<Str
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.is_empty() {
+                Err(fallback_error)
+            } else {
+                Err(stderr)
+            }
+        }
+        Err(error) => Err(format!("{fallback_error}: {error}")),
+    }
+}
+
+fn remove_git_worktree_checkout(main_repo: &str, path: &str) -> Result<(), String> {
+    run_git_argv(
+        main_repo,
+        &["worktree", "remove", path, "--force"],
+        format!("git worktree remove exited for {path}"),
+    )
+}
+
+fn prune_git_worktrees(main_repo: &str) {
+    let _ = run_git_argv(
+        main_repo,
+        &["worktree", "prune"],
+        "git worktree prune failed".to_owned(),
+    );
+}
+
+fn run_git_argv(cwd: &str, argv: &[&str], fallback_error: String) -> Result<(), String> {
+    match Command::new("git").args(argv).current_dir(cwd).output() {
+        Ok(output) if output.status.success() => Ok(()),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             if stderr.is_empty() {
