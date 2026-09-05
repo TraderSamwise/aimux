@@ -14,6 +14,7 @@ pub mod daemon;
 pub mod daemon_projects;
 pub mod daemon_state;
 pub mod daemon_supervisor;
+pub mod expose_socket;
 pub mod launcher_env;
 pub mod logs;
 pub mod managed_launch_env;
@@ -29,6 +30,7 @@ pub mod runtime_topology;
 pub mod session_bootstrap;
 pub mod shell_hooks;
 pub mod tmux;
+pub mod tmux_expose;
 pub mod tool_hooks;
 pub mod translation_plan;
 
