@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
@@ -7,6 +8,7 @@ use super::dispatcher::{
     ProjectServiceDispatchResponse, route_unimplemented_project_service_request,
 };
 use super::exchange_reads::route_exchange_read_request;
+use super::library::route_library_request;
 use super::metadata::route_runtime_metadata_request;
 use super::notification_context::route_notification_context_request;
 use super::notifications::route_notifications_request;
@@ -21,6 +23,7 @@ use super::work_outline::route_work_outline_request;
 pub struct ProjectServiceRequestContext {
     pub project_root: PathBuf,
     pub project_state_dir: Option<PathBuf>,
+    pub session_labels: BTreeMap<String, String>,
 }
 
 impl ProjectServiceRequestContext {
@@ -28,6 +31,7 @@ impl ProjectServiceRequestContext {
         Self {
             project_root: project_root.into(),
             project_state_dir: None,
+            session_labels: BTreeMap::new(),
         }
     }
 
@@ -38,7 +42,17 @@ impl ProjectServiceRequestContext {
         Self {
             project_root: project_root.into(),
             project_state_dir: Some(project_state_dir.into()),
+            session_labels: BTreeMap::new(),
         }
+    }
+
+    pub fn with_session_label(
+        mut self,
+        session_id: impl Into<String>,
+        label: impl Into<String>,
+    ) -> Self {
+        self.session_labels.insert(session_id.into(), label.into());
+        self
     }
 
     pub fn project_root(&self) -> &Path {
@@ -55,6 +69,10 @@ impl ProjectServiceRequestContext {
     pub fn project_state_dir_string(&self) -> String {
         self.project_state_dir().to_string_lossy().into_owned()
     }
+
+    pub fn session_label(&self, session_id: &str) -> Option<&str> {
+        self.session_labels.get(session_id).map(String::as_str)
+    }
 }
 
 pub fn route_project_service_request(
@@ -67,6 +85,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_notifications_request(context, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_library_request(context, method, path) {
         return response;
     }
     if let Some(response) = route_exchange_read_request(context, method, path) {

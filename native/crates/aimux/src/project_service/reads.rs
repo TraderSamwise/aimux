@@ -51,7 +51,6 @@ pub fn route_read_request(
         || pathname == routes::COORDINATION_WORKLIST
         || pathname == routes::PROJECT_OBSERVABILITY
         || pathname == routes::TOPOLOGY
-        || pathname == routes::LIBRARY
         || pathname == routes::WORKTREES
         || pathname == routes::GRAVEYARD
         || pathname == routes::orchestration::ROUTES

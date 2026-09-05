@@ -1,6 +1,7 @@
 pub mod dispatcher;
 pub mod exchange_reads;
 pub mod http;
+pub mod library;
 pub mod metadata;
 pub mod notification_context;
 pub mod notifications;
