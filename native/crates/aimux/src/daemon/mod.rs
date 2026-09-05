@@ -1,3 +1,4 @@
+pub mod access;
 pub mod core_commands;
 pub mod http;
 pub mod json;

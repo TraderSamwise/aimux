@@ -436,7 +436,6 @@ fn has_relay_actor_headers(headers: &BTreeMap<String, String>) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct HeaderJsonActor {
     role: Option<String>,
     user_id: Option<String>,
@@ -445,11 +444,19 @@ struct HeaderJsonActor {
 }
 
 fn actor_from_json(value: &str) -> Option<HeaderJsonActor> {
-    let mut actor: HeaderJsonActor = serde_json::from_str(value).ok()?;
-    if !matches!(actor.role.as_deref(), Some("owner" | "guest")) {
-        actor.role = None;
-    }
-    Some(actor)
+    let parsed: Value = serde_json::from_str(value).ok()?;
+    let record = parsed.as_object()?;
+    let role = string_field(record, "role").filter(|role| matches!(*role, "owner" | "guest"));
+    Some(HeaderJsonActor {
+        role: role.map(str::to_owned),
+        user_id: string_field(record, "userId").map(str::to_owned),
+        display_name: string_field(record, "displayName").map(str::to_owned),
+        email: string_field(record, "email").map(str::to_owned),
+    })
+}
+
+fn string_field<'a>(record: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
+    record.get(key).and_then(Value::as_str)
 }
 
 fn normalize_absolute_path(path: &str) -> Option<PathBuf> {
