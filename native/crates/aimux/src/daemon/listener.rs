@@ -86,6 +86,43 @@ where
     Ok(())
 }
 
+pub fn serve_daemon_http_with_metadata_and_interceptor<Handle, Metadata, Intercept>(
+    config: DaemonListenConfig,
+    handle: Handle,
+    metadata: Metadata,
+    intercept: Intercept,
+) -> Result<(), DaemonListenerError>
+where
+    Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
+    Metadata: Fn() -> DaemonRequestMetadata + Send + Sync + 'static,
+    Intercept: Fn(&DaemonHttpRequest, &mut std::net::TcpStream) -> Result<bool, DaemonListenerError>
+        + Send
+        + Sync
+        + 'static,
+{
+    let listener = TcpListener::bind((config.host.as_str(), config.port))?;
+    let handle = Arc::new(handle);
+    let metadata = Arc::new(metadata);
+    let intercept = Arc::new(intercept);
+    for stream in listener.incoming() {
+        let Ok(mut stream) = stream else {
+            continue;
+        };
+        let handle = Arc::clone(&handle);
+        let intercept = Arc::clone(&intercept);
+        let metadata = metadata();
+        thread::spawn(move || {
+            let _ = handle_daemon_stream_with_metadata_and_interceptor(
+                &mut stream,
+                metadata,
+                &mut |request, stream| intercept(request, stream),
+                &mut |request| handle(request),
+            );
+        });
+    }
+    Ok(())
+}
+
 pub fn spawn_daemon_connection<Stream, Handle>(
     mut stream: Stream,
     metadata: DaemonRequestMetadata,

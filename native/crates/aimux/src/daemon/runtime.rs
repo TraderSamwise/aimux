@@ -8,9 +8,14 @@ use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime}
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
-use crate::daemon::listener::{DaemonListenConfig, serve_daemon_http_with_metadata};
+use crate::daemon::listener::{
+    DaemonListenConfig, serve_daemon_http_with_metadata_and_interceptor,
+};
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::status::DaemonStatusRuntime;
+use crate::daemon::stream::{
+    maybe_handle_host_agent_stream_request, maybe_handle_project_event_stream_request,
+};
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
 use crate::daemon::text::auth::{
     AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
@@ -338,7 +343,8 @@ pub fn run_daemon_internal() -> Result<()> {
         path: resolver.daemon_info_path(),
     };
     let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(resolver, info)));
-    serve_daemon_http_with_metadata(
+    let stream_runtime = Arc::clone(&runtime);
+    serve_daemon_http_with_metadata_and_interceptor(
         DaemonListenConfig { host, port },
         move |request| {
             let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
@@ -347,6 +353,25 @@ pub fn run_daemon_internal() -> Result<()> {
         || crate::daemon::listener::DaemonRequestMetadata {
             issued_at: now_iso(),
             stopping: false,
+        },
+        move |request, writer| {
+            if maybe_handle_project_event_stream_request(request, writer).map_err(|error| {
+                crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                    error.to_string(),
+                ))
+            })? {
+                return Ok(true);
+            }
+            let mut runtime = stream_runtime
+                .lock()
+                .expect("daemon runtime mutex poisoned");
+            maybe_handle_host_agent_stream_request(&mut *runtime, request, writer).map_err(
+                |error| {
+                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                        error.to_string(),
+                    ))
+                },
+            )
         },
     )
     .map_err(anyhow::Error::new)

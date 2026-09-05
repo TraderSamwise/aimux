@@ -1,4 +1,5 @@
 use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_daemon_response};
+use crate::daemon::json::ProjectEventStreamTarget;
 use crate::daemon::listener::prepared_response_bytes;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::DaemonHttpRequest;
@@ -7,6 +8,9 @@ use crate::daemon::text::host_agent::{
     HostAgentStreamResolution, resolve_host_agent_stream_text_route,
 };
 use crate::remote_access::{RemoteAccessContext, assert_remote_access_allowed, parse_remote_actor};
+use crate::{
+    daemon::access::resolve_authorized_project_event_stream, project_api_contract::routes,
+};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
@@ -142,6 +146,80 @@ pub fn pipe_host_agent_stream_from_url(
     Ok(())
 }
 
+pub fn pipe_project_event_stream_from_url(
+    writer: &mut impl Write,
+    target: &ProjectEventStreamTarget,
+    options: HostAgentStreamRequestOptions,
+) -> Result<(), HostAgentStreamError> {
+    let endpoint = parse_upstream_url(&target.url)?;
+    let mut stream = connect_upstream(&endpoint, options.timeout_ms)?;
+    let timeout = options
+        .timeout_ms
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .map(Duration::from_millis);
+    stream.set_read_timeout(timeout).map_err(map_io_error)?;
+    stream.set_write_timeout(timeout).map_err(map_io_error)?;
+    stream
+        .write_all(project_event_stream_request(&endpoint, &target.headers).as_bytes())
+        .map_err(map_io_error)?;
+
+    let mut opened = read_upstream_response(stream)?;
+    if !(200..300).contains(&opened.status) {
+        let status = opened.status;
+        let message = opened.body_text().trim().to_owned();
+        writer
+            .write_all(&host_agent_stream_failure_bytes(HostAgentStreamFailure {
+                status,
+                message,
+            }))
+            .map_err(map_io_error)?;
+        return Ok(());
+    }
+
+    write_project_event_stream_headers(writer)?;
+    while let Some(chunk) = opened.body.next_chunk()? {
+        writer.write_all(&chunk).map_err(map_io_error)?;
+    }
+    Ok(())
+}
+
+pub fn maybe_handle_project_event_stream_request(
+    request: &DaemonHttpRequest,
+    writer: &mut impl Write,
+) -> Result<bool, HostAgentStreamError> {
+    let route_url = DaemonRouteUrl::parse(&request.path);
+    if request.method != "GET"
+        || !route_url.pathname().starts_with("/proxy/")
+        || !route_url.pathname().ends_with(routes::EVENTS)
+    {
+        return Ok(false);
+    }
+    match resolve_authorized_project_event_stream(&request.path, &request.headers) {
+        Ok(target) => {
+            let mut writer = CountingWriter::new(writer);
+            match pipe_project_event_stream_from_url(
+                &mut writer,
+                &target,
+                HostAgentStreamRequestOptions::default(),
+            ) {
+                Ok(()) => Ok(true),
+                Err(error) if writer.bytes_written == 0 => {
+                    write_prepared(
+                        writer.inner,
+                        &DaemonRouteResponse::text(502, format!("{error}\n")),
+                    )?;
+                    Ok(true)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(response) => {
+            write_prepared(writer, &response)?;
+            Ok(true)
+        }
+    }
+}
+
 pub fn maybe_handle_host_agent_stream_request(
     runtime: &mut impl DaemonHostAgentTextRuntime,
     request: &DaemonHttpRequest,
@@ -221,6 +299,40 @@ fn write_stream_headers(writer: &mut impl Write) -> Result<(), HostAgentStreamEr
     writer
         .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\nconnection: close\r\n\r\n")
         .map_err(map_io_error)
+}
+
+fn write_project_event_stream_headers(writer: &mut impl Write) -> Result<(), HostAgentStreamError> {
+    writer
+        .write_all(
+            b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache, no-transform\r\nconnection: close\r\n\r\n",
+        )
+        .map_err(map_io_error)
+}
+
+fn project_event_stream_request(
+    endpoint: &UpstreamEndpoint,
+    headers: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let mut request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nAccept: text/event-stream\r\nConnection: close\r\n",
+        endpoint.target, endpoint.host, endpoint.port
+    );
+    for (name, value) in headers {
+        let lower = name.to_ascii_lowercase();
+        if lower == "host"
+            || lower == "connection"
+            || lower == "accept"
+            || lower == "content-length"
+        {
+            continue;
+        }
+        request.push_str(name);
+        request.push_str(": ");
+        request.push_str(value);
+        request.push_str("\r\n");
+    }
+    request.push_str("\r\n");
+    request
 }
 
 fn write_prepared(

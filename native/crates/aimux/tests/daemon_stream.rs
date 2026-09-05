@@ -1,7 +1,9 @@
+use aimux::daemon::json::ProjectEventStreamTarget;
 use aimux::daemon::stream::{
     HostAgentStreamError, HostAgentStreamFailure, HostAgentStreamRequestOptions,
     host_agent_stream_failure_bytes, host_agent_stream_failure_response,
-    maybe_handle_host_agent_stream_request, pipe_host_agent_stream_from_url,
+    maybe_handle_host_agent_stream_request, maybe_handle_project_event_stream_request,
+    pipe_host_agent_stream_from_url, pipe_project_event_stream_from_url,
     write_host_agent_stream_text,
 };
 use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
@@ -178,6 +180,72 @@ fn upstream_url_pipe_maps_upstream_http_errors_to_plain_text() {
     let text = String::from_utf8(output).unwrap();
     assert!(text.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
     assert!(text.ends_with("not ready\n"));
+}
+
+#[test]
+fn project_event_stream_pipe_preserves_raw_sse_chunks() {
+    let (url, join) = serve_once(|mut stream| {
+        let request = read_request_text(&mut stream);
+        assert!(request.starts_with("GET /events?since=1 HTTP/1.1\r\n"));
+        assert!(request.contains("Accept: text/event-stream\r\n"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n20\r\nevent: ready\ndata: {\"ok\":true}\n\n\r\n0\r\n\r\n",
+            )
+            .expect("write upstream");
+    });
+    let mut output = Vec::new();
+
+    pipe_project_event_stream_from_url(
+        &mut output,
+        &ProjectEventStreamTarget {
+            url: format!("{url}/events?since=1"),
+            headers: BTreeMap::new(),
+        },
+        HostAgentStreamRequestOptions::default(),
+    )
+    .expect("stream");
+    join.join().expect("upstream");
+    let response = String::from_utf8(output).unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.contains("content-type: text/event-stream\r\n"));
+    assert!(response.ends_with("event: ready\ndata: {\"ok\":true}\n\n"));
+}
+
+#[test]
+fn project_event_stream_interceptor_pipes_authorized_proxy_route() {
+    let (url, join) = serve_once(|mut stream| {
+        let request = read_request_text(&mut stream);
+        assert!(request.starts_with("GET /events HTTP/1.1\r\n"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 23\r\n\r\nevent: ready\ndata: {}\n\n",
+            )
+            .expect("write upstream");
+    });
+    let port = url.rsplit_once(':').unwrap().1;
+    let request = request("GET", &format!("/proxy/127.0.0.1/{port}/events"));
+    let mut output = Vec::new();
+
+    let handled = maybe_handle_project_event_stream_request(&request, &mut output).expect("stream");
+    join.join().expect("upstream");
+    let response = String::from_utf8(output).unwrap();
+
+    assert!(handled);
+    assert!(response.contains("content-type: text/event-stream\r\n"));
+    assert!(response.ends_with("event: ready\ndata: {}\n\n"));
+}
+
+#[test]
+fn project_event_stream_interceptor_ignores_other_proxy_routes() {
+    let request = request("GET", "/proxy/127.0.0.1/43210/health");
+    let mut output = Vec::new();
+
+    let handled = maybe_handle_project_event_stream_request(&request, &mut output).expect("stream");
+
+    assert!(!handled);
+    assert!(output.is_empty());
 }
 
 #[test]
