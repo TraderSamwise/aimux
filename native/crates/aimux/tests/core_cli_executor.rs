@@ -13,6 +13,7 @@ struct FakeRuntime {
     daemon_state: DaemonState,
     commands: Vec<CoreCommandCall>,
     text_routes: Vec<String>,
+    open_targets: Vec<Value>,
     fail_commands: bool,
     log_path: PathBuf,
     log_output: String,
@@ -27,6 +28,7 @@ impl Default for FakeRuntime {
             daemon_state: DaemonState::empty(),
             commands: Vec::new(),
             text_routes: Vec::new(),
+            open_targets: Vec::new(),
             fail_commands: false,
             log_path: PathBuf::from("/tmp/aimux.log"),
             log_output: String::new(),
@@ -83,6 +85,11 @@ impl CoreCliRuntime for FakeRuntime {
 
     fn clear_log(&self, _path: &Path) -> Result<(), String> {
         self.clear_count.set(self.clear_count.get() + 1);
+        Ok(())
+    }
+
+    fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String> {
+        self.open_targets.push(target.clone());
         Ok(())
     }
 }
@@ -319,16 +326,24 @@ fn unsupported_runtime_features_fail_before_side_effects() {
 }
 
 #[test]
-fn host_restart_open_fails_before_project_restart_until_tmux_open_is_ported() {
+fn host_restart_open_restarts_project_then_opens_dashboard_target() {
     let mut runtime = FakeRuntime::default();
 
     let execution = run_core_cli_with(&args(&["host", "restart", "--open"]), &mut runtime);
 
-    assert_eq!(execution.code, 1);
+    assert_eq!(execution.code, 0);
     assert_eq!(
-        execution.stderr,
-        ["Error: dashboard open is not yet ported to native CLI"]
+        execution.stdout,
+        ["Restarted project service for aimux-repo"]
     );
-    assert!(execution.stdout.is_empty());
-    assert!(runtime.commands.is_empty());
+    assert!(execution.stderr.is_empty());
+    assert_eq!(runtime.commands.len(), 1);
+    assert_eq!(
+        runtime.commands[0].command,
+        CORE_COMMAND_NAMES.project_restart
+    );
+    assert_eq!(
+        runtime.open_targets,
+        [json!({ "sessionName": "aimux-repo", "windowIndex": 1 })]
+    );
 }

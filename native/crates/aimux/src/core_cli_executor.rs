@@ -20,9 +20,11 @@ use crate::logs::{
     LogSelectionOptions, clear_log_file, parse_line_count, read_last_log_lines, selected_log_path,
 };
 use crate::paths::PathResolver;
+use crate::tmux::{attach_session_argv, switch_client_argv};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreCliExecution {
@@ -59,6 +61,7 @@ pub trait CoreCliRuntime {
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
+    fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String>;
 }
 
 #[derive(Debug, Default)]
@@ -118,6 +121,28 @@ impl CoreCliRuntime for RealCoreCliRuntime {
 
     fn clear_log(&self, path: &Path) -> Result<(), String> {
         clear_log_file(path).map_err(|error| error.to_string())
+    }
+
+    fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String> {
+        let session_name = target
+            .get("sessionName")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "dashboard target sessionName is required".to_owned())?;
+        let window_index = target
+            .get("windowIndex")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "dashboard target windowIndex is required".to_owned())?;
+        let argv = if std::env::var_os("TMUX").is_some() {
+            switch_client_argv(session_name, window_index, None)
+        } else {
+            attach_session_argv(session_name, Some(window_index))
+        };
+        match Command::new("tmux").args(argv).status() {
+            Ok(status) if status.success() => Ok(()),
+            Ok(status) => Err(format!("tmux open dashboard exited with {status}")),
+            Err(error) => Err(format!("tmux open dashboard failed: {error}")),
+        }
     }
 }
 
@@ -266,9 +291,6 @@ fn run_command_action(
     if operation == CoreCliOperation::DaemonStatus {
         return Ok(run_daemon_status(output_mode, request, runtime));
     }
-    if operation == CoreCliOperation::HostRestart && open_dashboard_after {
-        return Err("dashboard open is not yet ported to native CLI".into());
-    }
     let response = runtime.request_core_command(request)?;
     match operation {
         CoreCliOperation::HostStatus => run_host_status(output_mode, response.result, runtime),
@@ -326,6 +348,9 @@ fn run_command_action(
                 "dashboardSessionName": response.result["dashboardSessionName"].clone(),
                 "dashboardTarget": response.result["dashboardTarget"].clone(),
             });
+            if open_dashboard_after {
+                runtime.open_dashboard_target(&payload["dashboardTarget"])?;
+            }
             let execution = render_json_or_lines(
                 output_mode,
                 payload.clone(),
