@@ -69,6 +69,7 @@ enum RewriteCommand {
 
 fn main() -> Result<ExitCode> {
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
+    let stripped_args = core_command_args(&raw_args);
     let process_argv = std::iter::once("node".to_owned())
         .chain(std::iter::once("aimux".to_owned()))
         .chain(raw_args.clone())
@@ -94,15 +95,9 @@ fn main() -> Result<ExitCode> {
             };
             return Ok(ExitCode::from(run_tmux_expose(options) as u8));
         }
-        CliEntry::Main => {
-            let core_args = core_command_args(&raw_args);
-            if core_args != raw_args {
-                eprintln!("Error: global logging flags are not yet ported to native CLI");
-                return Ok(ExitCode::from(1));
-            }
-        }
+        CliEntry::Main => {}
     }
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(std::iter::once("aimux".to_owned()).chain(stripped_args));
     match cli.command {
         Command::BuildInfo { json } => print_value(aimux::build_info(), json),
         Command::Daemon {

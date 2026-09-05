@@ -23,12 +23,14 @@ pub fn cli_entry_for<S: AsRef<str>>(argv: &[S]) -> CliEntry {
     }
     let args = core_command_args(argv);
     if has_core_global_logging_args(argv) {
-        if is_core_project_ensure_command(&args) && !is_valid_core_project_ensure_args(&args) {
-            return CliEntry::Core;
+        if is_core_cli_command(&args)
+            || (is_core_project_ensure_command(&args) && !is_valid_core_project_ensure_args(&args))
+        {
+            CliEntry::Core
+        } else {
+            CliEntry::Main
         }
-        return CliEntry::Main;
-    }
-    if is_core_cli_command(&args) {
+    } else if is_core_cli_command(&args) {
         CliEntry::Core
     } else {
         CliEntry::Main

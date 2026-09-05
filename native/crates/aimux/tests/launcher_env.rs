@@ -30,10 +30,10 @@ fn routes_core_expose_and_main_like_launcher_env() {
 }
 
 #[test]
-fn global_logging_keeps_most_commands_on_the_full_cli() {
+fn global_logging_flags_are_stripped_before_native_core_dispatch() {
     assert_eq!(
         cli_entry_for(&["node", "aimux", "--debug", "daemon", "status"]),
-        CliEntry::Main
+        CliEntry::Core
     );
     assert_eq!(
         cli_entry_for(&[
@@ -46,5 +46,9 @@ fn global_logging_keeps_most_commands_on_the_full_cli() {
             "--json"
         ]),
         CliEntry::Core
+    );
+    assert_eq!(
+        cli_entry_for(&["node", "aimux", "--log-level", "debug", "build-info"]),
+        CliEntry::Main
     );
 }
