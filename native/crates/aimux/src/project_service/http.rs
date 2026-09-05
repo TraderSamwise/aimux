@@ -241,6 +241,33 @@ pub fn parse_bounded_limit(
     Ok(parsed.min(max_value))
 }
 
+pub fn query_params(path: &str) -> BTreeMap<String, String> {
+    let Some((_, query)) = path.split_once('?') else {
+        return BTreeMap::new();
+    };
+    let mut params = BTreeMap::new();
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let key = percent_decode_form_lossy(key);
+        if key.is_empty() {
+            continue;
+        }
+        params.insert(key, percent_decode_form_lossy(value));
+    }
+    params
+}
+
+pub fn trimmed_query(params: &BTreeMap<String, String>, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 fn prepare_project_service_response(
     status: u16,
     body: ProjectServiceResponseBody,
@@ -299,6 +326,35 @@ fn parse_integer_str(value: &str, field: &str) -> Result<i64, String> {
         return Err(format!("{field} must be a safe integer"));
     }
     Ok(parsed)
+}
+
+fn percent_decode_form_lossy(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let raw = input.as_bytes();
+    let mut index = 0;
+    while index < raw.len() {
+        match raw[index] {
+            b'+' => {
+                bytes.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < raw.len() => {
+                let hex = std::str::from_utf8(&raw[index + 1..index + 3]).unwrap_or("");
+                if let Ok(value) = u8::from_str_radix(hex, 16) {
+                    bytes.push(value);
+                    index += 3;
+                } else {
+                    bytes.push(raw[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                bytes.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn is_integer_text(value: &str) -> bool {

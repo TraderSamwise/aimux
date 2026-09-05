@@ -2,7 +2,8 @@ use aimux::config::default_config;
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agents::{
-    build_agent_list, describe_session_restorability, topology_desktop_session_list,
+    build_agent_list, describe_session_restorability, resolve_direct_teammates,
+    select_direct_teammates, teammate_api_record, topology_desktop_session_list,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
@@ -204,6 +205,142 @@ fn route_agents_reads_topology_metadata_and_exchange_tasks() {
     cleanup(project);
 }
 
+#[test]
+fn history_route_preserves_runtime_core_replacement_stub() {
+    let project = temp_project("history");
+    let context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
+    let response = route_project_service_request(&context, "GET", routes::agents::HISTORY, None);
+    assert_eq!(response.status, 410);
+    assert_eq!(
+        response.body,
+        json!({ "ok": false, "error": "agent message history requires the runtime core replacement" })
+    );
+    cleanup(project);
+}
+
+#[test]
+fn direct_teammates_dedupes_and_sorts_by_order_created_and_id() {
+    let sessions = vec![
+        json!({ "id": "child-c", "createdAt": "2026-01-01T00:00:03.000Z", "team": { "parentSessionId": "parent", "order": 2 } }),
+        json!({ "id": "child-a", "createdAt": "2026-01-01T00:00:02.000Z", "team": { "parentSessionId": "parent", "order": 1 } }),
+        json!({ "id": "child-b", "createdAt": "2026-01-01T00:00:01.000Z", "team": { "parentSessionId": "parent", "order": 1 } }),
+        json!({ "id": "child-a", "createdAt": "2026-01-01T00:00:00.000Z", "team": { "parentSessionId": "parent", "order": 0 } }),
+        json!({ "id": "other", "team": { "parentSessionId": "different", "order": 0 } }),
+        json!({ "id": "plain" }),
+    ];
+
+    let selected = select_direct_teammates(&sessions, "parent");
+    assert_eq!(
+        selected
+            .iter()
+            .map(|session| session["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["child-b", "child-a", "child-c"]
+    );
+}
+
+#[test]
+fn direct_teammate_resolution_matches_parent_error_contracts() {
+    let sessions = vec![
+        json!({ "id": "parent", "command": "codex" }),
+        json!({ "id": "child", "command": "claude", "team": { "parentSessionId": "parent" } }),
+    ];
+
+    let resolved = resolve_direct_teammates(&sessions, "parent").unwrap();
+    assert_eq!(resolved.parent["id"], "parent");
+    assert_eq!(resolved.teammates[0]["id"], "child");
+    assert_eq!(
+        resolve_direct_teammates(&sessions, "").unwrap_err().error,
+        "parentSessionId is required"
+    );
+    assert_eq!(
+        resolve_direct_teammates(&sessions, "missing")
+            .unwrap_err()
+            .error,
+        "parent agent \"missing\" not found"
+    );
+    assert_eq!(
+        resolve_direct_teammates(&sessions, "child")
+            .unwrap_err()
+            .error,
+        "teammate agents cannot create or delegate to nested teams"
+    );
+}
+
+#[test]
+fn teammate_api_record_uses_team_label_and_shape() {
+    let record = teammate_api_record(&json!({
+        "id": "child",
+        "command": "codex",
+        "label": "fallback",
+        "status": "running",
+        "worktreePath": "/repo",
+        "headline": "Working",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "team": {
+            "parentSessionId": "parent",
+            "role": "reviewer",
+            "label": "Review"
+        }
+    }));
+
+    assert_eq!(record["id"], "child");
+    assert_eq!(record["sessionId"], "child");
+    assert_eq!(record["tool"], "codex");
+    assert_eq!(record["command"], "codex");
+    assert_eq!(record["label"], "Review");
+    assert_eq!(record["role"], "reviewer");
+    assert_eq!(record["worktreePath"], "/repo");
+    assert_eq!(record["team"]["parentSessionId"], "parent");
+}
+
+#[test]
+fn route_teammates_reads_runtime_topology() {
+    let project = temp_project("teammates-route");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&teammate_topology_fixture()).unwrap(),
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/agents/teammates?parentSessionId=parent",
+        None,
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["parentSessionId"], "parent");
+    assert_eq!(
+        response.body["teammates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|teammate| teammate["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["child-review", "child-code"]
+    );
+    assert_eq!(response.body["teammates"][0]["label"], "Review");
+
+    let missing_parent = route_project_service_request(
+        &context,
+        "GET",
+        "/agents/teammates?parentSessionId=missing",
+        None,
+    );
+    assert_eq!(missing_parent.status, 404);
+    assert_eq!(
+        missing_parent.body["error"],
+        "parent agent \"missing\" not found"
+    );
+    cleanup(project);
+}
+
 fn topology_fixture() -> Value {
     coerce_runtime_topology(&json!({
         "version": 1,
@@ -227,6 +364,36 @@ fn topology_fixture() -> Value {
             { "id": "codex-error", "nodeId": "node-error", "status": "offline", "command": "codex", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "unknown-tool", "nodeId": "node-unknown", "status": "offline", "command": "custom", "backendSessionId": "backend-custom", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "graveyarded", "nodeId": "node-live", "status": "graveyard", "command": "codex", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap()
+}
+
+fn teammate_topology_fixture() -> Value {
+    coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-parent", "rigId": "rig-1", "logicalId": "parent", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-code", "rigId": "rig-1", "logicalId": "child-code", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-review", "rigId": "rig-1", "logicalId": "child-review", "toolConfigKey": "claude", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [],
+        "sessions": [
+            { "id": "parent", "nodeId": "node-parent", "status": "running", "command": "codex", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "child-code", "nodeId": "node-code", "status": "running", "command": "codex", "team": { "teamId": "team-1", "parentSessionId": "parent", "role": "coder", "label": "Code", "order": 2 }, "createdAt": "2026-01-01T00:00:02.000Z", "updatedAt": "2026-01-01T00:00:02.000Z" },
+            { "id": "child-review", "nodeId": "node-review", "status": "idle", "command": "claude", "team": { "teamId": "team-1", "parentSessionId": "parent", "role": "reviewer", "label": "Review", "order": 1 }, "createdAt": "2026-01-01T00:00:01.000Z", "updatedAt": "2026-01-01T00:00:01.000Z" }
         ],
         "services": [],
         "worktrees": [],

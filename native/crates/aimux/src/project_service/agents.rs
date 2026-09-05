@@ -9,6 +9,7 @@ use crate::runtime_topology::{
 };
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 
@@ -19,8 +20,17 @@ pub fn route_agent_read_request(
     method: &str,
     path: &str,
 ) -> Option<ProjectServiceDispatchResponse> {
-    if !method.eq_ignore_ascii_case("GET") || project_service_pathname(path) != routes::agents::LIST
-    {
+    if !method.eq_ignore_ascii_case("GET") {
+        return None;
+    }
+    let pathname = project_service_pathname(path);
+    if pathname == routes::agents::HISTORY {
+        return Some(json_response(
+            410,
+            json!({ "ok": false, "error": "agent message history requires the runtime core replacement" }),
+        ));
+    }
+    if pathname != routes::agents::LIST && pathname != routes::agents::TEAMMATES {
         return None;
     }
     let project_state_dir = context.project_state_dir();
@@ -36,6 +46,9 @@ pub fn route_agent_read_request(
         .cloned()
         .unwrap_or_default();
     let sessions = topology_desktop_session_list(&topology, &metadata_state.sessions, &tools);
+    if pathname == routes::agents::TEAMMATES {
+        return Some(route_teammates(path, &sessions));
+    }
     Some(json_response(
         200,
         json!({
@@ -47,6 +60,22 @@ pub fn route_agent_read_request(
             ),
         }),
     ))
+}
+
+fn route_teammates(path: &str, sessions: &[Value]) -> ProjectServiceDispatchResponse {
+    let params = query_params(path);
+    let parent_session_id = trimmed_query(&params, "parentSessionId").unwrap_or_default();
+    match resolve_direct_teammates(sessions, &parent_session_id) {
+        Ok(resolved) => json_response(
+            200,
+            json!({
+                "ok": true,
+                "parentSessionId": string_field(&resolved.parent, "id").unwrap_or(""),
+                "teammates": resolved.teammates.iter().map(teammate_api_record).collect::<Vec<_>>(),
+            }),
+        ),
+        Err(error) => json_response(error.status, json!({ "ok": false, "error": error.error })),
+    }
 }
 
 pub fn topology_desktop_session_list(
@@ -79,6 +108,107 @@ pub fn topology_desktop_session_list(
             session
         })
         .collect()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirectTeammates {
+    pub parent: Value,
+    pub teammates: Vec<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectTeammatesError {
+    pub status: u16,
+    pub error: String,
+}
+
+pub fn resolve_direct_teammates(
+    topology_sessions: &[Value],
+    parent_session_id: &str,
+) -> Result<DirectTeammates, DirectTeammatesError> {
+    if parent_session_id.trim().is_empty() {
+        return Err(DirectTeammatesError {
+            status: 400,
+            error: "parentSessionId is required".into(),
+        });
+    }
+    let sessions = topology_sessions
+        .iter()
+        .filter(|session| !is_teammate_session(session))
+        .collect::<Vec<_>>();
+    let teammates = topology_sessions
+        .iter()
+        .filter(|session| is_teammate_session(session))
+        .collect::<Vec<_>>();
+    let parent = sessions
+        .iter()
+        .chain(teammates.iter())
+        .find(|session| string_field(session, "id") == Some(parent_session_id));
+    let Some(parent) = parent else {
+        return Err(DirectTeammatesError {
+            status: 404,
+            error: format!("parent agent \"{parent_session_id}\" not found"),
+        });
+    };
+    if is_teammate_session(parent) {
+        return Err(DirectTeammatesError {
+            status: 400,
+            error: "teammate agents cannot create or delegate to nested teams".into(),
+        });
+    }
+    let parent = (*parent).clone();
+    let teammate_values = teammates.into_iter().cloned().collect::<Vec<_>>();
+    Ok(DirectTeammates {
+        parent,
+        teammates: select_direct_teammates(&teammate_values, parent_session_id),
+    })
+}
+
+pub fn select_direct_teammates(sessions: &[Value], parent_session_id: &str) -> Vec<Value> {
+    let mut by_id = Map::new();
+    for session in sessions {
+        let Some(id) = string_field(session, "id") else {
+            continue;
+        };
+        if team_string_field(session, "parentSessionId") != Some(parent_session_id) {
+            continue;
+        }
+        if !by_id.contains_key(id) {
+            by_id.insert(id.to_owned(), session.clone());
+        }
+    }
+    let mut selected = by_id.into_values().collect::<Vec<_>>();
+    selected.sort_by(compare_teammate_sessions);
+    selected
+}
+
+pub fn teammate_api_record(session: &Value) -> Value {
+    let mut record = Map::new();
+    let id = string_field(session, "id").unwrap_or("");
+    insert_string(&mut record, "id", id);
+    insert_string(&mut record, "sessionId", id);
+    insert_optional(&mut record, "tool", string_field(session, "command"));
+    insert_optional(&mut record, "command", string_field(session, "command"));
+    insert_optional(
+        &mut record,
+        "label",
+        team_string_field(session, "label").or_else(|| string_field(session, "label")),
+    );
+    insert_optional(&mut record, "role", team_string_field(session, "role"));
+    for key in [
+        "status",
+        "worktreePath",
+        "headline",
+        "preview",
+        "createdAt",
+        "lastUsedAt",
+        "pending",
+        "pendingAction",
+        "team",
+    ] {
+        insert_value(&mut record, key, session.get(key).cloned());
+    }
+    Value::Object(record)
 }
 
 pub fn build_agent_list(
@@ -231,6 +361,29 @@ fn active_task_for<'a>(tasks: &'a [Value], session_id: &str) -> Option<&'a Value
     })
 }
 
+fn is_teammate_session(session: &Value) -> bool {
+    team_string_field(session, "parentSessionId").is_some()
+}
+
+fn compare_teammate_sessions(left: &Value, right: &Value) -> std::cmp::Ordering {
+    let left_order = team_number_field(left, "order").unwrap_or(f64::INFINITY);
+    let right_order = team_number_field(right, "order").unwrap_or(f64::INFINITY);
+    if left_order != right_order {
+        return left_order.total_cmp(&right_order);
+    }
+    let left_created = string_field(left, "createdAt").filter(|value| !value.is_empty());
+    let right_created = string_field(right, "createdAt").filter(|value| !value.is_empty());
+    match (left_created, right_created) {
+        (Some(left), Some(right)) if left != right => return left.cmp(right),
+        (Some(_), None) => return std::cmp::Ordering::Less,
+        (None, Some(_)) => return std::cmp::Ordering::Greater,
+        _ => {}
+    }
+    string_field(left, "id")
+        .unwrap_or("")
+        .cmp(string_field(right, "id").unwrap_or(""))
+}
+
 fn should_relaunch_fresh_session(
     session: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
@@ -312,6 +465,25 @@ fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 
 fn string_field_value(value: Option<&Value>) -> Option<&str> {
     value.and_then(Value::as_str)
+}
+
+fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value
+        .get("team")
+        .and_then(Value::as_object)
+        .and_then(|team| team.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn team_number_field(value: &Value, key: &str) -> Option<f64> {
+    value
+        .get("team")
+        .and_then(Value::as_object)
+        .and_then(|team| team.get(key))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
