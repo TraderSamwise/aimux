@@ -183,6 +183,155 @@ fn task_assignment_delivers_to_live_session_and_records_message_delivery() {
 }
 
 #[test]
+fn teammate_task_assigns_direct_teammate_and_delivers_prompt() {
+    let project = temp_project("teammate-task");
+    let state_dir = project.join("state");
+    write_teammate_topology(
+        &state_dir,
+        &[
+            ("claude-lead", "@lead", None, "/repo"),
+            (
+                "codex-worker",
+                "@worker",
+                Some("claude-lead"),
+                "/repo/.aimux/worktrees/review",
+            ),
+        ],
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeDeliveryRuntime::default();
+
+    let response = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE_TASK,
+        Some(&json!({
+            "parentSessionId": "claude-lead",
+            "teammateSessionId": "codex-worker",
+            "body": "\n\nAudit parser state drift\nCapture the failing case."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["parentSessionId"], "claude-lead");
+    assert_eq!(response.body["teammateSessionId"], "codex-worker");
+    assert_eq!(response.body["task"]["assignedBy"], "claude-lead");
+    assert_eq!(response.body["task"]["assignedTo"], "codex-worker");
+    assert_eq!(
+        response.body["task"]["description"],
+        "Audit parser state drift"
+    );
+    assert_eq!(
+        response.body["task"]["prompt"],
+        "Audit parser state drift\nCapture the failing case."
+    );
+    assert_eq!(
+        response.body["thread"]["worktreePath"],
+        "/repo/.aimux/worktrees/review"
+    );
+    assert_eq!(response.body["deliveredTo"], json!(["codex-worker"]));
+
+    let delivered_text = text_sent_to(&runtime, "@worker");
+    assert!(delivered_text.contains("[aimux task assigned]"));
+    assert!(delivered_text.contains("Audit parser state drift"));
+    assert!(delivered_text.contains("aimux task accept"));
+
+    let exchange = read_exchange(&state_dir);
+    assert!(
+        exchange["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["assignedTo"] == "codex-worker"
+                && task["assignedBy"] == "claude-lead")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn teammate_task_rejects_missing_teammate_session_id() {
+    let project = temp_project("teammate-task-missing-teammate");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE_TASK,
+        Some(&json!({
+            "parentSessionId": "claude-lead",
+            "body": "Do the task."
+        })),
+    );
+    assert_eq!(response.status, 400);
+    assert_eq!(response.body["error"], "teammateSessionId is required");
+    cleanup(project);
+}
+
+#[test]
+fn teammate_task_rejects_missing_prompt_or_body() {
+    let project = temp_project("teammate-task-missing-body");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE_TASK,
+        Some(&json!({
+            "parentSessionId": "claude-lead",
+            "teammateSessionId": "codex-worker",
+            "body": "   "
+        })),
+    );
+    assert_eq!(response.status, 400);
+    assert_eq!(
+        response.body["error"],
+        "teammate task requires body or prompt"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn teammate_task_rejects_non_direct_teammate() {
+    let project = temp_project("teammate-task-non-direct");
+    let state_dir = project.join("state");
+    write_teammate_topology(
+        &state_dir,
+        &[
+            ("claude-lead", "@lead", None, "/repo"),
+            ("other-parent", "@other", None, "/repo"),
+            (
+                "codex-worker",
+                "@worker",
+                Some("other-parent"),
+                "/repo/.aimux/worktrees/review",
+            ),
+        ],
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE_TASK,
+        Some(&json!({
+            "parentSessionId": "claude-lead",
+            "teammateSessionId": "codex-worker",
+            "body": "Audit this."
+        })),
+    );
+    assert_eq!(response.status, 404);
+    assert_eq!(
+        response.body["error"],
+        "teammate \"codex-worker\" is not attached to parent \"claude-lead\""
+    );
+    cleanup(project);
+}
+
+#[test]
 fn task_lifecycle_updates_task_thread_and_indexes() {
     let project = temp_project("task-lifecycle");
     let state_dir = project.join("state");
@@ -761,6 +910,89 @@ fn write_delivery_topology(state_dir: &PathBuf, sessions: &[(&str, &str)]) {
                 "updatedAt": "2026-01-01T00:00:00.000Z"
             })
         })
+        .collect::<Vec<_>>();
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": nodes,
+        "edges": [],
+        "bindings": bindings,
+        "sessions": topology_sessions,
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+    write(
+        runtime_topology_path(state_dir),
+        serde_yaml::to_string(&topology).expect("topology yaml"),
+    )
+    .expect("write topology");
+}
+
+fn write_teammate_topology(state_dir: &PathBuf, sessions: &[(&str, &str, Option<&str>, &str)]) {
+    create_dir_all(state_dir).expect("state dir");
+    let nodes = sessions
+        .iter()
+        .map(|(session_id, _window_id, _parent_id, _worktree_path)| {
+            json!({
+                "id": format!("node-{session_id}"),
+                "rigId": "rig-1",
+                "logicalId": session_id,
+                "toolConfigKey": "codex",
+                "createdAt": "2026-01-01T00:00:00.000Z"
+            })
+        })
+        .collect::<Vec<_>>();
+    let topology_sessions = sessions
+        .iter()
+        .enumerate()
+        .map(
+            |(index, (session_id, _window_id, parent_id, worktree_path))| {
+                let mut session = json!({
+                    "id": session_id,
+                    "nodeId": format!("node-{session_id}"),
+                    "tool": "codex",
+                    "command": "codex",
+                    "args": [],
+                    "status": "running",
+                    "worktreePath": worktree_path,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                });
+                if let Some(parent_id) = parent_id {
+                    session["team"] = json!({
+                        "parentSessionId": parent_id,
+                        "role": "worker",
+                        "label": session_id,
+                        "order": index as i64,
+                    });
+                }
+                session
+            },
+        )
+        .collect::<Vec<_>>();
+    let bindings = sessions
+        .iter()
+        .enumerate()
+        .map(
+            |(index, (session_id, window_id, _parent_id, _worktree_path))| {
+                json!({
+                    "id": format!("tmux:{session_id}"),
+                    "nodeId": format!("node-{session_id}"),
+                    "tmuxSession": "aimux",
+                    "tmuxWindowId": window_id,
+                    "tmuxWindowIndex": index as i64 + 1,
+                    "tmuxWindowName": session_id,
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                })
+            },
+        )
         .collect::<Vec<_>>();
     let topology = coerce_runtime_topology(&json!({
         "version": 1,

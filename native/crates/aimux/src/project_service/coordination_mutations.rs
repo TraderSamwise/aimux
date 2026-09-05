@@ -2,12 +2,16 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::config::load_config_for_project;
+use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
+use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
 use super::agent_output::{
     AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime, resolve_live_window_id,
     send_prompt_to_tmux,
 };
+use super::agents::{resolve_direct_teammates, topology_desktop_session_list};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
@@ -48,6 +52,7 @@ pub fn route_coordination_mutation_request_with_runtime(
         routes::handoff::ACCEPT => route_handoff_accept(&project_state_dir, body),
         routes::handoff::COMPLETE => route_handoff_complete(&project_state_dir, body),
         routes::tasks::ASSIGN => route_task_assign(&project_state_dir, body),
+        routes::agents::CREATE_TEAMMATE_TASK => route_create_teammate_task(context, body),
         routes::tasks::ACCEPT => route_task_accept(&project_state_dir, body),
         routes::tasks::BLOCK => route_task_block(&project_state_dir, body),
         routes::tasks::COMPLETE => {
@@ -419,6 +424,116 @@ fn route_task_assign(project_state_dir: &Path, body: &Value) -> ProjectServiceDi
             json!({ "ok": true, "task": task, "thread": thread, "message": message, "deliveredTo": [] }),
         ))
     })
+}
+
+fn route_create_teammate_task(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let project_state_dir = context.project_state_dir();
+    let parent_session_id = trimmed_string(body.get("parentSessionId")).unwrap_or_default();
+    let teammate_session_id = trimmed_string(body.get("teammateSessionId")).unwrap_or_default();
+    if teammate_session_id.is_empty() {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "teammateSessionId is required" }),
+        );
+    }
+    let prompt = teammate_task_prompt(body);
+    if prompt.is_empty() {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "teammate task requires body or prompt" }),
+        );
+    }
+    let (parent, teammate) = match resolve_teammate_task_target(
+        context,
+        &project_state_dir,
+        &parent_session_id,
+        &teammate_session_id,
+    ) {
+        Ok(target) => target,
+        Err(response) => return *response,
+    };
+    let worktree_path = trimmed_string(body.get("worktreePath"))
+        .or_else(|| trimmed_string(teammate.get("worktreePath")))
+        .or_else(|| trimmed_string(parent.get("worktreePath")));
+    let assign_body = json!({
+        "from": string_field(&parent, "id"),
+        "to": teammate_session_id,
+        "description": teammate_task_description(body, &prompt),
+        "prompt": prompt,
+        "worktreePath": worktree_path,
+    });
+    let mut response = route_task_assign(&project_state_dir, &assign_body);
+    object_insert_mut(
+        &mut response.body,
+        "parentSessionId",
+        Value::String(string_field(&parent, "id")),
+    );
+    object_insert_mut(
+        &mut response.body,
+        "teammateSessionId",
+        Value::String(teammate_session_id),
+    );
+    response
+}
+
+fn resolve_teammate_task_target(
+    context: &ProjectServiceRequestContext,
+    project_state_dir: &Path,
+    parent_session_id: &str,
+    teammate_session_id: &str,
+) -> Result<(Value, Value), Box<ProjectServiceDispatchResponse>> {
+    let config = load_config_for_project(context.project_root());
+    let tools = config
+        .get("tools")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let metadata_state = load_metadata_state(project_state_dir);
+    let topology = read_runtime_topology(runtime_topology_path(project_state_dir))
+        .map_err(|error| Box::new(json_response(500, json!({ "ok": false, "error": error }))))?;
+    let sessions = topology_desktop_session_list(&topology, &metadata_state.sessions, &tools);
+    let resolved = resolve_direct_teammates(&sessions, parent_session_id).map_err(|error| {
+        Box::new(json_response(
+            error.status,
+            json!({ "ok": false, "error": error.error }),
+        ))
+    })?;
+    let teammate = resolved
+        .teammates
+        .into_iter()
+        .find(|session| string_field(session, "id") == teammate_session_id)
+        .ok_or_else(|| {
+            Box::new(json_response(
+                404,
+                json!({
+                    "ok": false,
+                    "error": format!(
+                        "teammate \"{teammate_session_id}\" is not attached to parent \"{parent_session_id}\""
+                    ),
+                }),
+            ))
+        })?;
+    Ok((resolved.parent, teammate))
+}
+
+fn teammate_task_prompt(body: &Value) -> String {
+    trimmed_string(body.get("prompt"))
+        .or_else(|| trimmed_string(body.get("body")))
+        .unwrap_or_default()
+}
+
+fn teammate_task_description(body: &Value, prompt: &str) -> String {
+    trimmed_string(body.get("title"))
+        .or_else(|| trimmed_string(body.get("description")))
+        .or_else(|| first_non_empty_line(prompt).map(|line| line.chars().take(120).collect()))
+        .unwrap_or_else(|| "Teammate task".into())
+}
+
+fn first_non_empty_line(value: &str) -> Option<String> {
+    value.lines().find_map(trimmed_owned)
 }
 
 fn route_task_accept(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
@@ -1325,7 +1440,9 @@ fn delivery_plan(pathname: &str, request_body: &Value, response: &Value) -> Opti
             Vec::new(),
             &string_field_with_default(request_body, "from", "user"),
         ),
-        routes::tasks::ASSIGN => task_assignment_delivery_plan(response),
+        routes::tasks::ASSIGN | routes::agents::CREATE_TEAMMATE_TASK => {
+            task_assignment_delivery_plan(response)
+        }
         routes::tasks::BLOCK => task_outcome_delivery_plan(response, "blocked"),
         routes::tasks::COMPLETE => task_outcome_delivery_plan(response, "completed"),
         routes::reviews::APPROVE => task_outcome_delivery_plan(response, "review approved"),
