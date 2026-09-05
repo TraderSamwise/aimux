@@ -80,7 +80,7 @@ impl PathResolver {
     }
 
     pub fn project_id_for(&mut self, cwd: impl AsRef<Path>) -> String {
-        compute_project_id(&self.resolve_repo_root(cwd))
+        compute_project_id(self.resolve_repo_root(cwd))
     }
 
     pub fn global_aimux_dir(&self) -> PathBuf {

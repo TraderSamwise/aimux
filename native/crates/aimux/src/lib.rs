@@ -1,4 +1,5 @@
 pub mod build_info;
+pub mod config;
 pub mod contracts;
 pub mod core_command_contract;
 pub mod paths;

@@ -58,3 +58,31 @@ Parity evidence:
 Open gaps:
 - Registry mutation, corrupt-file quarantine, and AsyncLocalStorage-equivalent
   scoped project path state remain for later Phase 1/daemon slices.
+
+## 2026-09-05 Phase 1 Config Semantics
+
+Status: complete
+Scope: `src/config.ts` defaults, object-only deep merge, pure global/project
+layering, project stripping of global-only `hosted` and `installs` blocks, and
+normalization for worktrees, loop, scribe, expose, Codex, and Claude resume
+arguments.
+
+Verification:
+- `yarn native:fmt`
+- `yarn native:test`
+- `cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
+- `/Users/sam/cs/aimux/node_modules/.bin/tsc -p tsconfig.json`
+- direct TypeScript `loadConfig({ includeGlobal: false })` oracle comparison
+  against `testdata/contracts/v1/config/default.json`
+- direct TypeScript oracle for representative scribe, worktree cleanup,
+  expose, and built-in resume normalization cases
+
+Parity evidence:
+- `testdata/contracts/v1/config/default.json`
+- focused Rust tests translated from `src/config.test.ts`
+- subagent review found JS-edge drift around malformed arrays/scalars/null;
+  patched with additional Rust tests before commit
+
+Open gaps:
+- Filesystem loading, corrupt-file quarantine, and config save/init behavior
+  remain TypeScript-owned.

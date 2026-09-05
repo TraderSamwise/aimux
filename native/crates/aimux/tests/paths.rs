@@ -150,7 +150,7 @@ fn does_not_cache_non_git_fallback_roots() {
         .expect("run git init");
     assert!(status.success());
 
-    assert_eq!(resolver.resolve_repo_root(&root.join("nested")), root);
+    assert_eq!(resolver.resolve_repo_root(root.join("nested")), root);
 
     fs::remove_dir_all(&root).expect("remove temp repo");
 }
