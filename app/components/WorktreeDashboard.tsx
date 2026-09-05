@@ -31,7 +31,6 @@ import {
   worktreeGroupsFamily,
 } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
-import { PairDeviceDialog } from "@/components/PairDeviceDialog";
 import {
   isDevicePendingApprovalError,
   projectStateErrorCopy,
@@ -661,8 +660,10 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
     if (isDevicePendingApprovalError(desktopStateError)) {
       return (
         <View className={statePad}>
-          <PageStateCard title="Waiting for this device to be approved…" />
-          <PairDeviceDialog />
+          <PageStateCard
+            title="Waiting for this device to be approved..."
+            body="Use the approval banner above or the code in the top bar to finish pairing."
+          />
         </View>
       );
     }

@@ -8,16 +8,19 @@ import {
   type ViewStyle,
 } from "react-native";
 import { usePathname } from "expo-router";
-import { useAtom, useSetAtom } from "jotai";
-import { Menu } from "lucide-react-native";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { KeyRound, Menu } from "lucide-react-native";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
+import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SharedSidebar } from "@/components/SharedSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
+import { Text } from "@/components/ui/text";
 import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { useRouteShare } from "@/lib/use-route-share";
+import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
 import { sidebarOpenAtom } from "@/stores/ui";
 
@@ -37,8 +40,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
   const isMonitorRoute = pathname === "/monitor";
   const isSharedShell = isSharedRoute || Boolean(activeShare);
+  const relayConfigured = useAtomValue(relayConfiguredAtom);
+  const relayStatus = useAtomValue(relayStatusAtom);
+  const pendingApproval = useAtomValue(relayPendingApprovalAtom);
+  const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
   const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
+  const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
 
   // Mobile drawer should start closed — users don't expect it open on load.
   useEffect(() => {
@@ -92,6 +100,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <View className="flex-1 bg-background">
       <View style={shellZoomStyle}>
         <TopBar left={hamburger} />
+        {showPairingBanner ? (
+          <Pressable
+            accessibilityLabel="Pair this browser"
+            accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
+            onPress={() => setPairingDialogOpen(true)}
+            className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
+          >
+            <KeyRound size={16} color="#fbbf24" />
+            <View className="ml-2 min-w-0 flex-1">
+              <Text className="text-[13px] font-semibold text-amber-200">
+                Approve this browser to connect
+              </Text>
+              <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
+                Run {APPROVE_COMMAND}
+                {pendingApproval?.approvalCode
+                  ? ` and match code ${pendingApproval.approvalCode}`
+                  : ""}
+                .
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
         <View className="flex-1 flex-row">
           {isDesktop ? <Sidebar /> : null}
           {isTablet && sidebarOpen ? <Sidebar /> : null}
@@ -129,6 +159,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Animated.View>
           ) : null}
         </View>
+        {pairingDialogOpen ? (
+          <PairDeviceDialog onDismiss={() => setPairingDialogOpen(false)} />
+        ) : null}
       </View>
     </View>
   );

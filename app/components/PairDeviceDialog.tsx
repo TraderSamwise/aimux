@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 
-const APPROVE_COMMAND = "aimux security device approve";
+export const APPROVE_COMMAND = "aimux security device approve";
 
 /**
  * Shown only once the operator asks for something the host has to answer, so a
