@@ -1,6 +1,7 @@
 use aimux::core_cli::{CoreCommandCall, CoreCommandOk};
 use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
+use aimux::daemon::text::operations::RestartControlPlaneTextResult;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
 use serde_json::{Value, json};
 use std::cell::Cell;
@@ -14,7 +15,9 @@ struct FakeRuntime {
     commands: Vec<CoreCommandCall>,
     text_routes: Vec<String>,
     open_targets: Vec<Value>,
+    restart_calls: Vec<Option<String>>,
     fail_commands: bool,
+    restart_failures: i64,
     log_path: PathBuf,
     log_output: String,
     clear_count: Cell<usize>,
@@ -29,7 +32,9 @@ impl Default for FakeRuntime {
             commands: Vec::new(),
             text_routes: Vec::new(),
             open_targets: Vec::new(),
+            restart_calls: Vec::new(),
             fail_commands: false,
+            restart_failures: 0,
             log_path: PathBuf::from("/tmp/aimux.log"),
             log_output: String::new(),
             clear_count: Cell::new(0),
@@ -91,6 +96,34 @@ impl CoreCliRuntime for FakeRuntime {
     fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String> {
         self.open_targets.push(target.clone());
         Ok(())
+    }
+
+    fn restart_control_plane(
+        &mut self,
+        project_root: Option<&str>,
+    ) -> Result<RestartControlPlaneTextResult, String> {
+        self.restart_calls.push(project_root.map(str::to_owned));
+        Ok(RestartControlPlaneTextResult {
+            restart: json!({
+                "daemon": {
+                    "previous": null,
+                    "current": { "pid": 9001 },
+                    "retained": false
+                },
+                "projects": [],
+                "summary": {
+                    "projects": 0,
+                    "servicesEnsured": 0,
+                    "runtimeRepairs": 0,
+                    "dashboardsReloaded": 0,
+                    "runtimeRebuildRequired": 0,
+                    "orphanProcessesCleaned": 0,
+                    "orphanTmuxSessionsCleaned": 0,
+                    "failures": self.restart_failures
+                }
+            }),
+            text: format!("Aimux Restart\n  failures: {}", self.restart_failures),
+        })
     }
 }
 
@@ -309,20 +342,42 @@ fn doctor_versions_executes_daemon_text_route() {
 fn unsupported_runtime_features_fail_before_side_effects() {
     let mut runtime = FakeRuntime::default();
 
-    let restart = run_core_cli_with(&args(&["restart"]), &mut runtime);
-    assert_eq!(restart.code, 1);
-    assert_eq!(
-        restart.stderr,
-        ["Error: control-plane restart is not yet ported to native CLI"]
-    );
-    assert!(runtime.commands.is_empty());
-
     let login = run_core_cli_with(&args(&["login"]), &mut runtime);
     assert_eq!(login.code, 1);
     assert_eq!(
         login.stderr,
         ["Error: remote access is unavailable in the local build"]
     );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
+    let mut runtime = FakeRuntime::default();
+
+    let execution = run_core_cli_with(&args(&["restart", "--project", "child"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(execution.stdout, ["Aimux Restart\n  failures: 0"]);
+    assert!(execution.stderr.is_empty());
+    assert_eq!(runtime.restart_calls, [Some("/resolved/child".into())]);
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn restart_control_plane_json_outputs_restart_report_and_fails_on_failures() {
+    let mut runtime = FakeRuntime {
+        restart_failures: 2,
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["daemon", "restart", "--json"]), &mut runtime);
+
+    assert_eq!(execution.code, 1);
+    assert!(execution.stderr.is_empty());
+    assert_eq!(runtime.restart_calls, [None]);
+    let report: Value = serde_json::from_str(&execution.stdout[0]).expect("restart json");
+    assert_eq!(report["summary"]["failures"], json!(2));
 }
 
 #[test]

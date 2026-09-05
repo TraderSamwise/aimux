@@ -4,7 +4,7 @@ use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, string_param, text_error,
     text_or_json_lines,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +17,118 @@ pub struct DashboardOpenRequest {
 pub struct RestartControlPlaneTextResult {
     pub restart: Value,
     pub text: String,
+}
+
+pub fn empty_restart_project_result(project_root: &str) -> Value {
+    json!({
+        "projectRoot": project_root,
+        "runtimeRebuildRequired": false,
+        "runtime": { "status": "skipped" },
+        "service": { "status": "skipped" },
+        "dashboard": { "status": "skipped" },
+    })
+}
+
+pub fn render_runtime_restart_result(result: &Value) -> String {
+    let daemon = result.get("daemon").unwrap_or(&Value::Null);
+    let retained = daemon
+        .get("retained")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let current_pid = daemon
+        .get("current")
+        .and_then(|value| value.get("pid"))
+        .map(js_string)
+        .unwrap_or_else(|| "null".into());
+    let previous_pid = daemon
+        .get("previous")
+        .and_then(|value| value.get("pid"))
+        .map(js_string);
+    let daemon_status = if retained {
+        format!("retained pid={current_pid}")
+    } else if let Some(previous_pid) = previous_pid {
+        format!("restarted pid={previous_pid} -> pid={current_pid}")
+    } else {
+        format!("started -> pid={current_pid}")
+    };
+    let summary = result.get("summary").unwrap_or(&Value::Null);
+    let mut lines = vec![
+        "Aimux Restart".to_owned(),
+        format!("  daemon: {daemon_status}"),
+        format!("  projects: {}", summary_number(summary, "projects")),
+        format!(
+            "  services ensured: {}",
+            summary_number(summary, "servicesEnsured")
+        ),
+        format!(
+            "  runtime repaired: {}",
+            summary_number(summary, "runtimeRepairs")
+        ),
+        format!(
+            "  dashboards reloaded: {}",
+            summary_number(summary, "dashboardsReloaded")
+        ),
+        format!(
+            "  validation orphans: {} processes, {} tmux sessions",
+            summary_number(summary, "orphanProcessesCleaned"),
+            summary_number(summary, "orphanTmuxSessionsCleaned")
+        ),
+        format!("  failures: {}", summary_number(summary, "failures")),
+    ];
+
+    if summary
+        .get("runtimeRebuildRequired")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        > 0
+    {
+        lines.push(String::new());
+        lines.push("Runtime repaired:".into());
+        for project in result
+            .get("projects")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|project| {
+                project
+                    .get("runtimeRebuildRequired")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+        {
+            lines.push(format!(
+                "  {}",
+                project
+                    .get("projectRoot")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            ));
+        }
+    }
+
+    for project in result
+        .get("projects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let runtime = project.get("runtime").unwrap_or(&Value::Null);
+        let service = project.get("service").unwrap_or(&Value::Null);
+        let dashboard = project.get("dashboard").unwrap_or(&Value::Null);
+        lines.push(String::new());
+        lines.push(format!(
+            "Project: {}",
+            project
+                .get("projectRoot")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        ));
+        lines.push(format!("  runtime: {}", step_status(runtime)));
+        lines.push(format!("  service: {}", step_status(service)));
+        lines.push(format!("  dashboard: {}", dashboard_status(dashboard)));
+    }
+
+    lines.join("\n")
 }
 
 pub trait DaemonOperationsTextRuntime {
@@ -292,6 +404,45 @@ fn restart_failure_count(restart: &Value) -> Option<i64> {
         .get("summary")
         .and_then(|summary| summary.get("failures"))
         .and_then(Value::as_i64)
+}
+
+fn summary_number(summary: &Value, key: &str) -> i64 {
+    summary.get(key).and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn step_status(value: &Value) -> String {
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("skipped");
+    let Some(error) = value.get("error").and_then(Value::as_str) else {
+        return status.to_owned();
+    };
+    format!("{status} ({error})")
+}
+
+fn dashboard_status(value: &Value) -> String {
+    let status = step_status(value);
+    let session_name = value.get("sessionName").and_then(Value::as_str);
+    let window_id = value
+        .get("target")
+        .and_then(|target| target.get("windowId"))
+        .and_then(Value::as_str);
+    match (session_name, window_id) {
+        (Some(session_name), Some(window_id)) => format!("{status} {session_name}:{window_id}"),
+        _ => status,
+    }
+}
+
+fn js_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(values) => values.iter().map(js_string).collect::<Vec<_>>().join(","),
+        Value::Object(_) => "[object Object]".into(),
+    }
 }
 
 fn path_resolve(value: &str) -> String {

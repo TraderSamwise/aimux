@@ -36,6 +36,7 @@ use crate::daemon::text::metadata::DaemonMetadataTextRuntime;
 use crate::daemon::text::notifications::DaemonNotificationTextRuntime;
 use crate::daemon::text::operations::{
     DaemonOperationsTextRuntime, DashboardOpenRequest, RestartControlPlaneTextResult,
+    empty_restart_project_result, render_runtime_restart_result,
 };
 use crate::daemon::text::overseer::DaemonOverseerTextRuntime;
 use crate::daemon::text::params::ProjectServiceJsonResult;
@@ -278,6 +279,81 @@ impl RealDaemonRuntime {
         Ok(payload)
     }
 
+    fn restart_control_plane_runtime(
+        &mut self,
+        issued_at: &str,
+        project_root: Option<&str>,
+    ) -> RestartControlPlaneTextResult {
+        let before = restart_before_report(self, issued_at);
+        let project_roots = self.restart_project_roots(project_root);
+        let mut projects = Vec::with_capacity(project_roots.len());
+        for project_root in project_roots {
+            projects.push(self.restart_control_plane_project(&project_root));
+        }
+        let current = self.current_daemon_info(issued_at);
+        let summary = restart_summary(&projects);
+        let restart = json!({
+            "startedAt": issued_at,
+            "finishedAt": now_iso(),
+            "before": before,
+            "verification": {
+                "status": "skipped",
+                "after": Value::Null,
+                "error": Value::Null,
+            },
+            "daemon": {
+                "previous": Value::Null,
+                "current": current,
+                "retained": true,
+            },
+            "orphanCleanup": {
+                "processPids": [],
+                "tmuxSessions": [],
+                "errors": [],
+            },
+            "projects": projects,
+            "summary": summary,
+        });
+        let text = render_runtime_restart_result(&restart);
+        RestartControlPlaneTextResult { restart, text }
+    }
+
+    fn restart_project_roots(&self, project_root: Option<&str>) -> Vec<String> {
+        match project_root {
+            Some(project_root) => vec![self.resolve_project_root_value(project_root)],
+            None => self
+                .list_projects_for_route()
+                .into_iter()
+                .map(|project| project.path)
+                .collect(),
+        }
+    }
+
+    fn restart_control_plane_project(&mut self, project_root: &str) -> Value {
+        let mut result = empty_restart_project_result(project_root);
+        let service =
+            match <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false)
+                .and_then(|_| {
+                    <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)
+                }) {
+                Ok(state) => json!({ "status": "ensured", "state": state }),
+                Err(error) => json!({ "status": "failed", "error": error }),
+            };
+        let dashboard = match self.reload_dashboard_runtime(project_root, None) {
+            Ok(payload) => json!({
+                "status": "reloaded",
+                "sessionName": payload.get("dashboardSessionName").cloned().unwrap_or(Value::Null),
+                "target": payload.get("dashboardTarget").cloned().unwrap_or(Value::Null),
+            }),
+            Err(error) => json!({ "status": "failed", "error": error }),
+        };
+        if let Value::Object(object) = &mut result {
+            object.insert("service".into(), service);
+            object.insert("dashboard".into(), dashboard);
+        }
+        result
+    }
+
     fn service_endpoints_by_id(&self) -> HashMap<String, Value> {
         let Ok(registry) = self.resolver.load_registry() else {
             return HashMap::new();
@@ -518,7 +594,8 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         _issued_at: &str,
         _project_root: Option<&str>,
     ) -> Result<Value, String> {
-        Err(self.unported("control plane restart"))
+        let result = self.restart_control_plane_runtime(_issued_at, _project_root);
+        Ok(json!({ "restart": result.restart, "text": result.text }))
     }
 
     fn has_remote_credentials(&self) -> bool {
@@ -635,10 +712,10 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
 
     fn restart_control_plane(
         &mut self,
-        _issued_at: &str,
-        _project_root: Option<&str>,
+        issued_at: &str,
+        project_root: Option<&str>,
     ) -> Result<RestartControlPlaneTextResult, String> {
-        Err(self.unported("control plane restart"))
+        Ok(self.restart_control_plane_runtime(issued_at, project_root))
     }
 
     fn dashboard_reload(
@@ -1139,6 +1216,69 @@ fn run_tmux_status(argv: Vec<String>) -> Result<(), String> {
         Ok(status) => Err(format!("tmux exited with {status}")),
         Err(error) => Err(error.to_string()),
     }
+}
+
+fn restart_before_report(runtime: &impl DaemonStatusRuntime, issued_at: &str) -> Value {
+    let projects = runtime.list_projects_for_route();
+    json!({
+        "generatedAt": issued_at,
+        "daemon": runtime.current_daemon_info(issued_at),
+        "expectedServiceManifest": runtime.project_service_info(),
+        "projectCount": projects.len(),
+        "serviceAliveCount": projects.iter().filter(|project| project.service_alive).count(),
+        "daemonStateProjectCount": runtime.daemon_state().projects.len(),
+        "projects": projects,
+        "relay": runtime.relay_status(),
+    })
+}
+
+fn restart_summary(projects: &[Value]) -> Value {
+    let services_ensured = projects
+        .iter()
+        .filter(|project| restart_step_status(project, "service") == Some("ensured"))
+        .count();
+    let runtime_repairs = projects
+        .iter()
+        .filter(|project| restart_step_status(project, "runtime") == Some("repaired"))
+        .count();
+    let dashboards_reloaded = projects
+        .iter()
+        .filter(|project| restart_step_status(project, "dashboard") == Some("reloaded"))
+        .count();
+    let runtime_rebuild_required = projects
+        .iter()
+        .filter(|project| {
+            project
+                .get("runtimeRebuildRequired")
+                .and_then(Value::as_bool)
+                == Some(true)
+        })
+        .count();
+    let project_failures = projects
+        .iter()
+        .filter(|project| {
+            ["runtime", "service", "dashboard"]
+                .into_iter()
+                .any(|field| restart_step_status(project, field) == Some("failed"))
+        })
+        .count();
+    json!({
+        "projects": projects.len(),
+        "servicesEnsured": services_ensured,
+        "runtimeRepairs": runtime_repairs,
+        "dashboardsReloaded": dashboards_reloaded,
+        "runtimeRebuildRequired": runtime_rebuild_required,
+        "orphanProcessesCleaned": 0,
+        "orphanTmuxSessionsCleaned": 0,
+        "failures": project_failures,
+    })
+}
+
+fn restart_step_status<'a>(project: &'a Value, field: &str) -> Option<&'a str> {
+    project
+        .get(field)
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
 }
 
 fn now_iso() -> String {

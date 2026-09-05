@@ -3,6 +3,7 @@ use crate::core_cli::{
     CoreCommandOk, classify_core_cli_with_project_resolver,
 };
 use crate::core_command_client::request_core_command;
+use crate::core_command_contract::CORE_COMMAND_NAMES;
 use crate::core_command_transport::{DaemonRequestInit, request_daemon_text};
 use crate::core_text::{
     core_whoami_json, render_core_daemon_projects_lines, render_core_daemon_status_lines,
@@ -13,6 +14,7 @@ use crate::core_text::{
     render_core_remote_disable_lines, render_core_remote_enable_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
+use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{AimuxDaemonInfo, DaemonState, load_daemon_info, load_daemon_state};
 use crate::daemon_supervisor::ensure_daemon_running;
@@ -62,6 +64,10 @@ pub trait CoreCliRuntime {
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
     fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String>;
+    fn restart_control_plane(
+        &mut self,
+        project_root: Option<&str>,
+    ) -> Result<RestartControlPlaneTextResult, String>;
 }
 
 #[derive(Debug, Default)]
@@ -143,6 +149,29 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             Ok(status) => Err(format!("tmux open dashboard exited with {status}")),
             Err(error) => Err(format!("tmux open dashboard failed: {error}")),
         }
+    }
+
+    fn restart_control_plane(
+        &mut self,
+        project_root: Option<&str>,
+    ) -> Result<RestartControlPlaneTextResult, String> {
+        let response = self.request_core_command(&CoreCommandCall {
+            command: CORE_COMMAND_NAMES.restart,
+            payload: project_root.map(|project_root| json!({ "projectRoot": project_root })),
+            options: Default::default(),
+        })?;
+        let restart = response
+            .result
+            .get("restart")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let text = response
+            .result
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| "Aimux Restart\n  failures: 0".into());
+        Ok(RestartControlPlaneTextResult { restart, text })
     }
 }
 
@@ -265,10 +294,35 @@ fn run_plan(
             }
             Err(message.into())
         }
-        CoreCliAction::RestartControlPlane { .. } => {
-            Err("control-plane restart is not yet ported to native CLI".into())
+        CoreCliAction::RestartControlPlane { project_root } => {
+            run_restart_control_plane(project_root.as_deref(), output_mode, runtime)
         }
     }
+}
+
+fn run_restart_control_plane(
+    project_root: Option<&str>,
+    output_mode: CoreCliOutputMode,
+    runtime: &mut impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let result = runtime.restart_control_plane(project_root)?;
+    let failures = result
+        .restart
+        .get("summary")
+        .and_then(|summary| summary.get("failures"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let stdout = match output_mode {
+        CoreCliOutputMode::Json => {
+            vec![serde_json::to_string_pretty(&result.restart).map_err(|error| error.to_string())?]
+        }
+        CoreCliOutputMode::Text => vec![result.text],
+    };
+    Ok(CoreCliExecution {
+        code: if failures > 0 { 1 } else { 0 },
+        stdout,
+        stderr: Vec::new(),
+    })
 }
 
 fn run_text_route(
