@@ -106,7 +106,7 @@ const PHASES: &[RewritePhase] = &[
 pub fn rewrite_status() -> RewriteStatus {
     RewriteStatus {
         version: 1,
-        strategy: "Bun-Zig-style translation first: preserve files, functions, line logic, loops, and data shapes before refactoring.",
+        strategy: "translation first: preserve functional behavior, function logic, loops, and data shapes; split large TypeScript monoliths into smaller Rust modules when the split does not change behavior.",
         end_state: "zero Node in the normal Aimux CLI, daemon, project-service, tmux runtime, and dashboard hot path",
         phases: PHASES,
     }

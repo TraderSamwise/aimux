@@ -4,6 +4,7 @@ pub mod cli_launcher;
 pub mod config;
 pub mod contracts;
 pub mod core_cli;
+pub mod core_cli_executor;
 pub mod core_cli_routing;
 pub mod core_command_client;
 pub mod core_command_contract;
