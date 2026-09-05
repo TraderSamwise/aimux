@@ -1520,14 +1520,13 @@ export default function ChatScreen() {
                   multiline
                   lineBreakStrategyIOS="standard"
                   editable={!sendBusy && !composerAwaitingAck}
+                  scrollEnabled
                   textBreakStrategy="balanced"
                   className="w-full text-sm text-foreground"
                   style={[
                     NO_BROWSER_FOCUS_RING,
                     {
                       alignSelf: "stretch",
-                      flexGrow: 0,
-                      flexShrink: 1,
                       fontSize: COMPOSER_INPUT_FONT_SIZE,
                       lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
                       maxWidth: "100%",
