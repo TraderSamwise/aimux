@@ -58,8 +58,6 @@ pub fn route_read_request(
         || pathname == routes::agents::LIST
         || pathname == routes::agents::TEAMMATES
         || pathname == routes::agents::HISTORY
-        || pathname == routes::threads::LIST
-        || pathname == routes::tasks::LIST
         || pathname == routes::team::CONFIG
         || pathname == routes::controls::SWITCHABLE_AGENTS
     {
