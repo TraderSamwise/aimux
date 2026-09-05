@@ -26,6 +26,7 @@ pub mod project_service_manifest;
 pub mod proxy_project_binding;
 pub mod remote_access;
 pub mod runtime_topology;
+pub mod session_bootstrap;
 pub mod shell_hooks;
 pub mod tmux;
 pub mod tool_hooks;

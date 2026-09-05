@@ -168,7 +168,8 @@ pub fn topology_session_to_session_state(session: &Value, topology: &Value) -> V
     } else {
         None
     };
-    let tool = string_field(session, "tool")
+    let tool = string_field(session, "toolConfigKey")
+        .or_else(|| string_field(session, "tool"))
         .or_else(|| node.and_then(|node| string_field(node, "toolConfigKey")))
         .or_else(|| string_field(session, "command"))
         .unwrap_or("unknown");
@@ -178,7 +179,8 @@ pub fn topology_session_to_session_state(session: &Value, topology: &Value) -> V
     insert_string(
         &mut item,
         "toolConfigKey",
-        node.and_then(|node| string_field(node, "toolConfigKey"))
+        string_field(session, "toolConfigKey")
+            .or_else(|| node.and_then(|node| string_field(node, "toolConfigKey")))
             .unwrap_or(tool),
     );
     insert_string(
@@ -491,6 +493,7 @@ fn coerce_session(value: &Value, index: usize) -> Result<Value, String> {
             Value::String(runtime_session_status(row.get("status"))),
         )),
         optional("tool", row.get("tool")),
+        optional("toolConfigKey", row.get("toolConfigKey")),
         optional("command", row.get("command")),
         optional_string_array("args", row.get("args")),
         optional("backendSessionId", row.get("backendSessionId")),

@@ -217,6 +217,179 @@ fn record_backend_session_updates_metadata_and_topology() {
 }
 
 #[test]
+fn agent_spawn_launches_tool_and_records_topology_metadata() {
+    let project = temp_project("agent-spawn");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock",
+            "sessionId": "mock-new",
+            "worktreePath": worktree,
+            "open": false,
+            "launchOverride": {
+                "command": "/bin/mock",
+                "args": ["--base", "--fast"],
+                "env": { "MOCK_ENV": "1" }
+            }
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-new");
+    assert_eq!(response.body["transition"]["operation"], "agent.spawn");
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.created[0].name, "/bin/mock");
+    assert_eq!(runtime.created[0].cwd, worktree.to_string_lossy());
+    assert_eq!(runtime.created[0].command, "env");
+    assert!(runtime.created[0].detached);
+    assert!(
+        runtime.created[0]
+            .args
+            .iter()
+            .any(|arg| arg == "MOCK_ENV=1")
+    );
+    assert_eq!(runtime.metadata[0].1["sessionId"], "mock-new");
+    assert_eq!(runtime.metadata[0].1["toolConfigKey"], "mock");
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--base", "--fast"]));
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-new");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["toolConfigKey"], "mock");
+    assert_eq!(session["worktreePath"], worktree.to_string_lossy().as_ref());
+    cleanup(project);
+}
+
+#[test]
+fn agent_fork_creates_handoff_thread_and_native_fork_launch() {
+    let project = temp_project("agent-fork");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-source",
+            "nodeId": "agent:mock-source",
+            "status": "running",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "backendSessionId": "backend-123",
+            "worktreePath": "/repo/worktree",
+            "label": "source lane",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::FORK,
+        Some(&json!({
+            "sourceSessionId": "mock-source",
+            "tool": "mock",
+            "targetSessionId": "mock-fork",
+            "instruction": "carry this forward",
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-fork");
+    let thread_id = response.body["threadId"].as_str().unwrap();
+    assert_eq!(response.body["transition"]["operation"], "agent.fork");
+    assert!(
+        runtime.created[0]
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("'--fork' 'backend-123'"))
+    );
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--base"]));
+    let exchange: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(state_dir.join("runtime-exchange.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        exchange["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|thread| {
+                thread["id"] == thread_id
+                    && thread["kind"] == "handoff"
+                    && thread["waitingOn"] == json!(["mock-fork"])
+            })
+    );
+    assert!(
+        exchange["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| {
+                message["threadId"] == thread_id
+                    && message["kind"] == "handoff"
+                    && message["body"] == "carry this forward"
+            })
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_switch_tool_replaces_live_window_and_keeps_session_id() {
+    let project = temp_project("agent-switch-tool");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SWITCH_TOOL,
+        Some(&json!({
+            "sessionId": "codex-live",
+            "tool": "mock2",
+            "instruction": "continue"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "codex-live");
+    assert_eq!(response.body["tool"], "mock2");
+    assert_eq!(response.body["transition"]["operation"], "agent.switchTool");
+    assert_eq!(runtime.killed, vec!["@agent"]);
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.created[0].name, "/bin/mock2");
+    assert_eq!(runtime.metadata[0].1["sessionId"], "codex-live");
+    assert_eq!(runtime.metadata[0].1["toolConfigKey"], "mock2");
+    assert_eq!(runtime.metadata[0].1["command"], "/bin/mock2");
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--next"]));
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "codex-live");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["toolConfigKey"], "mock2");
+    assert_eq!(session["command"], "/bin/mock2");
+    cleanup(project);
+}
+
+#[test]
 fn service_stop_and_remove_update_topology_and_kill_live_window() {
     let project = temp_project("service");
     let state_dir = project.join("state");
@@ -819,6 +992,15 @@ fn write_project_tool_config(project: &Path) {
                 "mock": {
                     "command": "/bin/mock",
                     "args": ["--base"],
+                    "enabled": true,
+                    "wrapperEnabled": true,
+                    "resumeArgs": ["--resume", "{sessionId}"],
+                    "forkArgs": ["--fork", "{sessionId}"],
+                    "resumeByBackendSessionId": true
+                },
+                "mock2": {
+                    "command": "/bin/mock2",
+                    "args": ["--next"],
                     "enabled": true,
                     "wrapperEnabled": true,
                     "resumeArgs": ["--resume", "{sessionId}"],

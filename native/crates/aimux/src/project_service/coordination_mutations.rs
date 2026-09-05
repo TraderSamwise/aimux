@@ -1592,7 +1592,7 @@ fn task_outcome_prompt(
     lines.join("\n")
 }
 
-fn derive_runtime_exchange_indexes(exchange: Value) -> Value {
+pub(crate) fn derive_runtime_exchange_indexes(exchange: Value) -> Value {
     let previous_inbox = array_field(&exchange, "inbox");
     let threads = array_field(&exchange, "threads");
     let tasks = array_field(&exchange, "tasks");
