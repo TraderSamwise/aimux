@@ -87,6 +87,105 @@ describe("composer protocol", () => {
     ).toBe(true);
   });
 
+  it("confirms long sends from a clipped echoed prefix", () => {
+    const sentText =
+      "There is a lot of work here. Please audit the routing layer, summarize the historical position, " +
+      "then explain which fixes are already landed and which pieces are still failing in the mobile chat view. " +
+      "Do not skip the edge cases around slow scrolling, prompt focus, and long visible user messages.";
+
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "text",
+                text: sentText.slice(0, 150),
+              },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: [],
+          baselineUserMessageCount: 0,
+          text: sentText,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("confirms long sends from a visible middle fragment", () => {
+    const sentText =
+      "Start with the notification fanout and then continue into composer delivery. " +
+      "The important point is that long prompt inputs can be visible only as one transcript fragment " +
+      "while the full submitted prompt is larger than the current mobile capture window. " +
+      "Finish by checking the ack state and do not leave the draft behind.";
+    const middleFragment = "long prompt inputs can be visible only as one transcript fragment";
+
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "text",
+                text: `... ${middleFragment} while the full submitted prompt is larger ...`,
+              },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: [],
+          baselineUserMessageCount: 0,
+          text: sentText,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("does not confirm short sends from partial echoed text", () => {
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [{ role: "user", parts: [{ type: "text", text: "please fix" }] }],
+        {
+          attachmentFilenames: [],
+          baselineUserMessageCount: 0,
+          text: "please fix the app",
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("does not confirm long sends from unrelated new user text", () => {
+    const sentText =
+      "Investigate the long prompt delivery path across the app, metadata server, and tmux runtime. " +
+      "The submitted text should clear only after the matching user echo appears in the structured chat transcript. " +
+      "This sentence pads the request enough to require long-message matching behavior.";
+
+    expect(
+      userMessageAcknowledgesComposerSend(
+        [
+          {
+            role: "user",
+            parts: [
+              {
+                type: "text",
+                text: "This is a different message that happens after the baseline but should not match.",
+              },
+            ],
+          },
+        ],
+        {
+          attachmentFilenames: [],
+          baselineUserMessageCount: 0,
+          text: sentText,
+        },
+      ),
+    ).toBe(false);
+  });
+
   it("does not confirm from old user messages before the send baseline", () => {
     expect(
       userMessageAcknowledgesComposerSend(

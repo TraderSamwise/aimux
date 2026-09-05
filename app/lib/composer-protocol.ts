@@ -33,8 +33,10 @@ export interface PendingComposerAckLike {
   text: string;
 }
 
-export const COMPOSER_SEND_TIMEOUT_MESSAGE =
-  "Send not confirmed after 5s. Check connection and retry.";
+export const COMPOSER_SEND_TIMEOUT_MESSAGE = "Send not confirmed yet. Check connection and retry.";
+
+const LONG_COMPOSER_ACK_MIN_SENT_CHARS = 240;
+const LONG_COMPOSER_ACK_FRAGMENT_CHARS = 96;
 
 export function normalizeComposerDraft(draft: string): string | null {
   const text = draft.trim();
@@ -74,6 +76,28 @@ function composerAckMessageText(message: ComposerAckMessageLike): string {
       ?.flatMap((part) => [part.text, part.filename, part.label, part.attachmentId])
       .filter((value): value is string => typeof value === "string" && value.length > 0) ?? [];
   return normalizeComposerAckText([message.text ?? "", ...textParts].filter(Boolean).join(" "));
+}
+
+function uniqueComposerAckFragments(text: string, fragmentLength: number): string[] {
+  if (text.length < fragmentLength) return [];
+  const starts = [
+    0,
+    Math.max(0, Math.floor((text.length - fragmentLength) / 2)),
+    Math.max(0, text.length - fragmentLength),
+  ];
+  return Array.from(new Set(starts.map((start) => text.slice(start, start + fragmentLength))));
+}
+
+function textAcknowledgesComposerSend(messageText: string, sentText: string): boolean {
+  if (!sentText) return false;
+  if (messageText.includes(sentText)) return true;
+  if (sentText.length < LONG_COMPOSER_ACK_MIN_SENT_CHARS) return false;
+  if (messageText.length >= LONG_COMPOSER_ACK_FRAGMENT_CHARS && sentText.includes(messageText)) {
+    return true;
+  }
+  return uniqueComposerAckFragments(sentText, LONG_COMPOSER_ACK_FRAGMENT_CHARS).some((fragment) =>
+    messageText.includes(fragment),
+  );
 }
 
 function messageAttachmentPartCount(message: ComposerAckMessageLike): number {
@@ -147,7 +171,7 @@ export function userMessageAcknowledgesComposerSend(
   const newMessages = userMessages.slice(pending.baselineUserMessageCount);
   return newMessages.some((message) => {
     const messageText = composerAckMessageText(message);
-    const textMatches = !sentText || messageText.includes(sentText);
+    const textMatches = !sentText || textAcknowledgesComposerSend(messageText, sentText);
     if (!textMatches) return false;
     if (sentText) return true;
     if (!hasPendingAttachments) return Boolean(sentText);
