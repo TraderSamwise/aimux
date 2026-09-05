@@ -7,6 +7,7 @@ use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -45,10 +46,65 @@ pub struct LoginCallbackResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct LoginFlowWaiter {
+    result: Arc<Mutex<Option<Result<LoginFlowResult, String>>>>,
+}
+
+impl LoginFlowWaiter {
+    pub fn ready_error(error: String) -> Self {
+        Self {
+            result: Arc::new(Mutex::new(Some(Err(error)))),
+        }
+    }
+
+    pub fn wait(self) -> Result<LoginFlowResult, String> {
+        loop {
+            let result = self.result.lock().expect("login result mutex").take();
+            if let Some(result) = result {
+                return result;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
 pub fn run_login_flow(
     resolver: &PathResolver,
     action: LoginAction,
 ) -> Result<LoginFlowResult, String> {
+    let prepared = prepare_login_flow(resolver, action)?;
+    wait_for_login_callback(prepared)
+}
+
+pub fn start_login_flow(
+    resolver: &PathResolver,
+    action: LoginAction,
+) -> Result<(Vec<String>, LoginFlowWaiter), String> {
+    let prepared = prepare_login_flow(resolver, action)?;
+    let messages = prepared.messages.clone();
+    let result = Arc::new(Mutex::new(None));
+    let thread_result = Arc::clone(&result);
+    thread::spawn(move || {
+        let flow_result = wait_for_login_callback(prepared);
+        *thread_result.lock().expect("login result mutex") = Some(flow_result);
+    });
+    Ok((messages, LoginFlowWaiter { result }))
+}
+
+#[derive(Debug)]
+struct PreparedLoginFlow {
+    listener: TcpListener,
+    state: String,
+    relay_url: String,
+    auth_path: std::path::PathBuf,
+    messages: Vec<String>,
+}
+
+fn prepare_login_flow(
+    resolver: &PathResolver,
+    action: LoginAction,
+) -> Result<PreparedLoginFlow, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
     listener
         .set_nonblocking(true)
@@ -67,21 +123,33 @@ pub fn run_login_flow(
         format!("If it doesn't open, visit:\n  {auth_url}\n"),
     ];
     open_browser(&auth_url);
+    Ok(PreparedLoginFlow {
+        listener,
+        state,
+        relay_url,
+        auth_path: resolver.auth_path(),
+        messages,
+    })
+}
 
+fn wait_for_login_callback(prepared: PreparedLoginFlow) -> Result<LoginFlowResult, String> {
     let deadline = current_unix_millis() + LOGIN_TIMEOUT_MS;
     loop {
-        match listener.accept() {
+        match prepared.listener.accept() {
             Ok((stream, _)) => {
                 let response = handle_login_stream(
                     stream,
-                    &state,
-                    &relay_url,
-                    resolver.auth_path(),
+                    &prepared.state,
+                    &prepared.relay_url,
+                    &prepared.auth_path,
                     now_iso(),
                 )
                 .map_err(|error| error.to_string())?;
                 if let Some(user_id) = response.user_id {
-                    return Ok(LoginFlowResult { user_id, messages });
+                    return Ok(LoginFlowResult {
+                        user_id,
+                        messages: prepared.messages,
+                    });
                 }
                 return Err(response.error.unwrap_or_else(|| "Login failed".to_owned()));
             }

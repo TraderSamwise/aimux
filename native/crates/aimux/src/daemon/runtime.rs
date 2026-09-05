@@ -56,7 +56,7 @@ use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
 use crate::remote_credentials;
-use crate::remote_login::{self, LoginAction};
+use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::tmux::{
     TmuxTarget, is_tmux_client_session_for_host, kill_session_argv, project_session,
 };
@@ -77,6 +77,7 @@ pub struct RealDaemonRuntime {
     next_command: AtomicU64,
     project_service_launcher: Arc<dyn ProjectServiceLauncher>,
     project_service_startup_timeout_ms: u64,
+    auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
 }
 
 impl fmt::Debug for RealDaemonRuntime {
@@ -89,6 +90,10 @@ impl fmt::Debug for RealDaemonRuntime {
             .field(
                 "project_service_startup_timeout_ms",
                 &self.project_service_startup_timeout_ms,
+            )
+            .field(
+                "auth_flow_count",
+                &self.auth_flows.lock().map(|flows| flows.len()).ok(),
             )
             .finish_non_exhaustive()
     }
@@ -116,6 +121,7 @@ impl RealDaemonRuntime {
             next_command: AtomicU64::new(0),
             project_service_launcher,
             project_service_startup_timeout_ms,
+            auth_flows: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1061,27 +1067,59 @@ impl DaemonAuthTextRuntime for RealDaemonRuntime {
     }
 
     fn start_auth_flow(&mut self, action: AuthAction) -> AuthFlowStart {
-        AuthFlowStart {
-            id: "native-auth-unported".into(),
-            messages: vec![self.unported(match action {
-                AuthAction::Login => "login",
-                AuthAction::SecurityUnlock => "security unlock",
-            })],
+        let id = format!(
+            "native-auth-{}",
+            self.next_command.fetch_add(1, Ordering::Relaxed) + 1
+        );
+        match remote_login::start_login_flow(
+            &self.resolver,
+            match action {
+                AuthAction::Login => LoginAction::Login,
+                AuthAction::SecurityUnlock => LoginAction::SecurityUnlock,
+            },
+        ) {
+            Ok((messages, waiter)) => {
+                self.auth_flows
+                    .lock()
+                    .expect("auth flow mutex")
+                    .insert(id.clone(), waiter);
+                AuthFlowStart { id, messages }
+            }
+            Err(error) => {
+                self.auth_flows
+                    .lock()
+                    .expect("auth flow mutex")
+                    .insert(id.clone(), LoginFlowWaiter::ready_error(error));
+                AuthFlowStart {
+                    id,
+                    messages: Vec::new(),
+                }
+            }
         }
     }
 
     fn wait_auth_flow(
         &mut self,
-        _id: &str,
-        action: AuthAction,
+        id: &str,
+        _action: AuthAction,
     ) -> Result<AuthFlowResult, AuthTextError> {
-        Err(AuthTextError {
-            status: 501,
-            error: self.unported(match action {
-                AuthAction::Login => "login",
-                AuthAction::SecurityUnlock => "security unlock",
+        let waiter = self
+            .auth_flows
+            .lock()
+            .expect("auth flow mutex")
+            .remove(id)
+            .ok_or_else(|| AuthTextError {
+                status: 404,
+                error: "auth session not found".into(),
+            })?;
+        match waiter.wait() {
+            Ok(result) => Ok(AuthFlowResult {
+                user_id: result.user_id,
+                relay: <Self as DaemonCoreCommandRuntime>::enable_relay_for_user_request(self),
+                messages: result.messages,
             }),
-        })
+            Err(error) => Err(AuthTextError { status: 500, error }),
+        }
     }
 }
 
