@@ -76,6 +76,11 @@ Shared terminal/chat formatting belongs in `app/lib/ansi.ts` and
 previews should reuse those helpers instead of parsing terminal output in
 screen components.
 
+Animations on interactive app surfaces must run on the native/UI thread. Use
+Reanimated shared values/styles or React Native `Animated` with
+`useNativeDriver: true`; do not introduce JS-driven layout animations for chat,
+keyboard, scrolling, navigation chrome, composer, or other touch-critical paths.
+
 ## Shared Chats
 
 Shared chats are orthogonal to a receiver's own projects. A receiver can use

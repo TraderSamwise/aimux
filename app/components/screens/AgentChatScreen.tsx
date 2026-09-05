@@ -87,7 +87,7 @@ import {
 import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
-  getComposerSendText,
+  normalizeComposerDraft,
   userMessageAcknowledgesComposerSend,
   shouldSubmitComposerKey,
 } from "@/lib/composer-protocol";
@@ -334,6 +334,10 @@ type InitialTranscriptStatus = "idle" | "loading" | "timed-out";
 
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
 
+function hasComposerDraftContent(text: string): boolean {
+  return /\S/.test(text);
+}
+
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
   if (!key) return;
   if (snapshot.draft.length === 0 && snapshot.pendingAttachments.length === 0) {
@@ -572,6 +576,7 @@ export default function ChatScreen() {
   const [shareSummaryCheckedKey, setShareSummaryCheckedKey] = useState<string | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [draftHasContent, setDraftHasContent] = useState(false);
   const [pendingComposerAck, setPendingComposerAck] = useState<PendingComposerAck | null>(null);
   const [acceptedComposerMessages, setAcceptedComposerMessages] = useState<
     AcceptedComposerMessage[]
@@ -813,6 +818,7 @@ export default function ChatScreen() {
     const saved = composerDraftKey ? composerDraftsByKey.get(composerDraftKey) : undefined;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer is re-seeded from the draft store when the conversation changes
     setDraft(saved?.draft ?? "");
+    setDraftHasContent(hasComposerDraftContent(saved?.draft ?? ""));
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
     setComposerInputContentHeight(saved?.inputContentHeight ?? COMPOSER_INPUT_MIN_HEIGHT);
     setPendingComposerAck(null);
@@ -1074,6 +1080,7 @@ export default function ChatScreen() {
       releasePendingAttachmentPreviews(pendingAttachments);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- terminal transcript ack clears only the matched pending send
       setDraft("");
+      setDraftHasContent(false);
       setPendingAttachments([]);
       setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     }
@@ -1283,12 +1290,10 @@ export default function ChatScreen() {
     : [headerWorktreeBranch, session?.status ?? "unknown", session?.command, sessionId]
         .filter(Boolean)
         .join(" · ");
-  const composerSendText = getComposerSendText({
-    draft,
-    hasServiceEndpoint: Boolean(serviceEndpoint),
-    hasSessionId: Boolean(sessionId && !routeSessionMissing),
-    sendBusy,
-  });
+  const composerSendText =
+    draftHasContent && serviceEndpoint && sessionId && !routeSessionMissing && !sendBusy
+      ? draft
+      : null;
   const hasPendingAttachments = pendingAttachments.length > 0;
   const canSendMessage = Boolean(
     serviceEndpoint &&
@@ -1467,13 +1472,19 @@ export default function ChatScreen() {
   const handleScrollContentInsetChange = useCallback(
     (pane: ScrollPaneKey, contentInsetBottom: number) => {
       const state = scrollPolicyStateRef.current[pane];
+      const rawContentInsetBottom = Math.max(0, contentInsetBottom);
+      const composerGeometryHeight = composerFocusedRef.current
+        ? rawContentInsetBottom
+        : composerHiddenRef.current
+          ? Math.min(rawContentInsetBottom, visibleComposerScrollReserve)
+          : visibleComposerScrollReserve;
       const wasPinned =
         !scrollInitializedRef.current[pane] ||
         state.intent.kind === "anchored-to-end" ||
         isOffsetPinnedToBottom(state);
       const transition = onGeometryChange({
         geometry: {
-          composerHeight: Math.max(0, contentInsetBottom),
+          composerHeight: composerGeometryHeight,
         },
         state: {
           ...state,
@@ -1495,6 +1506,7 @@ export default function ChatScreen() {
       isUserScrollActive,
       settlePaneAfterMetricChange,
       syncNativeComposerForPane,
+      visibleComposerScrollReserve,
     ],
   );
 
@@ -1752,9 +1764,21 @@ export default function ChatScreen() {
       return;
     }
     requestAnimationFrame(() => {
-      syncNativeComposerForPane(showTerminalOnly ? "terminal" : "chat");
+      const panes: ScrollPaneKey[] = showSplit
+        ? ["chat", "terminal"]
+        : [showTerminalOnly ? "terminal" : "chat"];
+      for (const pane of panes) {
+        handleScrollContentInsetChange(pane, visibleComposerScrollReserve);
+      }
     });
-  }, [composerFocused, setNativeComposerHidden, showTerminalOnly, syncNativeComposerForPane]);
+  }, [
+    composerFocused,
+    handleScrollContentInsetChange,
+    setNativeComposerHidden,
+    showSplit,
+    showTerminalOnly,
+    visibleComposerScrollReserve,
+  ]);
 
   useEffect(() => {
     if (
@@ -1805,7 +1829,7 @@ export default function ChatScreen() {
   }
 
   async function handleSendMessage() {
-    const text = composerSendText ?? "";
+    const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
     const attachments = [...pendingAttachments];
     if (
       !serviceEndpoint ||
@@ -1893,6 +1917,7 @@ export default function ChatScreen() {
         ].slice(-20),
       );
       setDraft("");
+      setDraftHasContent(false);
       setPendingAttachments([]);
       setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
       setPendingComposerAck(null);
@@ -1928,6 +1953,7 @@ export default function ChatScreen() {
           : null,
       );
       setDraft(text);
+      setDraftHasContent(hasComposerDraftContent(text));
       setPendingAttachments(attachments);
       setSendError(formatComposerSendFailure(err));
     } finally {
@@ -2052,13 +2078,17 @@ export default function ChatScreen() {
   function handleComposerContentSizeChange(
     event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
   ) {
-    setComposerInputContentHeight(
-      Math.max(COMPOSER_INPUT_MIN_HEIGHT, Math.ceil(event.nativeEvent.contentSize.height)),
+    const nextHeight = Math.max(
+      COMPOSER_INPUT_MIN_HEIGHT,
+      Math.ceil(event.nativeEvent.contentSize.height),
     );
+    setComposerInputContentHeight((current) => (current === nextHeight ? current : nextHeight));
   }
 
   function handleDraftChange(text: string) {
     setDraft(text);
+    const nextHasContent = hasComposerDraftContent(text);
+    setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
     if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     if (sendError) setSendError(null);
   }
@@ -2324,19 +2354,27 @@ export default function ChatScreen() {
                   placeholder="Ask the agent…"
                   placeholderTextColor="#71717a"
                   multiline
+                  lineBreakStrategyIOS="standard"
                   editable={!sendBusy && !composerAwaitingAck}
                   scrollEnabled={composerInputOverflowHeight > COMPOSER_INPUT_MAX_HEIGHT}
-                  className="text-sm text-foreground"
+                  textBreakStrategy="balanced"
+                  className="w-full text-sm text-foreground"
                   style={[
                     NO_BROWSER_FOCUS_RING,
                     {
+                      alignSelf: "stretch",
                       height: composerInputHeight,
                       fontSize: COMPOSER_INPUT_FONT_SIZE,
                       lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+                      maxWidth: "100%",
+                      maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
+                      minHeight: COMPOSER_INPUT_MIN_HEIGHT,
+                      minWidth: 0,
                       paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
                       paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
                       paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
                       opacity: sendBusy || composerAwaitingAck ? 0.55 : 1,
+                      width: "100%",
                     },
                   ]}
                   textAlignVertical="top"
