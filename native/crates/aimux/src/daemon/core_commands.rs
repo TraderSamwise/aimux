@@ -1,6 +1,6 @@
 use crate::core_command_contract::{CORE_COMMAND_NAMES, is_core_command_name};
 use crate::daemon::routing::DaemonRouteResponse;
-use crate::daemon::status::{DaemonStatusRuntime, daemon_status_payload};
+use crate::daemon::status::DaemonStatusRuntime;
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
 
@@ -57,15 +57,19 @@ pub fn route_core_command(
     let result = match command {
         command if command == CORE_COMMAND_NAMES.ping => Ok(json!({ "pong": true })),
         command if command == CORE_COMMAND_NAMES.status => {
-            let projects = runtime.list_projects_for_route();
-            let mut result = daemon_status_payload(runtime, issued_at, &projects);
-            if let Some(object) = result.as_object_mut() {
-                object.insert(
-                    "updatedAt".to_owned(),
-                    runtime.daemon_state().updated_at.unwrap_or(Value::Null),
-                );
-            }
-            Ok(result)
+            let daemon = runtime.current_daemon_info(issued_at);
+            Ok(json!({
+                "daemon": {
+                    "pid": daemon.pid,
+                    "port": daemon.port,
+                    "startedAt": daemon.started_at,
+                    "updatedAt": daemon.updated_at,
+                    "serviceInfo": runtime.project_service_info(),
+                },
+                "projects": runtime.list_projects_for_route(),
+                "relay": runtime.relay_status(),
+                "updatedAt": runtime.daemon_state().updated_at.unwrap_or(Value::Null),
+            }))
         }
         command if command == CORE_COMMAND_NAMES.projects_list => {
             Ok(json!({ "projects": runtime.list_projects_for_route() }))

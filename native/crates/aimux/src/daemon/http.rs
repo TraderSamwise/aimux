@@ -194,8 +194,19 @@ fn is_local_http_origin(origin: &str) -> bool {
     let Some(rest) = origin.strip_prefix("http://") else {
         return false;
     };
-    let host_end = rest.find([':', '/', '?', '#']).unwrap_or(rest.len());
-    matches!(&rest[..host_end], "localhost" | "127.0.0.1")
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    let (host, port) = authority.split_once(':').unwrap_or((authority, ""));
+    if !port.is_empty() && !port.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1"
+    )
 }
 
 fn parse_urlencoded_form(input: &str) -> Result<Map<String, Value>, BodyParseError> {

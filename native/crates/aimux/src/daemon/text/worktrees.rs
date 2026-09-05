@@ -330,19 +330,27 @@ pub fn graveyard_agent_text_route(
             Ok(session_id) => session_id,
             Err(response) => return response,
         };
-    let Some(status) = json
-        .get("status")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .or_else(|| input.status_fallback.map(str::to_owned))
-    else {
-        return text_error(
-            502,
-            format!(
-                "Error: project service returned invalid {} response: status is required",
-                input.action
-            ),
-        );
+    let status = match json.get("status") {
+        Some(Value::String(status)) if !status.is_empty() => status.clone(),
+        Some(Value::String(_)) => {
+            return text_error(
+                502,
+                format!(
+                    "Error: project service returned invalid {} response: status is required",
+                    input.action
+                ),
+            );
+        }
+        _ if input.status_fallback.is_some() => input.status_fallback.unwrap().to_owned(),
+        _ => {
+            return text_error(
+                502,
+                format!(
+                    "Error: project service returned invalid {} response: status is required",
+                    input.action
+                ),
+            );
+        }
     };
     let mut payload = Map::new();
     payload.insert("ok".to_owned(), Value::Bool(true));

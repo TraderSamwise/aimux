@@ -16,13 +16,17 @@ pub trait DaemonStatusRuntime {
     fn current_daemon_info(&self, issued_at: &str) -> AimuxDaemonInfo;
     fn project_service_info(&self) -> Value;
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject>;
+    fn list_projects_with_online_agent_counts_for_route(&mut self) -> Vec<ProjectsRouteProject> {
+        self.list_projects_for_route()
+    }
+    fn ensure_project_paths(&mut self, _project: &str) {}
     fn daemon_state(&self) -> DaemonState;
     fn relay_status(&self) -> Value;
     fn resolve_project_root(&self, cwd: &str) -> String;
 }
 
 pub fn route_status_request(
-    runtime: &impl DaemonStatusRuntime,
+    runtime: &mut impl DaemonStatusRuntime,
     method: &str,
     path: &str,
     issued_at: &str,
@@ -62,6 +66,7 @@ pub fn route_status_request(
                 "project query is required\n",
             ));
         };
+        runtime.ensure_project_paths(project);
         let (payload, known_project) = host_status_payload(runtime, project, issued_at);
         return Some(text_or_json_lines(
             &route_url,
@@ -99,9 +104,10 @@ pub fn route_status_request(
     }
 
     if method == "GET" && pathname == "/projects" {
+        let projects = runtime.list_projects_with_online_agent_counts_for_route();
         return Some(DaemonRouteResponse::json(
             200,
-            json!({ "ok": true, "projects": runtime.list_projects_for_route() }),
+            json!({ "ok": true, "projects": projects }),
         ));
     }
 

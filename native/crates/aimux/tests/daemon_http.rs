@@ -45,8 +45,11 @@ fn daemon_cors_matches_loopback_allowlist_without_wildcard_default() {
     assert!(is_allowed_cors_origin("http://localhost:8081"));
     assert!(is_allowed_cors_origin("http://localhost:4545"));
     assert!(is_allowed_cors_origin("http://127.0.0.1:4545"));
+    assert!(is_allowed_cors_origin("http://LOCALHOST:4545"));
     assert!(!is_allowed_cors_origin("https://localhost:4545"));
     assert!(!is_allowed_cors_origin("https://evil.example"));
+    assert!(!is_allowed_cors_origin("http://localhost:123@evil.example"));
+    assert!(!is_allowed_cors_origin("http://localhost:abc"));
 
     let empty = BTreeMap::new();
     let no_origin = cors_headers(&empty).expect("no origin is allowed");

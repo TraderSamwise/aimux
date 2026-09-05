@@ -6,14 +6,15 @@ use aimux::daemon::status::{
 };
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
-use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone)]
 struct FakeStatusRuntime {
     daemon: AimuxDaemonInfo,
     service_info: Value,
     projects: Vec<ProjectsRouteProject>,
+    projects_with_counts: Vec<ProjectsRouteProject>,
+    ensure_calls: Vec<String>,
     state: DaemonState,
     relay: Value,
 }
@@ -29,6 +30,27 @@ impl DaemonStatusRuntime for FakeStatusRuntime {
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
         self.projects.clone()
+    }
+
+    fn list_projects_with_online_agent_counts_for_route(&mut self) -> Vec<ProjectsRouteProject> {
+        self.projects_with_counts.clone()
+    }
+
+    fn ensure_project_paths(&mut self, project: &str) {
+        self.ensure_calls.push(project.into());
+        if project == "/unregistered" && self.projects.iter().all(|item| item.path != project) {
+            self.projects.push(ProjectsRouteProject {
+                id: "unregistered-id".into(),
+                name: "unregistered".into(),
+                path: "/unregistered".into(),
+                last_seen: None,
+                dashboard_session_name: "aimux-unregistered-id".into(),
+                service: None,
+                service_alive: false,
+                service_endpoint: None,
+                online_agent_count: None,
+            });
+        }
     }
 
     fn daemon_state(&self) -> DaemonState {
@@ -60,6 +82,8 @@ fn runtime() -> FakeStatusRuntime {
         service_endpoint: Some(json!({ "host": "127.0.0.1", "port": 44191, "pid": 9123 })),
         online_agent_count: None,
     };
+    let mut project_with_count = project.clone();
+    project_with_count.online_agent_count = Some(2);
     FakeStatusRuntime {
         daemon: AimuxDaemonInfo {
             pid: 9001,
@@ -69,10 +93,12 @@ fn runtime() -> FakeStatusRuntime {
         },
         service_info: json!({ "apiVersion": 5, "buildStamp": "stamp", "capabilities": {} }),
         projects: vec![project],
+        projects_with_counts: vec![project_with_count],
+        ensure_calls: Vec::new(),
         state: DaemonState {
             version: 1,
             updated_at: Some(json!("now")),
-            projects: BTreeMap::from([
+            projects: Map::from_iter([
                 (
                     "repo-id".into(),
                     json!({ "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 }),
@@ -103,8 +129,9 @@ fn json_body(response: aimux::daemon::routing::DaemonRouteResponse) -> Value {
 
 #[test]
 fn health_route_matches_daemon_contract_without_waking_projects() {
+    let mut runtime = runtime();
     let response =
-        route_status_request(&runtime(), "GET", "/health", "issued").expect("health route");
+        route_status_request(&mut runtime, "GET", "/health", "issued").expect("health route");
     assert_eq!(response.status, 200);
     assert_eq!(
         json_body(response),
@@ -122,13 +149,14 @@ fn health_route_matches_daemon_contract_without_waking_projects() {
 fn daemon_status_uses_persisted_state_but_live_flags_from_route_projects() {
     let payload = daemon_status_payload(&runtime(), "issued", &runtime().projects);
     assert_eq!(payload["projects"].as_array().unwrap().len(), 2);
-    assert_eq!(payload["projects"][0]["projectId"], "cold-id");
-    assert_eq!(payload["projects"][0]["serviceAlive"], false);
-    assert_eq!(payload["projects"][1]["projectId"], "repo-id");
-    assert_eq!(payload["projects"][1]["serviceAlive"], true);
+    assert_eq!(payload["projects"][0]["projectId"], "repo-id");
+    assert_eq!(payload["projects"][0]["serviceAlive"], true);
+    assert_eq!(payload["projects"][1]["projectId"], "cold-id");
+    assert_eq!(payload["projects"][1]["serviceAlive"], false);
 
+    let mut runtime = runtime();
     let text = route_status_request(
-        &runtime(),
+        &mut runtime,
         "GET",
         CORE_API_ROUTES.daemon_status_text,
         "issued",
@@ -150,8 +178,9 @@ fn host_status_resolves_current_project_without_service_requirement() {
     assert_eq!(payload["serviceAlive"], true);
     assert_eq!(payload["metadataEndpoint"]["port"], 44191);
 
+    let mut runtime = runtime();
     let unknown = route_status_request(
-        &runtime(),
+        &mut runtime,
         "GET",
         &format!("{}?project=/unknown", CORE_API_ROUTES.host_status_text),
         "issued",
@@ -161,12 +190,31 @@ fn host_status_resolves_current_project_without_service_requirement() {
         text_body(unknown),
         "No known control service for /unknown\n"
     );
+    assert_eq!(runtime.ensure_calls, ["/unknown"]);
+}
+
+#[test]
+fn host_status_registers_project_paths_before_lookup() {
+    let mut runtime = runtime();
+    let response = route_status_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?project=/unregistered", CORE_API_ROUTES.host_status_text),
+        "issued",
+    )
+    .expect("host status route");
+    assert_eq!(runtime.ensure_calls, ["/unregistered"]);
+    assert_eq!(
+        text_body(response),
+        "Service: idle\nMetadata: not running\nExpected manifest: {\"apiVersion\":5,\"buildStamp\":\"stamp\",\"capabilities\":{}}\nTmux session: aimux-unregistered-id\n"
+    );
 }
 
 #[test]
 fn project_lists_keep_registered_projects_visible() {
+    let mut runtime = runtime();
     let projects = route_status_request(
-        &runtime(),
+        &mut runtime,
         "GET",
         CORE_API_ROUTES.projects_list_text,
         "issued",
@@ -175,7 +223,7 @@ fn project_lists_keep_registered_projects_visible() {
     assert_eq!(text_body(projects), "repo  live  /repo\n");
 
     let daemon_projects = route_status_request(
-        &runtime(),
+        &mut runtime,
         "GET",
         &format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text),
         "issued",
@@ -188,24 +236,47 @@ fn project_lists_keep_registered_projects_visible() {
 }
 
 #[test]
+fn projects_route_uses_online_agent_counts_without_changing_text_lists() {
+    let mut runtime = runtime();
+    let response =
+        route_status_request(&mut runtime, "GET", "/projects", "issued").expect("projects route");
+    assert_eq!(json_body(response)["projects"][0]["onlineAgentCount"], 2);
+
+    let text = route_status_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?json=1", CORE_API_ROUTES.projects_list_text),
+        "issued",
+    )
+    .expect("projects text route");
+    assert!(json_body_like_text(&text_body(text))["projects"][0]["onlineAgentCount"].is_null());
+}
+
+#[test]
 fn projects_by_id_reads_persisted_catalog_state() {
-    let response = route_status_request(&runtime(), "GET", "/projects/repo-id", "issued")
+    let mut runtime = runtime();
+    let response = route_status_request(&mut runtime, "GET", "/projects/repo-id", "issued")
         .expect("project by id route");
     assert_eq!(json_body(response)["project"]["projectRoot"], "/repo");
 
-    let encoded = route_status_request(&runtime(), "GET", "/projects/cold%2Did", "issued")
+    let encoded = route_status_request(&mut runtime, "GET", "/projects/cold%2Did", "issued")
         .expect("encoded project route");
     assert_eq!(json_body(encoded)["project"]["projectRoot"], "/cold");
 
-    let missing = route_status_request(&runtime(), "GET", "/projects/missing", "issued")
+    let missing = route_status_request(&mut runtime, "GET", "/projects/missing", "issued")
         .expect("missing project route");
     assert_eq!(json_body(missing)["project"], Value::Null);
 }
 
 #[test]
 fn unrelated_routes_are_left_for_other_daemon_modules() {
-    assert!(route_status_request(&runtime(), "POST", "/projects/ensure", "issued").is_none());
+    let mut runtime = runtime();
+    assert!(route_status_request(&mut runtime, "POST", "/projects/ensure", "issued").is_none());
     assert!(
-        route_status_request(&runtime(), "GET", "/proxy/127.0.0.1/1/health", "issued").is_none()
+        route_status_request(&mut runtime, "GET", "/proxy/127.0.0.1/1/health", "issued").is_none()
     );
+}
+
+fn json_body_like_text(text: &str) -> Value {
+    serde_json::from_str(text).expect("json text")
 }

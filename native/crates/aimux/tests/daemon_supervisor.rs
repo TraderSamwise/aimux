@@ -12,8 +12,7 @@ use aimux::paths::PathResolver;
 use aimux::project_service_manifest::{
     ProjectServiceManifest, project_service_capabilities, should_keep_unresponsive_daemon,
 };
-use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -200,7 +199,7 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
     let state = DaemonState {
         version: 1,
         updated_at: Some(json!("now")),
-        projects: BTreeMap::from([(
+        projects: Map::from_iter([(
             "project-1".into(),
             serde_json::to_value(project).expect("project JSON"),
         )]),
@@ -249,7 +248,7 @@ fn stop_daemon_info_refuses_to_signal_unverified_daemon_and_preserves_state() {
     let state = DaemonState {
         version: 1,
         updated_at: Some(json!("now")),
-        projects: BTreeMap::new(),
+        projects: Map::new(),
     };
     save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
     save_daemon_state(resolver.daemon_state_path(), &state).expect("save daemon state");

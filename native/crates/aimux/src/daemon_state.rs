@@ -1,7 +1,7 @@
 use crate::atomic_write::{atomic_write, quarantine_corrupt_file, write_json_atomic};
 use crate::project_catalog::is_git_project_root;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -78,7 +78,7 @@ pub struct DaemonState {
     pub version: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<Value>,
-    pub projects: BTreeMap<String, Value>,
+    pub projects: Map<String, Value>,
 }
 
 impl DaemonState {
@@ -86,7 +86,7 @@ impl DaemonState {
         Self {
             version: 1,
             updated_at: Some(Value::String(EPOCH_ISO.into())),
-            projects: BTreeMap::new(),
+            projects: Map::new(),
         }
     }
 }
@@ -249,7 +249,7 @@ pub fn load_daemon_state_with(
         return DaemonState::empty();
     };
     let updated_at = raw.get("updatedAt").cloned();
-    let mut projects = BTreeMap::new();
+    let mut projects = Map::new();
     if let Some(Value::Object(entries)) = raw.get("projects") {
         for (project_id, entry) in entries {
             let Some(root) = entry.get("projectRoot").and_then(Value::as_str) else {

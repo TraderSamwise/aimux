@@ -7,8 +7,7 @@ use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
-use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone)]
 struct FakeCoreRuntime {
@@ -59,7 +58,7 @@ impl DaemonStatusRuntime for FakeCoreRuntime {
         DaemonState {
             version: 1,
             updated_at: Some(json!("state-time")),
-            projects: BTreeMap::from([(
+            projects: Map::from_iter([(
                 "repo-id".into(),
                 json!({ "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 }),
             )]),
@@ -213,6 +212,19 @@ fn dispatches_ping_status_and_project_list_without_project_wake() {
     ));
     assert_eq!(status["result"]["daemon"]["pid"], 9001);
     assert_eq!(status["result"]["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        status["result"]["projects"][0],
+        json!({
+            "id": "repo-id",
+            "name": "repo",
+            "path": "/repo",
+            "lastSeen": "2026-03-28T00:00:00.000Z",
+            "dashboardSessionName": "aimux-repo-id",
+            "service": { "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 },
+            "serviceAlive": true,
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 44191, "pid": 9123 }
+        })
+    );
     assert_eq!(status["result"]["updatedAt"], "state-time");
 
     let projects = json_body(route_core_command(

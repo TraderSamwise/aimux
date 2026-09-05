@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 struct FakeWorktreeRuntime {
     calls: Vec<(String, String, Option<Value>, Option<u64>)>,
     fail_get: bool,
+    empty_graveyard_status: bool,
+    omit_graveyard_status: bool,
 }
 
 impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
@@ -98,7 +100,13 @@ impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
             ),
             project_routes::agents::KILL => ProjectServiceJsonResult::ok(
                 "/repo",
-                json!({ "ok": true, "sessionId": body["sessionId"].clone(), "status": "graveyard" }),
+                if self.omit_graveyard_status {
+                    json!({ "ok": true, "sessionId": body["sessionId"].clone() })
+                } else if self.empty_graveyard_status {
+                    json!({ "ok": true, "sessionId": body["sessionId"].clone(), "status": "" })
+                } else {
+                    json!({ "ok": true, "sessionId": body["sessionId"].clone(), "status": "graveyard" })
+                },
             ),
             project_routes::graveyard_actions::RESURRECT_AGENT => ProjectServiceJsonResult::ok(
                 "/repo",
@@ -300,6 +308,45 @@ fn graveyard_routes_match_project_service_proxy_contract() {
     )
     .expect("graveyard cleanup");
     assert!(text_body(cleanup).contains("Graveyard cleanup would remove 1 item(s); 0 failed."));
+}
+
+#[test]
+fn graveyard_send_fallback_only_applies_when_status_is_missing() {
+    let mut missing_status = FakeWorktreeRuntime {
+        omit_graveyard_status: true,
+        ..FakeWorktreeRuntime::default()
+    };
+    let fallback = route_worktree_text_request(
+        &mut missing_status,
+        "POST",
+        &format!(
+            "{}?project=/repo&sessionId=claude-1",
+            CORE_API_ROUTES.graveyard_send_text
+        ),
+        None,
+    )
+    .expect("graveyard send");
+    assert_eq!(text_body(fallback), "graveyarded claude-1\n");
+
+    let mut empty_status = FakeWorktreeRuntime {
+        empty_graveyard_status: true,
+        ..FakeWorktreeRuntime::default()
+    };
+    let invalid = route_worktree_text_request(
+        &mut empty_status,
+        "POST",
+        &format!(
+            "{}?project=/repo&sessionId=claude-1",
+            CORE_API_ROUTES.graveyard_send_text
+        ),
+        None,
+    )
+    .expect("graveyard send");
+    assert_eq!(invalid.status, 502);
+    assert_eq!(
+        text_body(invalid),
+        "Error: project service returned invalid graveyard send response: status is required\n"
+    );
 }
 
 #[test]
