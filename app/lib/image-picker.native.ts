@@ -1,5 +1,5 @@
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
+import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 
 export type PickedAttachmentKind = "image" | "audio" | "video" | "pdf" | "text" | "file";
@@ -59,6 +59,7 @@ function mimeTypeFromName(name: string | null | undefined): string {
 
 type AttachmentDataLoader = () => Promise<string>;
 const attachmentDataLoaders = new Map<string, AttachmentDataLoader>();
+const releaseAttachmentDataFiles = new Map<string, () => void>();
 
 function rememberPickedAttachmentDataLoader(id: string, loader: AttachmentDataLoader) {
   let promise: Promise<string> | null = null;
@@ -72,6 +73,20 @@ export function rememberPickedAttachmentDataBase64(id: string, dataBase64: strin
   rememberPickedAttachmentDataLoader(id, async () => dataBase64);
 }
 
+export function rememberPickedAttachmentDataFile(
+  id: string,
+  uri: string,
+  options: { deleteOnRelease?: boolean } = {},
+) {
+  rememberPickedAttachmentDataLoader(id, () => new File(uri).base64());
+  if (options.deleteOnRelease) {
+    releaseAttachmentDataFiles.set(id, () => {
+      const file = new File(uri);
+      if (file.exists) file.delete();
+    });
+  }
+}
+
 export async function pickedAttachmentDataBase64(attachment: PickedAttachment): Promise<string> {
   if (attachment.dataBase64) return attachment.dataBase64;
   const loader = attachmentDataLoaders.get(attachment.id);
@@ -81,6 +96,9 @@ export async function pickedAttachmentDataBase64(attachment: PickedAttachment): 
 
 export function releasePickedAttachment(attachment: PickedAttachment) {
   attachmentDataLoaders.delete(attachment.id);
+  const cleanupFile = releaseAttachmentDataFiles.get(attachment.id);
+  releaseAttachmentDataFiles.delete(attachment.id);
+  cleanupFile?.();
 }
 
 export async function pickAttachment(): Promise<PickedAttachment | null> {
@@ -107,11 +125,7 @@ export async function pickFileAttachment(): Promise<PickedAttachment | null> {
   const id = localId();
   const filename = asset.name || "attachment";
   const mimeType = asset.mimeType ?? mimeTypeFromName(filename);
-  rememberPickedAttachmentDataLoader(id, () =>
-    FileSystem.readAsStringAsync(asset.uri, {
-      encoding: "base64",
-    }),
-  );
+  rememberPickedAttachmentDataFile(id, asset.uri);
 
   return {
     id,
@@ -130,11 +144,7 @@ async function pickedImageAttachmentFromAsset(
   const id = localId();
   const filename = asset.fileName || "image.jpg";
   const mimeType = asset.mimeType ?? mimeTypeFromName(filename);
-  rememberPickedAttachmentDataLoader(id, () =>
-    FileSystem.readAsStringAsync(asset.uri, {
-      encoding: "base64",
-    }),
-  );
+  rememberPickedAttachmentDataFile(id, asset.uri);
 
   return {
     id,

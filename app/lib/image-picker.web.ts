@@ -151,6 +151,22 @@ export function rememberPickedAttachmentDataBase64(id: string, dataBase64: strin
   rememberPickedAttachmentDataLoader(id, async () => dataBase64);
 }
 
+export function rememberPickedAttachmentDataFile(
+  id: string,
+  uri: string,
+  _options: { deleteOnRelease?: boolean } = {},
+) {
+  rememberPickedAttachmentDataLoader(id, async () => {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const dataUrl = await readFileAsDataUrl(
+      blobToFile(blob),
+      blob.type || "application/octet-stream",
+    );
+    return dataUrl.slice(dataUrl.indexOf(",") + 1);
+  });
+}
+
 export async function pickedAttachmentDataBase64(attachment: PickedAttachment): Promise<string> {
   if (attachment.dataBase64) return attachment.dataBase64;
   const loader = attachmentDataLoaders.get(attachment.id);
@@ -165,7 +181,14 @@ export function releasePickedAttachment(attachment: PickedAttachment) {
   }
 }
 
-async function readFileAsDataUrl(file: File, mimeType: string): Promise<string> {
+function blobToFile(blob: Blob): File {
+  if (typeof File !== "undefined") {
+    return new File([blob], "attachment", { type: blob.type });
+  }
+  return blob as File;
+}
+
+async function readFileAsDataUrl(file: Blob, mimeType: string): Promise<string> {
   if (typeof FileReader !== "undefined") {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();

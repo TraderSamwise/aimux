@@ -180,7 +180,6 @@ const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VE
 const COMPOSER_INPUT_MAX_HEIGHT =
   COMPOSER_INPUT_LINE_HEIGHT * 3 + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
-const COMPOSER_INPUT_APPROX_CHAR_WIDTH = 7.5;
 const COMPOSER_FOOTER_ESTIMATED_HEIGHT = 132;
 const COMPOSER_SCROLL_SAFETY_PADDING = 44;
 const COMPOSER_HIDE_ANIMATION_MS = 160;
@@ -515,18 +514,6 @@ function isOffsetPinnedToBottom(state: ChatScrollPolicyState) {
     metrics: state.metrics,
     threshold: SCROLL_BOTTOM_EPSILON,
   });
-}
-
-function estimateComposerInputContentHeight(draft: string, composerWidth: number) {
-  if (!draft) return COMPOSER_INPUT_MIN_HEIGHT;
-
-  const usableWidth = Math.max(1, composerWidth - 20 - COMPOSER_INPUT_HORIZONTAL_PADDING * 2);
-  const charsPerLine = Math.max(1, Math.floor(usableWidth / COMPOSER_INPUT_APPROX_CHAR_WIDTH));
-  const lineCount = draft.split("\n").reduce((total, line) => {
-    return total + Math.max(1, Math.ceil(line.length / charsPerLine));
-  }, 0);
-
-  return lineCount * COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 }
 
 export default function ChatScreen() {
@@ -876,22 +863,11 @@ export default function ChatScreen() {
   const compactHeaderActions = width < 430;
   const headerActionsMaxWidth =
     Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
-  const estimatedComposerInputContentHeight = estimateComposerInputContentHeight(
-    draft,
-    composerWidth,
-  );
   const composerInputHeight = Math.min(
     COMPOSER_INPUT_MAX_HEIGHT,
-    Math.max(
-      COMPOSER_INPUT_MIN_HEIGHT,
-      composerInputContentHeight,
-      estimatedComposerInputContentHeight,
-    ),
+    Math.max(COMPOSER_INPUT_MIN_HEIGHT, composerInputContentHeight),
   );
-  const composerInputOverflowHeight = Math.max(
-    composerInputContentHeight,
-    estimatedComposerInputContentHeight,
-  );
+  const composerInputOverflowHeight = composerInputContentHeight;
   const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;

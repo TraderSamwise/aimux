@@ -65,4 +65,10 @@ export async function pickedAttachmentDataBase64(attachment: PickedAttachment): 
 
 export function rememberPickedAttachmentDataBase64(_id: string, _dataBase64: string) {}
 
+export function rememberPickedAttachmentDataFile(
+  _id: string,
+  _uri: string,
+  _options: { deleteOnRelease?: boolean } = {},
+) {}
+
 export function releasePickedAttachment(_attachment: PickedAttachment) {}
