@@ -4,6 +4,7 @@ use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
 };
 use crate::daemon_state::get_daemon_base_url;
+use crate::expose_socket::parse_positive_header_integer;
 use crate::project_api_contract::routes;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -223,6 +224,40 @@ pub fn parse_expose_args<S: AsRef<str>>(raw_args: &[S]) -> Result<TmuxExposeOpti
     Ok(options)
 }
 
+pub fn tmux_expose_options_from_socket_header(
+    header: &[String],
+    fallback_project_root: impl AsRef<Path>,
+    fallback_project_state_dir: impl AsRef<Path>,
+) -> TmuxExposeOptions {
+    let value = |index: usize| {
+        header
+            .get(index)
+            .map(String::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    TmuxExposeOptions {
+        project_root: value(0)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| fallback_project_root.as_ref().to_path_buf()),
+        project_state_dir: value(1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| fallback_project_state_dir.as_ref().to_path_buf()),
+        current_client_session: value(2),
+        client_tty: value(3),
+        current_window: value(4),
+        current_window_id: value(5),
+        current_path: value(6),
+        pane_id: value(7),
+        aimux_home: value(8),
+        daemon_endpoint: value(13),
+        selection_file: value(14).map(PathBuf::from),
+        columns: parse_positive_header_integer(header.get(11).map(String::as_str)),
+        rows: parse_positive_header_integer(header.get(12).map(String::as_str)),
+        ..TmuxExposeOptions::default()
+    }
+}
+
 pub fn run_tmux_expose(options: TmuxExposeOptions) -> i32 {
     let mut client = SystemExposeHttpClient;
     let mut input = std::io::stdin();
@@ -274,21 +309,21 @@ pub fn run_tmux_expose_with_client(
     let mut buffer = [0_u8; 8192];
     loop {
         let count = match input.read(&mut buffer) {
-            Ok(0) => return 0,
+            Ok(0) => return finish_plain_expose(output, 0),
             Ok(count) => count,
-            Err(_) => return 1,
+            Err(_) => return finish_plain_expose(output, 1),
         };
         for key in parse_key_events(&buffer[..count]) {
             if matches!(
                 key,
                 ExposeKey::Char('q') | ExposeKey::Escape | ExposeKey::Ctrl('c')
             ) {
-                return 0;
+                return finish_plain_expose(output, 0);
             }
             if leader_pending {
                 leader_pending = false;
                 if key == ExposeKey::Char('d') {
-                    return 76;
+                    return finish_plain_expose(output, 76);
                 }
             }
             if key == ExposeKey::Ctrl('a') {
@@ -340,7 +375,7 @@ pub fn run_tmux_expose_with_client(
                 ) {
                     Ok(Some(item)) => {
                         if focus_or_select(&options, &context, &deps, client, &item) {
-                            return 0;
+                            return finish_plain_expose(output, 0);
                         }
                         let _ = render_plain_expose(output, &view, &items, index);
                     }
@@ -357,7 +392,7 @@ pub fn run_tmux_expose_with_client(
                 if target < items.len().min(9) {
                     index = target;
                     if focus_or_select(&options, &context, &deps, client, &items[index]) {
-                        return 0;
+                        return finish_plain_expose(output, 0);
                     }
                     if let Ok(next_view) = load_expose_scope_items_with(
                         scope,
@@ -377,7 +412,7 @@ pub fn run_tmux_expose_with_client(
                 if let Some(item) = items.get(index)
                     && focus_or_select(&options, &context, &deps, client, item)
                 {
-                    return 0;
+                    return finish_plain_expose(output, 0);
                 }
                 continue;
             }
@@ -659,6 +694,12 @@ fn focus_or_select(
         return true;
     }
     focus_expose_item_with(item, context, &options.project_state_dir, deps, client).unwrap_or(false)
+}
+
+fn finish_plain_expose(output: &mut impl Write, code: i32) -> i32 {
+    let _ = write!(output, "\x1b[?25h");
+    let _ = output.flush();
+    code
 }
 
 fn render_plain_expose(

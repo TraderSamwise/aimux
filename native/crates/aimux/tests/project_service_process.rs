@@ -1,6 +1,10 @@
 use aimux::daemon_state::load_metadata_endpoint;
+#[cfg(unix)]
+use aimux::expose_socket::{expose_socket_path, expose_socket_path_file};
+#[cfg(unix)]
+use aimux::project_service::process::start_project_expose_socket;
 use aimux::project_service::process::{
-    desired_project_service_port, handle_project_service_connection,
+    ProjectServiceStartup, desired_project_service_port, handle_project_service_connection,
     publish_project_service_endpoint,
 };
 use aimux::project_service::router::ProjectServiceRequestContext;
@@ -65,6 +69,34 @@ fn project_service_connection_routes_http_to_rust_project_router() {
     assert!(health_response.contains("\"ok\":true"));
     assert!(health_response.contains("\"projectStateDir\""));
     assert!(health_response.contains("\"serviceInfo\""));
+    cleanup(project);
+}
+
+#[cfg(unix)]
+#[test]
+fn project_service_expose_socket_publishes_and_cleans_up_path() {
+    let project = temp_project("expose-socket");
+    let state_dir = project.join("state");
+    let startup = ProjectServiceStartup {
+        project_id: "project".into(),
+        project_root: project.clone(),
+        project_state_dir: state_dir.clone(),
+        desired_port: 0,
+    };
+
+    let socket_path = expose_socket_path(&state_dir);
+    let path_file = expose_socket_path_file(&state_dir);
+    let guard = start_project_expose_socket(&startup).expect("start expose socket");
+
+    assert!(socket_path.exists());
+    assert_eq!(
+        read_to_string(&path_file).expect("socket path file"),
+        format!("{}\n", socket_path.display())
+    );
+
+    drop(guard);
+    assert!(!socket_path.exists());
+    assert!(!path_file.exists());
     cleanup(project);
 }
 

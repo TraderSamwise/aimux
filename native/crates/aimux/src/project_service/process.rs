@@ -1,19 +1,32 @@
 use anyhow::{Context, Result};
 use sha1::{Digest, Sha1};
+use std::fs;
+use std::io::{self, Read};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::listener::{DaemonListenerError, handle_daemon_stream};
 use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon_state::{MetadataApiEndpoint, remove_metadata_endpoint, save_metadata_endpoint};
+use crate::expose_socket::{
+    EXPOSE_SOCKET_HEADER_TIMEOUT_MS, clear_expose_socket_path, expose_socket_path,
+    publish_expose_socket_path, read_expose_socket_header,
+};
 use crate::paths::{PathResolver, compute_project_id};
+use crate::tmux_expose::{
+    SystemExposeHttpClient, run_tmux_expose_with_client, tmux_expose_options_from_socket_header,
+};
 
 use super::http::PreparedProjectServiceResponse;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::server::{ProjectServiceHttpRequest, handle_project_service_http_request};
+
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectServiceInternalOptions {
@@ -44,6 +57,8 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
     let _endpoint_guard = ProjectServiceEndpointGuard {
         project_state_dir: startup.project_state_dir.clone(),
     };
+    #[cfg(unix)]
+    let _expose_socket_guard = start_project_expose_socket(&startup).ok();
     serve_project_service_listener(listener, startup);
     Ok(())
 }
@@ -126,6 +141,111 @@ fn bind_project_service_listener(desired_port: u16) -> Result<TcpListener> {
     TcpListener::bind(("127.0.0.1", desired_port))
         .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
         .context("bind project-service listener")
+}
+
+#[cfg(unix)]
+pub fn start_project_expose_socket(
+    startup: &ProjectServiceStartup,
+) -> io::Result<ProjectExposeSocketGuard> {
+    fs::create_dir_all(&startup.project_state_dir)?;
+    let socket_path = expose_socket_path(&startup.project_state_dir);
+    clear_expose_socket_path(&startup.project_state_dir, &socket_path);
+    let listener = UnixListener::bind(&socket_path)?;
+    publish_expose_socket_path(&startup.project_state_dir, &socket_path)?;
+    let project_root = startup.project_root.clone();
+    let project_state_dir = startup.project_state_dir.clone();
+    thread::spawn(move || serve_expose_socket(listener, project_root, project_state_dir));
+    Ok(ProjectExposeSocketGuard {
+        project_state_dir: startup.project_state_dir.clone(),
+        socket_path,
+    })
+}
+
+#[cfg(unix)]
+pub struct ProjectExposeSocketGuard {
+    project_state_dir: PathBuf,
+    socket_path: PathBuf,
+}
+
+#[cfg(unix)]
+impl Drop for ProjectExposeSocketGuard {
+    fn drop(&mut self) {
+        clear_expose_socket_path(&self.project_state_dir, &self.socket_path);
+    }
+}
+
+#[cfg(unix)]
+fn serve_expose_socket(listener: UnixListener, project_root: PathBuf, project_state_dir: PathBuf) {
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else {
+            continue;
+        };
+        let project_root = project_root.clone();
+        let project_state_dir = project_state_dir.clone();
+        thread::spawn(move || {
+            let _ = handle_expose_socket_stream(stream, &project_root, &project_state_dir);
+        });
+    }
+}
+
+#[cfg(unix)]
+fn handle_expose_socket_stream(
+    mut stream: UnixStream,
+    fallback_project_root: &Path,
+    fallback_project_state_dir: &Path,
+) -> io::Result<()> {
+    let mut input = stream.try_clone()?;
+    input.set_read_timeout(Some(Duration::from_millis(EXPOSE_SOCKET_HEADER_TIMEOUT_MS)))?;
+    let parsed = read_expose_socket_header(&mut input)?;
+    input.set_read_timeout(None)?;
+    let status_path = parsed
+        .header
+        .get(10)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let options = tmux_expose_options_from_socket_header(
+        &parsed.header,
+        fallback_project_root,
+        fallback_project_state_dir,
+    );
+    let mut input = PrefixedRead::new(parsed.rest, input);
+    let mut client = SystemExposeHttpClient;
+    let code = run_tmux_expose_with_client(options, &mut input, &mut stream, &mut client);
+    if let Some(status_path) = status_path {
+        let _ = fs::write(status_path, format!("{code}\n"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+struct PrefixedRead<R> {
+    prefix: Vec<u8>,
+    offset: usize,
+    inner: R,
+}
+
+#[cfg(unix)]
+impl<R> PrefixedRead<R> {
+    fn new(prefix: Vec<u8>, inner: R) -> Self {
+        Self {
+            prefix,
+            offset: 0,
+            inner,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl<R: Read> Read for PrefixedRead<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.offset < self.prefix.len() {
+            let count = buffer.len().min(self.prefix.len() - self.offset);
+            buffer[..count].copy_from_slice(&self.prefix[self.offset..self.offset + count]);
+            self.offset += count;
+            return Ok(count);
+        }
+        self.inner.read(buffer)
+    }
 }
 
 fn project_request_from_daemon(request: DaemonHttpRequest) -> ProjectServiceHttpRequest {

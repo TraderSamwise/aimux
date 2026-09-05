@@ -6,7 +6,8 @@ use aimux::tmux_expose::{
     ExposeSortMode, ExposeSublabel, ExposeUiState, FastControlContext, LoadExposeScopeDeps,
     focus_expose_item_with, initial_expose_scope, load_expose_scope_items_with,
     load_overseer_expose_item_with, next_expose_scope, parse_expose_args, read_expose_ui_state,
-    run_tmux_expose_with_client, write_expose_ui_state, write_selected_window,
+    run_tmux_expose_with_client, tmux_expose_options_from_socket_header, write_expose_ui_state,
+    write_selected_window,
 };
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -337,6 +338,52 @@ fn expose_args_require_paths_and_resolve_them_without_touching_optional_values()
 
     assert!(parse_expose_args(&["expose", "--project-root", "/repo"]).is_err());
     assert!(parse_expose_args(&["expose", "--project-state-dir", "/state"]).is_err());
+}
+
+#[test]
+fn socket_header_mapping_matches_metadata_server_contract() {
+    let header = vec![
+        "/project".to_owned(),
+        "/state".to_owned(),
+        "client-session".to_owned(),
+        "/dev/ttys001".to_owned(),
+        "codex".to_owned(),
+        "@1".to_owned(),
+        "/project/wt".to_owned(),
+        "%7".to_owned(),
+        "/home/.aimux".to_owned(),
+        "".to_owned(),
+        "/tmp/status".to_owned(),
+        "120cols".to_owned(),
+        "30rows".to_owned(),
+        "http://127.0.0.1:43190".to_owned(),
+        "/tmp/selection".to_owned(),
+    ];
+
+    let options = tmux_expose_options_from_socket_header(&header, "/fallback", "/fallback-state");
+
+    assert_eq!(options.project_root, PathBuf::from("/project"));
+    assert_eq!(options.project_state_dir, PathBuf::from("/state"));
+    assert_eq!(
+        options.current_client_session.as_deref(),
+        Some("client-session")
+    );
+    assert_eq!(options.client_tty.as_deref(), Some("/dev/ttys001"));
+    assert_eq!(options.current_window.as_deref(), Some("codex"));
+    assert_eq!(options.current_window_id.as_deref(), Some("@1"));
+    assert_eq!(options.current_path.as_deref(), Some("/project/wt"));
+    assert_eq!(options.pane_id.as_deref(), Some("%7"));
+    assert_eq!(options.aimux_home.as_deref(), Some("/home/.aimux"));
+    assert_eq!(
+        options.daemon_endpoint.as_deref(),
+        Some("http://127.0.0.1:43190")
+    );
+    assert_eq!(
+        options.selection_file,
+        Some(PathBuf::from("/tmp/selection"))
+    );
+    assert_eq!(options.columns, Some(120));
+    assert_eq!(options.rows, Some(30));
 }
 
 #[test]
