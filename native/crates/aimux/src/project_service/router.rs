@@ -17,6 +17,7 @@ use super::operation_failures::route_operation_failures_request;
 use super::plans::route_plan_request;
 use super::reads::route_read_request;
 use super::team::route_team_request;
+use super::topology::route_topology_request;
 use super::usage::route_usage_request;
 use super::work_outline::route_work_outline_request;
 
@@ -26,6 +27,7 @@ pub struct ProjectServiceRequestContext {
     pub project_state_dir: Option<PathBuf>,
     pub session_labels: BTreeMap<String, String>,
     pub request_headers: BTreeMap<String, String>,
+    pub desktop_state: Option<Value>,
 }
 
 impl ProjectServiceRequestContext {
@@ -35,6 +37,7 @@ impl ProjectServiceRequestContext {
             project_state_dir: None,
             session_labels: BTreeMap::new(),
             request_headers: BTreeMap::new(),
+            desktop_state: None,
         }
     }
 
@@ -47,6 +50,7 @@ impl ProjectServiceRequestContext {
             project_state_dir: Some(project_state_dir.into()),
             session_labels: BTreeMap::new(),
             request_headers: BTreeMap::new(),
+            desktop_state: None,
         }
     }
 
@@ -56,6 +60,11 @@ impl ProjectServiceRequestContext {
         label: impl Into<String>,
     ) -> Self {
         self.session_labels.insert(session_id.into(), label.into());
+        self
+    }
+
+    pub fn with_desktop_state(mut self, desktop_state: Value) -> Self {
+        self.desktop_state = Some(desktop_state);
         self
     }
 
@@ -106,6 +115,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_library_request(context, method, path) {
+        return response;
+    }
+    if let Some(response) = route_topology_request(context, method, path) {
         return response;
     }
     if let Some(response) = route_exchange_read_request(context, method, path) {

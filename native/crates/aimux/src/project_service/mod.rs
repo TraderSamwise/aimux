@@ -15,5 +15,6 @@ pub mod routes;
 pub mod runtime_exchange;
 pub mod server;
 pub mod team;
+pub mod topology;
 pub mod usage;
 pub mod work_outline;
