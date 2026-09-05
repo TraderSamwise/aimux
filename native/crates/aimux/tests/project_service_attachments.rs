@@ -265,6 +265,143 @@ fn publish_rejects_remote_missing_invalid_and_sensitive_sources() {
     cleanup(project);
 }
 
+#[test]
+fn uploads_session_bound_attachment_and_serves_content() {
+    let project = temp_project("upload");
+    let context = ProjectServiceRequestContext::new(&project);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS,
+        Some(&json!({
+            "filename": "screen.png",
+            "mimeType": "image/png",
+            "dataBase64": "cG5nLWJ5dGVz",
+            "sessionId": "codex-1"
+        })),
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["attachment"]["kind"], "image");
+    assert_eq!(response.body["attachment"]["filename"], "screen.png");
+    assert_eq!(response.body["attachment"]["mimeType"], "image/png");
+    assert_eq!(response.body["attachment"]["sizeBytes"], 9);
+    assert_eq!(response.body["attachment"]["source"], "upload");
+    assert_eq!(response.body["attachment"]["sessionId"], "codex-1");
+
+    let content_url = response.body["attachment"]["contentUrl"].as_str().unwrap();
+    let content = route_project_service_request(&context, "GET", content_url, None);
+    assert_eq!(content.status, 200);
+    assert_eq!(content.bytes, Some(b"png-bytes".to_vec()));
+    assert_eq!(content.content_type, Some("image/png".to_owned()));
+    cleanup(project);
+}
+
+#[test]
+fn upload_accepts_data_url_and_hosted_metadata() {
+    let project = temp_project("upload-hosted");
+    let context = ProjectServiceRequestContext::new(&project);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS,
+        Some(&json!({
+            "filename": "notes.txt",
+            "mimeType": "text/plain; charset=utf-8",
+            "dataBase64": "data:text/plain;base64,cG5nLWJ5dGVz",
+            "sessionId": "codex-1",
+            "hostedAttachment": {
+                "contentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+                "expiresAt": "2099-01-01T00:00:00.000Z",
+                "sizeBytes": 9
+            }
+        })),
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["attachment"]["mimeType"], "text/plain");
+    assert_eq!(
+        response.body["attachment"]["hostedContentUrl"],
+        "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content"
+    );
+    assert_eq!(
+        response.body["attachment"]["hostedExpiresAt"],
+        "2099-01-01T00:00:00.000Z"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn upload_rejects_bad_shape_malformed_data_active_mime_and_wrong_guest_session() {
+    let project = temp_project("upload-errors");
+    let context = ProjectServiceRequestContext::new(&project);
+
+    let missing = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS,
+        Some(&json!({ "filename": "x.txt", "mimeType": "text/plain" })),
+    );
+    assert_eq!(missing.status, 400);
+    assert_eq!(
+        missing.body["error"],
+        "filename, mimeType, and dataBase64 are required"
+    );
+
+    let malformed = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS,
+        Some(&json!({
+            "filename": "x.txt",
+            "mimeType": "text/plain",
+            "dataBase64": "not-base64",
+            "sessionId": "codex-1"
+        })),
+    );
+    assert_eq!(malformed.status, 400);
+    assert_eq!(malformed.body["error"], "attachment content must be base64");
+
+    let active = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS,
+        Some(&json!({
+            "filename": "x.html",
+            "mimeType": "text/html",
+            "dataBase64": "aGVsbG8=",
+            "sessionId": "codex-1"
+        })),
+    );
+    assert_eq!(active.status, 400);
+    assert_eq!(active.body["error"], "unsupported attachment mime type");
+
+    let guest_context = ProjectServiceRequestContext::new(&project).with_request_headers([
+        ("x-aimux-actor-role", "guest"),
+        ("x-aimux-share-session-id", "codex-1"),
+    ]);
+    let guest_other = route_project_service_request(
+        &guest_context,
+        "POST",
+        routes::ATTACHMENTS,
+        Some(&json!({
+            "filename": "x.txt",
+            "mimeType": "text/plain",
+            "dataBase64": "aGVsbG8=",
+            "sessionId": "codex-2"
+        })),
+    );
+    assert_eq!(guest_other.status, 403);
+    assert_eq!(
+        guest_other.body["error"],
+        "shared guest cannot access another session"
+    );
+    cleanup(project);
+}
+
 fn seed_attachment(project: &Path, id: &str, session_id: Option<&str>) -> PathBuf {
     let dir = attachments_dir(project);
     create_dir_all(&dir).expect("attachments dir");

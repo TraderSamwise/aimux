@@ -28,6 +28,12 @@ pub fn route_attachment_request(
             body.unwrap_or(&Value::Null),
         ));
     }
+    if method.eq_ignore_ascii_case("POST") && pathname == routes::ATTACHMENTS {
+        return Some(route_attachment_upload(
+            context,
+            body.unwrap_or(&Value::Null),
+        ));
+    }
     if !method.eq_ignore_ascii_case("GET") {
         return None;
     }
@@ -194,12 +200,133 @@ fn route_attachment_publish(
     )
 }
 
+fn route_attachment_upload(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let filename = body.get("filename").and_then(Value::as_str);
+    let mime_type = body.get("mimeType").and_then(Value::as_str);
+    let data_base64 = body.get("dataBase64").and_then(Value::as_str);
+    if filename.is_none() || mime_type.is_none() || data_base64.is_none() {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "filename, mimeType, and dataBase64 are required" }),
+        );
+    }
+    let raw_session_id = body
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if raw_session_id.is_empty() {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "sessionId is required" }),
+        );
+    }
+    if !is_valid_session_id(raw_session_id) {
+        return json_response(400, json!({ "ok": false, "error": "sessionId is invalid" }));
+    }
+    if parse_remote_actor(&context.request_headers)
+        .as_ref()
+        .is_some_and(|actor| {
+            actor.role == RemoteActorRole::Guest
+                && actor.share_session_id.as_deref() != Some(raw_session_id)
+        })
+    {
+        return json_response(
+            403,
+            json!({ "ok": false, "error": "shared guest cannot access another session" }),
+        );
+    }
+    let hosted_attachment = hosted_attachment_from_body(body.get("hostedAttachment"));
+    match create_uploaded_attachment(
+        context,
+        CreateUploadedAttachmentInput {
+            filename: filename.expect("validated filename"),
+            mime_type: mime_type.expect("validated mime type"),
+            data_base64: data_base64.expect("validated data"),
+            session_id: raw_session_id,
+            hosted_attachment,
+        },
+    ) {
+        Ok(attachment) => json_response(200, json!({ "ok": true, "attachment": attachment })),
+        Err(error) => json_response(400, json!({ "ok": false, "error": error })),
+    }
+}
+
 struct CreatePathAttachmentInput<'a> {
     source_path: &'a str,
     filename: Option<&'a str>,
     mime_type: Option<&'a str>,
     session_id: &'a str,
     hosted_attachment: Option<Value>,
+}
+
+struct CreateUploadedAttachmentInput<'a> {
+    filename: &'a str,
+    mime_type: &'a str,
+    data_base64: &'a str,
+    session_id: &'a str,
+    hosted_attachment: Option<Value>,
+}
+
+fn create_uploaded_attachment(
+    context: &ProjectServiceRequestContext,
+    input: CreateUploadedAttachmentInput<'_>,
+) -> Result<Value, String> {
+    let mime_type = normalize_mime_type(input.mime_type)?;
+    let kind = infer_attachment_kind(&mime_type);
+    let filename = sanitize_filename(input.filename);
+    let buffer = decode_attachment_base64(input.data_base64)?;
+    if buffer.is_empty() {
+        return Err("attachment content is required".into());
+    }
+    if buffer.len() > MAX_ATTACHMENT_BYTES {
+        return Err("attachment exceeds 10 MB".into());
+    }
+    let buffer_sha256 = sha256_hex(&buffer);
+    let hosted_attachment = match input.hosted_attachment {
+        Some(hosted) => Some(normalize_hosted_attachment_reference(
+            hosted,
+            &buffer_sha256,
+            buffer.len() as i64,
+        )?),
+        None => None,
+    };
+    let id = next_attachment_id();
+    let extension = extension_for_attachment(&mime_type, &filename);
+    let attachment_dir = attachments_dir(context.project_root());
+    let content_path = attachment_dir.join(format!("{id}{extension}"));
+    let sha256 = hosted_attachment
+        .as_ref()
+        .and_then(|hosted| string_field(hosted, "sha256").map(str::to_owned))
+        .unwrap_or(buffer_sha256);
+    let mut record = Map::new();
+    record.insert("id".into(), Value::String(id.clone()));
+    record.insert("kind".into(), Value::String(kind));
+    record.insert("filename".into(), Value::String(filename));
+    record.insert("mimeType".into(), Value::String(mime_type));
+    record.insert("sizeBytes".into(), Value::from(buffer.len() as i64));
+    record.insert("sha256".into(), Value::String(sha256));
+    record.insert("createdAt".into(), Value::String(now_iso()));
+    record.insert("source".into(), Value::String("upload".into()));
+    record.insert(
+        "contentPath".into(),
+        Value::String(content_path.to_string_lossy().into_owned()),
+    );
+    record.insert(
+        "sessionId".into(),
+        Value::String(input.session_id.to_owned()),
+    );
+    if let Some(hosted) = hosted_attachment {
+        record.insert("hostedAttachment".into(), hosted);
+    }
+    let record = Value::Object(record);
+    atomic_write(&content_path, &buffer).map_err(|error| error.to_string())?;
+    write_json_atomic(attachment_dir.join(format!("{id}.json")), &record)
+        .map_err(|error| error.to_string())?;
+    Ok(to_public_attachment(record))
 }
 
 fn create_path_attachment(
@@ -541,6 +668,85 @@ fn is_valid_session_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+}
+
+fn decode_attachment_base64(value: &str) -> Result<Vec<u8>, String> {
+    let normalized = normalize_base64(value)?;
+    let bytes = normalized.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let a =
+            base64_value(chunk[0]).ok_or_else(|| "attachment content must be base64".to_owned())?;
+        let b =
+            base64_value(chunk[1]).ok_or_else(|| "attachment content must be base64".to_owned())?;
+        let c = if chunk[2] == b'=' {
+            None
+        } else {
+            Some(
+                base64_value(chunk[2])
+                    .ok_or_else(|| "attachment content must be base64".to_owned())?,
+            )
+        };
+        let d = if chunk[3] == b'=' {
+            None
+        } else {
+            Some(
+                base64_value(chunk[3])
+                    .ok_or_else(|| "attachment content must be base64".to_owned())?,
+            )
+        };
+        if c.is_none() && d.is_some() {
+            return Err("attachment content must be base64".into());
+        }
+        output.push((a << 2) | (b >> 4));
+        if let Some(c) = c {
+            output.push(((b & 0x0f) << 4) | (c >> 2));
+            if let Some(d) = d {
+                output.push(((c & 0x03) << 6) | d);
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn normalize_base64(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    let without_prefix = if trimmed.starts_with("data:") {
+        match trimmed.find(";base64,") {
+            Some(index) => &trimmed[index + ";base64,".len()..],
+            None => trimmed,
+        }
+    } else {
+        trimmed
+    };
+    let normalized = without_prefix
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    if normalized.len() % 4 != 0
+        || !normalized
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| is_base64_payload_byte(byte, index, normalized.len()))
+    {
+        return Err("attachment content must be base64".into());
+    }
+    Ok(normalized)
+}
+
+fn is_base64_payload_byte(byte: u8, index: usize, len: usize) -> bool {
+    base64_value(byte).is_some() || (byte == b'=' && index >= len.saturating_sub(2))
+}
+
+fn base64_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
 }
 
 fn sanitize_filename(filename: &str) -> String {
