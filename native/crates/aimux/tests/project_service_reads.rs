@@ -25,9 +25,62 @@ fn health_route_matches_project_service_contract_shape() {
 }
 
 #[test]
+fn diagnostics_route_reports_resources_and_runtime_exchange() {
+    let project = temp_project("diagnostics");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_read_request(&context, "GET", routes::DIAGNOSTICS).expect("diagnostics");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(
+        response.body["projectStateDir"],
+        state_dir.to_string_lossy().as_ref()
+    );
+    assert!(response.body["pid"].as_u64().is_some());
+    assert_eq!(response.body["serviceInfo"]["apiVersion"], 5);
+    assert!(
+        response.body["resources"]["memoryRssBytes"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        response.body["resources"]["memoryHeapUsedBytes"]
+            .as_u64()
+            .is_some()
+    );
+    assert_eq!(response.body["recentSlowRequests"], json!([]));
+    assert_eq!(response.body["plugins"], json!([]));
+    assert_eq!(response.body["previews"], json!({}));
+    assert_eq!(response.body["agentOutputReads"]["total"]["count"], 0);
+    assert_eq!(response.body["runtimeExchange"]["exists"], false);
+    cleanup(project);
+}
+
+#[test]
+fn diagnostics_lifecycle_route_reports_empty_rust_queue() {
+    let project = temp_project("diagnostics-lifecycle");
+    let context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
+    let response =
+        route_read_request(&context, "GET", routes::DIAGNOSTICS_LIFECYCLE).expect("diagnostics");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert!(response.body["pid"].as_u64().is_some());
+    assert_eq!(
+        response.body["projectRoot"],
+        project.to_string_lossy().as_ref()
+    );
+    assert_eq!(response.body["queuedCount"], 0);
+    assert_eq!(response.body["runningCount"], 0);
+    assert_eq!(response.body["pending"], json!([]));
+    assert_eq!(response.body["running"], json!([]));
+    cleanup(project);
+}
+
+#[test]
 fn read_split_returns_unimplemented_for_known_unported_reads() {
     let context = ProjectServiceRequestContext::with_project_state_dir("/repo", "/state/repo");
-    let response = route_read_request(&context, "GET", routes::DIAGNOSTICS).expect("known read");
+    let response = route_read_request(&context, "GET", routes::DESKTOP_STATE).expect("known read");
     assert_eq!(response.status, 501);
     assert_eq!(response.body["group"], "reads");
 }
