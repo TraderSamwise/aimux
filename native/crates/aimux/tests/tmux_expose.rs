@@ -5,8 +5,8 @@ use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeConfig, ExposeHttpClient, ExposeHttpRequest, ExposeScope,
     ExposeSortMode, ExposeSublabel, ExposeUiState, FastControlContext, LoadExposeScopeDeps,
     focus_expose_item_with, initial_expose_scope, load_expose_scope_items_with,
-    load_overseer_expose_item_with, next_expose_scope, read_expose_ui_state, write_expose_ui_state,
-    write_selected_window,
+    load_overseer_expose_item_with, next_expose_scope, parse_expose_args, read_expose_ui_state,
+    run_tmux_expose_with_client, write_expose_ui_state, write_selected_window,
 };
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -295,6 +295,164 @@ fn ui_state_defaults_invalid_files_and_round_trips_valid_modes() {
         ExposeSortMode::RecentOutput
     );
     cleanup(state_dir);
+}
+
+#[test]
+fn expose_args_require_paths_and_resolve_them_without_touching_optional_values() {
+    let cwd = std::env::current_dir().expect("cwd");
+    let parsed = parse_expose_args(&[
+        "expose",
+        "--project-root",
+        "relative-project",
+        "--project-state-dir=relative-state",
+        "--current-client-session",
+        "client-session",
+        "--client-tty",
+        "/dev/ttys001",
+        "--current-window",
+        "codex",
+        "--current-window-id",
+        "@1",
+        "--current-path",
+        "../there",
+        "--pane-id",
+        "%7",
+        "--aimux-home",
+        "/tmp/home",
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.project_root, cwd.join("relative-project"));
+    assert_eq!(parsed.project_state_dir, cwd.join("relative-state"));
+    assert_eq!(
+        parsed.current_client_session.as_deref(),
+        Some("client-session")
+    );
+    assert_eq!(parsed.client_tty.as_deref(), Some("/dev/ttys001"));
+    assert_eq!(parsed.current_window.as_deref(), Some("codex"));
+    assert_eq!(parsed.current_window_id.as_deref(), Some("@1"));
+    assert_eq!(parsed.current_path.as_deref(), Some("../there"));
+    assert_eq!(parsed.pane_id.as_deref(), Some("%7"));
+    assert_eq!(parsed.aimux_home.as_deref(), Some("/tmp/home"));
+
+    assert!(parse_expose_args(&["expose", "--project-root", "/repo"]).is_err());
+    assert!(parse_expose_args(&["expose", "--project-state-dir", "/state"]).is_err());
+}
+
+#[test]
+fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
+    let state_dir = temp_dir("runner-global");
+    let options = parsed_options(&state_dir);
+
+    let mut close_client = FakeHttp::with_responses([json!({ "ok": true, "items": [] })]);
+    let mut close_input: &[u8] = b"q";
+    let mut close_output = Vec::new();
+    assert_eq!(
+        run_tmux_expose_with_client(
+            options.clone(),
+            &mut close_input,
+            &mut close_output,
+            &mut close_client
+        ),
+        0
+    );
+
+    let mut dashboard_client = FakeHttp::with_responses([json!({ "ok": true, "items": [] })]);
+    let mut dashboard_input: &[u8] = b"\x01d";
+    let mut dashboard_output = Vec::new();
+    assert_eq!(
+        run_tmux_expose_with_client(
+            options.clone(),
+            &mut dashboard_input,
+            &mut dashboard_output,
+            &mut dashboard_client
+        ),
+        76
+    );
+
+    let mut focus_client = FakeHttp::with_responses([
+        json!({
+            "ok": true,
+            "items": [{
+                "id": "remote",
+                "label": "codex",
+                "projectRoot": "/other-repo",
+                "projectName": "Other",
+                "target": { "windowId": "@9" },
+                "metadata": { "recencyAt": "2026-01-02T00:00:00.000Z" },
+                "recentRank": 0
+            }]
+        }),
+        json!({ "ok": true }),
+    ]);
+    let mut focus_input: &[u8] = b"1";
+    let mut focus_output = Vec::new();
+    assert_eq!(
+        run_tmux_expose_with_client(
+            options.clone(),
+            &mut focus_input,
+            &mut focus_output,
+            &mut focus_client
+        ),
+        0
+    );
+    assert_eq!(
+        focus_client.requests[1].0,
+        format!("http://127.0.0.1:43190{}", CORE_API_ROUTES.expose_focus)
+    );
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_reloads_scope_toggles_sort_and_uses_same_project_selection_file() {
+    let state_dir = temp_dir("runner-selection");
+    let selection_file = state_dir.join("selection");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Worktree);
+    options.selection_file = Some(selection_file.clone());
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [
+            { "id": "old", "label": "old", "target": { "windowId": "@1" }, "metadata": { "recencyAt": "2026-01-01T00:00:00.000Z" }, "recentRank": 1 },
+            { "id": "new", "label": "new", "target": { "windowId": "@2" }, "metadata": { "recencyAt": "2026-01-02T00:00:00.000Z" }, "recentRank": 0 }
+        ]
+    })]);
+    let mut input: &[u8] = b"r1";
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_client(options, &mut input, &mut output, &mut client),
+        0
+    );
+
+    assert_eq!(
+        fs::read_to_string(selection_file).expect("selection"),
+        "@2\n"
+    );
+    assert_eq!(client.requests.len(), 1);
+    assert_eq!(
+        read_expose_ui_state(&state_dir).sort_mode,
+        ExposeSortMode::RecentOutput
+    );
+    cleanup(state_dir);
+}
+
+fn parsed_options(state_dir: &Path) -> aimux::tmux_expose::TmuxExposeOptions {
+    aimux::tmux_expose::TmuxExposeOptions {
+        project_root: PathBuf::from("/repo"),
+        project_state_dir: state_dir.to_path_buf(),
+        current_window: Some("meta-dashboard".into()),
+        current_window_id: Some("@1".into()),
+        current_client_session: Some("aimux-test-client-12345678".into()),
+        client_tty: Some("/dev/ttys001".into()),
+        daemon_endpoint: Some("http://127.0.0.1:43190".into()),
+        metadata_endpoint: Some("http://127.0.0.1:45000".into()),
+        columns: Some(80),
+        rows: Some(24),
+        ..aimux::tmux_expose::TmuxExposeOptions::default()
+    }
 }
 
 fn temp_dir(label: &str) -> PathBuf {

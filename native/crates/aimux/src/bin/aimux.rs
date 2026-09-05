@@ -5,6 +5,7 @@ use aimux::launcher_env::{CliEntry, cli_entry_for};
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
+use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -84,8 +85,14 @@ fn main() -> Result<ExitCode> {
             return Ok(ExitCode::from(execution.code as u8));
         }
         CliEntry::Expose => {
-            eprintln!("Error: expose is not yet ported to native CLI");
-            return Ok(ExitCode::from(1));
+            let options = match parse_expose_args(&raw_args) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    return Ok(ExitCode::from(1));
+                }
+            };
+            return Ok(ExitCode::from(run_tmux_expose(options) as u8));
         }
         CliEntry::Main => {
             let core_args = core_command_args(&raw_args);
