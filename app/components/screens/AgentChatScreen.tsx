@@ -17,6 +17,7 @@ import {
 import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
+import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import {
   ArrowUp,
   ChevronDown,
@@ -123,6 +124,7 @@ const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 12.4;
 const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
 const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
+type ChatScrollHandle = Pick<ScrollView, "scrollToEnd">;
 const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
 const COMPOSER_INPUT_VERTICAL_PADDING = 6;
@@ -580,7 +582,7 @@ export default function ChatScreen() {
   );
   const sendBusyRef = useRef(false);
   const composerInputRef = useRef<TextInput | null>(null);
-  const chatScrollRef = useRef<ScrollView | null>(null);
+  const chatScrollRef = useRef<ChatScrollHandle | null>(null);
   const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
     contentHeight: 0,
     offsetY: 0,
@@ -814,6 +816,18 @@ export default function ChatScreen() {
         cancelPendingChatScroll();
       }
       chatScrollPolicyRef.current = nextPolicy;
+    },
+    [cancelPendingChatScroll],
+  );
+
+  const handleChatEndVisible = useCallback(
+    (visible: boolean) => {
+      if (!visible) {
+        cancelPendingChatScroll();
+        chatScrollPolicyRef.current = { intent: "reading" };
+        return;
+      }
+      chatScrollPolicyRef.current = createChatScrollPolicy();
     },
     [cancelPendingChatScroll],
   );
@@ -1429,7 +1443,7 @@ export default function ChatScreen() {
     else router.replace(parentViewHrefForPath(pathname, projectPath));
   }
 
-  const composerFooter = (
+  const composerFooterContent = (
     <View
       className="border-t border-border bg-background px-3 py-3"
       style={{
@@ -1611,6 +1625,12 @@ export default function ChatScreen() {
       </AttachmentDropZone>
     </View>
   );
+  const composerFooter =
+    Platform.OS === "web" ? (
+      composerFooterContent
+    ) : (
+      <KeyboardStickyView style={{ flexShrink: 0 }}>{composerFooterContent}</KeyboardStickyView>
+    );
 
   return (
     <View style={{ flex: 1 }}>
@@ -2084,6 +2104,7 @@ export default function ChatScreen() {
                   onContentSizeChange={handleChatContentSizeChange}
                   onLayout={handleChatLayout}
                   onScroll={handleChatScroll}
+                  onEndVisible={handleChatEndVisible}
                   ref={chatScrollRef}
                   serviceEndpoint={displayServiceEndpoint}
                   dividerWidth={chatDividerWidth}
@@ -2099,31 +2120,80 @@ export default function ChatScreen() {
 }
 
 const AgentChatTranscript = React.forwardRef<
-  ScrollView,
+  ChatScrollHandle,
   {
     dividerWidth: number;
     messages: readonly ChatMessage[];
+    onEndVisible: (visible: boolean) => void;
     onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
     onLayout: (event: LayoutChangeEvent) => void;
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
     serviceEndpoint: ServiceEndpoint;
   }
 >(function AgentChatTranscript(
-  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
+  {
+    dividerWidth,
+    messages,
+    onContentSizeChange,
+    onEndVisible,
+    onLayout,
+    onScroll,
+    serviceEndpoint,
+  },
   ref,
 ) {
+  const content =
+    messages.length === 0 ? null : (
+      <View className="w-full gap-1">
+        {messages.map((message, index) => (
+          <View
+            key={message.id ?? message.clientMessageId ?? `message:${index}`}
+            style={{ flexShrink: 0 }}
+          >
+            <MessageBlock
+              dividerWidth={dividerWidth}
+              message={message}
+              serviceEndpoint={serviceEndpoint}
+            />
+          </View>
+        ))}
+      </View>
+    );
+  const contentContainerStyle = {
+    flexGrow: 1,
+    justifyContent: "flex-end" as const,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 18,
+  };
+
+  if (Platform.OS !== "web") {
+    return (
+      <KeyboardChatScrollView
+        ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+        className="flex-1 bg-background"
+        contentContainerStyle={contentContainerStyle}
+        keyboardDismissMode="interactive"
+        keyboardLiftBehavior="whenAtEnd"
+        keyboardShouldPersistTaps="handled"
+        onContentSizeChange={onContentSizeChange}
+        onEndVisible={onEndVisible}
+        onLayout={onLayout}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator
+      >
+        {content}
+      </KeyboardChatScrollView>
+    );
+  }
+
   return (
     <ScrollView
-      ref={ref}
+      ref={ref as React.Ref<ScrollView>}
       className="flex-1 bg-background"
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: "flex-end",
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 18,
-      }}
-      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      contentContainerStyle={contentContainerStyle}
+      keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       onContentSizeChange={onContentSizeChange}
       onLayout={onLayout}
@@ -2131,22 +2201,7 @@ const AgentChatTranscript = React.forwardRef<
       scrollEventThrottle={16}
       showsVerticalScrollIndicator
     >
-      {messages.length === 0 ? null : (
-        <View className="w-full gap-1">
-          {messages.map((message, index) => (
-            <View
-              key={message.id ?? message.clientMessageId ?? `message:${index}`}
-              style={{ flexShrink: 0 }}
-            >
-              <MessageBlock
-                dividerWidth={dividerWidth}
-                message={message}
-                serviceEndpoint={serviceEndpoint}
-              />
-            </View>
-          ))}
-        </View>
-      )}
+      {content}
     </ScrollView>
   );
 });
