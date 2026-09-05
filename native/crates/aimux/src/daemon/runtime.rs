@@ -30,10 +30,11 @@ use crate::daemon_projects::{ProjectsRouteProject, build_projects_route_projects
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, clear_daemon_info,
     get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state, load_metadata_endpoint,
-    save_daemon_info, save_daemon_state,
+    remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
+use crate::process_inspector::{ProjectServiceProcessIdentity, is_aimux_project_service_process};
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
 use anyhow::{Context, Result};
@@ -56,6 +57,7 @@ pub trait ProjectServiceLauncher: Send + Sync {
         project_root: &Path,
         project_state_dir: &Path,
     ) -> Result<i32, String>;
+    fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String>;
 }
 
 #[derive(Debug, Default)]
@@ -100,6 +102,27 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
         }
         let child = command.spawn().map_err(|error| error.to_string())?;
         i32::try_from(child.id()).map_err(|_| "project service pid overflow".to_owned())
+    }
+
+    fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {
+        if !is_pid_alive(service.pid) {
+            return Ok(());
+        }
+        let expected = ProjectServiceProcessIdentity {
+            project_id: Some(service.project_id.clone()),
+            project_root: Some(service.project_root.clone()),
+        };
+        if !is_aimux_project_service_process(service.pid, &expected) {
+            return Err(format!(
+                "refusing to signal unverified aimux project service pid={}",
+                service.pid
+            ));
+        }
+        signal_pid(
+            service.pid,
+            if force { libc::SIGKILL } else { libc::SIGTERM },
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
@@ -234,7 +257,10 @@ impl RealDaemonRuntime {
         let service = state.projects.get(project_id)?;
         serde_json::from_value::<ProjectServiceState>(service.clone())
             .ok()
-            .filter(|service| is_pid_alive(service.pid))
+            .filter(|service| {
+                service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
+                    && is_pid_alive(service.pid)
+            })
     }
 
     fn save_project_service_state(&self, service: &ProjectServiceState) -> Result<(), String> {
@@ -246,6 +272,12 @@ impl RealDaemonRuntime {
         );
         save_daemon_state(self.resolver.daemon_state_path(), &state)
             .map_err(|error| error.to_string())
+    }
+
+    fn stored_project_service_state(&self, project_id: &str) -> Option<ProjectServiceState> {
+        let state = load_daemon_state(self.resolver.daemon_state_path());
+        let service = state.projects.get(project_id)?;
+        serde_json::from_value::<ProjectServiceState>(service.clone()).ok()
     }
 
     fn wait_for_live_project_service(
@@ -416,16 +448,44 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         serde_json::to_value(service).map_err(|error| error.to_string())
     }
 
-    fn stop_project(&mut self, _project_root: &str, _force: bool) -> Result<Value, String> {
-        Err(self.unported("project service stop"))
+    fn stop_project(&mut self, project_root: &str, force: bool) -> Result<Value, String> {
+        let mut resolver = self.resolver.clone();
+        let project_root_path = resolver.resolve_repo_root(project_root);
+        let project_root = project_root_path.to_string_lossy().into_owned();
+        let project_id = compute_project_id(&project_root_path);
+        let Some(mut service) = self.stored_project_service_state(&project_id) else {
+            return Ok(json!({
+                "projectId": project_id,
+                "projectRoot": project_root,
+                "pid": 0,
+                "status": "stopped",
+            }));
+        };
+        self.project_service_launcher.terminate(&service, force)?;
+        remove_metadata_endpoint(resolver.project_state_dir_for(&project_root));
+        service.status = Some(crate::daemon_state::ProjectServiceStatus::Stopped);
+        service.updated_at = now_iso();
+        service.last_exit = Some(crate::daemon_state::ProjectServiceExit {
+            at: service.updated_at.clone(),
+            code: None,
+            signal: Some(if force { "SIGKILL" } else { "SIGTERM" }.into()),
+            expected: true,
+        });
+        self.save_project_service_state(&service)?;
+        serde_json::to_value(service).map_err(|error| error.to_string())
     }
 
     fn restart_project_service(
         &mut self,
-        _project_root: &str,
+        project_root: &str,
         _serve_only: bool,
     ) -> Result<Value, String> {
-        Err(self.unported("project service restart"))
+        let _ = <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false);
+        let project = <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
+        Ok(json!({
+            "project": project,
+            "dashboardSessionName": Value::Null,
+        }))
     }
 
     fn overseer_watch(
@@ -943,4 +1003,20 @@ fn current_unix_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(unix)]
+fn signal_pid(pid: i32, signal: i32) -> std::io::Result<()> {
+    unsafe {
+        if libc::kill(pid, signal) == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn signal_pid(_pid: i32, _signal: i32) -> std::io::Result<()> {
+    Ok(())
 }

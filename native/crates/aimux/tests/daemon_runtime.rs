@@ -251,6 +251,99 @@ fn core_projects_ensure_route_uses_native_supervision_runtime() {
 }
 
 #[test]
+fn stop_project_marks_service_stopped_and_removes_endpoint() {
+    let fixture = RuntimeFixture::new("stop");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_902,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_657));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let stopped = runtime
+        .stop_project(project.to_str().expect("project path"), false)
+        .expect("stop project");
+
+    assert_eq!(
+        launcher.terminations(),
+        vec![(std::process::id() as i32, false)]
+    );
+    assert_eq!(stopped["status"], "stopped");
+    assert_eq!(stopped["lastExit"]["signal"], "SIGTERM");
+    assert!(
+        !resolver
+            .project_state_dir_for(&project)
+            .join("metadata-api.json")
+            .exists()
+    );
+    assert_eq!(
+        fixture
+            .runtime()
+            .daemon_state()
+            .projects
+            .get(&entry.id)
+            .and_then(|value| value.get("status")),
+        Some(&json!("stopped"))
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn restart_project_stops_then_launches_fresh_service() {
+    let fixture = RuntimeFixture::new("restart");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    let launcher = Arc::new(FakeLauncher::new(87_658));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let restarted = runtime
+        .restart_project_service(project.to_str().expect("project path"), true)
+        .expect("restart project");
+
+    assert_eq!(
+        launcher.terminations(),
+        vec![(std::process::id() as i32, false)]
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project.to_string_lossy().into_owned()]
+    );
+    assert_eq!(restarted["project"]["pid"], json!(87_658));
+    assert_eq!(restarted["project"]["status"], "starting");
+    fixture.cleanup();
+}
+
+#[test]
 fn native_daemon_auth_reports_local_logged_out_state() {
     let fixture = RuntimeFixture::new("auth");
     let runtime = fixture.runtime();
@@ -349,6 +442,7 @@ fn request(method: &str, path: &str) -> aimux::daemon::server::DaemonHttpRequest
 struct FakeLauncher {
     pid: i32,
     calls: Mutex<Vec<String>>,
+    terminations: Mutex<Vec<(i32, bool)>>,
 }
 
 impl FakeLauncher {
@@ -356,11 +450,16 @@ impl FakeLauncher {
         Self {
             pid,
             calls: Mutex::new(Vec::new()),
+            terminations: Mutex::new(Vec::new()),
         }
     }
 
     fn calls(&self) -> Vec<String> {
         self.calls.lock().expect("calls").clone()
+    }
+
+    fn terminations(&self) -> Vec<(i32, bool)> {
+        self.terminations.lock().expect("terminations").clone()
     }
 }
 
@@ -377,4 +476,44 @@ impl ProjectServiceLauncher for FakeLauncher {
             .push(project_root.to_string_lossy().into_owned());
         Ok(self.pid)
     }
+
+    fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {
+        self.terminations
+            .lock()
+            .expect("terminations")
+            .push((service.pid, force));
+        Ok(())
+    }
+}
+
+fn persist_service(
+    resolver: &PathResolver,
+    project_id: &str,
+    project: &Path,
+    pid: i32,
+    status: ProjectServiceStatus,
+) {
+    let service = ProjectServiceState {
+        project_id: project_id.into(),
+        project_root: project.to_string_lossy().into_owned(),
+        pid,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: Some(status),
+        restart_count: Some(0),
+        last_restart_at: None,
+        last_exit: None,
+    };
+    save_daemon_state(
+        resolver.daemon_state_path(),
+        &DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: Map::from_iter([(
+                project_id.into(),
+                serde_json::to_value(service).expect("service json"),
+            )]),
+        },
+    )
+    .expect("daemon state");
 }
