@@ -18,6 +18,7 @@ import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowUp,
   ChevronDown,
@@ -85,6 +86,7 @@ import {
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
+import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { singleRouteParam } from "@/lib/route-params";
@@ -99,6 +101,7 @@ import { useRouteShare } from "@/lib/use-route-share";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
+import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
   activityFamily,
@@ -130,9 +133,10 @@ const COMPOSER_INPUT_LINE_HEIGHT = 20;
 const COMPOSER_INPUT_VERTICAL_PADDING = 6;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_MAX_HEIGHT =
-  COMPOSER_INPUT_LINE_HEIGHT * 3 + COMPOSER_INPUT_VERTICAL_PADDING * 2;
+  COMPOSER_INPUT_LINE_HEIGHT * 4 + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_HEIGHT_SLOP = 4;
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
+const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
@@ -453,6 +457,8 @@ export default function ChatScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const { width, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const keyboardVisible = useKeyboardVisible(Platform.OS !== "web");
   const appVisible = useAppVisible();
   const [token, setToken] = useState<string | null>(null);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
@@ -711,6 +717,10 @@ export default function ChatScreen() {
   const composerInputScrollEnabled =
     composerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP;
   const composerInputHeight = composerInputHeightForContentHeight(composerInputContentHeight);
+  const composerFooterBottomPadding =
+    Platform.OS === "web" || keyboardVisible
+      ? COMPOSER_FOOTER_VERTICAL_PADDING
+      : COMPOSER_FOOTER_VERTICAL_PADDING + resolveChromeBottomInset(insets.bottom);
   const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
@@ -1436,6 +1446,7 @@ export default function ChatScreen() {
       className="border-t border-border bg-background px-3 py-3"
       style={{
         flexShrink: 0,
+        paddingBottom: composerFooterBottomPadding,
       }}
     >
       {pendingAttachments.length > 0 ? (
