@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   assertPublishableSource,
+  anchorSessionAttachment,
   createPathAttachment,
   forgetSessionAttachments,
   listSessionAttachments,
@@ -316,5 +317,40 @@ describe("session attachment hydration", () => {
     forgetSessionAttachments();
 
     expect(listSessionAttachments("codex-1").map((entry) => entry.record.filename)).toEqual(["earlier.txt"]);
+  });
+
+  it("hydrates persisted anchors after a service restart", () => {
+    const sourcePath = join(repoRoot, "chart.png");
+    writeFileSync(sourcePath, "png");
+    const attachment = createPathAttachment({ projectRoot: repoRoot, sourcePath, sessionId: "codex-1" });
+
+    anchorSessionAttachment("codex-1", attachment.id, "assistant:published-turn");
+    expect(getAttachmentRecord(attachment.id, "codex-1")?.anchorMessageId).toBe("assistant:published-turn");
+
+    forgetSessionAttachments();
+
+    expect(listSessionAttachments("codex-1")).toMatchObject([
+      {
+        anchorMessageId: "assistant:published-turn",
+        record: { id: attachment.id },
+      },
+    ]);
+  });
+
+  it("does not revive old unanchored path publishes after a service restart", () => {
+    const sourcePath = join(repoRoot, "old-chart.png");
+    writeFileSync(sourcePath, "png");
+    const attachment = createPathAttachment({ projectRoot: repoRoot, sourcePath, sessionId: "codex-1" });
+    const record = getAttachmentRecord(attachment.id, "codex-1");
+    expect(record).toBeTruthy();
+    const old = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    writeFileSync(
+      join(repoRoot, ".aimux", "attachments", `${attachment.id}.json`),
+      `${JSON.stringify({ ...record, createdAt: old, anchorMessageId: undefined }, null, 2)}\n`,
+    );
+
+    forgetSessionAttachments();
+
+    expect(listSessionAttachments("codex-1")).toEqual([]);
   });
 });

@@ -25,6 +25,12 @@ export interface AttachmentRecord {
    * every session for them — see its comment for why that is the safe default.
    */
   sessionId?: string;
+  /**
+   * The transcript message this agent-published attachment was first rendered
+   * with. Persisted so a project-service restart cannot make an old image attach
+   * to the newest reply.
+   */
+  anchorMessageId?: string;
   hostedAttachment?: HostedAttachmentReference;
 }
 
@@ -309,6 +315,7 @@ export interface PublishedAttachmentEntry {
 const recentPublishedBySession = new Map<string, PublishedAttachmentEntry[]>();
 const hydratedSessions = new Set<string>();
 const RECENT_PUBLISHED_PER_SESSION = 5;
+const UNANCHORED_HYDRATE_GRACE_MS = 2 * 60 * 1000;
 
 function rememberPublishedAttachment(record: AttachmentRecord): void {
   if (record.source !== "path" || !record.sessionId) return;
@@ -347,8 +354,12 @@ function hydrateSessionAttachments(sessionId: string): void {
   const knownIds = new Set(known.map((entry) => entry.record.id));
   const hydrated = records
     .filter((record) => !knownIds.has(record.id))
+    .filter(
+      (record) =>
+        Boolean(record.anchorMessageId) || Date.now() - Date.parse(record.createdAt) < UNANCHORED_HYDRATE_GRACE_MS,
+    )
     .slice(0, RECENT_PUBLISHED_PER_SESSION)
-    .map((record) => ({ record: toPublicAttachment(record) }));
+    .map((record) => ({ record: toPublicAttachment(record), anchorMessageId: record.anchorMessageId }));
   recentPublishedBySession.set(sessionId, [...known, ...hydrated].slice(0, RECENT_PUBLISHED_PER_SESSION));
 }
 
@@ -367,11 +378,15 @@ export function listSessionAttachments(sessionId: string, opts: { limit?: number
  * every later answer.
  */
 export function anchorSessionAttachment(sessionId: string, attachmentId: string, messageId: string): void {
-  const recent = recentPublishedBySession.get(sessionId.trim());
+  const trimmedSessionId = sessionId.trim();
+  const recent = recentPublishedBySession.get(trimmedSessionId);
   if (!recent) return;
   const entry = recent.find((candidate) => candidate.record.id === attachmentId);
   if (!entry) return;
   entry.anchorMessageId = messageId;
+  const record = getAttachmentRecord(attachmentId, trimmedSessionId);
+  if (!record || record.source !== "path") return;
+  writeJsonAtomic(join(getAttachmentsDir(), `${record.id}.json`), { ...record, anchorMessageId: messageId });
 }
 
 /** Test seam. Publishing and reading share a process, so they share this map. */
