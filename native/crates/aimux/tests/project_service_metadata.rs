@@ -904,19 +904,24 @@ fn runtime_notify_honors_focused_session_unless_forced() {
 }
 
 #[test]
-fn unported_runtime_metadata_routes_stay_explicit() {
+fn split_owned_runtime_routes_are_not_claimed_by_metadata_handler() {
     let project = temp_project("unported");
     let context =
         ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
-    let response = route_runtime_metadata_request(
-        &context,
-        "POST",
+    for route in [
+        routes::runtime::NOTIFICATION_CONTEXT,
         routes::runtime::SHELL_STATE,
-        Some(&json!({})),
-    )
-    .expect("known runtime route");
-    assert_eq!(response.status, 501);
-    assert_eq!(response.body["group"], "runtime");
+        routes::runtime::USAGE_MARK,
+        routes::hooks::CLAUDE,
+        routes::hooks::CODEX,
+        routes::STATUSLINE_REFRESH,
+        routes::OPERATION_FAILURES_CLEAR,
+    ] {
+        assert!(
+            route_runtime_metadata_request(&context, "POST", route, Some(&json!({}))).is_none(),
+            "metadata handler should not claim split-owned route {route}"
+        );
+    }
     cleanup(project);
 }
 

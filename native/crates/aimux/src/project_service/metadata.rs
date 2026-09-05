@@ -4,10 +4,7 @@ use std::path::Path;
 use crate::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use crate::project_api_contract::routes;
 
-use super::dispatcher::{
-    ProjectServiceDispatchResponse, project_service_pathname,
-    route_unimplemented_project_service_request,
-};
+use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::notification_context::is_session_notification_focused;
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::router::ProjectServiceRequestContext;
@@ -180,15 +177,6 @@ pub fn route_runtime_metadata_request(
                 ),
                 Err(error) => json_response(500, json!({ "ok": false, "error": error })),
             })
-        }
-        routes::runtime::NOTIFICATION_CONTEXT
-        | routes::runtime::SHELL_STATE
-        | routes::runtime::USAGE_MARK
-        | routes::hooks::CLAUDE
-        | routes::hooks::CODEX
-        | routes::STATUSLINE_REFRESH
-        | routes::OPERATION_FAILURES_CLEAR => {
-            Some(route_unimplemented_project_service_request(method, path))
         }
         _ => None,
     }
