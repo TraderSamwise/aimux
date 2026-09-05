@@ -6,6 +6,7 @@ use crate::paths::PathResolver;
 use super::dispatcher::{
     ProjectServiceDispatchResponse, route_unimplemented_project_service_request,
 };
+use super::metadata::route_runtime_metadata_request;
 use super::plans::route_plan_request;
 use super::reads::route_read_request;
 
@@ -59,6 +60,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_plan_request(context.project_root(), method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_runtime_metadata_request(context, method, path, body) {
         return response;
     }
 
