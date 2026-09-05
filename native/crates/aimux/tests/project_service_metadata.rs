@@ -326,6 +326,33 @@ fn runtime_set_activity_tracks_idle_transitions() {
 }
 
 #[test]
+fn runtime_set_activity_stamps_cold_idle_sessions() {
+    let project = temp_project("activity-cold-idle");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ACTIVITY,
+        Some(&json!({ "session": "codex-1", "activity": "idle" })),
+    )
+    .expect("set activity");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["activity"], "idle");
+    assert!(
+        derived["becameIdleAt"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z')),
+        "cold idle sessions get a becameIdleAt timestamp"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn runtime_set_attention_updates_derived_attention() {
     let project = temp_project("attention");
     let state_dir = project.join("state");
@@ -379,6 +406,29 @@ fn runtime_set_attention_updates_derived_attention() {
         snapshot.notifications[0]["dedupeKey"],
         "needs_input:codex-1"
     );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_set_attention_creates_only_attention_for_cold_sessions() {
+    let project = temp_project("attention-cold");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ATTENTION,
+        Some(&json!({ "session": "codex-1", "attention": "normal" })),
+    )
+    .expect("set attention");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["attention"], "normal");
+    assert!(derived["activity"].is_null());
+    assert!(derived["unseenCount"].is_null());
     cleanup(project);
 }
 
@@ -458,6 +508,29 @@ fn runtime_mark_seen_only_zeros_unseen_count() {
     assert_eq!(derived["attention"], "needs_input");
     assert_eq!(derived["activity"], "waiting");
     assert_eq!(derived["services"], json!([{ "label": "web" }]));
+    cleanup(project);
+}
+
+#[test]
+fn runtime_mark_seen_creates_derived_without_status_drift() {
+    let project = temp_project("mark-seen-cold");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::MARK_SEEN,
+        Some(&json!({ "session": "codex-1" })),
+    )
+    .expect("mark seen");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let session = &state.sessions["codex-1"];
+    assert_eq!(session["derived"]["unseenCount"], 0);
+    assert!(session["derived"]["activity"].is_null());
+    assert!(session["derived"]["attention"].is_null());
     cleanup(project);
 }
 

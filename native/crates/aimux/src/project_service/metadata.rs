@@ -296,12 +296,6 @@ fn set_derived_services(current: Value, services: Value) -> Value {
 }
 
 fn set_derived_activity(current: Value, activity: String) -> Value {
-    let previous_activity = current
-        .get("derived")
-        .and_then(Value::as_object)
-        .and_then(|derived| derived.get("activity"))
-        .and_then(Value::as_str)
-        .map(str::to_owned);
     let mut derived = current
         .get("derived")
         .and_then(Value::as_object)
@@ -309,7 +303,7 @@ fn set_derived_activity(current: Value, activity: String) -> Value {
         .unwrap_or_default();
     if activity == "running" {
         derived.remove("becameIdleAt");
-    } else if previous_activity.as_deref() == Some("running") {
+    } else if !derived.contains_key("becameIdleAt") {
         derived.insert("becameIdleAt".to_owned(), Value::String(now_iso()));
     }
     derived.insert("activity".to_owned(), Value::String(activity));
