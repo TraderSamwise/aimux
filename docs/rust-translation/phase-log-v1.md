@@ -86,3 +86,27 @@ Parity evidence:
 Open gaps:
 - Filesystem loading, corrupt-file quarantine, and config save/init behavior
   remain TypeScript-owned.
+
+## 2026-09-05 Phase 1 Registered Catalog And Projects Route
+
+Status: complete
+Scope: `src/project-scanner.ts` registered desktop project filtering/sorting and
+`src/daemon/projects-route.ts` registered `/projects` service decoration plus
+online agent count rules.
+
+Verification:
+- `yarn native:test`
+- direct TypeScript oracle for `countOnlineDesktopAgents`
+
+Parity evidence:
+- focused Rust tests translated from `src/project-scanner.test.ts` and
+  `src/daemon/projects-route.test.ts`
+- dead-code sidecar found no early-surface exports safe to skip
+- subagent review found actor-state nullish precedence and relative `.git`
+  resolution drift; both patched with regression tests before commit
+
+Open gaps:
+- Full topology scanning, statusline enrichment, daemon HTTP route wiring, and
+  online-count network caching remain for later daemon/runtime slices.
+- Exact `localeCompare` ordering and config-file-backed session prefix loading
+  remain open for the full scanner port.
