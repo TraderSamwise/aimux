@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 use super::dispatcher::ProjectServiceDispatchResponse;
 use super::http::{
     MAX_BODY_BYTES, PreparedProjectServiceResponse, ProjectServiceBodyError,
-    prepare_project_service_empty_response, prepare_project_service_json_response,
-    project_service_cors_headers, read_json_body_limited, reject_project_service_cors_response,
+    prepare_project_service_bytes_response, prepare_project_service_empty_response,
+    prepare_project_service_json_response, project_service_cors_headers, read_json_body_limited,
+    reject_project_service_cors_response,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +59,17 @@ where
     };
 
     let response = route(&request.method, &request.path, body.as_ref());
+    if let Some(bytes) = response.bytes {
+        return prepare_project_service_bytes_response(
+            response.status,
+            bytes,
+            response
+                .content_type
+                .as_deref()
+                .unwrap_or("application/octet-stream"),
+            cors,
+        );
+    }
     prepare_project_service_json_response(response.status, response.body, cors)
 }
 

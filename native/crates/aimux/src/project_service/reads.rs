@@ -25,24 +25,23 @@ pub fn route_read_request(
             Ok(manifest) => serde_json::to_value(manifest).unwrap_or_else(|_| json!({})),
             Err(error) => json!({ "error": error.to_string() }),
         };
-        return Some(ProjectServiceDispatchResponse {
-            status: 200,
-            body: json!({
+        return Some(ProjectServiceDispatchResponse::json(
+            200,
+            json!({
                 "ok": true,
                 "projectStateDir": context.project_state_dir_string(),
                 "pid": std::process::id(),
                 "serviceInfo": service_info,
             }),
-        });
+        ));
     }
 
     if pathname == routes::STATE {
         let state = load_metadata_state(context.project_state_dir());
-        return Some(ProjectServiceDispatchResponse {
-            status: 200,
-            body: serde_json::to_value(state)
-                .unwrap_or_else(|_| json!({ "version": 1, "sessions": {} })),
-        });
+        return Some(ProjectServiceDispatchResponse::json(
+            200,
+            serde_json::to_value(state).unwrap_or_else(|_| json!({ "version": 1, "sessions": {} })),
+        ));
     }
 
     if pathname == routes::DIAGNOSTICS

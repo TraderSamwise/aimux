@@ -363,5 +363,5 @@ fn percent_decode_bytes(input: &str, plus_as_space: bool) -> Result<String, Stri
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse { status, body }
+    ProjectServiceDispatchResponse::json(status, body)
 }

@@ -61,10 +61,7 @@ fn parses_write_body_before_dispatch() {
             assert_eq!(method, "POST");
             assert_eq!(path, routes::runtime::SET_STATUS);
             assert_eq!(body, Some(&json!({ "session": "codex-1", "text": "idle" })));
-            ProjectServiceDispatchResponse {
-                status: 200,
-                body: json!({ "ok": true }),
-            }
+            ProjectServiceDispatchResponse::json(200, json!({ "ok": true }))
         },
     );
     assert_eq!(response.status, 200);
@@ -81,13 +78,30 @@ fn does_not_parse_get_body() {
         request("GET", routes::HEALTH, [], [b"not json".as_slice()]),
         |_method, _path, body| {
             assert!(body.is_none());
-            ProjectServiceDispatchResponse {
-                status: 200,
-                body: json!({ "ok": true }),
-            }
+            ProjectServiceDispatchResponse::json(200, json!({ "ok": true }))
         },
     );
     assert_eq!(response.status, 200);
+}
+
+#[test]
+fn dispatches_binary_route_responses_without_json_encoding() {
+    let response = handle_project_service_http_request(
+        request("GET", "/attachments/file-1/content", [], []),
+        |_method, _path, _body| {
+            ProjectServiceDispatchResponse::bytes(200, vec![0, 1, 2], "image/png")
+        },
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, vec![0, 1, 2]);
+    assert_eq!(
+        response.headers.get("content-type"),
+        Some(&"image/png".to_owned())
+    );
+    assert_eq!(
+        response.headers.get("cache-control"),
+        Some(&"private, max-age=31536000, immutable".to_owned())
+    );
 }
 
 #[test]

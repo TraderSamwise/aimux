@@ -24,10 +24,10 @@ pub fn route_usage_request(
     let body = body.unwrap_or(&Value::Null);
     let item_id = trimmed_string(body.get("itemId")).unwrap_or_default();
     if item_id.is_empty() {
-        return Some(ProjectServiceDispatchResponse {
-            status: 400,
-            body: json!({ "ok": false, "error": "itemId is required" }),
-        });
+        return Some(ProjectServiceDispatchResponse::json(
+            400,
+            json!({ "ok": false, "error": "itemId is required" }),
+        ));
     }
     let state = mark_last_used(
         context.project_state_dir(),
@@ -37,14 +37,14 @@ pub fn route_usage_request(
             used_at: trimmed_string(body.get("usedAt")),
         },
     );
-    Some(ProjectServiceDispatchResponse {
-        status: 200,
-        body: json!({
+    Some(ProjectServiceDispatchResponse::json(
+        200,
+        json!({
             "ok": true,
             "itemId": item_id,
             "lastUsedAt": state.get("items").and_then(|items| items.get(&item_id)).and_then(|item| item.get("lastUsedAt")).cloned().unwrap_or(Value::Null),
         }),
-    })
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

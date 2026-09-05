@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
 
+use super::attachments::route_attachment_request;
 use super::dispatcher::{
     ProjectServiceDispatchResponse, route_unimplemented_project_service_request,
 };
@@ -24,6 +25,7 @@ pub struct ProjectServiceRequestContext {
     pub project_root: PathBuf,
     pub project_state_dir: Option<PathBuf>,
     pub session_labels: BTreeMap<String, String>,
+    pub request_headers: BTreeMap<String, String>,
 }
 
 impl ProjectServiceRequestContext {
@@ -32,6 +34,7 @@ impl ProjectServiceRequestContext {
             project_root: project_root.into(),
             project_state_dir: None,
             session_labels: BTreeMap::new(),
+            request_headers: BTreeMap::new(),
         }
     }
 
@@ -43,6 +46,7 @@ impl ProjectServiceRequestContext {
             project_root: project_root.into(),
             project_state_dir: Some(project_state_dir.into()),
             session_labels: BTreeMap::new(),
+            request_headers: BTreeMap::new(),
         }
     }
 
@@ -52,6 +56,17 @@ impl ProjectServiceRequestContext {
         label: impl Into<String>,
     ) -> Self {
         self.session_labels.insert(session_id.into(), label.into());
+        self
+    }
+
+    pub fn with_request_headers(
+        mut self,
+        headers: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.request_headers = headers
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
         self
     }
 
@@ -85,6 +100,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_notifications_request(context, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_attachment_request(context, method, path) {
         return response;
     }
     if let Some(response) = route_library_request(context, method, path) {

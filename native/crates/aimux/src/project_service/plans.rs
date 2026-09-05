@@ -146,7 +146,7 @@ fn percent_decode_uri_component(input: &str) -> Result<String, String> {
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse { status, body }
+    ProjectServiceDispatchResponse::json(status, body)
 }
 
 pub fn plans_route_prefix() -> &'static str {

@@ -74,10 +74,10 @@ pub fn route_notification_context_request(
             panel_open: Some(body.get("panelOpen") == Some(&Value::Bool(true))),
         },
     );
-    Some(ProjectServiceDispatchResponse {
-        status: 200,
-        body: json!({ "ok": true, "context": entry }),
-    })
+    Some(ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "context": entry }),
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

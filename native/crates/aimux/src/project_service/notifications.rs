@@ -596,5 +596,5 @@ fn percent_decode_form(input: &str) -> String {
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse { status, body }
+    ProjectServiceDispatchResponse::json(status, body)
 }

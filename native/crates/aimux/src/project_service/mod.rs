@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod dispatcher;
 pub mod exchange_reads;
 pub mod exchange_retention;

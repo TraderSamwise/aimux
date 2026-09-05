@@ -49,14 +49,14 @@ pub fn route_library_request(
     if !method.eq_ignore_ascii_case("GET") || pathname != routes::LIBRARY {
         return None;
     }
-    Some(ProjectServiceDispatchResponse {
-        status: 200,
-        body: json!({
+    Some(ProjectServiceDispatchResponse::json(
+        200,
+        json!({
             "ok": true,
             "documents": list_library_documents(context.project_root()),
             "entries": load_library_entries(context, DEFAULT_PREVIEW_BYTES),
         }),
-    })
+    ))
 }
 
 pub fn list_library_documents(project_root: impl AsRef<Path>) -> Vec<Value> {

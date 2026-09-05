@@ -51,10 +51,10 @@ pub fn route_operation_failures_request(
                 .unwrap_or_default(),
         },
     );
-    Some(ProjectServiceDispatchResponse {
-        status: 200,
-        body: json!({ "ok": true, "cleared": cleared }),
-    })
+    Some(ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "cleared": cleared }),
+    ))
 }
 
 pub fn dashboard_operation_failures_path(project_state_dir: impl AsRef<Path>) -> PathBuf {

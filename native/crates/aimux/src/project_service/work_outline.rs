@@ -652,5 +652,5 @@ fn format_offset_date_time(now: time::OffsetDateTime) -> String {
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse { status, body }
+    ProjectServiceDispatchResponse::json(status, body)
 }

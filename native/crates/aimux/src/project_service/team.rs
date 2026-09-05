@@ -255,12 +255,9 @@ fn error(status: u16, message: impl Into<String>) -> TeamMutationResult {
 }
 
 fn team_result_response(result: TeamMutationResult) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse {
-        status: result.status,
-        body: result.body,
-    }
+    ProjectServiceDispatchResponse::json(result.status, result.body)
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse { status, body }
+    ProjectServiceDispatchResponse::json(status, body)
 }

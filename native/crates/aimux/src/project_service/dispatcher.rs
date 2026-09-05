@@ -16,6 +16,28 @@ pub enum ProjectServiceRouteResolution {
 pub struct ProjectServiceDispatchResponse {
     pub status: u16,
     pub body: Value,
+    pub bytes: Option<Vec<u8>>,
+    pub content_type: Option<String>,
+}
+
+impl ProjectServiceDispatchResponse {
+    pub fn json(status: u16, body: Value) -> Self {
+        Self {
+            status,
+            body,
+            bytes: None,
+            content_type: None,
+        }
+    }
+
+    pub fn bytes(status: u16, bytes: Vec<u8>, content_type: impl Into<String>) -> Self {
+        Self {
+            status,
+            body: Value::Null,
+            bytes: Some(bytes),
+            content_type: Some(content_type.into()),
+        }
+    }
 }
 
 pub fn parse_project_service_method(method: &str) -> Option<Method> {
@@ -72,31 +94,31 @@ pub fn route_unimplemented_project_service_request(
     path: &str,
 ) -> ProjectServiceDispatchResponse {
     match resolve_project_service_route(method, path) {
-        ProjectServiceRouteResolution::Route(spec) => ProjectServiceDispatchResponse {
-            status: 501,
-            body: json!({
+        ProjectServiceRouteResolution::Route(spec) => ProjectServiceDispatchResponse::json(
+            501,
+            json!({
                 "ok": false,
                 "error": "project service route not ported",
                 "method": spec.method.as_str(),
                 "path": project_service_pathname(path),
                 "group": route_group_name(spec.group),
             }),
-        },
+        ),
         ProjectServiceRouteResolution::MethodNotAllowed { path, allowed } => {
-            ProjectServiceDispatchResponse {
-                status: 405,
-                body: json!({
+            ProjectServiceDispatchResponse::json(
+                405,
+                json!({
                     "ok": false,
                     "error": "method not allowed",
                     "path": path,
                     "allowed": allowed.into_iter().map(Method::as_str).collect::<Vec<_>>(),
                 }),
-            }
+            )
         }
-        ProjectServiceRouteResolution::NotFound { path } => ProjectServiceDispatchResponse {
-            status: 404,
-            body: json!({ "ok": false, "error": "not found", "path": path }),
-        },
+        ProjectServiceRouteResolution::NotFound { path } => ProjectServiceDispatchResponse::json(
+            404,
+            json!({ "ok": false, "error": "not found", "path": path }),
+        ),
     }
 }
 
