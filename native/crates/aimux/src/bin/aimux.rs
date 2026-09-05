@@ -1,8 +1,12 @@
 use aimux::core_cli_executor::run_core_cli;
 use aimux::core_cli_routing::core_command_args;
 use aimux::launcher_env::{CliEntry, cli_entry_for};
+use aimux::project_service::process::{
+    ProjectServiceInternalOptions, run_project_service_internal,
+};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Debug, Parser)]
@@ -26,6 +30,13 @@ enum Command {
     Rewrite {
         #[command(subcommand)]
         command: RewriteCommand,
+    },
+    #[command(name = "__project-service-internal", hide = true)]
+    ProjectServiceInternal {
+        #[arg(long = "project-id")]
+        project_id: Option<String>,
+        #[arg(long = "project-root")]
+        project_root: Option<PathBuf>,
     },
 }
 
@@ -83,6 +94,16 @@ fn main() -> Result<ExitCode> {
         Command::Rewrite {
             command: RewriteCommand::Status { json },
         } => print_value(aimux::rewrite_status(), json),
+        Command::ProjectServiceInternal {
+            project_id,
+            project_root,
+        } => {
+            run_project_service_internal(ProjectServiceInternalOptions {
+                project_id,
+                project_root,
+            })?;
+            Ok(())
+        }
     }?;
     Ok(ExitCode::SUCCESS)
 }
