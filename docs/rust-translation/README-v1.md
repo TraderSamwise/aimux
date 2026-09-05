@@ -28,6 +28,7 @@ entrypoints, and the search/test evidence used to make the call.
 - `parity-matrix-v1.md`: behavior-surface checklist.
 - `phase-log-v1.md`: compact phase evidence log.
 - `decisions-v1.md`: intentional behavior differences from TypeScript.
+- `release-zero-node-v1.md`: installed runtime release gate.
 
 The machine-readable contract map lives at
 `native/contracts/feature-parity-v1.json`. Cross-language fixtures live under
