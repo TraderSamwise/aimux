@@ -352,7 +352,7 @@ fn runtime_set_attention_updates_derived_attention() {
 }
 
 #[test]
-fn runtime_mark_seen_clears_unseen_and_dismisses_actionable_attention() {
+fn runtime_mark_seen_only_zeros_unseen_count() {
     let project = temp_project("mark-seen");
     let state_dir = project.join("state");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -383,8 +383,8 @@ fn runtime_mark_seen_clears_unseen_and_dismisses_actionable_attention() {
     let state = load_metadata_state(&state_dir);
     let derived = &state.sessions["codex-1"]["derived"];
     assert_eq!(derived["unseenCount"], 0);
-    assert_eq!(derived["attention"], "normal");
-    assert_eq!(derived["activity"], "idle");
+    assert_eq!(derived["attention"], "needs_input");
+    assert_eq!(derived["activity"], "waiting");
     assert_eq!(derived["services"], json!([{ "label": "web" }]));
     cleanup(project);
 }

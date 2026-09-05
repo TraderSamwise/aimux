@@ -384,17 +384,7 @@ fn mark_seen(current: Value) -> Value {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let clear_attention = matches!(
-        derived.get("attention").and_then(Value::as_str),
-        Some("needs_input" | "needs_response")
-    );
     derived.insert("unseenCount".to_owned(), Value::Number(0.into()));
-    if clear_attention {
-        derived.insert("attention".to_owned(), Value::String("normal".to_owned()));
-        if derived.get("activity").and_then(Value::as_str) == Some("waiting") {
-            derived.insert("activity".to_owned(), Value::String("idle".to_owned()));
-        }
-    }
     object_insert(current, "derived", Value::Object(derived))
 }
 
