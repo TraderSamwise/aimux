@@ -6,6 +6,11 @@ Rewrite Aimux into Rust with full feature parity before architecture changes.
 The normal installed CLI, daemon, project-service, tmux runtime, and dashboard
 hot path must end with zero Node processes.
 
+JavaScript may remain for the Expo/mobile/web GUI and for build-time tooling
+needed to produce GUI assets. It may not remain in the installed runtime path
+for CLI, daemon, project-service, tmux control, terminal dashboard, doctor, or
+release install shims.
+
 ## Porting Rule
 
 TypeScript behavior is the spec. The first Rust implementation copies file
