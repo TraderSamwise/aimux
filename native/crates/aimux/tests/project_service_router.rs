@@ -36,8 +36,8 @@ fn router_keeps_unported_routes_explicit() {
     let context = ProjectServiceRequestContext::new(&project);
     let response = route_project_service_request(
         &context,
-        "POST",
-        routes::controls::OPEN_DASHBOARD,
+        "GET",
+        routes::orchestration::ROUTES,
         Some(&json!({})),
     );
     assert_eq!(response.status, 501);
@@ -46,9 +46,9 @@ fn router_keeps_unported_routes_explicit() {
         json!({
             "ok": false,
             "error": "project service route not ported",
-            "method": "POST",
-            "path": "/control/open-dashboard",
-            "group": "controls",
+            "method": "GET",
+            "path": "/orchestration/routes",
+            "group": "reads",
         })
     );
     cleanup(project);

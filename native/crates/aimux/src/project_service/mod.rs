@@ -2,6 +2,7 @@ pub mod agent_controls;
 pub mod agent_output;
 pub mod agents;
 pub mod attachments;
+pub mod controls;
 pub mod coordination_mutations;
 pub mod coordination_worklist;
 pub mod desktop_state;
