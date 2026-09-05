@@ -11,6 +11,10 @@ fn routes_core_expose_and_main_like_launcher_env() {
         CliEntry::Core
     );
     assert_eq!(
+        cli_entry_for(&["node", "aimux", "daemon", "run"]),
+        CliEntry::Main
+    );
+    assert_eq!(
         cli_entry_for(&["node", "aimux", "expose"]),
         CliEntry::Expose
     );
