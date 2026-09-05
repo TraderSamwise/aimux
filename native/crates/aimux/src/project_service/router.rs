@@ -22,6 +22,7 @@ use super::team::route_team_request;
 use super::topology::route_topology_request;
 use super::usage::route_usage_request;
 use super::work_outline::route_work_outline_request;
+use super::worktrees::route_worktree_read_request;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectServiceRequestContext {
@@ -126,6 +127,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_agent_read_request(context, method, path) {
+        return response;
+    }
+    if let Some(response) = route_worktree_read_request(context, method, path) {
         return response;
     }
     if let Some(response) = route_exchange_read_request(context, method, path) {

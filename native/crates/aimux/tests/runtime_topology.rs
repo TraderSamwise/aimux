@@ -1,8 +1,10 @@
 use aimux::runtime_topology::{
-    coerce_runtime_topology, list_topology_session_states, read_runtime_topology,
-    runtime_topology_path, topology_session_to_session_state,
+    coerce_runtime_topology, list_topology_service_states, list_topology_session_states,
+    list_topology_worktree_graveyard, list_topology_worktree_states,
+    list_worktree_graveyard_entries, read_runtime_topology, runtime_topology_path,
+    topology_session_to_session_state,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -154,6 +156,61 @@ exchangeRefs: []
     let topology = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
     assert_eq!(topology["rigs"][0]["id"], "rig-1");
     cleanup(project);
+}
+
+#[test]
+fn projects_worktree_service_and_worktree_graveyard_states() {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-agent", "rigId": "rig-1", "logicalId": "agent-1", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "service:svc-1", "rigId": "rig-1", "logicalId": "svc-1", "role": "service", "runtime": "service", "toolConfigKey": "service", "cwd": "/repo/wt", "label": "web", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "tmux:service:svc-1", "nodeId": "service:svc-1", "tmuxSession": "aimux", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "web", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "agent-1", "nodeId": "node-agent", "status": "graveyard", "command": "codex", "worktreePath": "/repo/wt", "createdAt": "2026-01-01T00:00:01.000Z", "updatedAt": "2026-01-01T00:00:01.000Z" }
+        ],
+        "services": [
+            { "id": "svc-1", "rigId": "rig-1", "nodeId": "service:svc-1", "status": "running", "command": "yarn dev", "worktreePath": "/repo/wt", "createdAt": "2026-01-01T00:00:02.000Z", "updatedAt": "2026-01-01T00:00:02.000Z" }
+        ],
+        "worktrees": [
+            { "id": "wt-1", "rigId": "rig-1", "path": "/repo/wt", "name": "wt", "status": "graveyard", "branch": "feat/wt", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z", "removedAt": "2026-01-01T00:00:03.000Z" },
+            { "id": "main", "rigId": "rig-1", "path": "/repo", "name": "main", "status": "active", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [
+            { "id": "gy-1", "rigId": "rig-1", "worktreeId": "wt-1", "path": "/repo/wt", "branch": "feat/wt", "graveyardedAt": "2026-01-01T00:00:03.000Z" },
+            { "id": "gy-deleted", "rigId": "rig-1", "path": "/repo/deleted", "graveyardedAt": "2026-01-01T00:00:03.000Z", "deletedAt": "2026-01-01T00:00:04.000Z" }
+        ],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+
+    let active_worktrees = list_topology_worktree_states(&topology, Some(&["active"]));
+    assert_eq!(active_worktrees.len(), 1);
+    assert_eq!(active_worktrees[0]["path"], "/repo");
+    let graveyard_entries = list_topology_worktree_graveyard(&topology, false);
+    assert_eq!(graveyard_entries.len(), 1);
+    assert_eq!(graveyard_entries[0]["name"], Value::Null);
+    let services = list_topology_service_states(&topology, None);
+    assert_eq!(services[0]["label"], "web");
+    assert_eq!(services[0]["cwd"], "/repo/wt");
+    assert_eq!(services[0]["tmuxTarget"]["windowId"], "@2");
+
+    let worktree_graveyard = list_worktree_graveyard_entries(&topology);
+    assert_eq!(worktree_graveyard[0]["name"], "wt");
+    assert_eq!(worktree_graveyard[0]["branch"], "feat/wt");
+    assert_eq!(worktree_graveyard[0]["agents"][0]["id"], "agent-1");
+    assert_eq!(worktree_graveyard[0]["services"][0]["id"], "svc-1");
 }
 
 fn temp_project(label: &str) -> PathBuf {

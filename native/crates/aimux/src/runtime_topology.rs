@@ -242,6 +242,154 @@ pub fn list_topology_session_states(topology: &Value, statuses: Option<&[&str]>)
         .collect()
 }
 
+pub fn topology_worktree_to_worktree_state(worktree: &Value) -> Value {
+    let mut item = Map::new();
+    for key in [
+        "id",
+        "path",
+        "name",
+        "status",
+        "branch",
+        "head",
+        "basePath",
+        "createdAt",
+        "removedAt",
+        "operationFailure",
+    ] {
+        insert_value(&mut item, key, worktree.get(key).cloned());
+    }
+    Value::Object(item)
+}
+
+pub fn list_topology_worktree_states(topology: &Value, statuses: Option<&[&str]>) -> Vec<Value> {
+    array_field(topology, "worktrees")
+        .iter()
+        .filter(|worktree| {
+            statuses.is_none_or(|statuses| {
+                string_field(worktree, "status").is_some_and(|status| statuses.contains(&status))
+            })
+        })
+        .map(topology_worktree_to_worktree_state)
+        .collect()
+}
+
+pub fn topology_service_to_service_state(service: &Value, topology: &Value) -> Value {
+    let node = string_field(service, "nodeId").and_then(|node_id| {
+        array_field(topology, "nodes")
+            .iter()
+            .find(|node| string_field(node, "id") == Some(node_id))
+    });
+    let binding = string_field(service, "nodeId").and_then(|node_id| {
+        array_field(topology, "bindings")
+            .iter()
+            .find(|binding| string_field(binding, "nodeId") == Some(node_id))
+    });
+    let mut item = Map::new();
+    for key in [
+        "id",
+        "status",
+        "command",
+        "args",
+        "launchCommandLine",
+        "worktreePath",
+        "createdAt",
+        "lastSeenAt",
+    ] {
+        insert_value(&mut item, key, service.get(key).cloned());
+    }
+    insert_optional(
+        &mut item,
+        "cwd",
+        string_field(service, "cwd").or_else(|| node.and_then(|node| string_field(node, "cwd"))),
+    );
+    insert_optional(
+        &mut item,
+        "label",
+        string_field(service, "label")
+            .or_else(|| node.and_then(|node| string_field(node, "label"))),
+    );
+    if matches!(
+        string_field(service, "status"),
+        Some("running" | "starting")
+    ) && let Some(binding) = binding
+        && let (Some(session_name), Some(window_id), Some(window_index)) = (
+            string_field(binding, "tmuxSession"),
+            string_field(binding, "tmuxWindowId"),
+            number_field(binding, "tmuxWindowIndex"),
+        )
+    {
+        item.insert(
+            "tmuxTarget".into(),
+            json!({
+                "sessionName": session_name,
+                "windowId": window_id,
+                "windowIndex": window_index,
+                "windowName": string_field(binding, "tmuxWindowName")
+                    .or_else(|| string_field(service, "label"))
+                    .or_else(|| string_field(service, "id"))
+                    .unwrap_or(""),
+            }),
+        );
+    }
+    Value::Object(item)
+}
+
+pub fn list_topology_service_states(topology: &Value, statuses: Option<&[&str]>) -> Vec<Value> {
+    array_field(topology, "services")
+        .iter()
+        .filter(|service| {
+            statuses.is_none_or(|statuses| {
+                string_field(service, "status").is_some_and(|status| statuses.contains(&status))
+            })
+        })
+        .map(|service| topology_service_to_service_state(service, topology))
+        .collect()
+}
+
+pub fn topology_worktree_graveyard_to_state(entry: &Value) -> Value {
+    let mut item = Map::new();
+    for key in [
+        "id",
+        "worktreeId",
+        "path",
+        "name",
+        "branch",
+        "graveyardedAt",
+        "reason",
+        "deletedAt",
+    ] {
+        insert_value(&mut item, key, entry.get(key).cloned());
+    }
+    Value::Object(item)
+}
+
+pub fn list_topology_worktree_graveyard(topology: &Value, include_deleted: bool) -> Vec<Value> {
+    array_field(topology, "worktreeGraveyard")
+        .iter()
+        .filter(|entry| include_deleted || entry.get("deletedAt").is_none_or(Value::is_null))
+        .map(topology_worktree_graveyard_to_state)
+        .collect()
+}
+
+pub fn list_worktree_graveyard_entries(topology: &Value) -> Vec<Value> {
+    let sessions = list_topology_session_states(topology, None);
+    let services = list_topology_service_states(topology, None);
+    list_topology_worktree_graveyard(topology, false)
+        .into_iter()
+        .map(|entry| {
+            let path = string_field(&entry, "path").unwrap_or("");
+            json!({
+                "name": string_field(&entry, "name").unwrap_or_else(|| path_basename(path).unwrap_or(path)),
+                "path": path,
+                "branch": string_field(&entry, "branch").unwrap_or(""),
+                "graveyardedAt": string_field(&entry, "graveyardedAt").unwrap_or(""),
+                "agents": sessions.iter().filter(|session| string_field(session, "worktreePath") == Some(path)).cloned().collect::<Vec<_>>(),
+                "services": services.iter().filter(|service| string_field(service, "worktreePath") == Some(path)).cloned().collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
 fn coerce_rig(value: &Value, index: usize) -> Result<Value, String> {
     let row = as_object(value, &format!("rigs[{index}]"))?;
     Ok(json!({
@@ -854,4 +1002,11 @@ fn is_missing_file_error(error: &io::Error) -> bool {
     {
         false
     }
+}
+
+fn path_basename(path: &str) -> Option<&str> {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
 }
