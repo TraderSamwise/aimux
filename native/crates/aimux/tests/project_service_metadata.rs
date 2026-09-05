@@ -1,6 +1,10 @@
 use aimux::daemon_state::{load_metadata_state, metadata_state_path};
 use aimux::project_api_contract::routes;
 use aimux::project_service::metadata::{route_runtime_metadata_request, update_session_metadata};
+use aimux::project_service::notification_context::{
+    NotificationContextPatch, NotificationContextSource, update_notification_context,
+};
+use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::router::ProjectServiceRequestContext;
 use serde_json::json;
 use std::fs::{read_to_string, remove_dir_all};
@@ -366,12 +370,163 @@ fn runtime_mark_seen_clears_unseen_and_dismisses_actionable_attention() {
 }
 
 #[test]
+fn runtime_event_derives_state_and_keeps_bounded_event_history() {
+    let project = temp_project("event-state");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "running",
+                "attention": "normal",
+                "unseenCount": 2,
+                "events": (0..25).map(|index| json!({ "kind": "response", "message": format!("old-{index}") })).collect::<Vec<_>>()
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "status",
+                "message": "waiting for you to confirm",
+                "tone": "warn",
+                "ts": "2026-01-01T00:00:10.000Z",
+                "threadId": "thread-1",
+                "threadName": "Build"
+            }
+        })),
+    )
+    .expect("event route");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["activity"], "waiting");
+    assert_eq!(derived["attention"], "needs_input");
+    assert_eq!(derived["unseenCount"], 3);
+    assert_eq!(derived["becameIdleAt"], "2026-01-01T00:00:10.000Z");
+    assert_eq!(derived["lastOutputAt"], "2026-01-01T00:00:10.000Z");
+    assert_eq!(derived["threadId"], "thread-1");
+    assert_eq!(derived["threadName"], "Build");
+    assert_eq!(
+        derived["lastEvent"]["message"],
+        "waiting for you to confirm"
+    );
+    let events = derived["events"].as_array().expect("events");
+    assert_eq!(events.len(), 20);
+    assert_eq!(events[0]["message"], "old-6");
+    assert_eq!(events[19]["kind"], "status");
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_emits_attention_notifications() {
+    let project = temp_project("event-alert");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "needs_input",
+                "message": "Approve deploy",
+                "ts": "2026-01-01T00:00:10.000Z"
+            }
+        })),
+    )
+    .expect("event route");
+    assert_eq!(response.status, 200);
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 1);
+    assert_eq!(snapshot.notifications[0]["title"], "codex-1 needs input");
+    assert_eq!(snapshot.notifications[0]["body"], "Approve deploy");
+    assert_eq!(snapshot.notifications[0]["kind"], "needs_input");
+    assert_eq!(
+        snapshot.notifications[0]["dedupeKey"],
+        "needs_input:codex-1"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_suppresses_unseen_and_unread_when_session_is_focused() {
+    let project = temp_project("event-focused");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_notification_context(
+        &state_dir,
+        NotificationContextSource::Tui,
+        NotificationContextPatch {
+            focused: Some(true),
+            screen: Some(Some("session".into())),
+            session_id: Some(Some("codex-1".into())),
+            panel_open: Some(false),
+        },
+    );
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "needs_input",
+                "message": "Still here",
+                "ts": "2026-01-01T00:00:10.000Z"
+            }
+        })),
+    )
+    .expect("event route");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-1"]["derived"]["unseenCount"], 0);
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 0);
+    assert_eq!(snapshot.notifications[0]["unread"], false);
+    cleanup(project);
+}
+
+#[test]
 fn unported_runtime_metadata_routes_stay_explicit() {
     let project = temp_project("unported");
     let context =
         ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
     let response =
-        route_runtime_metadata_request(&context, "POST", routes::runtime::EVENT, Some(&json!({})))
+        route_runtime_metadata_request(&context, "POST", routes::runtime::NOTIFY, Some(&json!({})))
             .expect("known runtime route");
     assert_eq!(response.status, 501);
     assert_eq!(response.body["group"], "runtime");

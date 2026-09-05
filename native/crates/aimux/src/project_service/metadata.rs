@@ -8,6 +8,8 @@ use super::dispatcher::{
     ProjectServiceDispatchResponse, project_service_pathname,
     route_unimplemented_project_service_request,
 };
+use super::notification_context::is_session_notification_focused;
+use super::notifications::{NotificationWriteInput, add_notification};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{
     compact_runtime_exchange_file, inspect_runtime_exchange_store, runtime_exchange_path,
@@ -158,6 +160,14 @@ pub fn route_runtime_metadata_request(
                 mark_seen,
             ))
         }
+        routes::runtime::EVENT => {
+            let session = string_field(body, "session");
+            let event = body
+                .get("event")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            route_runtime_event(&project_state_dir, &session, event)
+        }
         routes::runtime::COMPACT_EXCHANGE => {
             let path = runtime_exchange_path(&project_state_dir);
             let result = compact_runtime_exchange_file(&path);
@@ -173,8 +183,7 @@ pub fn route_runtime_metadata_request(
                 Err(error) => json_response(500, json!({ "ok": false, "error": error })),
             })
         }
-        routes::runtime::EVENT
-        | routes::runtime::NOTIFY
+        routes::runtime::NOTIFY
         | routes::runtime::NOTIFICATION_CONTEXT
         | routes::runtime::SHELL_STATE
         | routes::runtime::USAGE_MARK
@@ -186,6 +195,27 @@ pub fn route_runtime_metadata_request(
         }
         _ => None,
     }
+}
+
+fn route_runtime_event(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    event: Value,
+) -> Option<ProjectServiceDispatchResponse> {
+    let project_state_dir = project_state_dir.as_ref();
+    let normalized = normalize_agent_event(event);
+    let focused = is_session_notification_focused(project_state_dir, session_id);
+    if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
+        apply_agent_event(current, session_id, normalized.clone(), focused)
+    }) {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    if let Some(notification) = notification_for_event(session_id, &normalized, focused)
+        && let Err(error) = add_notification(project_state_dir, notification)
+    {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
+    Some(ok())
 }
 
 pub fn update_session_metadata(
@@ -315,6 +345,301 @@ fn mark_seen(current: Value) -> Value {
         }
     }
     object_insert(current, "derived", Value::Object(derived))
+}
+
+fn normalize_agent_event(event: Value) -> Value {
+    let mut event = object_value(event);
+    if !event.contains_key("ts") {
+        event.insert("ts".to_owned(), Value::String(now_iso()));
+    }
+    Value::Object(event)
+}
+
+fn apply_agent_event(
+    current: Value,
+    _session_id: &str,
+    normalized: Value,
+    suppress_unseen: bool,
+) -> Value {
+    let mut derived = current
+        .get("derived")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let current_derived = Value::Object(derived.clone());
+    let next = derive_from_event(&current_derived, &normalized, suppress_unseen);
+    if let Some(activity) = next.activity {
+        derived.insert("activity".to_owned(), Value::String(activity));
+    }
+    if let Some(attention) = next.attention {
+        derived.insert("attention".to_owned(), Value::String(attention));
+    }
+    derived.insert(
+        "unseenCount".to_owned(),
+        Value::Number(next.unseen_count.into()),
+    );
+    match next.became_idle_at {
+        Some(value) => {
+            derived.insert("becameIdleAt".to_owned(), Value::String(value));
+        }
+        None => {
+            derived.remove("becameIdleAt");
+        }
+    }
+
+    let mut events = derived
+        .get("events")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let keep_from = events.len().saturating_sub(19);
+    events = events.split_off(keep_from);
+    events.push(normalized.clone());
+    derived.insert("events".to_owned(), Value::Array(events));
+
+    let kind = event_string(&normalized, "kind").unwrap_or_default();
+    if kind != "prompt"
+        && kind != "task_assigned"
+        && let Some(ts) = normalized.get("ts").cloned()
+    {
+        derived.insert("lastOutputAt".to_owned(), ts);
+    }
+    if let Some(thread_id) = normalized
+        .get("threadId")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        derived.insert("threadId".to_owned(), thread_id);
+    }
+    if let Some(thread_name) = normalized
+        .get("threadName")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        derived.insert("threadName".to_owned(), thread_name);
+    }
+    derived.insert("lastEvent".to_owned(), normalized);
+    object_insert(current, "derived", Value::Object(derived))
+}
+
+struct DerivedEventState {
+    activity: Option<String>,
+    attention: Option<String>,
+    unseen_count: i64,
+    became_idle_at: Option<String>,
+}
+
+fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> DerivedEventState {
+    let kind = event_string(event, "kind").unwrap_or_default();
+    let message = event_string(event, "message")
+        .unwrap_or_default()
+        .to_lowercase();
+    let tone = event_string(event, "tone");
+    let mut activity = event_string(current, "activity");
+    let mut attention = event_string(current, "attention").or_else(|| Some("normal".to_owned()));
+    let mut unseen_count = current
+        .get("unseenCount")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let mut became_idle_at = event_string(current, "becameIdleAt");
+
+    match kind.as_str() {
+        "prompt" | "task_assigned" => {
+            activity = Some("running".to_owned());
+            attention = Some("normal".to_owned());
+        }
+        "response" => {
+            activity = Some("idle".to_owned());
+            attention = Some("normal".to_owned());
+            unseen_count = increment_unseen(unseen_count, suppress_unseen);
+        }
+        "task_done" => {
+            activity = Some("done".to_owned());
+            attention = Some("normal".to_owned());
+            unseen_count = increment_unseen(unseen_count, suppress_unseen);
+        }
+        "task_failed" => {
+            activity = Some("error".to_owned());
+            attention = Some("error".to_owned());
+            unseen_count = increment_unseen(unseen_count, suppress_unseen);
+        }
+        "needs_input" => {
+            activity = Some("waiting".to_owned());
+            attention = Some("needs_input".to_owned());
+            unseen_count = increment_unseen(unseen_count, suppress_unseen);
+        }
+        "blocked" => {
+            activity = Some("waiting".to_owned());
+            attention = Some("blocked".to_owned());
+            unseen_count = increment_unseen(unseen_count, suppress_unseen);
+        }
+        "interrupted" => {
+            activity = Some("interrupted".to_owned());
+            attention = Some("normal".to_owned());
+            unseen_count = increment_unseen(unseen_count, suppress_unseen);
+        }
+        "notify" => {
+            unseen_count = increment_unseen(unseen_count, suppress_unseen);
+            if tone.as_deref() == Some("error") {
+                attention = Some("error".to_owned());
+            }
+        }
+        "status" => {
+            if tone.as_deref() == Some("error") {
+                activity = Some("error".to_owned());
+                attention = Some("error".to_owned());
+                unseen_count = increment_unseen(unseen_count, suppress_unseen);
+            } else if status_message_needs_input(&message) {
+                activity = Some("waiting".to_owned());
+                attention = Some("needs_input".to_owned());
+                unseen_count = increment_unseen(unseen_count, suppress_unseen);
+            } else if status_message_blocked(&message) {
+                activity = Some("waiting".to_owned());
+                attention = Some("blocked".to_owned());
+                unseen_count = increment_unseen(unseen_count, suppress_unseen);
+            } else if tone.as_deref() == Some("success") || status_message_done(&message) {
+                activity = Some("done".to_owned());
+                attention = Some("normal".to_owned());
+                unseen_count = increment_unseen(unseen_count, suppress_unseen);
+            } else if status_message_running(&message) {
+                activity = Some("running".to_owned());
+                attention = Some("normal".to_owned());
+            }
+        }
+        _ => {}
+    }
+
+    if activity.as_deref() == Some("running") {
+        became_idle_at = None;
+    } else if event_string(current, "activity").as_deref() == Some("running") && activity.is_some()
+    {
+        became_idle_at = event_string(event, "ts").or_else(|| Some(now_iso()));
+    }
+
+    DerivedEventState {
+        activity,
+        attention,
+        unseen_count,
+        became_idle_at,
+    }
+}
+
+fn notification_for_event(
+    session_id: &str,
+    event: &Value,
+    focused: bool,
+) -> Option<NotificationWriteInput> {
+    let kind = event_string(event, "kind").unwrap_or_default();
+    let tone = event_string(event, "tone");
+    let message = event_string(event, "message").unwrap_or_default();
+    let unread = !focused;
+    match kind.as_str() {
+        "needs_input" => Some(NotificationWriteInput {
+            kind: Some("needs_input".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} needs input"),
+            body: fallback_string(&message, "Agent is waiting for input."),
+            dedupe_key: Some(format!("needs_input:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        "blocked" => Some(NotificationWriteInput {
+            kind: Some("blocked".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} is blocked"),
+            body: fallback_string(&message, "Agent reported a blocked state."),
+            dedupe_key: Some(format!("blocked:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        "task_failed" => Some(NotificationWriteInput {
+            kind: Some("task_failed".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} errored"),
+            body: fallback_string(&message, "Agent reported an error state."),
+            dedupe_key: Some(format!("error:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        "notify" if tone.as_deref() == Some("error") => Some(NotificationWriteInput {
+            kind: Some("task_failed".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} errored"),
+            body: fallback_string(&message, "Agent reported an error state."),
+            dedupe_key: Some(format!("error:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        "notify" => Some(NotificationWriteInput {
+            kind: Some("notification".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: event_string(event, "source").unwrap_or_else(|| "notification".to_owned()),
+            body: fallback_string(&message, "Agent notification."),
+            dedupe_key: (!message.is_empty()).then(|| format!("notify:{session_id}:{message}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        _ if tone.as_deref() == Some("error") => Some(NotificationWriteInput {
+            kind: Some("task_failed".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} errored"),
+            body: fallback_string(&message, "Agent reported an error state."),
+            dedupe_key: Some(format!("error:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
+        _ => None,
+    }
+}
+
+fn increment_unseen(current: i64, suppress_unseen: bool) -> i64 {
+    if suppress_unseen {
+        current
+    } else {
+        current + 1
+    }
+}
+
+fn status_message_needs_input(message: &str) -> bool {
+    message.contains("need input")
+        || message.contains("needs input")
+        || message.contains("need your input")
+        || message.contains("needs your input")
+        || message.contains("waiting for you")
+        || message.contains("press enter")
+        || message.contains("confirm")
+        || message.contains("approval")
+}
+
+fn status_message_blocked(message: &str) -> bool {
+    message.contains("blocked") || message.contains("waiting on") || message.contains("stuck")
+}
+
+fn status_message_done(message: &str) -> bool {
+    message.contains("done")
+        || message.contains("complete")
+        || message.contains("completed")
+        || message.contains("finished")
+        || message.contains("resolved")
+}
+
+fn status_message_running(message: &str) -> bool {
+    message.contains("working")
+        || message.contains("running")
+        || message.contains("thinking")
+        || message.contains("building")
+        || message.contains("deploying")
+        || message.contains("indexing")
+        || message.contains("searching")
+        || message.contains("editing")
+}
+
+fn fallback_string(value: &str, fallback: &str) -> String {
+    if value.is_empty() {
+        fallback.to_owned()
+    } else {
+        value.to_owned()
+    }
 }
 
 fn append_log(current: Value, entry: Value) -> Value {
@@ -538,6 +863,10 @@ fn stable_metadata_payload(value: &Value) -> String {
 
 fn string_field(value: &Value, field: &str) -> String {
     string_field_with_default(value, field, "")
+}
+
+fn event_string(value: &Value, field: &str) -> Option<String> {
+    value.get(field).and_then(Value::as_str).map(str::to_owned)
 }
 
 fn string_field_with_default(value: &Value, field: &str, default_value: &str) -> String {

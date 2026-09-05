@@ -1,6 +1,8 @@
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::project_api_contract::routes;
 
@@ -12,8 +14,10 @@ use super::runtime_exchange::{
 };
 
 const NOTIFICATION_TAG: &str = "notification";
+const PROJECT_NOTIFICATION_PARTICIPANT: &str = "project";
 const DEFAULT_PROJECT_LIST_LIMIT: i64 = 200;
 const MAX_PROJECT_LIST_LIMIT: i64 = 500;
+static NOTIFICATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn route_notifications_request(
     context: &ProjectServiceRequestContext,
@@ -56,6 +60,160 @@ pub struct NotificationSnapshot {
     pub unread_count: usize,
     pub limit: Option<usize>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationWriteInput {
+    pub title: String,
+    pub body: String,
+    pub session_id: Option<String>,
+    pub target_key: Option<String>,
+    pub target_kind: Option<String>,
+    pub kind: Option<String>,
+    pub project_name: Option<String>,
+    pub project_root: Option<String>,
+    pub worktree_path: Option<String>,
+    pub worktree_name: Option<String>,
+    pub branch: Option<String>,
+    pub category_label: Option<String>,
+    pub reason_label: Option<String>,
+    pub dedupe_key: Option<String>,
+    pub created_at: Option<String>,
+    pub unread: bool,
+    pub interaction: Option<Value>,
+}
+
+impl Default for NotificationWriteInput {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            body: String::new(),
+            session_id: None,
+            target_key: None,
+            target_kind: None,
+            kind: None,
+            project_name: None,
+            project_root: None,
+            worktree_path: None,
+            worktree_name: None,
+            branch: None,
+            category_label: None,
+            reason_label: None,
+            dedupe_key: None,
+            created_at: None,
+            unread: true,
+            interaction: None,
+        }
+    }
+}
+
+pub fn add_notification(
+    project_state_dir: impl AsRef<Path>,
+    input: NotificationWriteInput,
+) -> Result<Value, String> {
+    let now = input
+        .created_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(now_iso);
+    let session_id = trimmed_owned(input.session_id.as_deref());
+    let target_key = normalize_target_key(session_id.as_deref(), input.target_key.as_deref());
+    let target_kind = normalize_target_kind(
+        session_id.as_deref(),
+        target_key.as_deref(),
+        input.target_kind.as_deref(),
+    );
+    let thread_id = unique_notification_id("notification");
+    let message_id = format!("message-{thread_id}");
+    let record_id = unique_notification_id("notification-record");
+    let participant_id = session_id
+        .clone()
+        .unwrap_or_else(|| PROJECT_NOTIFICATION_PARTICIPANT.to_owned());
+    let title = trimmed_owned(Some(&input.title)).unwrap_or_else(|| "aimux".to_owned());
+    let body = trimmed_owned(Some(&input.body))
+        .unwrap_or_else(|| trimmed_owned(Some(&input.title)).unwrap_or_else(|| "aimux".to_owned()));
+    let unread_by = if input.unread {
+        vec![Value::String(participant_id.clone())]
+    } else {
+        Vec::new()
+    };
+    let thread = json!({
+        "id": thread_id,
+        "title": title,
+        "kind": "conversation",
+        "status": "open",
+        "createdAt": now,
+        "updatedAt": now,
+        "createdBy": "aimux",
+        "participants": ["aimux", participant_id],
+        "lastMessageId": message_id,
+        "unreadBy": unread_by,
+        "tags": [NOTIFICATION_TAG],
+    });
+    let metadata = notification_metadata(NotificationMetadataInput {
+        record_id,
+        session_id,
+        target_key,
+        target_kind,
+        kind: input.kind,
+        project_name: input.project_name,
+        project_root: input.project_root,
+        worktree_path: input.worktree_path,
+        worktree_name: input.worktree_name,
+        branch: input.branch,
+        category_label: input.category_label,
+        reason_label: input.reason_label,
+        dedupe_key: input.dedupe_key,
+        interaction: input.interaction,
+    });
+    let message = json!({
+        "id": message_id,
+        "threadId": thread_id,
+        "ts": now,
+        "from": "aimux",
+        "to": [participant_id],
+        "kind": "note",
+        "body": body,
+        "metadata": metadata,
+    });
+    let mut written_record = Value::Null;
+    update_runtime_exchange(runtime_exchange_path(project_state_dir), |mut exchange| {
+        if let Some(threads) = exchange.get_mut("threads").and_then(Value::as_array_mut) {
+            threads.retain(|thread| {
+                thread.get("id").and_then(Value::as_str) != Some(thread_id.as_str())
+            });
+            threads.push(thread.clone());
+        }
+        if let Some(messages) = exchange.get_mut("messages").and_then(Value::as_array_mut) {
+            messages.retain(|message| {
+                message.get("threadId").and_then(Value::as_str) != Some(thread_id.as_str())
+            });
+            messages.push(message.clone());
+        }
+        if let Some(inbox) = exchange.get_mut("inbox").and_then(Value::as_array_mut) {
+            inbox.retain(|entry| {
+                entry.get("subjectKind").and_then(Value::as_str) != Some("thread")
+                    || entry.get("subjectId").and_then(Value::as_str) != Some(thread_id.as_str())
+            });
+            if input.unread {
+                inbox.push(json!({
+                    "id": format!("inbox:{participant_id}:thread:{thread_id}"),
+                    "participantId": participant_id,
+                    "subjectKind": "thread",
+                    "subjectId": thread_id,
+                    "state": "unread",
+                    "urgency": 3,
+                    "updatedAt": now,
+                }));
+            }
+        }
+        exchange["generatedAt"] = Value::String(now.clone());
+        written_record = notification_record(&exchange, &thread, &message);
+        exchange
+    })?;
+    Ok(written_record)
 }
 
 pub fn list_notification_snapshot(
@@ -217,6 +375,139 @@ fn parse_notification_mutation(body: &Value) -> Result<NotificationMutation, Str
         ids,
         session_id: trimmed_string(body.get("sessionId")),
     })
+}
+
+struct NotificationMetadataInput {
+    record_id: String,
+    session_id: Option<String>,
+    target_key: Option<String>,
+    target_kind: Option<String>,
+    kind: Option<String>,
+    project_name: Option<String>,
+    project_root: Option<String>,
+    worktree_path: Option<String>,
+    worktree_name: Option<String>,
+    branch: Option<String>,
+    category_label: Option<String>,
+    reason_label: Option<String>,
+    dedupe_key: Option<String>,
+    interaction: Option<Value>,
+}
+
+fn notification_metadata(input: NotificationMetadataInput) -> Value {
+    let mut metadata = Map::new();
+    metadata.insert(
+        "notificationRecordId".into(),
+        Value::String(input.record_id),
+    );
+    for (key, value) in [
+        ("notificationSessionId", input.session_id),
+        ("notificationTargetKey", input.target_key),
+        ("notificationTargetKind", input.target_kind),
+        ("notificationKind", input.kind),
+        ("notificationProjectName", input.project_name),
+        ("notificationProjectRoot", input.project_root),
+        ("notificationWorktreePath", input.worktree_path),
+        ("notificationWorktreeName", input.worktree_name),
+        ("notificationBranch", input.branch),
+        ("notificationCategoryLabel", input.category_label),
+        ("notificationReasonLabel", input.reason_label),
+        ("notificationDedupeKey", input.dedupe_key),
+    ] {
+        insert_nullable_trimmed(&mut metadata, key, value.as_deref());
+    }
+    metadata.insert("notificationCleared".into(), Value::Bool(false));
+    let interaction = input.interaction.unwrap_or(Value::Null);
+    insert_nullable_trimmed(
+        &mut metadata,
+        "notificationInteractionId",
+        interaction.get("id").and_then(Value::as_str),
+    );
+    insert_nullable_trimmed(
+        &mut metadata,
+        "notificationInteractionType",
+        interaction.get("type").and_then(Value::as_str),
+    );
+    insert_nullable_trimmed(
+        &mut metadata,
+        "notificationInteractionSummary",
+        interaction.get("summary").and_then(Value::as_str),
+    );
+    metadata.insert(
+        "notificationInteractionTelemetry".into(),
+        Value::Bool(interaction.get("telemetry") == Some(&Value::Bool(true))),
+    );
+    insert_nullable_trimmed(
+        &mut metadata,
+        "notificationInteractionToolName",
+        interaction.get("toolName").and_then(Value::as_str),
+    );
+    insert_nullable_trimmed(
+        &mut metadata,
+        "notificationInteractionToolInputJSON",
+        interaction.get("toolInputJSON").and_then(Value::as_str),
+    );
+    Value::Object(metadata)
+}
+
+fn normalize_target_key(session_id: Option<&str>, target_key: Option<&str>) -> Option<String> {
+    trimmed_owned(target_key)
+        .or_else(|| session_id.map(|session_id| format!("session:{session_id}")))
+}
+
+fn normalize_target_kind(
+    session_id: Option<&str>,
+    target_key: Option<&str>,
+    target_kind: Option<&str>,
+) -> Option<String> {
+    trimmed_owned(target_kind).or_else(|| {
+        target_key.map(|target_key| {
+            if session_id.is_some() && target_key.starts_with("session:") {
+                "session".to_owned()
+            } else {
+                "generic".to_owned()
+            }
+        })
+    })
+}
+
+fn insert_nullable_trimmed(map: &mut Map<String, Value>, key: &str, value: Option<&str>) {
+    map.insert(
+        key.to_owned(),
+        trimmed_owned(value)
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+}
+
+fn unique_notification_id(prefix: &str) -> String {
+    let sequence = NOTIFICATION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{prefix}-{}-{nanos}-{sequence}", std::process::id())
+}
+
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
+}
+
+fn trimmed_owned(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 enum NotificationMutationKind {
