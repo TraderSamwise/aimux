@@ -103,8 +103,8 @@ pub fn required_param(
     name: &str,
 ) -> Result<String, DaemonRouteResponse> {
     let value = string_param(route_url, body, name);
-    match value.map(|value| value.trim().to_owned()) {
-        Some(value) if !value.is_empty() => Ok(value),
+    match value {
+        Some(value) if !value.trim().is_empty() => Ok(value),
         _ => Err(text_error(400, format!("{name} is required"))),
     }
 }
