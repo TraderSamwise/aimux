@@ -1,0 +1,14 @@
+{
+  "repoRoot": "/tmp/aimux-paths-demo",
+  "projectId": "aimux-paths-demo-d2ba0b1d07f1",
+  "managedWorktree": "/tmp/aimux-paths-demo/.aimux/worktrees/feature-a",
+  "globalHome": "/tmp/aimux-home",
+  "readOnlySuffixes": {
+    "statePath": "/state.json",
+    "runtimeTopologyPath": "/runtime-topology.yaml",
+    "runtimeExchangePath": "/runtime-exchange.yaml",
+    "metadataPath": "/metadata.json",
+    "notificationContextPath": "/notification-context.json",
+    "dashboardOperationFailuresPath": "/dashboard-operation-failures.json"
+  }
+}

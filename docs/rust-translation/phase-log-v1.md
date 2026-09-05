@@ -37,3 +37,24 @@ Parity evidence:
 
 Open gaps:
 - Full request/response struct mirror remains for later Phase 1 slices.
+
+## 2026-09-05 Phase 1 Path Identity
+
+Status: complete
+Scope: `src/paths.ts` deterministic project identity helpers, AIMUX_HOME
+resolution, managed worktree parent identity, and read-only project path
+projection.
+
+Verification:
+- `yarn native:test`
+- `/Users/sam/cs/aimux/node_modules/.bin/tsc -p tsconfig.json`
+- direct Node oracle for `getProjectIdFor` and `getReadOnlyProjectPathsFor`
+
+Parity evidence:
+- `testdata/contracts/v1/paths/identity.json`
+- TypeScript oracle confirmed project id, managed worktree identity,
+  read-only paths, and non-git fallback cache behavior
+
+Open gaps:
+- Registry mutation, corrupt-file quarantine, and AsyncLocalStorage-equivalent
+  scoped project path state remain for later Phase 1/daemon slices.

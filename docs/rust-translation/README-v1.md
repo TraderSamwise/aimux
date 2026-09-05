@@ -12,6 +12,10 @@ TypeScript behavior is the spec. The first Rust implementation copies file
 boundaries, function names where practical, control flow, loops, data shapes,
 edge cases, and awkward decisions. Improvements wait until parity is proven.
 
+Trivially proven dead code should be deleted instead of translated. The commit
+must carry the proof: no exported contract, no reachable reference from active
+entrypoints, and the search/test evidence used to make the call.
+
 ## Tracked Files
 
 - `phases-v1.md`: phase order and acceptance gates.
