@@ -11,6 +11,9 @@ vi.mock("react-native", () => ({
 
 import {
   canRenderRichText,
+  displayableMessageParts,
+  hasDisplayableChatMessageContent,
+  hasDisplayableChatText,
   messageContainerStyleForRole,
   messageSpeakerLabel,
   normalizeChatLinkTarget,
@@ -192,6 +195,34 @@ describe("MessageBlock layout", () => {
   it("does not clip rich terminal spans inside chat bubbles", () => {
     expect(messageContainerStyleForRole("assistant").overflow).toBe("visible");
     expect(messageContainerStyleForRole("user").overflow).toBe("visible");
+  });
+
+  it("drops parser residue that has no displayable content", () => {
+    expect(hasDisplayableChatText("\u200b\n\t")).toBe(false);
+    expect(displayableMessageParts([{ type: "text", text: "\u200b\n" }])).toEqual([]);
+    expect(
+      hasDisplayableChatMessageContent({
+        parts: [{ type: "text", text: "\u200b\n" }],
+        text: "\u200b\n",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps attachment-only messages displayable", () => {
+    expect(
+      hasDisplayableChatMessageContent({
+        parts: [
+          {
+            type: "image_reference",
+            label: "[image #1]",
+            attachmentId: "att_1",
+            filename: "shot.png",
+            mimeType: "image/png",
+          },
+        ],
+        text: "",
+      }),
+    ).toBe(true);
   });
 });
 

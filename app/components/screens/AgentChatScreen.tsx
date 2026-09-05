@@ -32,7 +32,7 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
-import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ArrowUp,
@@ -79,6 +79,8 @@ import {
   attachmentsFromClipboardData,
   clipboardDataHasFile,
   pickAttachments,
+  pickedAttachmentDataBase64,
+  releasePickedAttachment,
   type ClipboardFileSource,
   type PickedAttachment,
 } from "@/lib/image-picker";
@@ -338,6 +340,12 @@ function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapsh
     ...snapshot,
     pendingAttachments: [...snapshot.pendingAttachments],
   });
+}
+
+function releasePendingAttachmentPreviews(attachments: readonly PickedAttachment[]) {
+  for (const attachment of attachments) {
+    releasePickedAttachment(attachment);
+  }
 }
 
 function attachmentHistoryPartsFromUploads(
@@ -740,6 +748,7 @@ export default function ChatScreen() {
     terminal: null,
   });
   const activeComposerDraftKeyRef = useRef<string | null>(null);
+  const sendOperationIdRef = useRef(0);
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
     draft: "",
@@ -1069,6 +1078,7 @@ export default function ChatScreen() {
       );
 
     if (draftStillMatches && attachmentsStillMatch) {
+      releasePendingAttachmentPreviews(pendingAttachments);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- terminal transcript ack clears only the matched pending send
       setDraft("");
       setPendingAttachments([]);
@@ -1646,6 +1656,12 @@ export default function ChatScreen() {
     resetScrollPanesToBottom();
   }, [resetScrollPanesToBottom, routeFocusToken, sessionKey]);
 
+  useFocusEffect(
+    useCallback(() => {
+      resetScrollPanesToBottom();
+    }, [resetScrollPanesToBottom]),
+  );
+
   useEffect(() => {
     if (composerFocused) {
       requestAnimationFrame(() => setNativeComposerHidden(false));
@@ -1719,10 +1735,17 @@ export default function ChatScreen() {
       return;
     }
     sendBusyRef.current = true;
+    const sendOperationId = sendOperationIdRef.current + 1;
+    sendOperationIdRef.current = sendOperationId;
+    const sendComposerDraftKey = composerDraftKey;
     clearLocalInterruptHold(sessionId);
     const baselineUserMessageCount = userMessageCount;
+    const baselineMessageCount = allMessages.length;
     setSendBusy(true);
     setSendError(null);
+    const sendStillOwnsActiveComposer = () =>
+      sendOperationIdRef.current === sendOperationId &&
+      activeComposerDraftKeyRef.current === sendComposerDraftKey;
     try {
       for (let idx = 0; idx < attachments.length; idx += 1) {
         const attachment = attachments[idx];
@@ -1733,7 +1756,7 @@ export default function ChatScreen() {
             kind: attachment.kind,
             filename: attachment.filename,
             mimeType: attachment.mimeType,
-            dataBase64: attachment.dataBase64,
+            dataBase64: await pickedAttachmentDataBase64(attachment),
             sessionId: sessionKey,
           },
           { token },
@@ -1763,18 +1786,24 @@ export default function ChatScreen() {
         timedOut: false,
       };
       const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
+      const acceptedMessage = buildAcceptedComposerMessage({
+        attachments,
+        clientMessageId,
+        sessionKey,
+        text,
+      });
+      releasePendingAttachmentPreviews(attachments);
+      if (!sendStillOwnsActiveComposer()) {
+        if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+        return;
+      }
       setAcceptedComposerMessages((current) =>
         [
           ...current,
           {
-            baselineMessageCount: allMessages.length,
+            baselineMessageCount,
             clientMessageId,
-            message: buildAcceptedComposerMessage({
-              attachments,
-              clientMessageId,
-              sessionKey,
-              text,
-            }),
+            message: acceptedMessage,
             pending: acceptedPending,
           },
         ].slice(-20),
@@ -1783,9 +1812,21 @@ export default function ChatScreen() {
       setPendingAttachments([]);
       setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
       setPendingComposerAck(null);
-      if (composerDraftKey) composerDraftsByKey.delete(composerDraftKey);
+      if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
       void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
+      if (!sendStillOwnsActiveComposer()) {
+        if (sendComposerDraftKey) {
+          rememberComposerDraft(sendComposerDraftKey, {
+            draft: text,
+            inputContentHeight: composerInputContentHeight,
+            pendingAttachments: attachments,
+          });
+        } else {
+          releasePendingAttachmentPreviews(attachments);
+        }
+        return;
+      }
       setPendingComposerAck(
         isTransientRequestError(err)
           ? {
@@ -1806,8 +1847,10 @@ export default function ChatScreen() {
       setPendingAttachments(attachments);
       setSendError(formatComposerSendFailure(err));
     } finally {
-      sendBusyRef.current = false;
-      setSendBusy(false);
+      if (sendOperationIdRef.current === sendOperationId) {
+        sendBusyRef.current = false;
+        setSendBusy(false);
+      }
     }
   }
 
@@ -1828,7 +1871,10 @@ export default function ChatScreen() {
   }
 
   function handleDropAttachments(attachments: PickedAttachment[]) {
-    if (sendBusy || sendBusyRef.current || composerAwaitingAck) return;
+    if (sendBusy || sendBusyRef.current || composerAwaitingAck) {
+      releasePendingAttachmentPreviews(attachments);
+      return;
+    }
     setSendError(null);
     appendPendingAttachments(attachments);
   }
@@ -1859,10 +1905,12 @@ export default function ChatScreen() {
     if (attachments.length === 0) return;
     const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
     if (slots <= 0) {
+      releasePendingAttachmentPreviews(attachments);
       setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} files.`);
       return;
     }
     const accepted = attachments.slice(0, slots);
+    releasePendingAttachmentPreviews(attachments.slice(slots));
     setPendingAttachments((current) => [...current, ...accepted]);
     setSendError(
       accepted.length < attachments.length
@@ -1872,7 +1920,10 @@ export default function ChatScreen() {
   }
 
   function removePendingAttachment(id: string) {
-    setPendingAttachments((current) => current.filter((attachment) => attachment.id !== id));
+    setPendingAttachments((current) => {
+      releasePendingAttachmentPreviews(current.filter((attachment) => attachment.id === id));
+      return current.filter((attachment) => attachment.id !== id);
+    });
   }
 
   /**

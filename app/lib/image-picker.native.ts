@@ -9,7 +9,7 @@ export interface PickedAttachment {
   kind: PickedAttachmentKind;
   filename: string;
   mimeType: string;
-  dataBase64: string;
+  dataBase64?: string;
   previewUri: string;
   sizeBytes?: number;
 }
@@ -57,6 +57,32 @@ function mimeTypeFromName(name: string | null | undefined): string {
   return "application/octet-stream";
 }
 
+type AttachmentDataLoader = () => Promise<string>;
+const attachmentDataLoaders = new Map<string, AttachmentDataLoader>();
+
+function rememberPickedAttachmentDataLoader(id: string, loader: AttachmentDataLoader) {
+  let promise: Promise<string> | null = null;
+  attachmentDataLoaders.set(id, () => {
+    promise ??= loader();
+    return promise;
+  });
+}
+
+export function rememberPickedAttachmentDataBase64(id: string, dataBase64: string) {
+  rememberPickedAttachmentDataLoader(id, async () => dataBase64);
+}
+
+export async function pickedAttachmentDataBase64(attachment: PickedAttachment): Promise<string> {
+  if (attachment.dataBase64) return attachment.dataBase64;
+  const loader = attachmentDataLoaders.get(attachment.id);
+  if (!loader) throw new Error("Attachment data is no longer available.");
+  return loader();
+}
+
+export function releasePickedAttachment(attachment: PickedAttachment) {
+  attachmentDataLoaders.delete(attachment.id);
+}
+
 export async function pickAttachment(): Promise<PickedAttachment | null> {
   const image = await pickImageAttachment();
   if (image) return image;
@@ -78,18 +104,20 @@ export async function pickFileAttachment(): Promise<PickedAttachment | null> {
 
   const asset = result.assets[0];
   if (!asset?.uri) throw new Error("Could not read file.");
+  const id = localId();
   const filename = asset.name || "attachment";
-  const dataBase64 = await FileSystem.readAsStringAsync(asset.uri, {
-    encoding: "base64",
-  });
   const mimeType = asset.mimeType ?? mimeTypeFromName(filename);
+  rememberPickedAttachmentDataLoader(id, () =>
+    FileSystem.readAsStringAsync(asset.uri, {
+      encoding: "base64",
+    }),
+  );
 
   return {
-    id: localId(),
+    id,
     kind: kindFromMimeType(mimeType),
     filename,
     mimeType,
-    dataBase64,
     previewUri: asset.uri,
     sizeBytes: asset.size,
   };
@@ -99,20 +127,20 @@ async function pickedImageAttachmentFromAsset(
   asset: ImagePicker.ImagePickerAsset,
 ): Promise<PickedImageAttachment> {
   if (!asset.uri) throw new Error("Could not read image.");
+  const id = localId();
   const filename = asset.fileName || "image.jpg";
   const mimeType = asset.mimeType ?? mimeTypeFromName(filename);
-  const dataBase64 =
-    asset.base64 ??
-    (await FileSystem.readAsStringAsync(asset.uri, {
+  rememberPickedAttachmentDataLoader(id, () =>
+    FileSystem.readAsStringAsync(asset.uri, {
       encoding: "base64",
-    }));
+    }),
+  );
 
   return {
-    id: localId(),
+    id,
     kind: "image",
     filename,
     mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg",
-    dataBase64,
     previewUri: asset.uri,
     sizeBytes: asset.fileSize,
   };
@@ -127,7 +155,7 @@ export async function pickImageAttachments(
       : 0;
   const result = await ImagePicker.launchImageLibraryAsync({
     allowsMultipleSelection: true,
-    base64: true,
+    base64: false,
     mediaTypes: "images",
     quality: 1,
     ...(selectionLimit > 0 ? { selectionLimit } : {}),

@@ -5,7 +5,7 @@ export interface PickedAttachment {
   kind: PickedAttachmentKind;
   filename: string;
   mimeType: string;
-  dataBase64: string;
+  dataBase64?: string;
   previewUri: string;
   sizeBytes?: number;
 }
@@ -116,21 +116,74 @@ export async function imageAttachmentsFromFiles(
 }
 
 async function attachmentFromFile(file: File): Promise<PickedAttachment> {
+  const mimeType = file.type || "application/octet-stream";
+  const id = localId();
+  rememberPickedAttachmentDataLoader(id, async () => {
+    const dataUrl = await readFileAsDataUrl(file, mimeType);
+    return dataUrl.slice(dataUrl.indexOf(",") + 1);
+  });
+
+  return {
+    id,
+    kind: kindFromMimeType(mimeType),
+    filename: file.name || "attachment",
+    mimeType,
+    previewUri:
+      typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(file)
+        : await readFileAsDataUrl(file, mimeType),
+    sizeBytes: file.size,
+  };
+}
+
+type AttachmentDataLoader = () => Promise<string>;
+const attachmentDataLoaders = new Map<string, AttachmentDataLoader>();
+
+function rememberPickedAttachmentDataLoader(id: string, loader: AttachmentDataLoader) {
+  let promise: Promise<string> | null = null;
+  attachmentDataLoaders.set(id, () => {
+    promise ??= loader();
+    return promise;
+  });
+}
+
+export function rememberPickedAttachmentDataBase64(id: string, dataBase64: string) {
+  rememberPickedAttachmentDataLoader(id, async () => dataBase64);
+}
+
+export async function pickedAttachmentDataBase64(attachment: PickedAttachment): Promise<string> {
+  if (attachment.dataBase64) return attachment.dataBase64;
+  const loader = attachmentDataLoaders.get(attachment.id);
+  if (!loader) throw new Error("Attachment data is no longer available.");
+  return loader();
+}
+
+export function releasePickedAttachment(attachment: PickedAttachment) {
+  attachmentDataLoaders.delete(attachment.id);
+  if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    if (attachment.previewUri.startsWith("blob:")) URL.revokeObjectURL(attachment.previewUri);
+  }
+}
+
+async function readFileAsDataUrl(file: File, mimeType: string): Promise<string> {
+  if (typeof FileReader !== "undefined") {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error("Could not read file."));
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        if (result) resolve(result);
+        else reject(new Error("Could not read file."));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
   for (let index = 0; index < bytes.length; index += 0x8000) {
     binary += String.fromCharCode(...bytes.slice(index, index + 0x8000));
+    if (index > 0 && index % 0x80000 === 0) await Promise.resolve();
   }
-  const mimeType = file.type || "application/octet-stream";
-  const dataBase64 = btoa(binary);
-
-  return {
-    id: localId(),
-    kind: kindFromMimeType(mimeType),
-    filename: file.name || "attachment",
-    mimeType,
-    dataBase64,
-    previewUri: `data:${mimeType};base64,${dataBase64}`,
-    sizeBytes: file.size,
-  };
+  return `data:${mimeType};base64,${btoa(binary)}`;
 }

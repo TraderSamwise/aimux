@@ -5,7 +5,7 @@ export interface PickedAttachment {
   kind: PickedAttachmentKind;
   filename: string;
   mimeType: string;
-  dataBase64: string;
+  dataBase64?: string;
   previewUri: string;
   sizeBytes?: number;
 }
@@ -57,3 +57,12 @@ export async function imageAttachmentsFromFiles(
 ): Promise<PickedImageAttachment[]> {
   return attachmentsFromFiles(files);
 }
+
+export async function pickedAttachmentDataBase64(attachment: PickedAttachment): Promise<string> {
+  if (attachment.dataBase64) return attachment.dataBase64;
+  throw new Error("Attachment data is no longer available.");
+}
+
+export function rememberPickedAttachmentDataBase64(_id: string, _dataBase64: string) {}
+
+export function releasePickedAttachment(_attachment: PickedAttachment) {}

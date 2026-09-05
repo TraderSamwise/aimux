@@ -1,7 +1,7 @@
 import React, { useCallback } from "react";
 import { Platform, UIManager, requireNativeComponent, View, type ViewProps } from "react-native";
 
-import type { PickedAttachment } from "@/lib/image-picker";
+import { rememberPickedAttachmentDataBase64, type PickedAttachment } from "@/lib/image-picker";
 
 type NativeDroppedImage = {
   dataBase64: string;
@@ -32,12 +32,13 @@ function localId(): string {
 }
 
 function toPickedAttachment(image: NativeDroppedImage): PickedAttachment {
+  const id = localId();
+  rememberPickedAttachmentDataBase64(id, image.dataBase64);
   return {
-    id: localId(),
+    id,
     kind: "image",
     filename: image.filename,
     mimeType: image.mimeType,
-    dataBase64: image.dataBase64,
     previewUri: `data:${image.mimeType};base64,${image.dataBase64}`,
     sizeBytes: image.sizeBytes,
   };

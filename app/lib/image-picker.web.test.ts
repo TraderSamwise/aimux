@@ -4,6 +4,8 @@ import {
   attachmentsFromClipboardData,
   clipboardDataHasFile,
   isAcceptedImageFile,
+  pickedAttachmentDataBase64,
+  releasePickedAttachment,
 } from "./image-picker.web";
 
 describe("isAcceptedImageFile", () => {
@@ -34,7 +36,17 @@ describe("attachmentsFromClipboardData", () => {
       kind: "image",
       mimeType: "image/png",
     });
-    expect(attachment[0]?.dataBase64).toBe("aGVsbG8=");
+    expect(attachment[0]?.dataBase64).toBeUndefined();
+  });
+
+  it("keeps pasted image bytes outside attachment state until upload", async () => {
+    const [attachment] = await attachmentsFromClipboardData({
+      files: [new File(["hello"], "clip.png", { type: "image/png" })],
+    });
+
+    expect(attachment?.dataBase64).toBeUndefined();
+    await expect(pickedAttachmentDataBase64(attachment!)).resolves.toBe("aGVsbG8=");
+    releasePickedAttachment(attachment!);
   });
 
   it("falls back to clipboard items when files is empty", async () => {

@@ -16,6 +16,7 @@ import type {
   HistoryAttachmentReferencePart,
   HistoryImagePart,
   HistoryImageReferencePart,
+  HistoryPart,
   HistoryTextSpan,
 } from "@/lib/events";
 import { getRelayServiceUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
@@ -70,6 +71,8 @@ const INLINE_URL_PATTERN = /\b(?:https?:\/\/|file:\/\/\/)[^\s<>"'`]+/gi;
 const TERMINAL_HYPERLINK_PATTERN =
   /\x1b\]8;[^;]*;((?:https?:\/\/|file:\/\/\/)[^\x07\x1b]*)(?:\x07|\x1b\\)([\s\S]*?)\x1b\]8;;(?:\x07|\x1b\\)|\]8;[^;]*;((?:https?:\/\/|file:\/\/\/)[^\s\\\]]+)(?:\\)([\s\S]*?)\]8;;\\?/gi;
 const SOFT_BREAK_PATTERN = /\u200B/g;
+const INVISIBLE_TEXT_PATTERN =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b\u200c\u200d\ufeff]/g;
 const TRAILING_URL_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?", ")", "]", "}"]);
 
 export function resolveImageUrl(
@@ -116,6 +119,24 @@ function attachmentPreviewKind(part: HistoryAttachmentReferencePart): string {
     return "text";
   }
   return "file";
+}
+
+export function hasDisplayableChatText(text: string | null | undefined): boolean {
+  return (
+    String(text ?? "")
+      .replace(INVISIBLE_TEXT_PATTERN, "")
+      .trim().length > 0
+  );
+}
+
+export function displayableMessageParts(parts: readonly HistoryPart[] | undefined): HistoryPart[] {
+  return (parts ?? []).filter((part) => part.type !== "text" || hasDisplayableChatText(part.text));
+}
+
+export function hasDisplayableChatMessageContent(
+  message: Pick<ChatMessage, "parts" | "text">,
+): boolean {
+  return displayableMessageParts(message.parts).length > 0 || hasDisplayableChatText(message.text);
 }
 
 function spanText(spans: readonly HistoryTextSpan[]): string {
@@ -473,7 +494,18 @@ function RichText({
 
 function MarkdownTableText({ className, text }: { className: string; text: string }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="my-1 max-w-full">
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      className="my-1 max-w-full"
+      contentContainerStyle={{ flexGrow: 0 }}
+      style={{
+        alignSelf: "flex-start",
+        flexGrow: 0,
+        flexShrink: 1,
+        maxWidth: "100%",
+      }}
+    >
       <Text
         className={`${className} font-mono`}
         style={[MESSAGE_TEXT_STYLE, { flexWrap: "nowrap" }]}
@@ -697,12 +729,22 @@ function AttachmentReferenceToken({
 }
 
 function WebAttachmentPreview({ kind, title, url }: { kind: string; title: string; url: string }) {
-  const frameStyle = {
+  const frameStyle: React.CSSProperties = {
+    backgroundColor: "rgba(0, 0, 0, 0.18)",
     border: "1px solid rgba(161, 161, 170, 0.35)",
     borderRadius: 6,
+    boxSizing: "border-box",
     marginTop: 8,
     maxWidth: "100%",
+    overflow: "hidden",
+    position: "relative",
     width: 360,
+  };
+  const fillFrameStyle: React.CSSProperties = {
+    border: 0,
+    display: "block",
+    height: "100%",
+    width: "100%",
   };
   if (kind === "audio") {
     return React.createElement("audio", {
@@ -712,39 +754,41 @@ function WebAttachmentPreview({ kind, title, url }: { kind: string; title: strin
     });
   }
   if (kind === "video") {
-    return React.createElement("video", {
-      controls: true,
-      src: url,
-      style: {
-        ...frameStyle,
-        backgroundColor: "rgba(0, 0, 0, 0.18)",
-        height: 220,
-      },
-    });
+    return React.createElement(
+      "div",
+      { style: { ...frameStyle, height: 220 } },
+      React.createElement("video", {
+        controls: true,
+        src: url,
+        style: fillFrameStyle,
+      }),
+    );
   }
   if (kind === "image") {
-    return React.createElement("img", {
-      alt: title,
-      src: url,
-      style: {
-        ...frameStyle,
-        backgroundColor: "rgba(0, 0, 0, 0.18)",
-        height: 180,
-        objectFit: "contain",
-      },
-    });
+    return React.createElement(
+      "div",
+      { style: { ...frameStyle, height: 180 } },
+      React.createElement("img", {
+        alt: title,
+        src: url,
+        style: {
+          ...fillFrameStyle,
+          objectFit: "contain",
+        },
+      }),
+    );
   }
   if (kind === "pdf" || kind === "text") {
-    return React.createElement("iframe", {
-      src: url,
-      title,
-      sandbox: "",
-      style: {
-        ...frameStyle,
-        backgroundColor: "rgba(0, 0, 0, 0.18)",
-        height: kind === "pdf" ? 240 : 180,
-      },
-    });
+    return React.createElement(
+      "div",
+      { style: { ...frameStyle, height: kind === "pdf" ? 240 : 180 } },
+      React.createElement("iframe", {
+        src: url,
+        title,
+        sandbox: "",
+        style: fillFrameStyle,
+      }),
+    );
   }
   return null;
 }
@@ -758,6 +802,10 @@ export const MessageBlock = React.memo(function MessageBlock({
   const isUser = role === "user";
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
   const richTerminalColors = useAtomValue(chatRichTerminalColorsAtom);
+  const displayParts = displayableMessageParts(message.parts);
+  const fallbackText = hasDisplayableChatText(message.text) ? (message.text ?? "") : "";
+
+  if (displayParts.length === 0 && !fallbackText) return null;
 
   return (
     <View
@@ -779,8 +827,8 @@ export const MessageBlock = React.memo(function MessageBlock({
           {speakerLabel}
         </Text>
       ) : null}
-      {Array.isArray(message.parts) && message.parts.length > 0 ? (
-        message.parts.map((part, idx) => {
+      {displayParts.length > 0 ? (
+        displayParts.map((part, idx) => {
           if (part.type === "text") {
             const className = isUser ? "text-primary-foreground" : "text-secondary-foreground";
             const richTextInput = {
@@ -832,7 +880,7 @@ export const MessageBlock = React.memo(function MessageBlock({
         <PlainTextPart
           className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}
           dividerWidth={dividerWidth}
-          text={message.text ?? ""}
+          text={fallbackText}
         />
       )}
     </View>
