@@ -295,6 +295,10 @@ function composerInputHeightForContentHeight(contentHeight: number): number {
   );
 }
 
+function composerContentHeightForDraft(draft: string, contentHeight: number): number {
+  return draft.length === 0 ? COMPOSER_INPUT_MIN_HEIGHT : contentHeight;
+}
+
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
   if (!key) return;
   if (snapshot.draft.length === 0 && snapshot.pendingAttachments.length === 0) {
@@ -736,9 +740,15 @@ export default function ChatScreen() {
   const compactHeaderActions = width < 430;
   const headerActionsMaxWidth =
     Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
+  const effectiveComposerInputContentHeight = composerContentHeightForDraft(
+    draft,
+    composerInputContentHeight,
+  );
   const composerInputScrollEnabled =
-    composerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP;
-  const composerInputHeight = composerInputHeightForContentHeight(composerInputContentHeight);
+    effectiveComposerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP;
+  const composerInputHeight = composerInputHeightForContentHeight(
+    effectiveComposerInputContentHeight,
+  );
   const composerExtraContentPadding = useSharedValue(0);
   const composerFooterBottomPadding =
     Platform.OS === "web" || keyboardVisible
