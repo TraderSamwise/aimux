@@ -7,6 +7,8 @@ pub mod core_cli_routing;
 pub mod core_command_contract;
 pub mod daemon_projects;
 pub mod daemon_state;
+pub mod launcher_env;
+pub mod logs;
 pub mod paths;
 pub mod project_api_contract;
 pub mod project_catalog;
