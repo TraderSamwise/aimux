@@ -36,8 +36,8 @@ fn router_keeps_unported_routes_explicit() {
     let context = ProjectServiceRequestContext::new(&project);
     let response = route_project_service_request(
         &context,
-        "GET",
-        routes::orchestration::ROUTES,
+        "POST",
+        routes::graveyard_actions::CLEANUP,
         Some(&json!({})),
     );
     assert_eq!(response.status, 501);
@@ -46,9 +46,9 @@ fn router_keeps_unported_routes_explicit() {
         json!({
             "ok": false,
             "error": "project service route not ported",
-            "method": "GET",
-            "path": "/orchestration/routes",
-            "group": "reads",
+            "method": "POST",
+            "path": "/graveyard/cleanup",
+            "group": "lifecycle",
         })
     );
     cleanup(project);

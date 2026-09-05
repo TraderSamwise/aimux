@@ -97,7 +97,6 @@ pub fn route_read_request(
         || pathname == routes::TOPOLOGY
         || pathname == routes::WORKTREES
         || pathname == routes::GRAVEYARD
-        || pathname == routes::orchestration::ROUTES
         || pathname == routes::agents::LIST
         || pathname == routes::agents::TEAMMATES
         || pathname == routes::agents::HISTORY
