@@ -1,7 +1,11 @@
 use aimux::daemon::stream::{
-    HostAgentStreamError, HostAgentStreamFailure, host_agent_stream_failure_bytes,
-    host_agent_stream_failure_response, write_host_agent_stream_text,
+    HostAgentStreamError, HostAgentStreamFailure, HostAgentStreamRequestOptions,
+    host_agent_stream_failure_bytes, host_agent_stream_failure_response,
+    pipe_host_agent_stream_from_url, write_host_agent_stream_text,
 };
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::thread;
 
 #[test]
 fn upstream_failure_maps_to_plain_text_response_before_stream_headers() {
@@ -113,4 +117,104 @@ fn stream_pipe_propagates_upstream_chunk_errors() {
     .unwrap_err();
 
     assert_eq!(error, HostAgentStreamError::Upstream("disconnected".into()));
+}
+
+#[test]
+fn upstream_url_pipe_streams_chunked_sse_from_loopback_service() {
+    let (url, join) = serve_once(|mut stream| {
+        let request = read_request_text(&mut stream);
+        assert!(request.starts_with("GET /agents/output/stream?sessionId=claude-1 HTTP/1.1\r\n"));
+        assert!(request.contains("Accept: text/event-stream\r\n"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n28\r\nevent: output\ndata: {\"output\":\"hello\"}\n\n\r\n0\r\n\r\n",
+            )
+            .expect("write upstream");
+    });
+    let mut output = Vec::new();
+
+    pipe_host_agent_stream_from_url(
+        &mut output,
+        "claude-1",
+        &format!("{url}/agents/output/stream?sessionId=claude-1"),
+        HostAgentStreamRequestOptions {
+            timeout_ms: Some(1_000),
+        },
+    )
+    .expect("pipe");
+    join.join().expect("upstream");
+
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(text.ends_with("hello\n"));
+}
+
+#[test]
+fn upstream_url_pipe_maps_upstream_http_errors_to_plain_text() {
+    let (url, join) = serve_once(|mut stream| {
+        let _ = read_request_text(&mut stream);
+        stream
+            .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 11\r\n\r\nnot ready\n")
+            .expect("write upstream");
+    });
+    let mut output = Vec::new();
+
+    pipe_host_agent_stream_from_url(
+        &mut output,
+        "claude-1",
+        &format!("{url}/agents/output/stream?sessionId=claude-1"),
+        HostAgentStreamRequestOptions {
+            timeout_ms: Some(1_000),
+        },
+    )
+    .expect("pipe");
+    join.join().expect("upstream");
+
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
+    assert!(text.ends_with("not ready\n"));
+}
+
+#[test]
+fn upstream_url_pipe_rejects_non_loopback_targets_before_connecting() {
+    let error = pipe_host_agent_stream_from_url(
+        &mut Vec::new(),
+        "claude-1",
+        "http://example.com:80/agents/output/stream",
+        HostAgentStreamRequestOptions {
+            timeout_ms: Some(1),
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        HostAgentStreamError::InvalidUrl("upstream URL must use loopback, got example.com".into())
+    );
+}
+
+fn serve_once(handle: impl FnOnce(TcpStream) + Send + 'static) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+    let address = listener.local_addr().expect("address");
+    let join = thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept");
+        handle(stream);
+    });
+    (format!("http://127.0.0.1:{}", address.port()), join)
+}
+
+fn read_request_text(stream: &mut TcpStream) -> String {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 512];
+    loop {
+        let count = stream.read(&mut buffer).expect("read request");
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    String::from_utf8(bytes).expect("request utf8")
 }
