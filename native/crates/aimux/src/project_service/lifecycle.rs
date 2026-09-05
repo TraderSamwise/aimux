@@ -35,6 +35,7 @@ use super::agents::{
 use super::coordination_mutations::derive_runtime_exchange_indexes;
 use super::coordination_mutations::route_coordination_mutation_request;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::prompt_context::clear_prompt_context;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
 use super::worktree_cache_cleanup::run_worktree_cache_cleanup;
@@ -261,6 +262,7 @@ fn route_agent_kill(
     };
     let reason = trimmed_string(body.get("reason"));
     let project_state_dir = context.project_state_dir();
+    clear_prompt_context(&project_state_dir, &session_id);
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return json_error(500, error),

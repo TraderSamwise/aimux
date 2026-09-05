@@ -21,6 +21,7 @@ use super::http::{
     trimmed_query,
 };
 use super::metadata::update_session_metadata;
+use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
 
 pub const DEFAULT_AGENT_OUTPUT_START_LINE: i64 = -120;
@@ -661,7 +662,11 @@ fn input_live_pane_route(
         None => text,
     };
     let formatted_text = format_agent_input_with_attachments(&input_text, &attachments);
-    let prompt = normalize_submitted_prompt(&formatted_text);
+    let project_state_dir = context.project_state_dir();
+    let prompt_context = get_prompt_context_text(&project_state_dir, &session_id);
+    let contextualized_text =
+        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
+    let prompt = normalize_submitted_prompt(&contextualized_text);
     if let Err(error) = send_prompt_to_tmux(runtime, &window_id, &prompt) {
         return json_error(500, error);
     }

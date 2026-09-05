@@ -526,6 +526,100 @@ fn shared_guest_input_is_limited_to_live_pane_shared_session() {
 }
 
 #[test]
+fn agent_input_prepends_prompt_context_for_both_input_routes() {
+    let project = temp_project("prompt-context-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let set_context = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PROMPT_CONTEXT,
+        Some(&json!({ "sessionId": "codex-1", "text": "page=/admin\nform=event" })),
+    );
+    assert_eq!(set_context.status, 200);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let agents_input = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "one" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(agents_input.status, 200);
+    let live_pane_input = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "two" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(live_pane_input.status, 200);
+
+    assert_eq!(
+        runtime.actions,
+        vec![
+            FakeRuntimeAction::Text(
+                "@1".into(),
+                "[aimux context] page=/admin form=event [/aimux context] one".into()
+            ),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+            FakeRuntimeAction::Text(
+                "@1".into(),
+                "[aimux context] page=/admin form=event [/aimux context] two".into()
+            ),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_stops_prepending_prompt_context_after_clear() {
+    let project = temp_project("prompt-context-clear");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let set_context = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PROMPT_CONTEXT,
+        Some(&json!({ "sessionId": "codex-1", "text": "form=event" })),
+    );
+    assert_eq!(set_context.status, 200);
+    let clear_context = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PROMPT_CONTEXT,
+        Some(&json!({ "sessionId": "codex-1", "text": "" })),
+    );
+    assert_eq!(clear_context.status, 200);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "plain" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        runtime.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "plain".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    cleanup(project);
+}
+
+#[test]
 fn input_formats_session_bound_attachments_into_submitted_prompt() {
     let project = temp_project("attachment-input");
     let state_dir = project.join("state");

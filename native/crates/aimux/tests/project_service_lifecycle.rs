@@ -3,6 +3,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
 };
+use aimux::project_service::prompt_context::{get_prompt_context_text, set_prompt_context};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use aimux::runtime_topology::{
@@ -128,6 +129,7 @@ fn agent_stop_marks_topology_offline_removes_binding_and_kills_window() {
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     let mut runtime = FakeLifecycleRuntime::default();
+    assert!(set_prompt_context(&state_dir, "codex-live", "form=event").is_some());
 
     let response = route_lifecycle_request_with_runtime(
         &context,
@@ -180,6 +182,7 @@ fn agent_kill_moves_session_to_graveyard_and_preserves_previous_status() {
     assert_eq!(response.body["previousStatus"], "running");
     assert_eq!(response.body["transition"]["operation"], "agent.kill");
     assert_eq!(runtime.killed, vec!["@agent"]);
+    assert_eq!(get_prompt_context_text(&state_dir, "codex-live"), None);
     let topology = read_topology(&state_dir);
     let session = session(&topology, "codex-live");
     assert_eq!(session["status"], "graveyard");

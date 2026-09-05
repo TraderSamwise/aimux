@@ -26,6 +26,7 @@ use super::notifications::route_notifications_request;
 use super::operation_failures::route_operation_failures_request;
 use super::plans::route_plan_request;
 use super::project_observability::route_project_observability_request;
+use super::prompt_context::route_prompt_context_request;
 use super::reads::route_read_request;
 use super::shell_state::route_shell_state_request;
 use super::statusline::route_statusline_refresh_request;
@@ -151,6 +152,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_lifecycle_request(context, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_prompt_context_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_agent_output_request(context, method, path, body) {

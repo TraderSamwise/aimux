@@ -22,6 +22,7 @@ pub mod operation_failures;
 pub mod plans;
 pub mod process;
 pub mod project_observability;
+pub mod prompt_context;
 pub mod reads;
 pub mod router;
 pub mod routes;
