@@ -226,6 +226,19 @@ export function onUserScroll({
   threshold?: number;
 }): ChatScrollPolicyState {
   const nextMetrics = normalizeMetrics({ ...state.metrics, ...metrics });
+  if (
+    state.intent.kind === "reading-history" &&
+    nextMetrics.contentOffset <= state.intent.frozenOffset
+  ) {
+    return {
+      ...state,
+      intent: {
+        frozenOffset: nextMetrics.contentOffset,
+        kind: "reading-history",
+      },
+      metrics: nextMetrics,
+    };
+  }
   const anchored = isAnchoredToEnd({
     geometry: state.geometry,
     metrics: nextMetrics,

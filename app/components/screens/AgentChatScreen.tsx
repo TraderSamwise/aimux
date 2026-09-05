@@ -574,6 +574,7 @@ export default function ChatScreen() {
   const composerScrollReserve = useSharedValue(
     COMPOSER_FOOTER_ESTIMATED_HEIGHT + COMPOSER_SCROLL_SAFETY_PADDING,
   );
+  const keyboardScrollFrozen = useSharedValue(false);
   const [composerInteractive, setComposerInteractive] = useState(true);
   const scrollPolicyStateRef = useRef<Record<ScrollPaneKey, ChatScrollPolicyState>>({
     chat: createScrollPaneState("chat"),
@@ -962,15 +963,26 @@ export default function ChatScreen() {
     [composerHideDistance, composerHideProgress],
   );
   const setNativeComposerHidden = useCallback(
-    (hidden: boolean) => {
-      if (!usesNativeKeyboardController || composerHiddenRef.current === hidden) return;
+    (hidden: boolean, options?: { preserveReserve?: boolean }) => {
+      if (!usesNativeKeyboardController) return;
+      const preserveReserve = Boolean(options?.preserveReserve);
+      const hiddenChanged = composerHiddenRef.current !== hidden;
+      if (!hiddenChanged && preserveReserve) return;
+      if (!hiddenChanged) {
+        // eslint-disable-next-line react-hooks/immutability
+        composerScrollReserve.value = withTiming(hidden ? 0 : visibleComposerScrollReserve, {
+          duration: COMPOSER_HIDE_ANIMATION_MS,
+        });
+        return;
+      }
       composerHiddenRef.current = hidden;
       if (!hidden) setComposerInteractive(true);
       composerHideProgress.stopAnimation();
-      // eslint-disable-next-line react-hooks/immutability
-      composerScrollReserve.value = withTiming(hidden ? 0 : visibleComposerScrollReserve, {
-        duration: COMPOSER_HIDE_ANIMATION_MS,
-      });
+      if (!preserveReserve) {
+        composerScrollReserve.value = withTiming(hidden ? 0 : visibleComposerScrollReserve, {
+          duration: COMPOSER_HIDE_ANIMATION_MS,
+        });
+      }
       Animated.timing(composerHideProgress, {
         duration: COMPOSER_HIDE_ANIMATION_MS,
         toValue: hidden ? 1 : 0,
@@ -1159,9 +1171,12 @@ export default function ChatScreen() {
         input: composerFocusedRef.current ? "focused" : "blurred",
         state,
       });
-      setNativeComposerHidden(presentation === "scrolled-away");
+      const hidden = presentation === "scrolled-away";
+      setNativeComposerHidden(hidden, {
+        preserveReserve: hidden && isUserScrollActive(pane),
+      });
     },
-    [setNativeComposerHidden, usesNativeKeyboardController],
+    [isUserScrollActive, setNativeComposerHidden, usesNativeKeyboardController],
   );
 
   const applyPaneScrollPosition = useCallback(
@@ -1306,16 +1321,20 @@ export default function ChatScreen() {
         const state = userScrollStateRef.current[pane];
         if (state.dragging || state.momentum) return;
         userScrollStateRef.current[pane] = createUserScrollState();
+        keyboardScrollFrozen.value = false;
         userScrollIdleTimerRef.current[pane] = null;
+        syncNativeComposerForPane(pane);
       }, SCROLL_GESTURE_IDLE_RELEASE_MS);
     },
-    [clearScrollIdleTimer],
+    [clearScrollIdleTimer, keyboardScrollFrozen, syncNativeComposerForPane],
   );
 
   const markUserScrollActive = useCallback(
     (pane: ScrollPaneKey, key: "dragging" | "momentum") => {
       clearScrollIdleTimer(pane);
       pendingBottomPinRef.current[pane] = false;
+      // eslint-disable-next-line react-hooks/immutability
+      keyboardScrollFrozen.value = true;
       if (usesNativeKeyboardController && key === "dragging") {
         composerInputRef.current?.blur();
         composerFocusedRef.current = false;
@@ -1328,7 +1347,7 @@ export default function ChatScreen() {
         [key]: true,
       };
     },
-    [clearScrollIdleTimer, usesNativeKeyboardController],
+    [clearScrollIdleTimer, keyboardScrollFrozen, usesNativeKeyboardController],
   );
 
   const handleScroll = useCallback(
@@ -1462,12 +1481,14 @@ export default function ChatScreen() {
       chat: createUserScrollState(),
       terminal: createUserScrollState(),
     };
+    // eslint-disable-next-line react-hooks/immutability
+    keyboardScrollFrozen.value = false;
     requestAnimationFrame(() => {
       setNativeComposerHidden(false);
       applyPaneScrollPosition("chat");
       applyPaneScrollPosition("terminal");
     });
-  }, [applyPaneScrollPosition, sessionKey, setNativeComposerHidden]);
+  }, [applyPaneScrollPosition, keyboardScrollFrozen, sessionKey, setNativeComposerHidden]);
 
   useEffect(() => {
     if (composerFocused) {
@@ -2076,6 +2097,7 @@ export default function ChatScreen() {
         composerBottomPadding={0}
         keyboardContentPadding={usesNativeKeyboardController ? composerScrollReserve : undefined}
         keyboardOffset={bottomInset}
+        keyboardScrollFrozen={keyboardScrollFrozen}
         pane="terminal"
         scrollViewRef={terminalScrollRef}
         showLiveOutputLabel
@@ -2127,6 +2149,7 @@ export default function ChatScreen() {
       contentContainerStyle={{ flexGrow: 1 }}
       keyboardContentPadding={usesNativeKeyboardController ? composerScrollReserve : undefined}
       keyboardOffset={bottomInset}
+      keyboardScrollFrozen={keyboardScrollFrozen}
       pane="chat"
       scrollViewRef={scrollRef}
       onMomentumScrollBegin={handleMomentumScrollBegin}
@@ -2746,6 +2769,7 @@ function KeyboardManagedScrollView({
   contentContainerStyle,
   keyboardContentPadding,
   keyboardOffset = 0,
+  keyboardScrollFrozen,
   onMomentumScrollBegin,
   onContentSizeChange,
   onContentInsetChange,
@@ -2762,6 +2786,7 @@ function KeyboardManagedScrollView({
   contentContainerStyle?: React.ComponentProps<typeof ScrollView>["contentContainerStyle"];
   keyboardContentPadding?: SharedValue<number>;
   keyboardOffset?: number;
+  keyboardScrollFrozen?: SharedValue<boolean>;
   onMomentumScrollBegin: (pane: ScrollPaneKey) => void;
   onContentSizeChange: (pane: ScrollPaneKey, contentHeight: number) => void;
   onContentInsetChange?: (pane: ScrollPaneKey, contentInsetBottom: number) => void;
@@ -2822,6 +2847,7 @@ function KeyboardManagedScrollView({
         {...commonProps}
         applyWorkaroundForContentInsetHitTestBug
         extraContentPadding={keyboardContentPadding}
+        freeze={keyboardScrollFrozen}
         keyboardLiftBehavior="whenAtEnd"
         offset={keyboardOffset}
         onContentInsetChange={

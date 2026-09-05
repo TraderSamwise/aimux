@@ -137,6 +137,35 @@ describe("chat scroll model", () => {
     expect(atEnd.intent).toEqual({ kind: "anchored-to-end" });
   });
 
+  it("keeps a slow drag away from the end in reading mode inside the bottom threshold", () => {
+    const state = onUserScrollBegin(
+      createChatScrollPolicyState({
+        pane: "chat",
+        geometry: { composerHeight: 90, endBuffer: 20 },
+        metrics: { contentLength: 1000, contentOffset: 610, viewportLength: 500 },
+      }),
+    );
+
+    const barelyAway = onUserScroll({
+      metrics: { contentOffset: 607 },
+      state,
+      threshold: 24,
+      reanchorThreshold: 8,
+    });
+    const backToEnd = onUserScroll({
+      metrics: { contentOffset: 610 },
+      state: barelyAway,
+      threshold: 24,
+      reanchorThreshold: 8,
+    });
+
+    expect(barelyAway.intent).toEqual({
+      frozenOffset: 607,
+      kind: "reading-history",
+    });
+    expect(backToEnd.intent).toEqual({ kind: "anchored-to-end" });
+  });
+
   it("does not force-scroll during keyboard or composer geometry changes while reading history", () => {
     const state = onUserScroll({
       metrics: { contentOffset: 250 },
