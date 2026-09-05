@@ -1,6 +1,8 @@
 pub mod agents;
 pub mod auth;
 pub mod collaboration;
+pub mod host_agent;
+pub mod metadata;
 pub mod notifications;
 pub mod overseer;
 pub mod params;
