@@ -10,6 +10,7 @@ pub mod core_command_client;
 pub mod core_command_contract;
 pub mod core_command_transport;
 pub mod core_text;
+pub mod daemon;
 pub mod daemon_projects;
 pub mod daemon_state;
 pub mod daemon_supervisor;
