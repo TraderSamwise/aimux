@@ -85,6 +85,7 @@ import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
   chatCommandForNavigationFocus,
+  chatDistanceFromEnd,
   chatPolicyAfterNavigationFocus,
   chatPolicyAfterUserScroll,
   createChatScrollPolicy,
@@ -131,12 +132,22 @@ import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_HORIZONTAL_PADDING = 32;
+const CHAT_SCROLL_DEBUG_UPDATE_INTERVAL_MS = 250;
 const CHAT_ASSISTANT_BUBBLE_MAX_RATIO = 0.9;
 const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 12.4;
 const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
 const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 type ChatScrollHandle = Pick<ScrollView, "scrollToEnd">;
+type ChatScrollDebugSnapshot = {
+  contentHeight: number;
+  distanceFromEnd: number;
+  event: string;
+  intent: ChatScrollPolicy["intent"];
+  lastCommandReason: string | null;
+  offsetY: number;
+  viewportHeight: number;
+};
 const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
 const COMPOSER_INPUT_MAX_LINES = 4;
@@ -488,6 +499,8 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [chatScrollDebugSnapshot, setChatScrollDebugSnapshot] =
+    useState<ChatScrollDebugSnapshot | null>(null);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
@@ -601,7 +614,10 @@ export default function ChatScreen() {
     viewportHeight: 0,
   });
   const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+  const chatScrollDebugLastPublishAtRef = useRef(0);
+  const chatScrollDebugSnapshotRef = useRef<ChatScrollDebugSnapshot | null>(null);
   const chatScrollFrameRef = useRef<number | null>(null);
+  const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
   const chatInitialLayoutKeyRef = useRef<string | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
@@ -749,29 +765,71 @@ export default function ChatScreen() {
     ),
   );
 
+  const publishChatScrollDebugSnapshot = useCallback(
+    (event: string, metrics = chatScrollMetricsRef.current, force = false) => {
+      if (!__DEV__) return;
+      const previousSnapshot = chatScrollDebugSnapshotRef.current;
+      const snapshot: ChatScrollDebugSnapshot = {
+        contentHeight: metrics.contentHeight,
+        distanceFromEnd: chatDistanceFromEnd(metrics),
+        event,
+        intent: chatScrollPolicyRef.current.intent,
+        lastCommandReason: previousSnapshot?.lastCommandReason ?? null,
+        offsetY: metrics.offsetY,
+        viewportHeight: metrics.viewportHeight,
+      };
+      const commandPrefix = "scrollToEnd:";
+      if (event.startsWith(commandPrefix)) {
+        snapshot.lastCommandReason = event.slice(commandPrefix.length);
+      }
+      chatScrollDebugSnapshotRef.current = snapshot;
+      const now = Date.now();
+      if (
+        !force &&
+        now - chatScrollDebugLastPublishAtRef.current < CHAT_SCROLL_DEBUG_UPDATE_INTERVAL_MS
+      ) {
+        return;
+      }
+      chatScrollDebugLastPublishAtRef.current = now;
+      setChatScrollDebugSnapshot(snapshot);
+    },
+    [],
+  );
+
   const cancelPendingChatScroll = useCallback(() => {
     if (chatScrollFrameRef.current === null) return;
+    const reason = chatScrollPendingCommandReasonRef.current ?? "unknown";
     cancelAnimationFrame(chatScrollFrameRef.current);
     chatScrollFrameRef.current = null;
-  }, []);
+    chatScrollPendingCommandReasonRef.current = null;
+    publishChatScrollDebugSnapshot(`scrollToEnd:canceled:${reason}`);
+  }, [publishChatScrollDebugSnapshot]);
 
   const executeChatScrollCommand = useCallback(
-    (command: ChatScrollCommand) => {
-      if (command.kind === "none") return;
+    (command: ChatScrollCommand, noneReason = "unknown") => {
+      if (command.kind === "none") {
+        publishChatScrollDebugSnapshot(`scrollToEnd:none:${noneReason}`);
+        return;
+      }
       cancelPendingChatScroll();
+      chatScrollPendingCommandReasonRef.current = command.reason;
+      publishChatScrollDebugSnapshot(`scrollToEnd:scheduled:${command.reason}`);
       chatScrollFrameRef.current = requestAnimationFrame(() => {
         chatScrollFrameRef.current = null;
+        chatScrollPendingCommandReasonRef.current = null;
         if (
           command.reason !== "initial" &&
           command.reason !== "navigation" &&
           chatScrollPolicyRef.current.intent !== "pinned"
         ) {
+          publishChatScrollDebugSnapshot(`scrollToEnd:skipped:${command.reason}`);
           return;
         }
         chatScrollRef.current?.scrollToEnd({ animated: command.animated });
+        publishChatScrollDebugSnapshot(`scrollToEnd:executed:${command.reason}`);
       });
     },
-    [cancelPendingChatScroll],
+    [cancelPendingChatScroll, publishChatScrollDebugSnapshot],
   );
 
   useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
@@ -793,15 +851,16 @@ export default function ChatScreen() {
         ...chatScrollMetricsRef.current,
         viewportHeight: event.nativeEvent.layout.height,
       };
+      publishChatScrollDebugSnapshot("layout");
       const layoutKey = sessionId ?? "unscoped";
       if (chatInitialLayoutKeyRef.current !== layoutKey) {
         chatInitialLayoutKeyRef.current = layoutKey;
         executeChatScrollCommand(chatCommandForInitialLayout());
         return;
       }
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current));
+      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
     },
-    [executeChatScrollCommand, sessionId],
+    [executeChatScrollCommand, publishChatScrollDebugSnapshot, sessionId],
   );
 
   const handleChatContentSizeChange = useCallback(
@@ -810,9 +869,10 @@ export default function ChatScreen() {
         ...chatScrollMetricsRef.current,
         contentHeight,
       };
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current));
+      publishChatScrollDebugSnapshot("content-size");
+      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
     },
-    [executeChatScrollCommand],
+    [executeChatScrollCommand, publishChatScrollDebugSnapshot],
   );
 
   const handleChatScroll = useCallback(
@@ -823,13 +883,23 @@ export default function ChatScreen() {
         viewportHeight: event.nativeEvent.layoutMeasurement.height,
       };
       chatScrollMetricsRef.current = metrics;
+      const previousIntent = chatScrollPolicyRef.current.intent;
       const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
       if (nextPolicy.intent === "reading") {
         cancelPendingChatScroll();
       }
       chatScrollPolicyRef.current = nextPolicy;
+      const transitionEvent =
+        previousIntent === nextPolicy.intent
+          ? "scroll"
+          : `policy:${previousIntent}->${nextPolicy.intent}`;
+      publishChatScrollDebugSnapshot(
+        transitionEvent,
+        metrics,
+        previousIntent !== nextPolicy.intent,
+      );
     },
-    [cancelPendingChatScroll],
+    [cancelPendingChatScroll, publishChatScrollDebugSnapshot],
   );
 
   useEffect(() => {
@@ -2091,12 +2161,41 @@ export default function ChatScreen() {
                   serviceEndpoint={displayServiceEndpoint}
                   dividerWidth={chatDividerWidth}
                 />
+                {__DEV__ && chatScrollDebugSnapshot ? (
+                  <ChatScrollDebugOverlay snapshot={chatScrollDebugSnapshot} />
+                ) : null}
                 {composerFooter}
               </View>
             )}
           </View>
         </View>
       </View>
+    </View>
+  );
+}
+
+function ChatScrollDebugOverlay({ snapshot }: { snapshot: ChatScrollDebugSnapshot }) {
+  if (!__DEV__) return null;
+  return (
+    <View
+      pointerEvents="none"
+      className="absolute right-2 top-2 z-50 rounded-md border border-border bg-background/90 px-2 py-1"
+      style={{ maxWidth: 240 }}
+    >
+      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
+        {`intent ${snapshot.intent} · end ${Math.round(snapshot.distanceFromEnd)}`}
+      </Text>
+      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
+        {`y ${Math.round(snapshot.offsetY)} · vh ${Math.round(snapshot.viewportHeight)} · ch ${Math.round(
+          snapshot.contentHeight,
+        )}`}
+      </Text>
+      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
+        {`event ${snapshot.event}`}
+      </Text>
+      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
+        {`cmd ${snapshot.lastCommandReason ?? "none"}`}
+      </Text>
     </View>
   );
 }
