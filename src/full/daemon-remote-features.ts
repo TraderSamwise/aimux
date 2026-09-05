@@ -152,9 +152,19 @@ export function createFullDaemonRemoteFeatures(): DaemonRemoteFeatures {
     },
     pushNotification(payload: RelayNotificationPush) {
       if (relayClient?.getStatus().status !== "connected") {
+        log.warn("mobile push suppressed because relay is unavailable", "remote", {
+          kind: payload.kind,
+          sessionId: payload.sessionId,
+        });
         return { ok: true, suppressed: true, reason: "relay_unavailable" };
       }
-      if (!pushThrottle.allow(payload)) return { ok: true, suppressed: true };
+      if (!pushThrottle.allow(payload)) {
+        log.warn("mobile push suppressed by daemon throttle", "remote", {
+          kind: payload.kind,
+          sessionId: payload.sessionId,
+        });
+        return { ok: true, suppressed: true, reason: "daemon_throttle" };
+      }
       relayClient.pushNotification(payload);
       return { ok: true };
     },

@@ -757,15 +757,9 @@ export default function ChatScreen() {
     !routeSessionMissing && !serviceEndpoint && Boolean(displayServiceEndpoint);
   const canShowTerminal = outputAvailable || Boolean(output);
   const usesNativeKeyboardController = Platform.OS !== "web";
-  const compactHeaderActionsWidth = canShowTerminal
-    ? canUseOwnerControls
-      ? 76
-      : 32
-    : canUseOwnerControls
-      ? 32
-      : 0;
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
+  const useScrollableNativeHeader = Platform.OS !== "web";
   const canUseSplitView = viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
   const effectiveAgentOutputViewMode =
     agentOutputViewMode === "split" && !canUseSplitView ? "chat" : agentOutputViewMode;
@@ -2189,97 +2183,63 @@ export default function ChatScreen() {
               className="border-b border-border px-4 py-3 flex-row items-center justify-between"
               style={{ flexShrink: 0 }}
             >
-              <Pressable
-                onPress={goBack}
-                accessibilityLabel="Back"
-                className="mr-3 h-8 w-8 items-center justify-center rounded-md border border-border active:bg-accent"
-              >
-                <ChevronLeft size={16} color="#a1a1aa" />
-              </Pressable>
-              {headerTone ? (
-                <View
-                  className="mr-2.5 self-stretch rounded-full"
-                  style={{ width: 3, backgroundColor: headerTone }}
-                />
-              ) : null}
-              <View className="flex-1" style={{ minWidth: 0 }}>
-                <View className="flex-row items-baseline gap-1.5" style={{ minWidth: 0 }}>
-                  <Text
-                    className="text-base font-semibold text-foreground"
-                    numberOfLines={1}
-                    ellipsizeMode="middle"
-                    style={[
-                      { minWidth: 0, flexShrink: 1 },
-                      headerTone ? { color: headerTone } : null,
-                    ]}
-                  >
-                    {sessionTitle}
-                  </Text>
-                  {sessionToolLabel && !compactHeaderActions ? (
-                    <Text
-                      className="text-xs text-muted-foreground"
-                      numberOfLines={1}
-                      style={{ minWidth: 0, flexShrink: 1 }}
-                    >
-                      {sessionToolLabel}
-                    </Text>
-                  ) : null}
-                </View>
-                <Text
-                  className="text-xs text-muted-foreground"
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {sessionSubtitle}
-                </Text>
-              </View>
-              {session && compactHeaderActions && (canUseOwnerControls || canShowTerminal) ? (
-                <View
-                  className="ml-2 flex-row items-center justify-end"
-                  style={{ flexShrink: 0, width: compactHeaderActionsWidth }}
-                >
-                  {canUseOwnerControls ? (
-                    <Pressable
-                      onPress={() => setManagePanelOpen((open) => !open)}
-                      accessibilityLabel="Manage agent"
-                      accessibilityState={{ expanded: managePanelOpen }}
-                      className={cn(
-                        canShowTerminal ? "mr-2" : "",
-                        "h-8 w-8 items-center justify-center rounded-md border",
-                        managePanelOpen ? "border-primary bg-accent" : "border-border",
-                      )}
-                    >
-                      <SlidersHorizontal
-                        size={14}
-                        color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
-                      />
-                    </Pressable>
-                  ) : null}
-                  {canShowTerminal ? (
-                    <Pressable
-                      onPress={cycleAgentOutputViewMode}
-                      accessibilityLabel={terminalToggleLabel}
-                      className="h-8 w-8 items-center justify-center rounded-md border border-border"
-                    >
-                      {showSplit ? (
-                        <Columns2 size={15} color="#a1a1aa" />
-                      ) : showTerminalOnly ? (
-                        <SquareTerminal size={15} color="#a1a1aa" />
-                      ) : (
-                        <MessageSquare size={15} color="#a1a1aa" />
-                      )}
-                    </Pressable>
-                  ) : null}
-                </View>
-              ) : session ? (
+              {useScrollableNativeHeader ? (
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
-                  style={{ flexShrink: 0, maxWidth: headerActionsMaxWidth, minWidth: 0 }}
-                  contentContainerStyle={{ alignItems: "center" }}
+                  style={{ flex: 1, minWidth: 0 }}
+                  contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
+                  keyboardShouldPersistTaps="handled"
                 >
                   <View className="flex-row items-center">
-                    {canUseOwnerControls ? (
+                    <Pressable
+                      onPress={goBack}
+                      accessibilityLabel="Back"
+                      className="mr-3 h-8 w-8 items-center justify-center rounded-md border border-border active:bg-accent"
+                    >
+                      <ChevronLeft size={16} color="#a1a1aa" />
+                    </Pressable>
+                    {headerTone ? (
+                      <View
+                        className="mr-2.5 h-12 rounded-full"
+                        style={{ width: 3, backgroundColor: headerTone }}
+                      />
+                    ) : null}
+                    <View
+                      className="mr-2"
+                      style={{ width: Math.max(210, Math.min(300, width * 0.48)) }}
+                    >
+                      <View className="flex-row items-baseline gap-1.5">
+                        <Text
+                          className="text-base font-semibold text-foreground"
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                          style={[
+                            { minWidth: 0, flexShrink: 1 },
+                            headerTone ? { color: headerTone } : null,
+                          ]}
+                        >
+                          {sessionTitle}
+                        </Text>
+                        {sessionToolLabel ? (
+                          <Text
+                            className="text-xs text-muted-foreground"
+                            numberOfLines={1}
+                            style={{ flexShrink: 0 }}
+                          >
+                            {sessionToolLabel}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Text
+                        className="text-xs text-muted-foreground"
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                      >
+                        {sessionSubtitle}
+                      </Text>
+                    </View>
+                    {session && canUseOwnerControls ? (
                       <>
                         <View className="mr-2">
                           <AgentActions
@@ -2316,21 +2276,23 @@ export default function ChatScreen() {
                         </Pressable>
                       </>
                     ) : null}
-                    <Pressable
-                      onPress={cycleAgentOutputViewMode}
-                      disabled={!canShowTerminal}
-                      accessibilityLabel={terminalToggleLabel}
-                      className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
-                    >
-                      {showSplit ? (
-                        <Columns2 size={15} color="#a1a1aa" />
-                      ) : showTerminalOnly ? (
-                        <SquareTerminal size={15} color="#a1a1aa" />
-                      ) : (
-                        <MessageSquare size={15} color="#a1a1aa" />
-                      )}
-                    </Pressable>
-                    {canUseOwnerControls ? (
+                    {session ? (
+                      <Pressable
+                        onPress={cycleAgentOutputViewMode}
+                        disabled={!canShowTerminal}
+                        accessibilityLabel={terminalToggleLabel}
+                        className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
+                      >
+                        {showSplit ? (
+                          <Columns2 size={15} color="#a1a1aa" />
+                        ) : showTerminalOnly ? (
+                          <SquareTerminal size={15} color="#a1a1aa" />
+                        ) : (
+                          <MessageSquare size={15} color="#a1a1aa" />
+                        )}
+                      </Pressable>
+                    ) : null}
+                    {session && canUseOwnerControls ? (
                       <Pressable
                         onPress={() => {
                           blurWebActiveElement();
@@ -2349,7 +2311,133 @@ export default function ChatScreen() {
                     ) : null}
                   </View>
                 </ScrollView>
-              ) : null}
+              ) : (
+                <>
+                  <Pressable
+                    onPress={goBack}
+                    accessibilityLabel="Back"
+                    className="mr-3 h-8 w-8 items-center justify-center rounded-md border border-border active:bg-accent"
+                  >
+                    <ChevronLeft size={16} color="#a1a1aa" />
+                  </Pressable>
+                  {headerTone ? (
+                    <View
+                      className="mr-2.5 self-stretch rounded-full"
+                      style={{ width: 3, backgroundColor: headerTone }}
+                    />
+                  ) : null}
+                  <View className="flex-1" style={{ minWidth: 0 }}>
+                    <View className="flex-row items-baseline gap-1.5" style={{ minWidth: 0 }}>
+                      <Text
+                        className="text-base font-semibold text-foreground"
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                        style={[
+                          { minWidth: 0, flexShrink: 1 },
+                          headerTone ? { color: headerTone } : null,
+                        ]}
+                      >
+                        {sessionTitle}
+                      </Text>
+                      {sessionToolLabel && !compactHeaderActions ? (
+                        <Text
+                          className="text-xs text-muted-foreground"
+                          numberOfLines={1}
+                          style={{ minWidth: 0, flexShrink: 1 }}
+                        >
+                          {sessionToolLabel}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text
+                      className="text-xs text-muted-foreground"
+                      numberOfLines={1}
+                      ellipsizeMode="middle"
+                    >
+                      {sessionSubtitle}
+                    </Text>
+                  </View>
+                  {session ? (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={{ flexShrink: 0, maxWidth: headerActionsMaxWidth, minWidth: 0 }}
+                      contentContainerStyle={{ alignItems: "center" }}
+                    >
+                      <View className="flex-row items-center">
+                        {canUseOwnerControls ? (
+                          <>
+                            <View className="mr-2">
+                              <AgentActions
+                                session={session}
+                                projectPath={stateProjectPath}
+                                endpoint={serviceEndpoint}
+                                token={token}
+                                compact
+                                mainCheckoutPath={desktopState?.mainCheckoutPath}
+                                onKilled={goBack}
+                              />
+                            </View>
+                            <Pressable
+                              onPress={() => setSharePanelOpen((open) => !open)}
+                              accessibilityLabel="Invite collaborator"
+                              className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
+                            >
+                              <UserPlus size={15} color="#a1a1aa" />
+                            </Pressable>
+                            <Pressable
+                              onPress={() => setManagePanelOpen((open) => !open)}
+                              accessibilityLabel="Manage agent"
+                              accessibilityState={{ expanded: managePanelOpen }}
+                              className={cn(
+                                "h-8 flex-row items-center gap-1.5 rounded-md border mr-2 px-2.5",
+                                managePanelOpen ? "border-primary bg-accent" : "border-border",
+                              )}
+                            >
+                              <SlidersHorizontal
+                                size={14}
+                                color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
+                              />
+                              <Text className="text-xs text-foreground">Manage</Text>
+                            </Pressable>
+                          </>
+                        ) : null}
+                        <Pressable
+                          onPress={cycleAgentOutputViewMode}
+                          disabled={!canShowTerminal}
+                          accessibilityLabel={terminalToggleLabel}
+                          className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
+                        >
+                          {showSplit ? (
+                            <Columns2 size={15} color="#a1a1aa" />
+                          ) : showTerminalOnly ? (
+                            <SquareTerminal size={15} color="#a1a1aa" />
+                          ) : (
+                            <MessageSquare size={15} color="#a1a1aa" />
+                          )}
+                        </Pressable>
+                        {canUseOwnerControls ? (
+                          <Pressable
+                            onPress={() => {
+                              blurWebActiveElement();
+                              router.push({
+                                pathname: "/plans/[sessionId]",
+                                params: {
+                                  sessionId: session.id,
+                                  ...(projectPath ? { project: projectPath } : {}),
+                                },
+                              });
+                            }}
+                            className="h-8 justify-center px-1"
+                          >
+                            <Text className="text-sm text-primary">Plan</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </ScrollView>
+                  ) : null}
+                </>
+              )}
             </View>
             {/*
             Closed by default. These are settings, and pinning them above every
@@ -2359,7 +2447,7 @@ export default function ChatScreen() {
             {session && managePanelOpen && canUseOwnerControls ? (
               <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
                 <ScrollView>
-                  {compactHeaderActions ? (
+                  {compactHeaderActions && !useScrollableNativeHeader ? (
                     <View className="border-b border-border bg-card px-4 py-3">
                       <AgentActions
                         session={session}

@@ -44,7 +44,7 @@ import {
   metadataDisplayContext,
   type SessionAlertDisplayContext,
 } from "./alert-display.js";
-import { notifyAlert } from "./notify.js";
+import { forwardMobilePushAlert, notifyAlert } from "./notify.js";
 import { clearNotifications, listNotificationSnapshot, markNotificationsRead } from "./notifications.js";
 import { updateNotificationContext } from "./notification-context.js";
 import { markSessionViewed } from "./session-viewed.js";
@@ -1056,6 +1056,7 @@ export class MetadataServer {
       if (event.type !== "alert") return;
       this.scheduleDesktopStateRefresh();
       notifyAlert(event);
+      forwardMobilePushAlert(event);
     });
   }
 

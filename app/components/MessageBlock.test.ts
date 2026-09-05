@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({
   Image: "Image",
+  Linking: { openURL: vi.fn() },
   Platform: { OS: "web" },
   ScrollView: "ScrollView",
   Text: "Text",
@@ -12,8 +13,10 @@ import {
   canRenderRichText,
   messageContainerStyleForRole,
   messageSpeakerLabel,
+  normalizeChatLinkTarget,
   resolveImageUrl,
   shouldRenderRichTerminalText,
+  splitChatTextLinkSegments,
   splitMarkdownTableSegments,
   splitMessageTextSegments,
 } from "@/components/MessageBlock";
@@ -189,6 +192,36 @@ describe("MessageBlock layout", () => {
   it("does not clip rich terminal spans inside chat bubbles", () => {
     expect(messageContainerStyleForRole("assistant").overflow).toBe("visible");
     expect(messageContainerStyleForRole("user").overflow).toBe("visible");
+  });
+});
+
+describe("MessageBlock links", () => {
+  it("splits ordinary URLs into clickable link segments", () => {
+    expect(splitChatTextLinkSegments("Open https://example.com/path?x=1.")).toEqual([
+      { kind: "text", text: "Open " },
+      { kind: "link", text: "https://example.com/path?x=1", url: "https://example.com/path?x=1" },
+      { kind: "text", text: "." },
+    ]);
+  });
+
+  it("turns Claude terminal artifact hyperlinks into clean link segments", () => {
+    expect(
+      splitChatTextLinkSegments(
+        "]8;id=ub1ind;https://claude.ai/code/artifact/a77d\\Artifact page]8;;\\",
+      ),
+    ).toEqual([
+      {
+        kind: "link",
+        text: "Artifact page",
+        url: "https://claude.ai/code/artifact/a77d",
+      },
+    ]);
+  });
+
+  it("normalizes soft-wrapped link targets before opening", () => {
+    expect(normalizeChatLinkTarget("https://example.com/a/\u200Bb")).toBe(
+      "https://example.com/a/b",
+    );
   });
 });
 

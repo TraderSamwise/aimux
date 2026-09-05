@@ -26,6 +26,20 @@ export function setMobilePushForwarder(forwarder: MobilePushForwarder | null): v
   mobilePushForwarder = forwarder;
 }
 
+export function forwardMobilePushAlert(event: AlertEvent): boolean {
+  if (event.kind === "interaction_request" && event.interaction?.telemetry) return false;
+  if (externalNotificationsDisabled()) {
+    debug(
+      `mobile push suppressed by AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS: ${event.message || event.sessionId || event.kind}`,
+      "notify",
+    );
+    return false;
+  }
+  if (!mobilePushForwarder) return false;
+  mobilePushForwarder(event);
+  return true;
+}
+
 function send(title: string, message: string): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
@@ -88,7 +102,6 @@ export function notifyAlert(event: AlertEvent): boolean {
   if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return false;
 
   send(event.title || "aimux", event.message || event.sessionId || event.kind);
-  if (!externalNotificationsDisabled()) mobilePushForwarder?.(event);
   return true;
 }
 

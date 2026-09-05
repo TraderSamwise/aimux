@@ -1,6 +1,7 @@
 import React from "react";
 import {
   Image,
+  Linking,
   Platform,
   ScrollView,
   Text as RNText,
@@ -52,12 +53,24 @@ const MESSAGE_CODE_EDIT_DIFF_STYLE: TextStyle = {
   fontSize: 12,
   lineHeight: 17,
 };
+const MESSAGE_LINK_STYLE: TextStyle = {
+  color: "#7cc7ff",
+  textDecorationLine: "underline",
+};
 
 export type TextSegment = { kind: "code-edit-diff" | "table" | "text"; text: string };
+export type ChatTextLinkSegment =
+  | { kind: "link"; text: string; url: string }
+  | { kind: "text"; text: string };
 type TextSegmentWithRange = TextSegment & { end: number; start: number };
 const BOX_TABLE_CHARS = /[╭╮╰╯┌┐└┘├┤┬┴┼─│═║╔╗╚╝╠╣╦╩╬]/;
 const CODE_EDIT_HEADER = /^Edited\s+\S.+\(\+\d+\s+-\d+\)\s*$/;
 const CODE_EDIT_ROW = /^\s*(?:\d+|\.{2,}|…+|⋮)\s+/;
+const INLINE_URL_PATTERN = /\b(?:https?:\/\/|file:\/\/\/)[^\s<>"'`]+/gi;
+const TERMINAL_HYPERLINK_PATTERN =
+  /\x1b\]8;[^;]*;((?:https?:\/\/|file:\/\/\/)[^\x07\x1b]*)(?:\x07|\x1b\\)([\s\S]*?)\x1b\]8;;(?:\x07|\x1b\\)|\]8;[^;]*;((?:https?:\/\/|file:\/\/\/)[^\s\\\]]+)(?:\\)([\s\S]*?)\]8;;\\?/gi;
+const SOFT_BREAK_PATTERN = /\u200B/g;
+const TRAILING_URL_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?", ")", "]", "}"]);
 
 export function resolveImageUrl(
   part: HistoryImagePart | HistoryImageReferencePart | HistoryAttachmentReferencePart,
@@ -135,6 +148,83 @@ export function splitMarkdownTableSegments(text: string): TextSegment[] {
 
 export function splitMessageTextSegments(text: string): TextSegment[] {
   return splitMessageTextSegmentsWithRanges(text).map(({ kind, text }) => ({ kind, text }));
+}
+
+export function splitChatTextLinkSegments(text: string): ChatTextLinkSegment[] {
+  const terminalSegments = splitTerminalHyperlinkSegments(text);
+  return mergeAdjacentTextSegments(
+    terminalSegments.flatMap((segment) =>
+      segment.kind === "link" ? [segment] : splitInlineUrlSegments(segment.text),
+    ),
+  );
+}
+
+export function normalizeChatLinkTarget(url: string): string {
+  return url.replace(SOFT_BREAK_PATTERN, "");
+}
+
+function splitTerminalHyperlinkSegments(text: string): ChatTextLinkSegment[] {
+  const segments: ChatTextLinkSegment[] = [];
+  TERMINAL_HYPERLINK_PATTERN.lastIndex = 0;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = TERMINAL_HYPERLINK_PATTERN.exec(text))) {
+    if (match.index > cursor)
+      segments.push({ kind: "text", text: text.slice(cursor, match.index) });
+
+    const url = match[1] ?? match[3] ?? "";
+    const label = cleanTerminalHyperlinkLabel(match[2] ?? match[4] ?? "", url);
+    segments.push({ kind: "link", text: label, url });
+    cursor = match.index + match[0].length;
+  }
+
+  if (cursor < text.length) segments.push({ kind: "text", text: text.slice(cursor) });
+  return segments.length > 0 ? segments : [{ kind: "text", text }];
+}
+
+function cleanTerminalHyperlinkLabel(label: string, url: string): string {
+  const trimmed = label.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").trim();
+  return trimmed || url;
+}
+
+function splitInlineUrlSegments(text: string): ChatTextLinkSegment[] {
+  const segments: ChatTextLinkSegment[] = [];
+  INLINE_URL_PATTERN.lastIndex = 0;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = INLINE_URL_PATTERN.exec(text))) {
+    const raw = match[0] ?? "";
+    const trimmed = trimTrailingUrlPunctuation(raw);
+    if (!trimmed) continue;
+    const start = match.index;
+    const end = start + trimmed.length;
+    if (start > cursor) segments.push({ kind: "text", text: text.slice(cursor, start) });
+    segments.push({ kind: "link", text: trimmed, url: trimmed });
+    cursor = end;
+  }
+
+  if (cursor < text.length) segments.push({ kind: "text", text: text.slice(cursor) });
+  return segments.length > 0 ? segments : [{ kind: "text", text }];
+}
+
+function trimTrailingUrlPunctuation(text: string): string {
+  let end = text.length;
+  while (end > 0 && TRAILING_URL_PUNCTUATION.has(text[end - 1] ?? "")) end -= 1;
+  return text.slice(0, end);
+}
+
+function mergeAdjacentTextSegments(segments: ChatTextLinkSegment[]): ChatTextLinkSegment[] {
+  const merged: ChatTextLinkSegment[] = [];
+  for (const segment of segments) {
+    if (!segment.text) continue;
+    const previous = merged[merged.length - 1];
+    if (previous?.kind === "text" && segment.kind === "text") {
+      previous.text += segment.text;
+      continue;
+    }
+    merged.push(segment);
+  }
+  return merged.length > 0 ? merged : [{ kind: "text", text: "" }];
 }
 
 function splitMessageTextSegmentsWithRanges(text: string): TextSegmentWithRange[] {
@@ -357,11 +447,26 @@ function RichText({
   );
   return (
     <Text className={className} style={textStyle}>
-      {displaySpans.map((span, index) => (
-        <RNText key={index} style={styleForRichTextSpan(span)}>
-          {span.text}
-        </RNText>
-      ))}
+      {displaySpans.flatMap((span, index) =>
+        splitChatTextLinkSegments(span.text).map((segment, segmentIndex) => (
+          <RNText
+            key={`${index}:${segmentIndex}`}
+            onPress={
+              segment.kind === "link"
+                ? () => {
+                    void Linking.openURL(normalizeChatLinkTarget(segment.url));
+                  }
+                : undefined
+            }
+            style={[
+              styleForRichTextSpan(span),
+              segment.kind === "link" ? MESSAGE_LINK_STYLE : null,
+            ]}
+          >
+            {segment.text}
+          </RNText>
+        )),
+      )}
     </Text>
   );
 }
@@ -457,7 +562,21 @@ function PlainTextPart({
           <MarkdownTableText key={index} className={className} text={segment.text} />
         ) : (
           <Text key={index} className={className} style={textStyleForSegmentKind(segment.kind)}>
-            {formatPlainTextForDisplay(segment.text, { dividerWidth })}
+            {splitChatTextLinkSegments(segment.text).map((linkSegment, linkIndex) => (
+              <RNText
+                key={linkIndex}
+                onPress={
+                  linkSegment.kind === "link"
+                    ? () => {
+                        void Linking.openURL(normalizeChatLinkTarget(linkSegment.url));
+                      }
+                    : undefined
+                }
+                style={linkSegment.kind === "link" ? MESSAGE_LINK_STYLE : null}
+              >
+                {formatPlainTextForDisplay(linkSegment.text, { dividerWidth })}
+              </RNText>
+            ))}
           </Text>
         ),
       )}
