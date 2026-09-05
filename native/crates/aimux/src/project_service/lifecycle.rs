@@ -150,6 +150,7 @@ pub fn route_lifecycle_request_with_runtime(
         routes::worktree_actions::GRAVEYARD => {
             Some(route_worktree_graveyard(context, body, runtime))
         }
+        routes::worktree_actions::REMOVE => Some(route_worktree_remove(context, body, runtime)),
         routes::graveyard_actions::RESURRECT_WORKTREE => {
             Some(route_graveyard_worktree_resurrect(context, body))
         }
@@ -2508,6 +2509,86 @@ fn route_worktree_graveyard(
     )
 }
 
+fn route_worktree_remove(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let Some(path) = trimmed_string(body.get("path")) else {
+        return json_error(400, "path is required");
+    };
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    if path == project_root {
+        return json_error(500, "Cannot remove the main checkout");
+    }
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(worktree) = array_field(&topology, "worktrees")
+        .into_iter()
+        .find(|worktree| string_field(worktree, "path") == path)
+    else {
+        return json_error(404, format!("Worktree \"{path}\" not found"));
+    };
+    let worktree_name = string_field(&worktree, "name");
+    if let Some(attached) = array_field(&topology, "sessions")
+        .into_iter()
+        .find(|session| {
+            string_field(session, "worktreePath") == path
+                && LIVE_STATUSES.contains(&string_field(session, "status").as_str())
+        })
+    {
+        let label = trimmed_string(attached.get("label"))
+            .or_else(|| trimmed_string(attached.get("id")))
+            .unwrap_or_else(|| "agent".into());
+        return json_error(
+            500,
+            format!("Cannot remove \"{worktree_name}\" while agent \"{label}\" is attached"),
+        );
+    }
+    let live_service_window_ids = array_field(&topology, "services")
+        .into_iter()
+        .filter(|service| string_field(service, "worktreePath") == path)
+        .filter_map(|service| live_window_id_for_service(&topology, &service))
+        .collect::<Vec<_>>();
+    if Path::new(&path).exists() {
+        if let Err(error) = remove_git_worktree_checkout(&project_root, &path) {
+            mark_worktree_remove_error(&project_state_dir, &path, &worktree_name, &error);
+            return json_error(500, error);
+        }
+    } else {
+        prune_git_worktrees(&project_root);
+    }
+    let removed_session_ids = session_ids_for_worktree(&topology, &path);
+    for session_id in &removed_session_ids {
+        delete_agent_assets(context.project_root(), &project_state_dir, session_id);
+    }
+    if let Err(error) =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
+            remove_worktree_dependents(&mut topology, &path);
+            let mut worktrees = array_field(&topology, "worktrees");
+            worktrees.retain(|worktree| string_field(worktree, "path") != path);
+            object_insert_mut(&mut topology, "worktrees", Value::Array(worktrees));
+            object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
+            topology
+        })
+    {
+        return json_error(500, error);
+    }
+    for window_id in live_service_window_ids {
+        let _ = runtime.kill_window(&window_id);
+    }
+    prune_git_worktrees(&project_root);
+    lifecycle_response(
+        json!({ "path": path, "status": "removed" }),
+        "worktree.remove",
+        "worktree",
+        Some(&path),
+    )
+}
+
 fn route_graveyard_worktree_resurrect(
     context: &ProjectServiceRequestContext,
     body: &Value,
@@ -2751,6 +2832,32 @@ fn worktree_name_from_path(path: &str) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or(path)
         .to_owned()
+}
+
+fn mark_worktree_remove_error(project_state_dir: &Path, path: &str, name: &str, error: &str) {
+    let _ = update_runtime_topology(runtime_topology_path(project_state_dir), |topology| {
+        map_topology_array(topology, "worktrees", |mut worktree| {
+            if string_field(&worktree, "path") == path {
+                object_insert_mut(&mut worktree, "status", Value::String("error".into()));
+                object_insert_mut(
+                    &mut worktree,
+                    "name",
+                    Value::String(if name.is_empty() {
+                        worktree_name_from_path(path)
+                    } else {
+                        name.to_owned()
+                    }),
+                );
+                object_insert_mut(
+                    &mut worktree,
+                    "operationFailure",
+                    Value::String(error.to_owned()),
+                );
+                object_insert_mut(&mut worktree, "updatedAt", Value::String(now_iso()));
+            }
+            worktree
+        })
+    });
 }
 
 fn session_ids_for_worktree(topology: &Value, worktree_path: &str) -> Vec<String> {

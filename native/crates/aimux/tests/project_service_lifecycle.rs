@@ -1260,6 +1260,68 @@ fn worktree_graveyard_rejects_attached_live_agent() {
 }
 
 #[test]
+fn worktree_remove_missing_checkout_removes_topology_and_stops_services() {
+    let project = temp_project("worktree-remove");
+    let state_dir = project.join("state");
+    let worktree = project.join("missing");
+    write_active_worktree_topology(&state_dir, &worktree, false);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::REMOVE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "removed");
+    assert_eq!(response.body["transition"]["operation"], "worktree.remove");
+    assert_eq!(runtime.killed, vec!["@service"]);
+    let topology = read_topology(&state_dir);
+    assert_eq!(topology["worktrees"], json!([]));
+    assert_eq!(topology["services"], json!([]));
+    assert_eq!(topology["nodes"], json!([]));
+    cleanup(project);
+}
+
+#[test]
+fn worktree_remove_rejects_attached_live_agent() {
+    let project = temp_project("worktree-remove-attached");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::REMOVE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("while agent \"active agent\" is attached")
+    );
+    assert!(runtime.killed.is_empty());
+    assert_eq!(
+        read_topology(&state_dir)["worktrees"][0]["status"],
+        "active"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn graveyard_worktree_resurrect_restores_active_topology_entry() {
     let project = temp_project("worktree-resurrect");
     let state_dir = project.join("state");
