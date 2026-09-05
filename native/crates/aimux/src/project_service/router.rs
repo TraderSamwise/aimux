@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
 
+use super::agents::route_agent_read_request;
 use super::attachments::route_attachment_request;
 use super::dispatcher::{
     ProjectServiceDispatchResponse, route_unimplemented_project_service_request,
@@ -122,6 +123,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_project_observability_request(context, method, path) {
+        return response;
+    }
+    if let Some(response) = route_agent_read_request(context, method, path) {
         return response;
     }
     if let Some(response) = route_exchange_read_request(context, method, path) {
