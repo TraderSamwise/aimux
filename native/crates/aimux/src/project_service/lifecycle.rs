@@ -1,6 +1,6 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -15,9 +15,9 @@ use crate::runtime_topology::{
     update_runtime_topology,
 };
 use crate::session_bootstrap::{
-    build_fork_preamble, build_session_preamble, build_tool_switch_continuity_preamble,
-    cap_launch_preamble_for_argv, ensure_default_plan, overseer_team, read_fork_source_snapshot,
-    scribe_team, seed_fork_artifacts,
+    build_codex_migration_continuity_preamble, build_fork_preamble, build_session_preamble,
+    build_tool_switch_continuity_preamble, cap_launch_preamble_for_argv, ensure_default_plan,
+    overseer_team, read_fork_source_snapshot, scribe_team, seed_fork_artifacts,
 };
 use crate::shell_hooks::{
     wrap_command_with_shell_integration, wrap_command_with_shell_integration_extra,
@@ -137,6 +137,7 @@ pub fn route_lifecycle_request_with_runtime(
         routes::agents::STOP => Some(route_agent_stop(context, body, runtime)),
         routes::agents::KILL => Some(route_agent_kill(context, body, runtime)),
         routes::agents::RENAME => Some(route_agent_rename(context, body, runtime)),
+        routes::agents::MIGRATE => Some(route_agent_migrate(context, body, runtime)),
         routes::agents::RESUME => Some(route_agent_resume(context, body, runtime)),
         routes::agents::RECORD_BACKEND_SESSION => Some(route_record_backend_session(context, body)),
         routes::services::CREATE => Some(route_service_create(context, body, runtime)),
@@ -295,6 +296,124 @@ fn route_agent_rename(
         "agent",
         Some(&session_id),
     )
+}
+
+fn route_agent_migrate(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) = trimmed_string(body.get("sessionId")) else {
+        return json_error(400, "sessionId is required");
+    };
+    let Some(target_worktree_path) = trimmed_string(body.get("worktreePath")) else {
+        return json_error(400, "worktreePath is required");
+    };
+    let project_state_dir = context.project_state_dir();
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(source_topology_session) = find_by_id(&topology, "sessions", &session_id) else {
+        return json_error(404, format!("Session \"{session_id}\" not found"));
+    };
+    let source_session = topology_session_to_session_state(&source_topology_session, &topology);
+    let source_worktree_path = trimmed_string(source_session.get("worktreePath"));
+    let source_cwd = source_worktree_path
+        .clone()
+        .unwrap_or_else(|| project_root.clone());
+    let tool_key = tool_config_key_for_session(&source_session)
+        .unwrap_or_else(|| string_field(&source_session, "command"));
+    let config = load_config_for_project(context.project_root());
+    let Some(tool_config) = config
+        .get("tools")
+        .and_then(Value::as_object)
+        .and_then(|tools| tools.get(&tool_key))
+    else {
+        return json_error(500, format!("Unknown tool config: {tool_key}"));
+    };
+    let command = trimmed_string(source_session.get("command")).unwrap_or_else(|| tool_key.clone());
+    let original_args =
+        strip_tool_action_args(tool_config, &string_array_field(source_session.get("args")));
+    let backend_session_id = trimmed_string(source_session.get("backendSessionId"));
+    let use_backend_resume =
+        can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
+    let snapshot = read_fork_source_snapshot(context.project_root(), &session_id);
+    let (launch_args, extra_preamble, persist_args, backend_override, suppress_startup_preamble) =
+        if use_backend_resume {
+            let resume = resume_args(
+                tool_config,
+                backend_session_id.as_deref().unwrap_or_default(),
+            );
+            (
+                compose_tool_args(tool_config, &resume, &original_args),
+                Some(format!(
+                    "You have been moved from {source_cwd} to {target_worktree_path}. Work in the new path from now on; paths in your earlier messages point at the old one."
+                )),
+                original_args.clone(),
+                backend_session_id.clone(),
+                false,
+            )
+        } else {
+            (
+                original_args.clone(),
+                Some(build_codex_migration_continuity_preamble(
+                    context.project_root(),
+                    &session_id,
+                    &source_cwd,
+                    &target_worktree_path,
+                    &snapshot,
+                    trimmed_string(body.get("instruction")).as_deref(),
+                )),
+                original_args.clone(),
+                None,
+                false,
+            )
+        };
+
+    if let Some(window_id) = live_window_id_for_session(&topology, &source_topology_session) {
+        let _ = runtime.kill_window(&window_id);
+    }
+    if use_backend_resume
+        && command_executable(&command) == "claude"
+        && let Some(backend_session_id) = backend_session_id.as_deref()
+    {
+        let _ = relocate_claude_transcript(&source_cwd, &target_worktree_path, backend_session_id);
+    }
+    let target_worktree =
+        (target_worktree_path != project_root).then_some(target_worktree_path.clone());
+    let result = launch_agent_session(
+        context,
+        runtime,
+        AgentSessionLaunchInput {
+            session_id: session_id.clone(),
+            tool_key: tool_key.clone(),
+            command,
+            args: launch_args,
+            worktree_path: target_worktree,
+            label: trimmed_string(source_session.get("label")),
+            team: source_session.get("team").cloned(),
+            extra_preamble,
+            launch_env: Vec::new(),
+            backend_session_id_override: backend_override,
+            detached: true,
+            suppress_startup_preamble,
+            persist_args: Some(persist_args),
+            allow_replace_session: true,
+            mark_overseer: source_session.get("overseer").and_then(Value::as_bool) == Some(true),
+            mark_scribe: source_session.get("scribe").and_then(Value::as_bool) == Some(true),
+        },
+    );
+    match result {
+        Ok(result) => lifecycle_response(
+            json!({ "sessionId": result.session_id, "worktreePath": target_worktree_path }),
+            "agent.migrate",
+            "agent",
+            Some(&session_id),
+        ),
+        Err(error) => json_error(500, error),
+    }
 }
 
 fn route_record_backend_session(
@@ -1414,6 +1533,80 @@ fn command_executable(command: &str) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or(command)
         .to_owned()
+}
+
+fn relocate_claude_transcript(
+    source_cwd: &str,
+    target_cwd: &str,
+    backend_session_id: &str,
+) -> bool {
+    relocate_claude_transcript_in_projects_dir(
+        source_cwd,
+        target_cwd,
+        backend_session_id,
+        claude_projects_dir(),
+    )
+}
+
+fn relocate_claude_transcript_in_projects_dir(
+    source_cwd: &str,
+    target_cwd: &str,
+    backend_session_id: &str,
+    projects_dir: impl AsRef<Path>,
+) -> bool {
+    let from =
+        claude_transcript_path_in_projects_dir(source_cwd, backend_session_id, &projects_dir);
+    let to = claude_transcript_path_in_projects_dir(target_cwd, backend_session_id, &projects_dir);
+    if from == to {
+        return true;
+    }
+    if !from.exists() {
+        return false;
+    }
+    if let Some(parent) = to.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return false;
+    }
+    std::fs::copy(from, to).is_ok()
+}
+
+fn claude_transcript_path_in_projects_dir(
+    cwd: &str,
+    backend_session_id: &str,
+    projects_dir: impl AsRef<Path>,
+) -> PathBuf {
+    projects_dir
+        .as_ref()
+        .join(encode_claude_project_path(cwd))
+        .join(format!("{backend_session_id}.jsonl"))
+}
+
+fn claude_projects_dir() -> PathBuf {
+    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .and_then(|value| {
+            let path = PathBuf::from(value);
+            (!path.as_os_str().is_empty()).then_some(path)
+        })
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".claude"))
+        })
+        .unwrap_or_else(|| PathBuf::from(".claude"));
+    base.join("projects")
+}
+
+fn encode_claude_project_path(cwd: &str) -> String {
+    cwd.chars()
+        .map(|char| {
+            if char == '/' || char == '.' {
+                '-'
+            } else {
+                char
+            }
+        })
+        .collect()
 }
 
 fn inject_codex_developer_instructions(

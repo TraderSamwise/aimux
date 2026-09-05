@@ -354,6 +354,42 @@ pub fn build_tool_switch_continuity_preamble(
     .join("\n")
 }
 
+pub fn build_codex_migration_continuity_preamble(
+    project_root: &Path,
+    session_id: &str,
+    source_worktree_path: &str,
+    target_worktree_path: &str,
+    snapshot: &ForkSourceSnapshot,
+    instruction: Option<&str>,
+) -> String {
+    let activity_summary = summarize_fork_source_activity(snapshot);
+    let context = context_dir(project_root).join(session_id);
+    [
+        format!("This session was migrated from {source_worktree_path} to {target_worktree_path}."),
+        format!(
+            "Read {}, {}, and {} first.",
+            context.join("summary.md").to_string_lossy(),
+            context.join("live.md").to_string_lossy(),
+            plan_authority_path_for_project_root(project_root, session_id)
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| format!(".aimux/plans/{session_id}.md"))
+        ),
+        "Treat them as real carried-over memory, not fresh-session scaffolding.".to_owned(),
+        "Do not start with git archaeology.".to_owned(),
+        "You are now working from the new worktree.".to_owned(),
+        "Re-orient to this worktree before continuing.".to_owned(),
+        activity_summary
+            .map(|summary| format!("Recent session activity: {summary}"))
+            .unwrap_or_default(),
+        instruction.unwrap_or_default().trim().to_owned(),
+        "After reading them, briefly summarize what we were doing in the new worktree and continue from that context.".to_owned(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
 fn default_plan_content(session_id: &str, tool: &str, worktree_path: Option<&str>) -> String {
     format!(
         "---\nsessionId: {session_id}\ntool: {tool}\nworktree: {}\nupdatedAt: {}\n---\n\n# Goal\n\nTBD\n\n# Current Status\n\nTBD\n\n# Steps\n\n- [ ] TBD\n\n# Notes\n\n- None yet.\n",

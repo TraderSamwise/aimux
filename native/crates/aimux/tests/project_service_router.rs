@@ -34,8 +34,12 @@ fn router_uses_rust_plan_handler_for_dynamic_plan_routes() {
 fn router_keeps_unported_routes_explicit() {
     let project = temp_project("unported");
     let context = ProjectServiceRequestContext::new(&project);
-    let response =
-        route_project_service_request(&context, "POST", routes::agents::MIGRATE, Some(&json!({})));
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::worktree_actions::CACHE_CLEANUP,
+        Some(&json!({})),
+    );
     assert_eq!(response.status, 501);
     assert_eq!(
         response.body,
@@ -43,7 +47,7 @@ fn router_keeps_unported_routes_explicit() {
             "ok": false,
             "error": "project service route not ported",
             "method": "POST",
-            "path": "/agents/migrate",
+            "path": "/worktrees/cache-cleanup",
             "group": "lifecycle",
         })
     );

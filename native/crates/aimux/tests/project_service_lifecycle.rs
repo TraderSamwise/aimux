@@ -390,6 +390,187 @@ fn agent_switch_tool_replaces_live_window_and_keeps_session_id() {
 }
 
 #[test]
+fn agent_migrate_relaunches_same_session_in_target_worktree_with_backend_resume() {
+    let project = temp_project("agent-migrate-backend");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let source_worktree = project.join("source");
+    let target_worktree = project.join("target");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-live",
+            "nodeId": "legacy-node",
+            "status": "running",
+            "tool": "mockp",
+            "toolConfigKey": "mockp",
+            "command": "/bin/mockp",
+            "args": ["--base-p", "--resume", "stale-backend"],
+            "backendSessionId": "backend-123",
+            "worktreePath": source_worktree,
+            "label": "mock lane",
+            "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let mut topology = read_topology(&state_dir);
+    topology["bindings"] = json!([{
+        "id": "tmux:mock-live",
+        "nodeId": "legacy-node",
+        "tmuxSession": "aimux",
+        "tmuxWindowId": "@old",
+        "tmuxWindowIndex": 1,
+        "tmuxWindowName": "mock",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+    }]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::MIGRATE,
+        Some(&json!({
+            "sessionId": "mock-live",
+            "worktreePath": target_worktree
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-live");
+    assert_eq!(
+        response.body["worktreePath"],
+        target_worktree.to_string_lossy().as_ref()
+    );
+    assert_eq!(response.body["transition"]["operation"], "agent.migrate");
+    assert_eq!(runtime.killed, vec!["@old"]);
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.name, "mock lane");
+    assert_eq!(created.cwd, target_worktree.to_string_lossy());
+    assert!(
+        created
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("'--resume' 'backend-123'"))
+    );
+    assert_eq!(runtime.metadata[0].1["sessionId"], "mock-live");
+    assert_eq!(runtime.metadata[0].1["backendSessionId"], "backend-123");
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--base-p"]));
+    assert_eq!(
+        runtime.metadata[0].1["worktreePath"],
+        target_worktree.to_string_lossy().as_ref()
+    );
+    assert_eq!(runtime.metadata[0].1["team"]["parentSessionId"], "parent-1");
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-live");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["args"], json!(["--base-p"]));
+    assert_eq!(
+        session["worktreePath"],
+        target_worktree.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|binding| binding["id"] == "tmux:mock-live")
+            .unwrap()["tmuxWindowId"],
+        "@11"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_migrate_without_backend_uses_continuity_preamble_and_does_not_resume() {
+    let project = temp_project("agent-migrate-no-backend");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let source_worktree = project.join("source");
+    let target_worktree = project.join("target");
+    std::fs::create_dir_all(project.join(".aimux/context/mock-live")).unwrap();
+    std::fs::write(
+        project.join(".aimux/context/mock-live/live.md"),
+        "recent terminal output\n",
+    )
+    .unwrap();
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-live",
+            "nodeId": "agent:mock-live",
+            "status": "running",
+            "tool": "mockp",
+            "toolConfigKey": "mockp",
+            "command": "/bin/mockp",
+            "args": ["--base-p", "--resume", "stale-backend"],
+            "worktreePath": source_worktree,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let mut topology = read_topology(&state_dir);
+    topology["bindings"] = json!([{
+        "id": "tmux:mock-live",
+        "nodeId": "agent:mock-live",
+        "tmuxSession": "aimux",
+        "tmuxWindowId": "@old",
+        "tmuxWindowIndex": 1,
+        "tmuxWindowName": "mock",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+    }]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::MIGRATE,
+        Some(&json!({
+            "sessionId": "mock-live",
+            "worktreePath": target_worktree,
+            "instruction": "finish the parser"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.killed, vec!["@old"]);
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.cwd, target_worktree.to_string_lossy());
+    assert!(
+        !created
+            .args
+            .last()
+            .unwrap()
+            .contains("'--resume' 'stale-backend'")
+    );
+    assert!(
+        created
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("This session was migrated from"))
+    );
+    assert!(
+        created
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("finish the parser"))
+    );
+    assert!(runtime.metadata[0].1.get("backendSessionId").is_none());
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--base-p"]));
+    cleanup(project);
+}
+
+#[test]
 fn service_stop_and_remove_update_topology_and_kill_live_window() {
     let project = temp_project("service");
     let state_dir = project.join("state");
@@ -1003,6 +1184,16 @@ fn write_project_tool_config(project: &Path) {
                     "args": ["--next"],
                     "enabled": true,
                     "wrapperEnabled": true,
+                    "resumeArgs": ["--resume", "{sessionId}"],
+                    "forkArgs": ["--fork", "{sessionId}"],
+                    "resumeByBackendSessionId": true
+                },
+                "mockp": {
+                    "command": "/bin/mockp",
+                    "args": ["--base-p"],
+                    "enabled": true,
+                    "wrapperEnabled": true,
+                    "preambleFlag": ["--prompt"],
                     "resumeArgs": ["--resume", "{sessionId}"],
                     "forkArgs": ["--fork", "{sessionId}"],
                     "resumeByBackendSessionId": true
