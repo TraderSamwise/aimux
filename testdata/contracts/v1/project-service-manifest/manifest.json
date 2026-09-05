@@ -1,0 +1,11 @@
+{
+  "apiVersion": 5,
+  "capabilities": {
+    "parsedAgentOutput": true,
+    "attachmentRead": true,
+    "chatEventStream": true,
+    "agentTranscriptMessages": true,
+    "agentActivityState": true
+  },
+  "buildStamp": "1786237306000.1786237306000-35f055a7caff"
+}

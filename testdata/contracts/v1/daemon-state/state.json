@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "updatedAt": "2026-08-25T00:00:00.000Z",
+  "projects": {
+    "git": {
+      "projectId": "git",
+      "projectRoot": "/fixtures/git-project",
+      "pid": 123,
+      "startedAt": "2026-08-25T00:00:00.000Z",
+      "updatedAt": "2026-08-25T00:00:00.000Z",
+      "status": "running",
+      "futureSupervisorField": true
+    },
+    "stale": {
+      "projectId": "stale",
+      "projectRoot": "/fixtures/non-git-project",
+      "pid": 456,
+      "startedAt": "2026-08-25T00:00:00.000Z",
+      "updatedAt": "2026-08-25T00:00:00.000Z"
+    },
+    "malformed": {
+      "projectId": "malformed",
+      "pid": 789
+    }
+  }
+}

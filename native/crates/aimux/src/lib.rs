@@ -1,11 +1,17 @@
+pub mod atomic_write;
 pub mod build_info;
 pub mod config;
 pub mod contracts;
+pub mod core_cli;
+pub mod core_cli_routing;
 pub mod core_command_contract;
 pub mod daemon_projects;
+pub mod daemon_state;
 pub mod paths;
 pub mod project_api_contract;
 pub mod project_catalog;
+pub mod project_service_manifest;
+pub mod tmux;
 pub mod translation_plan;
 
 pub use build_info::{BuildInfo, build_info};

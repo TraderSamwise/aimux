@@ -1,9 +1,17 @@
+use crate::atomic_write::{quarantine_corrupt_file, write_json_atomic};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const PROJECTS_REGISTRY_VERSION: u8 = 1;
+pub const MAX_PROJECT_REGISTRY_ENTRIES: usize = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +20,22 @@ pub struct ProjectEntry {
     pub name: String,
     pub repo_root: String,
     pub last_seen: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectsRegistry {
+    pub version: u8,
+    pub projects: Vec<ProjectEntry>,
+}
+
+impl Default for ProjectsRegistry {
+    fn default() -> Self {
+        Self {
+            version: PROJECTS_REGISTRY_VERSION,
+            projects: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -189,6 +213,83 @@ impl PathResolver {
         self.global_aimux_dir().join("projects.json")
     }
 
+    pub fn load_registry(&self) -> Result<ProjectsRegistry> {
+        let path = self.projects_registry_path();
+        if !path.exists() {
+            return Ok(ProjectsRegistry::default());
+        }
+        let Ok(contents) = fs::read_to_string(&path) else {
+            quarantine_corrupt_file(&path);
+            return Ok(ProjectsRegistry::default());
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&contents) else {
+            quarantine_corrupt_file(&path);
+            return Ok(ProjectsRegistry::default());
+        };
+        let Some(projects) = value.get("projects").and_then(Value::as_array) else {
+            bail!("aimux project registry projects must be an array");
+        };
+
+        let entries = projects
+            .iter()
+            .filter_map(|project| serde_json::from_value::<ProjectEntry>(project.clone()).ok())
+            .collect();
+        normalize_registry(entries, &self.process_cwd, &path)
+    }
+
+    pub fn save_registry(&self, registry: &ProjectsRegistry) -> Result<()> {
+        assert_registry_within_cap(&registry.projects, &self.projects_registry_path())?;
+        let registry = ProjectsRegistry {
+            version: PROJECTS_REGISTRY_VERSION,
+            projects: registry.projects.clone(),
+        };
+        write_json_atomic(self.projects_registry_path(), &registry)?;
+        Ok(())
+    }
+
+    pub fn register_project(&mut self, cwd: impl AsRef<Path>) -> Result<Option<ProjectEntry>> {
+        let repo_root = self.resolve_repo_root(cwd);
+        if is_ephemeral_temp_project_root_from(&repo_root, &self.process_cwd)
+            || !is_git_project_root_from(&repo_root, &self.process_cwd)
+        {
+            return Ok(None);
+        }
+
+        let project_id = compute_project_id(&repo_root);
+        let entry = ProjectEntry {
+            id: project_id.clone(),
+            name: repo_root
+                .file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or("")
+                .to_owned(),
+            repo_root: path_to_string(&repo_root),
+            last_seen: iso_timestamp(SystemTime::now()),
+        };
+        let mut registry = self.load_registry()?;
+        if let Some(index) = registry
+            .projects
+            .iter()
+            .position(|project| project.id == project_id)
+        {
+            registry.projects[index] = entry.clone();
+        } else {
+            registry.projects.push(entry.clone());
+        }
+        self.save_registry(&registry)?;
+        Ok(Some(entry))
+    }
+
+    pub fn list_projects(&self) -> Result<Vec<ProjectEntry>> {
+        Ok(self.load_registry()?.projects)
+    }
+
+    pub fn remove_project(&self, id: &str) -> Result<()> {
+        let mut registry = self.load_registry()?;
+        registry.projects.retain(|project| project.id != id);
+        self.save_registry(&registry)
+    }
+
     pub fn read_only_project_paths_for(&mut self, cwd: impl AsRef<Path>) -> ReadOnlyProjectPaths {
         let repo_root = self.resolve_repo_root(cwd);
         let project_id = compute_project_id(&repo_root);
@@ -213,16 +314,139 @@ impl PathResolver {
     }
 }
 
+pub fn is_git_project_root(repo_root: impl AsRef<Path>) -> bool {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    is_git_project_root_from(repo_root.as_ref(), &cwd)
+}
+
+pub fn is_ephemeral_temp_project_root(repo_root: impl AsRef<Path>) -> bool {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    is_ephemeral_temp_project_root_from(repo_root.as_ref(), &cwd)
+}
+
+fn normalize_registry(
+    entries: Vec<ProjectEntry>,
+    process_cwd: &Path,
+    registry_path: &Path,
+) -> Result<ProjectsRegistry> {
+    let mut projects = Vec::new();
+    let mut indexes = HashMap::new();
+    for project in entries {
+        if project.repo_root.trim().is_empty()
+            || is_ephemeral_temp_project_root_from(Path::new(&project.repo_root), process_cwd)
+            || !is_git_project_root_from(Path::new(&project.repo_root), process_cwd)
+        {
+            continue;
+        }
+        if let Some(index) = indexes.get(&project.id).copied() {
+            projects[index] = project;
+        } else {
+            indexes.insert(project.id.clone(), projects.len());
+            projects.push(project);
+        }
+    }
+    assert_registry_within_cap(&projects, registry_path)?;
+    Ok(ProjectsRegistry {
+        version: PROJECTS_REGISTRY_VERSION,
+        projects,
+    })
+}
+
+fn assert_registry_within_cap(projects: &[ProjectEntry], registry_path: &Path) -> Result<()> {
+    if projects.len() > MAX_PROJECT_REGISTRY_ENTRIES {
+        bail!(
+            "aimux project registry has {} entries; cap is {}. Refusing to continue because the registry is likely polluted. Remove stale entries from {}.",
+            projects.len(),
+            MAX_PROJECT_REGISTRY_ENTRIES,
+            registry_path.display()
+        );
+    }
+    Ok(())
+}
+
+fn is_git_project_root_from(repo_root: &Path, process_cwd: &Path) -> bool {
+    lexical_resolve(process_cwd, repo_root)
+        .join(".git")
+        .exists()
+}
+
+fn is_ephemeral_temp_project_root_from(repo_root: &Path, process_cwd: &Path) -> bool {
+    let resolved = lexical_resolve(process_cwd, repo_root);
+    let Some(name) = resolved.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    name.starts_with("aimux-")
+        && temp_dirs(process_cwd)
+            .iter()
+            .any(|directory| resolved == *directory || resolved.starts_with(directory))
+}
+
+fn temp_dirs(process_cwd: &Path) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    for candidate in [
+        std::env::temp_dir(),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/private/tmp"),
+        PathBuf::from("/var/tmp"),
+    ] {
+        let resolved = lexical_resolve(process_cwd, &candidate);
+        if !directories.contains(&resolved) {
+            directories.push(resolved.clone());
+        }
+        if let Ok(canonical) = fs::canonicalize(&resolved)
+            && !directories.contains(&canonical)
+        {
+            directories.push(canonical);
+        }
+    }
+    directories
+}
+
+fn iso_timestamp(time: SystemTime) -> String {
+    let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let total_seconds = duration.as_secs();
+    let days = (total_seconds / 86_400) as i64;
+    let seconds_in_day = total_seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_in_day / 3_600;
+    let minute = (seconds_in_day % 3_600) / 60;
+    let second = seconds_in_day % 60;
+    format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{:03}Z",
+        duration.subsec_millis()
+    )
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
+    let days = days_since_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year, month, day)
+}
+
 pub fn compute_project_id(repo_root: impl AsRef<Path>) -> String {
     let repo_root = path_to_string(repo_root.as_ref());
     let mut hasher = Sha256::new();
     hasher.update(repo_root.as_bytes());
     let hex = format!("{:x}", hasher.finalize());
-    let name = Path::new(&repo_root)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or("");
+    let name = basename_like_node_posix(&repo_root);
     format!("{}-{}", name, &hex[..12])
+}
+
+pub fn basename_like_node_posix(path: &str) -> &str {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "";
+    }
+    trimmed.rsplit('/').next().unwrap_or("")
 }
 
 pub fn resolve_aimux_home(

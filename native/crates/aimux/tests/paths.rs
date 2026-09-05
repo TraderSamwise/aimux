@@ -1,5 +1,6 @@
 use aimux::paths::{
-    PathResolver, aimux_managed_worktree_parent, compute_project_id, resolve_aimux_home,
+    PathResolver, aimux_managed_worktree_parent, basename_like_node_posix, compute_project_id,
+    resolve_aimux_home,
 };
 use serde::Deserialize;
 use std::fs;
@@ -38,6 +39,11 @@ fn fixture() -> PathIdentityFixture {
 fn computes_type_script_project_id_hash_prefix() {
     let fixture = fixture();
     assert_eq!(compute_project_id(&fixture.repo_root), fixture.project_id);
+    assert_eq!(basename_like_node_posix("/tmp/foo///"), "foo");
+    assert_eq!(basename_like_node_posix("/"), "");
+    assert_eq!(basename_like_node_posix("C:\\foo\\bar"), "C:\\foo\\bar");
+    assert_eq!(compute_project_id("/"), "-8a5edab28263");
+    assert_eq!(compute_project_id("/tmp/foo///"), "foo-44b7bdd71d22");
 }
 
 #[test]
