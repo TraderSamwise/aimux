@@ -9,6 +9,7 @@ pub mod notification_context;
 pub mod notifications;
 pub mod operation_failures;
 pub mod plans;
+pub mod project_observability;
 pub mod reads;
 pub mod router;
 pub mod routes;

@@ -15,6 +15,7 @@ use super::notification_context::route_notification_context_request;
 use super::notifications::route_notifications_request;
 use super::operation_failures::route_operation_failures_request;
 use super::plans::route_plan_request;
+use super::project_observability::route_project_observability_request;
 use super::reads::route_read_request;
 use super::team::route_team_request;
 use super::topology::route_topology_request;
@@ -118,6 +119,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_topology_request(context, method, path) {
+        return response;
+    }
+    if let Some(response) = route_project_observability_request(context, method, path) {
         return response;
     }
     if let Some(response) = route_exchange_read_request(context, method, path) {
