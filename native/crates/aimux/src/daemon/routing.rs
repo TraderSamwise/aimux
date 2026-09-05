@@ -30,6 +30,7 @@ impl DaemonRouteResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonRouteUrl {
     path: String,
+    search: String,
     query: BTreeMap<String, Vec<String>>,
 }
 
@@ -46,12 +47,21 @@ impl DaemonRouteUrl {
         }
         Self {
             path: pathname.to_owned(),
+            search: if query.is_empty() {
+                String::new()
+            } else {
+                format!("?{query}")
+            },
             query: params,
         }
     }
 
     pub fn pathname(&self) -> &str {
         &self.path
+    }
+
+    pub fn search(&self) -> &str {
+        &self.search
     }
 
     pub fn search_param(&self, name: &str) -> Option<&str> {

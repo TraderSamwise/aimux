@@ -1,5 +1,6 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::daemon::core_commands::{DaemonCoreCommandRuntime, route_core_command};
+use crate::daemon::json::{DaemonJsonRouteRuntime, route_json_daemon_request};
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, local_auth_routes, local_cli_text_routes,
 };
@@ -36,6 +37,7 @@ pub trait DaemonRouteRuntime:
     + DaemonWorktreeTextRuntime
     + DaemonCollaborationTextRuntime
     + DaemonAuthTextRuntime
+    + DaemonJsonRouteRuntime
 {
 }
 
@@ -53,6 +55,7 @@ impl<T> DaemonRouteRuntime for T where
         + DaemonWorktreeTextRuntime
         + DaemonCollaborationTextRuntime
         + DaemonAuthTextRuntime
+        + DaemonJsonRouteRuntime
 {
 }
 
@@ -120,6 +123,16 @@ pub fn route_daemon_request(
         return response;
     }
     if let Some(response) = route_auth_text_request(runtime, method, path) {
+        return response;
+    }
+    if let Some(response) = route_json_daemon_request(
+        runtime,
+        method,
+        path,
+        body,
+        &context.headers,
+        context.actor_present,
+    ) {
         return response;
     }
 

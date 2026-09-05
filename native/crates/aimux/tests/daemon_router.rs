@@ -1,6 +1,9 @@
 use aimux::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::http::DaemonResponseBody;
+use aimux::daemon::json::{
+    DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
+};
 use aimux::daemon::router::{DaemonRouteRequestContext, route_daemon_request};
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::status::DaemonStatusRuntime;
@@ -547,6 +550,63 @@ impl DaemonAuthTextRuntime for FakeRouterRuntime {
     }
 }
 
+impl DaemonJsonRouteRuntime for FakeRouterRuntime {
+    fn push_notification(&mut self, payload: &Value) -> Value {
+        self.calls.push(format!("push:{payload}"));
+        json!({ "ok": true })
+    }
+
+    fn loop_diagnostics(&self) -> Value {
+        json!({ "ok": true, "pid": 9001, "uptimeMs": 1, "eventLoop": {}, "tmuxExec": {} })
+    }
+
+    fn expose_items(&mut self, path: &str) -> Result<Value, String> {
+        self.calls.push(format!("expose-items:{path}"));
+        Ok(json!({ "ok": true, "items": [] }))
+    }
+
+    fn expose_focus(&mut self, request: ExposeFocusRequest) -> Result<Value, String> {
+        self.calls
+            .push(format!("expose-focus:{}", request.window_id));
+        Ok(json!({ "ok": true, "action": "expose-focus", "itemId": request.window_id }))
+    }
+
+    fn proxy_json_request(
+        &mut self,
+        target_url: &str,
+        method: &str,
+        _headers: &BTreeMap<String, String>,
+        body: Option<&Value>,
+        timeout_ms: u64,
+    ) -> Result<ProxyJsonResponse, String> {
+        self.calls.push(format!(
+            "proxy-json:{method}:{target_url}:{timeout_ms}:{body:?}"
+        ));
+        Ok(ProxyJsonResponse {
+            status: 200,
+            json: json!({ "ok": true, "target": target_url }),
+        })
+    }
+
+    fn proxy_binary_request(
+        &mut self,
+        target_url: &str,
+        method: &str,
+        _headers: &BTreeMap<String, String>,
+        timeout_ms: u64,
+        max_bytes: usize,
+    ) -> Result<ProxyBinaryResponse, String> {
+        self.calls.push(format!(
+            "proxy-binary:{method}:{target_url}:{timeout_ms}:{max_bytes}"
+        ));
+        Ok(ProxyBinaryResponse {
+            status: 200,
+            body: vec![1, 2, 3],
+            content_type: Some("image/png".into()),
+        })
+    }
+}
+
 fn text_body(response: DaemonRouteResponse) -> String {
     match response.body {
         DaemonResponseBody::Text(value) => value,
@@ -644,6 +704,46 @@ fn unified_router_dispatches_status_command_and_split_text_modules() {
             .iter()
             .any(|call| call.starts_with("post:/repo:/set-activity:"))
     );
+}
+
+#[test]
+fn unified_router_dispatches_json_proxy_routes_after_split_modules() {
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext::default();
+
+    let relay = route_daemon_request(
+        &mut runtime,
+        "GET",
+        "/relay/status",
+        None,
+        "issued",
+        &context,
+    );
+    assert_eq!(json_body(relay)["relay"]["status"], "off");
+
+    let proxy = route_daemon_request(
+        &mut runtime,
+        "GET",
+        "/proxy/127.0.0.1/4321/state?sessionId=claude-1",
+        None,
+        "issued",
+        &context,
+    );
+    assert_eq!(
+        json_body(proxy)["target"],
+        "http://127.0.0.1:4321/state?sessionId=claude-1"
+    );
+
+    let blocked = route_daemon_request(
+        &mut runtime,
+        "GET",
+        "/proxy/evil.example.com/4321/state",
+        None,
+        "issued",
+        &context,
+    );
+    assert_eq!(blocked.status, 403);
+    assert_eq!(json_body(blocked)["error"], "proxy host not allowed");
 }
 
 #[test]
