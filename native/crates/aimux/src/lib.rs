@@ -1,5 +1,6 @@
 pub mod atomic_write;
 pub mod build_info;
+pub mod cli_launcher;
 pub mod config;
 pub mod contracts;
 pub mod core_cli;
@@ -12,6 +13,7 @@ pub mod daemon_state;
 pub mod launcher_env;
 pub mod logs;
 pub mod paths;
+pub mod process_inspector;
 pub mod project_api_contract;
 pub mod project_catalog;
 pub mod project_service_manifest;
