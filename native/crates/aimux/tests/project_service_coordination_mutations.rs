@@ -332,6 +332,33 @@ fn teammate_task_rejects_non_direct_teammate() {
 }
 
 #[test]
+fn raw_teammate_send_is_retired_in_favor_of_durable_tasks() {
+    let project = temp_project("raw-teammate-send");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::RAW_TEAMMATE_SEND,
+        Some(&json!({
+            "parentSessionId": "parent",
+            "teammateSessionId": "child",
+            "body": "hello"
+        })),
+    );
+    assert_eq!(response.status, 410);
+    assert_eq!(response.body["ok"], false);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains(routes::agents::CREATE_TEAMMATE_TASK)
+    );
+    cleanup(project);
+}
+
+#[test]
 fn task_lifecycle_updates_task_thread_and_indexes() {
     let project = temp_project("task-lifecycle");
     let state_dir = project.join("state");

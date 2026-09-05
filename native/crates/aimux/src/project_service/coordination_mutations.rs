@@ -53,6 +53,7 @@ pub fn route_coordination_mutation_request_with_runtime(
         routes::handoff::COMPLETE => route_handoff_complete(&project_state_dir, body),
         routes::tasks::ASSIGN => route_task_assign(&project_state_dir, body),
         routes::agents::CREATE_TEAMMATE_TASK => route_create_teammate_task(context, body),
+        routes::agents::RAW_TEAMMATE_SEND => route_raw_teammate_send_removed(),
         routes::tasks::ACCEPT => route_task_accept(&project_state_dir, body),
         routes::tasks::BLOCK => route_task_block(&project_state_dir, body),
         routes::tasks::COMPLETE => {
@@ -424,6 +425,19 @@ fn route_task_assign(project_state_dir: &Path, body: &Value) -> ProjectServiceDi
             json!({ "ok": true, "task": task, "thread": thread, "message": message, "deliveredTo": [] }),
         ))
     })
+}
+
+fn route_raw_teammate_send_removed() -> ProjectServiceDispatchResponse {
+    json_response(
+        410,
+        json!({
+            "ok": false,
+            "error": format!(
+                "raw teammate send has been removed; create durable teammate work with {}",
+                routes::agents::CREATE_TEAMMATE_TASK
+            ),
+        }),
+    )
 }
 
 fn route_create_teammate_task(
