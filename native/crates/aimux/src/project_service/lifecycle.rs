@@ -144,6 +144,9 @@ pub fn route_lifecycle_request_with_runtime(
         routes::services::RESUME => Some(route_service_resume(context, body, runtime)),
         routes::services::STOP => Some(route_service_stop(context, body, runtime)),
         routes::services::REMOVE => Some(route_service_remove(context, body, runtime)),
+        routes::graveyard_actions::RESURRECT_AGENT => {
+            Some(route_graveyard_agent_resurrect(context, body))
+        }
         _ => None,
     }
 }
@@ -2335,6 +2338,72 @@ fn route_service_remove(
     )
 }
 
+fn route_graveyard_agent_resurrect(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) =
+        trimmed_string(body.get("sessionId")).or_else(|| trimmed_string(body.get("id")))
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(session) = find_by_id(&topology, "sessions", &session_id)
+        .filter(|session| string_field(session, "status") == "graveyard")
+    else {
+        return json_error(404, format!("Graveyard session \"{session_id}\" not found"));
+    };
+    let state = topology_session_to_session_state(&session, &topology);
+    if let Some(worktree_path) = trimmed_string(state.get("worktreePath"))
+        && !worktree_path_is_graveyarded(&topology, &worktree_path)
+        && !Path::new(&worktree_path).exists()
+    {
+        return json_error(
+            500,
+            format!(
+                "Cannot resurrect agent \"{session_id}\" because its worktree \"{worktree_path}\" is missing; restore the worktree first"
+            ),
+        );
+    }
+    let node_id = string_field(&session, "nodeId");
+    if let Err(error) =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
+            let now = now_iso();
+            topology = map_topology_array(topology, "sessions", |mut current| {
+                if string_field(&current, "id") == session_id
+                    && string_field(&current, "status") == "graveyard"
+                {
+                    object_insert_mut(&mut current, "status", Value::String("offline".into()));
+                    object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
+                    if let Value::Object(map) = &mut current {
+                        map.remove("graveyardedAt");
+                        map.remove("graveyardReason");
+                        map.remove("restoreBlockedReason");
+                    }
+                }
+                current
+            });
+            let mut bindings = array_field(&topology, "bindings");
+            bindings.retain(|binding| string_field(binding, "nodeId") != node_id);
+            object_insert_mut(&mut topology, "bindings", Value::Array(bindings));
+            object_insert_mut(&mut topology, "generatedAt", Value::String(now));
+            topology
+        })
+    {
+        return json_error(500, error);
+    }
+    lifecycle_response(
+        json!({ "sessionId": session_id, "status": "offline" }),
+        "graveyard.agent.resurrect",
+        "agent",
+        Some(&session_id),
+    )
+}
+
 fn apply_service_window_policy(
     runtime: &mut impl ProjectLifecycleRuntime,
     window_id: &str,
@@ -2350,6 +2419,15 @@ fn apply_service_window_policy(
         "aggressive-resize",
         MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressive_resize,
     )
+}
+
+fn worktree_path_is_graveyarded(topology: &Value, worktree_path: &str) -> bool {
+    array_field(topology, "worktreeGraveyard")
+        .iter()
+        .any(|entry| {
+            string_field(entry, "path") == worktree_path
+                && entry.get("deletedAt").and_then(Value::as_str).is_none()
+        })
 }
 
 fn upsert_service_topology(

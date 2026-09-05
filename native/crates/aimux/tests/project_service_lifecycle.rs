@@ -1085,6 +1085,174 @@ fn service_remove_kills_retained_saved_target_for_stopped_service() {
     cleanup(project);
 }
 
+#[test]
+fn graveyard_agent_resurrect_restores_offline_and_clears_graveyard_state() {
+    let project = temp_project("graveyard-agent-resurrect");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_graveyard_agent_topology(&state_dir, &worktree, false);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_AGENT,
+        Some(&json!({ "sessionId": "codex-old" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "codex-old");
+    assert_eq!(response.body["status"], "offline");
+    assert_eq!(
+        response.body["transition"]["operation"],
+        "graveyard.agent.resurrect"
+    );
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "codex-old");
+    assert_eq!(session["status"], "offline");
+    assert!(session.get("graveyardedAt").is_none());
+    assert!(session.get("graveyardReason").is_none());
+    assert!(session.get("restoreBlockedReason").is_none());
+    assert!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|binding| binding["nodeId"] != "node-old")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn graveyard_agent_resurrect_rejects_missing_active_worktree() {
+    let project = temp_project("graveyard-agent-missing-worktree");
+    let state_dir = project.join("state");
+    let worktree = project.join("missing");
+    write_graveyard_agent_topology(&state_dir, &worktree, false);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_AGENT,
+        Some(&json!({ "id": "codex-old" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("restore the worktree first")
+    );
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-old")["status"],
+        "graveyard"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn graveyard_agent_resurrect_allows_missing_graveyarded_worktree() {
+    let project = temp_project("graveyard-agent-graveyarded-worktree");
+    let state_dir = project.join("state");
+    let worktree = project.join("missing-graveyarded");
+    write_graveyard_agent_topology(&state_dir, &worktree, true);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_AGENT,
+        Some(&json!({ "sessionId": "codex-old" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-old")["status"],
+        "offline"
+    );
+    cleanup(project);
+}
+
+fn write_graveyard_agent_topology(
+    state_dir: &PathBuf,
+    worktree_path: &Path,
+    include_worktree_graveyard: bool,
+) {
+    let worktree_path = worktree_path.to_string_lossy();
+    let worktree_graveyard = if include_worktree_graveyard {
+        json!([{
+            "id": "graveyard-wt",
+            "rigId": "rig-1",
+            "worktreeId": "wt-old",
+            "path": worktree_path.as_ref(),
+            "name": "wt",
+            "branch": "feature/wt",
+            "graveyardedAt": "2026-01-01T00:00:00.000Z"
+        }])
+    } else {
+        json!([])
+    };
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [{
+            "id": "node-old",
+            "rigId": "rig-1",
+            "logicalId": "codex-old",
+            "toolConfigKey": "codex",
+            "cwd": worktree_path.as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "edges": [],
+        "bindings": [{
+            "id": "tmux:codex-old",
+            "nodeId": "node-old",
+            "tmuxSession": "aimux",
+            "tmuxWindowId": "@old",
+            "tmuxWindowIndex": 1,
+            "tmuxWindowName": "codex",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "sessions": [{
+            "id": "codex-old",
+            "nodeId": "node-old",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "graveyard",
+            "worktreePath": worktree_path.as_ref(),
+            "graveyardedAt": "2026-01-01T00:00:00.000Z",
+            "graveyardReason": "done",
+            "restoreBlockedReason": "old",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": worktree_graveyard,
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
 fn write_lifecycle_topology(state_dir: &PathBuf) {
     let topology = coerce_runtime_topology(&json!({
         "version": 1,
