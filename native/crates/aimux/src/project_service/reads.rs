@@ -54,7 +54,6 @@ pub fn route_read_request(
         || pathname == routes::LIBRARY
         || pathname == routes::WORKTREES
         || pathname == routes::GRAVEYARD
-        || pathname == routes::notifications::LIST
         || pathname == routes::orchestration::ROUTES
         || pathname == routes::agents::LIST
         || pathname == routes::agents::TEAMMATES

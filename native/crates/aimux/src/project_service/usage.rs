@@ -96,12 +96,14 @@ pub fn mark_last_used(project_state_dir: impl AsRef<Path>, options: MarkLastUsed
     if existing_used_at.is_none_or(|existing| recency_ms(&used_at) >= recency_ms(existing)) {
         items_mut(&mut state).insert(item_id.to_owned(), json!({ "lastUsedAt": used_at }));
     }
+    let item_snapshot = state
+        .get("items")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
     let project_recent_ids = sort_recent_ids(
         push_recent_id(string_array(state.get("projectRecentIds")), item_id),
-        state
-            .get("items")
-            .and_then(Value::as_object)
-            .unwrap_or(&Map::new()),
+        &item_snapshot,
     );
     state.insert(
         "projectRecentIds".into(),
