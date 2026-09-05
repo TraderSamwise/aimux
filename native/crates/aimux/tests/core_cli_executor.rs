@@ -1,6 +1,7 @@
 use aimux::core_cli::{CoreCommandCall, CoreCommandOk};
 use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
+use aimux::daemon::text::auth::AuthFlowResult;
 use aimux::daemon::text::operations::RestartControlPlaneTextResult;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
 use serde_json::{Value, json};
@@ -16,6 +17,8 @@ struct FakeRuntime {
     text_routes: Vec<String>,
     open_targets: Vec<Value>,
     restart_calls: Vec<Option<String>>,
+    login_calls: Cell<usize>,
+    security_unlock_calls: Cell<usize>,
     credentials: Option<Value>,
     cleared_credentials: Cell<usize>,
     remote_enabled: Cell<Option<bool>>,
@@ -36,6 +39,8 @@ impl Default for FakeRuntime {
             text_routes: Vec::new(),
             open_targets: Vec::new(),
             restart_calls: Vec::new(),
+            login_calls: Cell::new(0),
+            security_unlock_calls: Cell::new(0),
             credentials: None,
             cleared_credentials: Cell::new(0),
             remote_enabled: Cell::new(None),
@@ -99,6 +104,23 @@ impl CoreCliRuntime for FakeRuntime {
         } else {
             "none".into()
         }
+    }
+
+    fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String> {
+        if security_unlock {
+            self.security_unlock_calls
+                .set(self.security_unlock_calls.get() + 1);
+        } else {
+            self.login_calls.set(self.login_calls.get() + 1);
+        }
+        Ok(AuthFlowResult {
+            user_id: "user-1".into(),
+            relay: Value::Null,
+            messages: vec![
+                "Opening your browser to sign in...".into(),
+                "If it doesn't open, visit:\n  https://aimux.app/cli-auth?callback=local\n".into(),
+            ],
+        })
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -380,12 +402,9 @@ fn doctor_versions_executes_daemon_text_route() {
 fn unsupported_runtime_features_fail_before_side_effects() {
     let mut runtime = FakeRuntime::default();
 
-    let login = run_core_cli_with(&args(&["login"]), &mut runtime);
-    assert_eq!(login.code, 1);
-    assert_eq!(
-        login.stderr,
-        ["Error: remote access is unavailable in the local build"]
-    );
+    let enable = run_core_cli_with(&args(&["remote", "enable"]), &mut runtime);
+    assert_eq!(enable.code, 1);
+    assert_eq!(enable.stderr, ["Not logged in. Run `aimux login` first."]);
     assert!(runtime.commands.is_empty());
 }
 
@@ -463,6 +482,51 @@ fn logout_clears_native_credentials_after_best_effort_relay_disable() {
         CORE_COMMAND_NAMES.relay_disable
     );
     assert_eq!(runtime.cleared_credentials.get(), 1);
+}
+
+#[test]
+fn login_runs_native_browser_flow_and_best_effort_relay_enable() {
+    let mut runtime = FakeRuntime::default();
+
+    let execution = run_core_cli_with(&args(&["login"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(runtime.login_calls.get(), 1);
+    assert_eq!(runtime.commands[0].command, CORE_COMMAND_NAMES.relay_enable);
+    assert_eq!(
+        execution.stdout,
+        [
+            "Opening your browser to sign in...",
+            "If it doesn't open, visit:\n  https://aimux.app/cli-auth?callback=local\n",
+            "",
+            "✓ Logged in as user-1",
+            "Remote access is enabled (connection: connected)."
+        ]
+    );
+}
+
+#[test]
+fn security_unlock_uses_native_login_flow_without_daemon_relay_request_when_offline() {
+    let mut runtime = FakeRuntime {
+        daemon_info: None,
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["security", "unlock"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(runtime.security_unlock_calls.get(), 1);
+    assert!(runtime.commands.is_empty());
+    assert!(
+        execution
+            .stdout
+            .contains(&"✓ Security unlocked for user-1".into())
+    );
+    assert!(
+        execution
+            .stdout
+            .contains(&"Remote access is enabled. The daemon will connect on next start.".into())
+    );
 }
 
 #[test]

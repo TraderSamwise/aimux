@@ -56,6 +56,7 @@ use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
 use crate::remote_credentials;
+use crate::remote_login::{self, LoginAction};
 use crate::tmux::{
     TmuxTarget, is_tmux_client_session_for_host, kill_session_argv, project_session,
 };
@@ -1040,13 +1041,23 @@ impl DaemonAuthTextRuntime for RealDaemonRuntime {
     }
 
     fn run_auth_flow(&mut self, action: AuthAction) -> Result<AuthFlowResult, AuthFlowError> {
-        Err(AuthFlowError {
-            error: self.unported(match action {
-                AuthAction::Login => "login",
-                AuthAction::SecurityUnlock => "security unlock",
+        match remote_login::run_login_flow(
+            &self.resolver,
+            match action {
+                AuthAction::Login => LoginAction::Login,
+                AuthAction::SecurityUnlock => LoginAction::SecurityUnlock,
+            },
+        ) {
+            Ok(result) => Ok(AuthFlowResult {
+                user_id: result.user_id,
+                relay: <Self as DaemonCoreCommandRuntime>::enable_relay_for_user_request(self),
+                messages: result.messages,
             }),
-            messages: Vec::new(),
-        })
+            Err(error) => Err(AuthFlowError {
+                error,
+                messages: Vec::new(),
+            }),
+        }
     }
 
     fn start_auth_flow(&mut self, action: AuthAction) -> AuthFlowStart {

@@ -14,6 +14,7 @@ use crate::core_text::{
     render_core_remote_disable_lines, render_core_remote_enable_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
+use crate::daemon::text::auth::AuthFlowResult;
 use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{AimuxDaemonInfo, DaemonState, load_daemon_info, load_daemon_state};
@@ -23,6 +24,7 @@ use crate::logs::{
 };
 use crate::paths::PathResolver;
 use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
+use crate::remote_login::{LoginAction, run_login_flow};
 use crate::tmux::{attach_session_argv, switch_client_argv};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -64,6 +66,7 @@ pub trait CoreCliRuntime {
     fn whoami_payload(&self) -> Value;
     fn set_remote_enabled(&self, enabled: bool) -> Result<(), String>;
     fn clear_credentials(&self) -> String;
+    fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String>;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
     fn request_daemon_text(&mut self, path: &str) -> Result<String, String>;
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
@@ -142,6 +145,23 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     fn clear_credentials(&self) -> String {
         let resolver = PathResolver::from_env();
         clear_credentials(&resolver).as_str().into()
+    }
+
+    fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String> {
+        let resolver = PathResolver::from_env();
+        let result = run_login_flow(
+            &resolver,
+            if security_unlock {
+                LoginAction::SecurityUnlock
+            } else {
+                LoginAction::Login
+            },
+        )?;
+        Ok(AuthFlowResult {
+            user_id: result.user_id,
+            relay: Value::Null,
+            messages: result.messages,
+        })
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -329,19 +349,32 @@ fn run_plan(
             )
         }
         CoreCliAction::Login {
-            security_unlock, ..
+            security_unlock,
+            relay_enable,
         } => {
-            let message = "remote access is unavailable in the local build";
+            let result = runtime.run_login_flow(security_unlock)?;
+            let relay = match relay_enable {
+                Some(request) => runtime
+                    .request_core_command(&request)
+                    .map(|response| response.result["relay"].clone())
+                    .unwrap_or_else(|error| {
+                        json!({
+                            "status": "disconnected",
+                            "relayUrl": "",
+                            "lastConnectedAt": Value::Null,
+                            "lastError": error,
+                        })
+                    }),
+                None => json!({ "status": "off" }),
+            };
+            let payload = json!({ "userId": result.user_id, "relay": relay });
+            let mut lines = result.messages;
             if security_unlock {
-                let _ = render_core_security_unlock_lines(
-                    &json!({ "userId": "", "relay": { "status": "disconnected", "lastError": message } }),
-                );
+                lines.extend(render_core_security_unlock_lines(&payload));
             } else {
-                let _ = render_core_login_lines(
-                    &json!({ "userId": "", "relay": { "status": "disconnected", "lastError": message } }),
-                );
+                lines.extend(render_core_login_lines(&payload));
             }
-            Err(message.into())
+            Ok(CoreCliExecution::ok(lines))
         }
         CoreCliAction::RestartControlPlane { project_root } => {
             run_restart_control_plane(project_root.as_deref(), output_mode, runtime)
