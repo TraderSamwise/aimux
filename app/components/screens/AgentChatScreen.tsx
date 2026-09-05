@@ -1561,7 +1561,6 @@ export default function ChatScreen() {
                   placeholder="Ask the agent…"
                   placeholderTextColor="#71717a"
                   multiline
-                  numberOfLines={COMPOSER_INPUT_MAX_LINES}
                   lineBreakStrategyIOS="standard"
                   editable={!sendBusy && !composerAwaitingAck}
                   scrollEnabled={composerInputScrollEnabled}
