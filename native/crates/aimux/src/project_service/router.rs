@@ -22,6 +22,7 @@ use super::operation_failures::route_operation_failures_request;
 use super::plans::route_plan_request;
 use super::project_observability::route_project_observability_request;
 use super::reads::route_read_request;
+use super::shell_state::route_shell_state_request;
 use super::switchable_agents::route_switchable_agent_request;
 use super::team::route_team_request;
 use super::topology::route_topology_request;
@@ -171,6 +172,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_operation_failures_request(context, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_shell_state_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_runtime_metadata_request(context, method, path, body) {
