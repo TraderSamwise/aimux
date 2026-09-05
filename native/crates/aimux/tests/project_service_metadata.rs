@@ -305,6 +305,23 @@ fn runtime_set_activity_tracks_idle_transitions() {
             .is_some_and(|value| value.ends_with('Z')),
         "leaving running stamps becameIdleAt"
     );
+
+    let became_idle_at = state.sessions["codex-1"]["derived"]["becameIdleAt"].clone();
+    let waiting = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ACTIVITY,
+        Some(&json!({ "session": "codex-1", "activity": "waiting" })),
+    )
+    .expect("set activity");
+    assert_eq!(waiting.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-1"]["derived"]["activity"], "waiting");
+    assert_eq!(
+        state.sessions["codex-1"]["derived"]["becameIdleAt"], became_idle_at,
+        "non-running to non-running preserves the existing idle timestamp"
+    );
     cleanup(project);
 }
 
@@ -313,6 +330,18 @@ fn runtime_set_attention_updates_derived_attention() {
     let project = temp_project("attention");
     let state_dir = project.join("state");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "running",
+                "unseenCount": 4
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
 
     let response = route_runtime_metadata_request(
         &context,
@@ -328,6 +357,8 @@ fn runtime_set_attention_updates_derived_attention() {
         state.sessions["codex-1"]["derived"]["attention"],
         "needs_input"
     );
+    assert_eq!(state.sessions["codex-1"]["derived"]["activity"], "running");
+    assert_eq!(state.sessions["codex-1"]["derived"]["unseenCount"], 4);
     let snapshot = list_notification_snapshot(
         &state_dir,
         NotificationQuery {
@@ -348,6 +379,47 @@ fn runtime_set_attention_updates_derived_attention() {
         snapshot.notifications[0]["dedupeKey"],
         "needs_input:codex-1"
     );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_set_attention_suppresses_unread_when_session_is_focused() {
+    let project = temp_project("attention-focused");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_notification_context(
+        &state_dir,
+        NotificationContextSource::Desktop,
+        NotificationContextPatch {
+            focused: Some(true),
+            screen: Some(Some("session".into())),
+            session_id: Some(Some("codex-1".into())),
+            panel_open: Some(false),
+        },
+    );
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ATTENTION,
+        Some(&json!({ "session": "codex-1", "attention": "blocked" })),
+    )
+    .expect("set attention");
+    assert_eq!(response.status, 200);
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 0);
+    assert_eq!(snapshot.notifications[0]["kind"], "blocked");
+    assert_eq!(snapshot.notifications[0]["unread"], false);
     cleanup(project);
 }
 
