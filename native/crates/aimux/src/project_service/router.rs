@@ -8,6 +8,7 @@ use super::dispatcher::{
 };
 use super::metadata::route_runtime_metadata_request;
 use super::notification_context::route_notification_context_request;
+use super::operation_failures::route_operation_failures_request;
 use super::plans::route_plan_request;
 use super::reads::route_read_request;
 use super::team::route_team_request;
@@ -76,6 +77,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_usage_request(context, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_operation_failures_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_runtime_metadata_request(context, method, path, body) {

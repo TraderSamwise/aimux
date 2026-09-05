@@ -2,6 +2,7 @@ pub mod dispatcher;
 pub mod http;
 pub mod metadata;
 pub mod notification_context;
+pub mod operation_failures;
 pub mod plans;
 pub mod reads;
 pub mod router;
