@@ -1,0 +1,21 @@
+use aimux::{contract_manifest, rewrite_status};
+
+#[test]
+fn contract_manifest_keeps_zero_node_end_state_visible() {
+    let manifest = contract_manifest();
+    assert_eq!(manifest.version, 1);
+    assert!(manifest.rule.contains("TypeScript behavior is the spec"));
+    assert!(manifest.areas.iter().any(|area| area.id == "tmux-runtime"));
+    assert!(manifest.areas.iter().any(|area| area.id == "dashboard-tui"));
+}
+
+#[test]
+fn rewrite_status_tracks_translation_first_phases() {
+    let status = rewrite_status();
+    assert_eq!(status.version, 1);
+    assert!(status.strategy.contains("translation first"));
+    assert!(status.end_state.contains("zero Node"));
+    assert_eq!(status.phases.len(), 9);
+    assert_eq!(status.phases[0].id, "phase-0");
+    assert_eq!(status.phases[8].id, "phase-8");
+}

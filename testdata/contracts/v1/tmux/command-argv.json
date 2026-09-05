@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "source": "src/tmux/runtime-manager.ts",
+  "description": "Canonical tmux argv cases for Rust parity.",
+  "cases": [
+    {
+      "name": "captureTarget negative start",
+      "input": { "windowId": "@3", "startLine": -200 },
+      "expected": ["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"]
+    },
+    {
+      "name": "captureTarget includes escapes",
+      "input": { "windowId": "@3", "includeEscapes": true },
+      "expected": ["capture-pane", "-p", "-J", "-e", "-t", "@3", "-S", "-"]
+    }
+  ]
+}

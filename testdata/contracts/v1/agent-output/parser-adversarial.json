@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "source": "src/agent-output-parser-fixtures.ts",
+  "description": "Adversarial parser cases to export from the TypeScript oracle before Rust porting.",
+  "cases": []
+}

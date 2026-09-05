@@ -9,6 +9,7 @@ CODEX.md
 .env
 *.tsbuildinfo
 src-tauri/target/
+native/target/
 native/darwin/aimux-notifier.app/
 
 # Secrets and local env

@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "source": "src/project-api-contract.ts",
+  "description": "Canonical project-service HTTP route list for Rust parity.",
+  "routes": []
+}

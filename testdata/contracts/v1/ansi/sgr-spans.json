@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "app/lib/ansi.ts",
+  "description": "Canonical ANSI SGR span cases for Rust parity.",
+  "cases": [
+    { "name": "bold reset", "input": "\u001b[1mbold\u001b[22mplain" },
+    { "name": "rgb semicolon", "input": "\u001b[38;2;215;119;87mwarm" },
+    { "name": "rgb colon", "input": "\u001b[38:2:0:128:255mx" }
+  ]
+}
