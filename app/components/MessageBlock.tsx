@@ -43,14 +43,14 @@ const MESSAGE_USER_STYLE: ViewStyle = {
 const MESSAGE_TEXT_STYLE: TextStyle = {
   flexShrink: 1,
   flexWrap: "wrap",
-  fontSize: Platform.OS === "web" ? 15 : 16,
-  lineHeight: Platform.OS === "web" ? 21 : 24,
+  fontSize: Platform.OS === "web" ? 14 : 15,
+  lineHeight: Platform.OS === "web" ? 20 : 23,
   maxWidth: "100%",
 };
 const MESSAGE_CODE_EDIT_DIFF_STYLE: TextStyle = {
   ...MESSAGE_TEXT_STYLE,
-  fontSize: 13,
-  lineHeight: 18,
+  fontSize: 12,
+  lineHeight: 17,
 };
 
 export type TextSegment = { kind: "code-edit-diff" | "table" | "text"; text: string };
