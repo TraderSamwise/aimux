@@ -449,6 +449,87 @@ fn runtime_event_derives_state_and_keeps_bounded_event_history() {
 }
 
 #[test]
+fn runtime_event_keeps_last_output_at_for_prompt_and_task_assignment() {
+    let project = temp_project("event-output-kind");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for event in [
+        json!({ "kind": "response", "message": "Done.", "ts": "2026-01-01T00:00:00.000Z" }),
+        json!({ "kind": "prompt", "message": "next", "ts": "2026-01-01T00:05:00.000Z" }),
+        json!({ "kind": "task_assigned", "message": "assigned", "ts": "2026-01-01T00:10:00.000Z" }),
+    ] {
+        let response = route_runtime_metadata_request(
+            &context,
+            "POST",
+            routes::runtime::EVENT,
+            Some(&json!({ "session": "codex-1", "event": event })),
+        )
+        .expect("event route");
+        assert_eq!(response.status, 200);
+    }
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["lastOutputAt"], "2026-01-01T00:00:00.000Z");
+    assert_eq!(derived["lastEvent"]["kind"], "task_assigned");
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_focused_response_clears_attention_without_unseen_growth() {
+    let project = temp_project("event-focused-response");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "waiting",
+                "attention": "needs_input",
+                "unseenCount": 7
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+    update_notification_context(
+        &state_dir,
+        NotificationContextSource::Tui,
+        NotificationContextPatch {
+            focused: Some(true),
+            screen: Some(Some("session".into())),
+            session_id: Some(Some("codex-1".into())),
+            panel_open: Some(false),
+        },
+    );
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "response",
+                "message": "Done.",
+                "ts": "2026-01-01T00:00:10.000Z"
+            }
+        })),
+    )
+    .expect("event route");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["activity"], "idle");
+    assert_eq!(derived["attention"], "normal");
+    assert_eq!(derived["unseenCount"], 7);
+    cleanup(project);
+}
+
+#[test]
 fn runtime_event_emits_attention_notifications() {
     let project = temp_project("event-alert");
     let state_dir = project.join("state");
@@ -488,6 +569,52 @@ fn runtime_event_emits_attention_notifications() {
         snapshot.notifications[0]["dedupeKey"],
         "needs_input:codex-1"
     );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_maps_blocked_failed_and_notify_alerts() {
+    let project = temp_project("event-alert-kinds");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for event in [
+        json!({ "kind": "blocked", "message": "Need credentials", "ts": "2026-01-01T00:00:00.000Z" }),
+        json!({ "kind": "task_failed", "message": "Tests failed", "ts": "2026-01-01T00:00:01.000Z" }),
+        json!({ "kind": "notify", "source": "watcher", "message": "FYI", "ts": "2026-01-01T00:00:02.000Z" }),
+        json!({ "kind": "status", "tone": "error", "message": "Crashed", "ts": "2026-01-01T00:00:03.000Z" }),
+    ] {
+        let response = route_runtime_metadata_request(
+            &context,
+            "POST",
+            routes::runtime::EVENT,
+            Some(&json!({ "session": "codex-1", "event": event })),
+        )
+        .expect("event route");
+        assert_eq!(response.status, 200);
+    }
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 4);
+    let records = snapshot.notifications;
+    assert_eq!(records[0]["body"], "Crashed");
+    assert_eq!(records[0]["kind"], "task_failed");
+    assert_eq!(records[0]["dedupeKey"], "error:codex-1");
+    assert_eq!(records[1]["title"], "watcher");
+    assert_eq!(records[1]["kind"], "notification");
+    assert_eq!(records[1]["dedupeKey"], "notify:codex-1:FYI");
+    assert_eq!(records[2]["body"], "Tests failed");
+    assert_eq!(records[2]["kind"], "task_failed");
+    assert_eq!(records[3]["body"], "Need credentials");
+    assert_eq!(records[3]["kind"], "blocked");
     cleanup(project);
 }
 
@@ -537,6 +664,59 @@ fn runtime_event_suppresses_unseen_and_unread_when_session_is_focused() {
     assert_eq!(snapshot.total, 1);
     assert_eq!(snapshot.unread_count, 0);
     assert_eq!(snapshot.notifications[0]["unread"], false);
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_focused_alerts_are_recorded_read_for_error_kinds() {
+    let project = temp_project("event-focused-errors");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_notification_context(
+        &state_dir,
+        NotificationContextSource::Desktop,
+        NotificationContextPatch {
+            focused: Some(true),
+            screen: Some(Some("session".into())),
+            session_id: Some(Some("codex-1".into())),
+            panel_open: Some(false),
+        },
+    );
+
+    for event in [
+        json!({ "kind": "blocked", "message": "Blocked", "ts": "2026-01-01T00:00:00.000Z" }),
+        json!({ "kind": "task_failed", "message": "Failed", "ts": "2026-01-01T00:00:01.000Z" }),
+        json!({ "kind": "notify", "tone": "error", "message": "Errored", "ts": "2026-01-01T00:00:02.000Z" }),
+    ] {
+        let response = route_runtime_metadata_request(
+            &context,
+            "POST",
+            routes::runtime::EVENT,
+            Some(&json!({ "session": "codex-1", "event": event })),
+        )
+        .expect("event route");
+        assert_eq!(response.status, 200);
+    }
+
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-1"]["derived"]["unseenCount"], 0);
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 3);
+    assert_eq!(snapshot.unread_count, 0);
+    assert!(
+        snapshot
+            .notifications
+            .iter()
+            .all(|notification| notification["unread"] == false)
+    );
     cleanup(project);
 }
 
