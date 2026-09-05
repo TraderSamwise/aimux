@@ -1,8 +1,8 @@
 use aimux::daemon::http::{DaemonResponseBody, prepare_daemon_response};
 use aimux::daemon::listener::{
     DaemonRequestMetadata, handle_daemon_stream, handle_daemon_stream_with_metadata,
-    parse_daemon_http_request, parse_daemon_http_request_with_metadata, prepared_response_bytes,
-    spawn_daemon_connection,
+    handle_daemon_stream_with_metadata_and_interceptor, parse_daemon_http_request,
+    parse_daemon_http_request_with_metadata, prepared_response_bytes, spawn_daemon_connection,
 };
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::server::handle_daemon_http_request;
@@ -151,6 +151,33 @@ fn metadata_stream_round_trip_can_short_circuit_stopping() {
 
     let response = String::from_utf8(stream.output).unwrap();
     assert!(response.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
+}
+
+#[test]
+fn interceptor_can_handle_request_without_buffered_route_dispatch() {
+    let input = b"GET /core/host-agent-stream-text?project=.&sessionId=claude-1 HTTP/1.1\r\n\r\n";
+    let mut stream = MemoryStream::new(input);
+    handle_daemon_stream_with_metadata_and_interceptor(
+        &mut stream,
+        DaemonRequestMetadata::default(),
+        &mut |request, stream: &mut MemoryStream| {
+            assert_eq!(
+                request.path,
+                "/core/host-agent-stream-text?project=.&sessionId=claude-1"
+            );
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\n\r\nstreamed")
+                .unwrap();
+            Ok(true)
+        },
+        &mut |_| panic!("buffered route should be skipped"),
+    )
+    .expect("intercepted");
+
+    assert_eq!(
+        String::from_utf8(stream.output).unwrap(),
+        "HTTP/1.1 200 OK\r\n\r\nstreamed"
+    );
 }
 
 #[test]

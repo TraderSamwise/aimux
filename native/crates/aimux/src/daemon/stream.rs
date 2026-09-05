@@ -1,6 +1,12 @@
 use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_daemon_response};
 use crate::daemon::listener::prepared_response_bytes;
-use crate::daemon::text::host_agent::{AgentOutputSseTextHandler, AgentOutputStreamError};
+use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
+use crate::daemon::server::DaemonHttpRequest;
+use crate::daemon::text::host_agent::{
+    AgentOutputSseTextHandler, AgentOutputStreamError, DaemonHostAgentTextRuntime,
+    HostAgentStreamResolution, resolve_host_agent_stream_text_route,
+};
+use crate::remote_access::{RemoteAccessContext, assert_remote_access_allowed, parse_remote_actor};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
@@ -136,9 +142,97 @@ pub fn pipe_host_agent_stream_from_url(
     Ok(())
 }
 
+pub fn maybe_handle_host_agent_stream_request(
+    runtime: &mut impl DaemonHostAgentTextRuntime,
+    request: &DaemonHttpRequest,
+    writer: &mut impl Write,
+) -> Result<bool, HostAgentStreamError> {
+    let route_url = DaemonRouteUrl::parse(&request.path);
+    if request.method != "GET"
+        || route_url.pathname()
+            != crate::core_command_contract::CORE_API_ROUTES.host_agent_stream_text
+    {
+        return Ok(false);
+    }
+
+    let actor = parse_remote_actor(&request.headers);
+    let access_decision = assert_remote_access_allowed(
+        actor.as_ref(),
+        "GET",
+        route_url.pathname(),
+        &route_url,
+        RemoteAccessContext {
+            body: None,
+            project_root: None,
+        },
+    );
+    if !access_decision.ok {
+        write_prepared(
+            writer,
+            &DaemonRouteResponse::json(
+                access_decision.status.unwrap_or(403),
+                serde_json::json!({
+                    "ok": false,
+                    "error": access_decision.error.as_deref().unwrap_or("remote access denied")
+                }),
+            ),
+        )?;
+        return Ok(true);
+    }
+
+    let headers = request
+        .headers
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    match resolve_host_agent_stream_text_route(
+        runtime,
+        &request.path,
+        Some(&headers),
+        actor.is_some(),
+    ) {
+        HostAgentStreamResolution::Err { response } => {
+            write_prepared(writer, &response)?;
+            Ok(true)
+        }
+        HostAgentStreamResolution::Ok { url, session_id } => {
+            let mut writer = CountingWriter::new(writer);
+            match pipe_host_agent_stream_from_url(
+                &mut writer,
+                &session_id,
+                &url,
+                HostAgentStreamRequestOptions::default(),
+            ) {
+                Ok(()) => Ok(true),
+                Err(error) if writer.bytes_written == 0 => {
+                    write_prepared(
+                        writer.inner,
+                        &DaemonRouteResponse::text(502, format!("{error}\n")),
+                    )?;
+                    Ok(true)
+                }
+                Err(error) => Err(error),
+            }
+        }
+    }
+}
+
 fn write_stream_headers(writer: &mut impl Write) -> Result<(), HostAgentStreamError> {
     writer
         .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\nconnection: close\r\n\r\n")
+        .map_err(map_io_error)
+}
+
+fn write_prepared(
+    writer: &mut impl Write,
+    response: &DaemonRouteResponse,
+) -> Result<(), HostAgentStreamError> {
+    writer
+        .write_all(&prepared_response_bytes(&prepare_daemon_response(
+            response.status,
+            response.body.clone(),
+            response.content_type.as_deref(),
+        )))
         .map_err(map_io_error)
 }
 
@@ -152,6 +246,32 @@ fn map_transform_error(error: AgentOutputStreamError) -> HostAgentStreamError {
 
 pub fn host_agent_stream_failure_bytes(failure: HostAgentStreamFailure) -> Vec<u8> {
     prepared_response_bytes(&host_agent_stream_failure_response(failure))
+}
+
+struct CountingWriter<'a, Writer> {
+    inner: &'a mut Writer,
+    bytes_written: usize,
+}
+
+impl<'a, Writer> CountingWriter<'a, Writer> {
+    fn new(inner: &'a mut Writer) -> Self {
+        Self {
+            inner,
+            bytes_written: 0,
+        }
+    }
+}
+
+impl<Writer: Write> Write for CountingWriter<'_, Writer> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let count = self.inner.write(buffer)?;
+        self.bytes_written += count;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -122,8 +122,30 @@ where
     Stream: Read + Write,
     Handle: FnMut(DaemonHttpRequest) -> PreparedDaemonResponse,
 {
+    handle_daemon_stream_with_metadata_and_interceptor(
+        stream,
+        metadata,
+        &mut |_, _| Ok(false),
+        handle,
+    )
+}
+
+pub fn handle_daemon_stream_with_metadata_and_interceptor<Stream, Intercept, Handle>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    intercept: &mut Intercept,
+    handle: &mut Handle,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: Read + Write,
+    Intercept: FnMut(&DaemonHttpRequest, &mut Stream) -> Result<bool, DaemonListenerError>,
+    Handle: FnMut(DaemonHttpRequest) -> PreparedDaemonResponse,
+{
     let bytes = read_http_request(stream)?;
     let request = parse_daemon_http_request_with_metadata(&bytes, metadata)?;
+    if intercept(&request, stream)? {
+        return Ok(());
+    }
     let response = handle(request);
     write_prepared_response(stream, &response)?;
     Ok(())

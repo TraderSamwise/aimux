@@ -1,8 +1,13 @@
 use aimux::daemon::stream::{
     HostAgentStreamError, HostAgentStreamFailure, HostAgentStreamRequestOptions,
     host_agent_stream_failure_bytes, host_agent_stream_failure_response,
-    pipe_host_agent_stream_from_url, write_host_agent_stream_text,
+    maybe_handle_host_agent_stream_request, pipe_host_agent_stream_from_url,
+    write_host_agent_stream_text,
 };
+use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
+use aimux::daemon::text::params::ProjectServiceJsonResult;
+use aimux::daemon_state::MetadataApiEndpoint;
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
@@ -191,6 +196,145 @@ fn upstream_url_pipe_rejects_non_loopback_targets_before_connecting() {
         error,
         HostAgentStreamError::InvalidUrl("upstream URL must use loopback, got example.com".into())
     );
+}
+
+#[test]
+fn host_agent_stream_interceptor_ignores_other_routes() {
+    let mut runtime = FakeHostAgentRuntime::default();
+    let request = request("GET", "/health");
+    let mut output = Vec::new();
+
+    let handled = maybe_handle_host_agent_stream_request(&mut runtime, &request, &mut output)
+        .expect("intercept");
+
+    assert!(!handled);
+    assert!(output.is_empty());
+}
+
+#[test]
+fn host_agent_stream_interceptor_applies_access_and_cli_guards() {
+    let mut runtime = FakeHostAgentRuntime::default();
+    let mut guest = request(
+        "GET",
+        "/core/host-agent-stream-text?project=.&sessionId=claude-1",
+    );
+    guest
+        .headers
+        .insert("x-aimux-actor-role".into(), "guest".into());
+    let mut output = Vec::new();
+
+    let handled =
+        maybe_handle_host_agent_stream_request(&mut runtime, &guest, &mut output).expect("guest");
+    let guest_response = String::from_utf8(output).unwrap();
+
+    assert!(handled);
+    assert!(guest_response.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+    assert!(
+        guest_response
+            .ends_with(r#"{"ok":false,"error":"shared guests cannot access daemon routes"}"#)
+    );
+
+    let mut browser = request(
+        "GET",
+        "/core/host-agent-stream-text?project=.&sessionId=claude-1",
+    );
+    browser
+        .headers
+        .insert("origin".into(), "http://localhost:8081".into());
+    let mut output = Vec::new();
+    maybe_handle_host_agent_stream_request(&mut runtime, &browser, &mut output).expect("origin");
+    let origin_response = String::from_utf8(output).unwrap();
+    assert!(origin_response.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+    assert!(origin_response.ends_with("core text routes are cli-only\n"));
+}
+
+#[test]
+fn host_agent_stream_interceptor_resolves_and_pipes_upstream() {
+    let (url, join) = serve_once(|mut stream| {
+        let request = read_request_text(&mut stream);
+        assert!(request.starts_with("GET /agents/output/stream?sessionId=claude-1&startLine=-2000&intervalMs=500 HTTP/1.1\r\n"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n28\r\nevent: output\ndata: {\"output\":\"hello\"}\n\n\r\n0\r\n\r\n",
+            )
+            .expect("write upstream");
+    });
+    let mut runtime = FakeHostAgentRuntime {
+        ensured: false,
+        endpoint: endpoint_from_url(&url),
+    };
+    let request = request(
+        "GET",
+        "/core/host-agent-stream-text?project=.&sessionId=claude-1",
+    );
+    let mut output = Vec::new();
+
+    let handled = maybe_handle_host_agent_stream_request(&mut runtime, &request, &mut output)
+        .expect("stream");
+    join.join().expect("upstream");
+    let response = String::from_utf8(output).unwrap();
+
+    assert!(handled);
+    assert!(runtime.ensured);
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.ends_with("hello\n"));
+}
+
+#[derive(Debug, Default)]
+struct FakeHostAgentRuntime {
+    ensured: bool,
+    endpoint: Option<MetadataApiEndpoint>,
+}
+
+impl DaemonHostAgentTextRuntime for FakeHostAgentRuntime {
+    fn resolve_project_root(&self, value: &str) -> String {
+        if value == "." {
+            "/repo".into()
+        } else {
+            value.into()
+        }
+    }
+
+    fn ensure_project(&mut self, _project_root: &str) -> Result<(), String> {
+        self.ensured = true;
+        Ok(())
+    }
+
+    fn metadata_endpoint(&self, _project_root: &str) -> Option<MetadataApiEndpoint> {
+        self.endpoint.clone()
+    }
+
+    fn get_project_service_json(
+        &mut self,
+        _project: &str,
+        _route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        ProjectServiceJsonResult::error(aimux::daemon::routing::DaemonRouteResponse::text(
+            404,
+            "not found\n",
+        ))
+    }
+}
+
+fn request(method: &str, path: &str) -> aimux::daemon::server::DaemonHttpRequest {
+    aimux::daemon::server::DaemonHttpRequest {
+        method: method.into(),
+        path: path.into(),
+        headers: BTreeMap::new(),
+        body_chunks: Vec::new(),
+        stopping: false,
+        issued_at: String::new(),
+    }
+}
+
+fn endpoint_from_url(url: &str) -> Option<MetadataApiEndpoint> {
+    let port = url.rsplit_once(':')?.1.parse().ok()?;
+    Some(MetadataApiEndpoint {
+        host: "127.0.0.1".into(),
+        port,
+        pid: 1,
+        updated_at: "now".into(),
+    })
 }
 
 fn serve_once(handle: impl FnOnce(TcpStream) + Send + 'static) -> (String, thread::JoinHandle<()>) {
