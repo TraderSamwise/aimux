@@ -183,17 +183,6 @@ impl RealDaemonRuntime {
             .collect()
     }
 
-    fn live_project_service_state(&self, project_id: &str) -> Option<ProjectServiceState> {
-        let state = load_daemon_state(self.resolver.daemon_state_path());
-        let service = state.projects.get(project_id)?;
-        serde_json::from_value::<ProjectServiceState>(service.clone())
-            .ok()
-            .filter(|service| {
-                service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
-                    && is_pid_alive(service.pid)
-            })
-    }
-
     fn save_project_service_state(&self, service: &ProjectServiceState) -> Result<(), String> {
         let mut state = load_daemon_state(self.resolver.daemon_state_path());
         state.updated_at = Some(Value::String(service.updated_at.clone()));
@@ -332,7 +321,10 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
             |service| {
                 serde_json::from_value::<ProjectServiceState>(service.clone())
                     .ok()
-                    .is_some_and(|service| is_pid_alive(service.pid))
+                    .is_some_and(|service| {
+                        service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
+                            && is_pid_alive(service.pid)
+                    })
             },
         )
     }
@@ -366,10 +358,23 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         resolver
             .register_project(&project_root)
             .map_err(|error| error.to_string())?;
-        if let Some(service) = self.live_project_service_state(&project_id) {
+        let project_state_dir = resolver.project_state_dir_for(&project_root);
+        if let Some(mut service) = self.stored_project_service_state(&project_id)
+            && service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
+            && is_pid_alive(service.pid)
+        {
+            if self
+                .wait_for_live_project_service(&project_state_dir, service.pid)
+                .is_some()
+            {
+                service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
+                service.updated_at = now_iso();
+                self.save_project_service_state(&service)?;
+            } else {
+                service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
+            }
             return serde_json::to_value(service).map_err(|error| error.to_string());
         }
-        let project_state_dir = resolver.project_state_dir_for(&project_root);
         let pid = self.project_service_launcher.launch(
             &project_id,
             &project_root_path,

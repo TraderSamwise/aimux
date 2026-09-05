@@ -299,6 +299,16 @@ fn ensure_project_reuses_existing_live_state_without_launching() {
         },
     )
     .expect("daemon state");
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_903,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
     let launcher = Arc::new(FakeLauncher::new(87_655));
     let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
 
@@ -310,6 +320,35 @@ fn ensure_project_reuses_existing_live_state_without_launching() {
     assert_eq!(project_json["pid"], json!(std::process::id() as i32));
     assert_eq!(project_json["status"], "running");
     assert_eq!(project_json["restartCount"], json!(3));
+    fixture.cleanup();
+}
+
+#[test]
+fn ensure_project_keeps_existing_live_pid_starting_until_endpoint_exists() {
+    let fixture = RuntimeFixture::new("ensure-wait-endpoint");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    let launcher = Arc::new(FakeLauncher::new(87_659));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let project_json = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect("ensure project");
+
+    assert!(launcher.calls().is_empty());
+    assert_eq!(project_json["pid"], json!(std::process::id() as i32));
+    assert_eq!(project_json["status"], "starting");
     fixture.cleanup();
 }
 
