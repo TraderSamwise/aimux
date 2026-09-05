@@ -11,7 +11,10 @@ use crate::core_command_transport::{
 };
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use crate::daemon::disk_doctor::build_disk_doctor_report;
-use crate::daemon::expose::{expose_focus_route, expose_items_route};
+use crate::daemon::expose::{
+    DaemonExposeFocusRuntime, SystemDaemonExposeFocusRuntime, expose_focus_route,
+    expose_items_route, open_target_for_client,
+};
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
@@ -51,11 +54,15 @@ use crate::paths::{PathResolver, compute_project_id};
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
+use crate::tmux::{
+    TmuxTarget, is_tmux_client_session_for_host, kill_session_argv, project_session,
+};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Formatter};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -224,6 +231,51 @@ impl RealDaemonRuntime {
             }
             thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    fn refresh_project_statusline(&mut self, project_root: &str) {
+        let _ = self.request_project_service_json(
+            project_root,
+            project_routes::STATUSLINE_REFRESH,
+            Some(json!({ "force": true })),
+            Some(1_500),
+        );
+    }
+
+    fn reload_dashboard_runtime(
+        &mut self,
+        project_root: &str,
+        open: Option<DashboardOpenRequest>,
+    ) -> Result<Value, String> {
+        <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
+        let (repair, _) = system_tmux_repair_result(&mut self.resolver, project_root, false)?;
+        self.refresh_project_statusline(project_root);
+        dashboard_payload_from_repair(project_root, &repair, open)
+    }
+
+    fn restart_project_runtime(
+        &mut self,
+        project_root: &str,
+        open: Option<DashboardOpenRequest>,
+    ) -> Result<Value, String> {
+        let _ = <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false);
+        let tmux_sessions_killed = stop_project_tmux_runtime(project_root);
+        let project = <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
+        let (repair, _) = system_tmux_repair_result(&mut self.resolver, project_root, false)?;
+        self.refresh_project_statusline(project_root);
+        let mut payload = dashboard_payload_from_repair(project_root, &repair, open)?;
+        if let Value::Object(object) = &mut payload {
+            object.insert("project".into(), project);
+            object.insert("tmuxSessionsKilled".into(), json!(tmux_sessions_killed));
+            object.insert(
+                "dashboardSession".into(),
+                object
+                    .get("dashboardSessionName")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            );
+        }
+        Ok(payload)
     }
 
     fn service_endpoints_by_id(&self) -> HashMap<String, Value> {
@@ -591,18 +643,18 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
 
     fn dashboard_reload(
         &mut self,
-        _project_root: &str,
-        _open: Option<DashboardOpenRequest>,
+        project_root: &str,
+        open: Option<DashboardOpenRequest>,
     ) -> Result<Value, String> {
-        Err(self.unported("dashboard reload"))
+        self.reload_dashboard_runtime(project_root, open)
     }
 
     fn runtime_restart(
         &mut self,
-        _project_root: &str,
-        _open: Option<DashboardOpenRequest>,
+        project_root: &str,
+        open: Option<DashboardOpenRequest>,
     ) -> Result<Value, String> {
-        Err(self.unported("runtime restart"))
+        self.restart_project_runtime(project_root, open)
     }
 }
 
@@ -1001,6 +1053,92 @@ fn session_prefix_for_project(project_root: &str) -> String {
         .filter(|prefix| !prefix.trim().is_empty())
         .unwrap_or("aimux")
         .to_owned()
+}
+
+fn dashboard_payload_from_repair(
+    project_root: &str,
+    repair: &Value,
+    open: Option<DashboardOpenRequest>,
+) -> Result<Value, String> {
+    let session_name = repair
+        .get("dashboardSessionName")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "dashboard session missing after repair".to_owned())?;
+    let window_id = repair
+        .get("dashboardWindowId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "dashboard window missing after repair".to_owned())?;
+    let mut runtime = SystemDaemonExposeFocusRuntime;
+    let target = runtime
+        .target_by_window_id(session_name, window_id)?
+        .ok_or_else(|| "dashboard window not found after repair".to_owned())?;
+    if let Some(open) = open {
+        open_target_for_client(
+            &mut runtime,
+            &target,
+            open.current_client_session.as_deref(),
+            open.client_tty.as_deref(),
+        )?;
+    }
+    Ok(json!({
+        "ok": true,
+        "projectRoot": project_root,
+        "dashboardSessionName": session_name,
+        "dashboardTarget": tmux_target_json(&target),
+    }))
+}
+
+fn tmux_target_json(target: &TmuxTarget) -> Value {
+    json!({
+        "sessionName": target.session_name,
+        "windowId": target.window_id,
+        "windowIndex": target.window_index,
+        "windowName": target.window_name,
+    })
+}
+
+fn stop_project_tmux_runtime(project_root: &str) -> Vec<String> {
+    let session_prefix = session_prefix_for_project(project_root);
+    let host_session = project_session(project_root, &session_prefix).session_name;
+    let sessions = tmux_session_names();
+    let killed = sessions
+        .into_iter()
+        .filter(|session_name| {
+            session_name == &host_session
+                || is_tmux_client_session_for_host(session_name, &host_session)
+        })
+        .filter(|session_name| run_tmux_status(kill_session_argv(session_name)).is_ok())
+        .collect::<Vec<_>>();
+    let _ = run_tmux_status(crate::tmux::refresh_status_argv());
+    killed
+}
+
+fn tmux_session_names() -> Vec<String> {
+    let Ok(output) = Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn run_tmux_status(argv: Vec<String>) -> Result<(), String> {
+    match Command::new("tmux").args(argv).status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("tmux exited with {status}")),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn now_iso() -> String {
