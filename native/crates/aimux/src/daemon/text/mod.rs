@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod auth;
 pub mod collaboration;
 pub mod notifications;
 pub mod overseer;
