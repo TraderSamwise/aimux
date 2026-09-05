@@ -145,6 +145,140 @@ fn unported_runtime_metadata_routes_stay_explicit() {
     cleanup(project);
 }
 
+#[test]
+fn statusline_segment_posts_to_default_bottom_and_replaces_by_id() {
+    let project = temp_project("statusline-post");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let first = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::STATUSLINE_SEGMENT,
+        Some(&json!({ "session": "codex-1", "id": "build", "text": "red", "tone": "warning" })),
+    )
+    .expect("statusline route");
+    assert_eq!(first.status, 200);
+
+    let second = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::STATUSLINE_SEGMENT,
+        Some(&json!({ "session": "codex-1", "id": "build", "text": "green", "data": { "ok": true } })),
+    )
+    .expect("statusline route");
+    assert_eq!(second.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let bottom = state.sessions["codex-1"]["statusline"]["bottom"]
+        .as_array()
+        .expect("bottom segments");
+    assert_eq!(bottom.len(), 1);
+    assert_eq!(bottom[0]["id"], "build");
+    assert_eq!(bottom[0]["text"], "green");
+    assert_eq!(bottom[0]["data"], json!({ "ok": true }));
+    cleanup(project);
+}
+
+#[test]
+fn statusline_segment_delete_removes_named_rail_or_both() {
+    let project = temp_project("statusline-delete");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    for (line, id) in [("top", "same"), ("bottom", "same"), ("bottom", "other")] {
+        route_runtime_metadata_request(
+            &context,
+            "POST",
+            routes::STATUSLINE_SEGMENT,
+            Some(&json!({ "session": "codex-1", "line": line, "id": id, "text": id })),
+        )
+        .expect("statusline post");
+    }
+
+    route_runtime_metadata_request(
+        &context,
+        "DELETE",
+        routes::STATUSLINE_SEGMENT,
+        Some(&json!({ "session": "codex-1", "line": "top", "id": "same" })),
+    )
+    .expect("statusline delete");
+    let state = load_metadata_state(&state_dir);
+    assert!(state.sessions["codex-1"]["statusline"]["top"].is_null());
+    assert_eq!(
+        state.sessions["codex-1"]["statusline"]["bottom"]
+            .as_array()
+            .expect("bottom")
+            .len(),
+        2
+    );
+
+    route_runtime_metadata_request(
+        &context,
+        "DELETE",
+        routes::STATUSLINE_SEGMENT,
+        Some(&json!({ "session": "codex-1", "id": "same" })),
+    )
+    .expect("statusline delete both");
+    let state = load_metadata_state(&state_dir);
+    let bottom = state.sessions["codex-1"]["statusline"]["bottom"]
+        .as_array()
+        .expect("bottom");
+    assert_eq!(bottom.len(), 1);
+    assert_eq!(bottom[0]["id"], "other");
+    cleanup(project);
+}
+
+#[test]
+fn statusline_segment_validates_body_like_typescript() {
+    let project = temp_project("statusline-validation");
+    let context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
+    for (method, body, error) in [
+        ("POST", json!({}), "session is required"),
+        (
+            "POST",
+            json!({ "session": "codex-1", "line": "middle" }),
+            "line must be top or bottom",
+        ),
+        ("DELETE", json!({ "session": "codex-1" }), "id is required"),
+        (
+            "POST",
+            json!({ "session": "codex-1", "id": "a", "ttlSeconds": 0 }),
+            "ttlSeconds must be between 1 and 86400",
+        ),
+        (
+            "POST",
+            json!({ "session": "codex-1", "id": "a", "text": "x", "data": "x".repeat(4097) }),
+            "data is 4099 bytes; the limit is 4096",
+        ),
+        (
+            "POST",
+            json!({ "session": "codex-1", "text": "x" }),
+            "a segment needs an id to be replaceable",
+        ),
+    ] {
+        let response = route_runtime_metadata_request(
+            &context,
+            method,
+            routes::STATUSLINE_SEGMENT,
+            Some(&body),
+        )
+        .expect("statusline route");
+        assert_eq!(response.status, 400);
+        assert_eq!(response.body["error"], error);
+    }
+    let response = route_runtime_metadata_request(
+        &context,
+        "PUT",
+        routes::STATUSLINE_SEGMENT,
+        Some(&json!({ "session": "codex-1" })),
+    )
+    .expect("statusline route");
+    assert_eq!(response.status, 405);
+    assert_eq!(response.body["error"], "use POST or DELETE");
+    cleanup(project);
+}
+
 fn temp_project(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "aimux-rust-project-service-metadata-{label}-{}-{}",

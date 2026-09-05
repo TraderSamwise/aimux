@@ -10,6 +10,9 @@ use super::dispatcher::{
 };
 use super::router::ProjectServiceRequestContext;
 
+const MAX_SEGMENT_DATA_BYTES: usize = 4096;
+const MAX_SEGMENT_TTL_SECONDS: f64 = 86_400.0;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetadataUpdateResult {
     pub state: MetadataState,
@@ -23,6 +26,14 @@ pub fn route_runtime_metadata_request(
     body: Option<&Value>,
 ) -> Option<ProjectServiceDispatchResponse> {
     let pathname = project_service_pathname(path);
+    if pathname == routes::STATUSLINE_SEGMENT {
+        return Some(route_statusline_segment_request(
+            context.project_state_dir(),
+            method,
+            body.unwrap_or(&Value::Null),
+        ));
+    }
+
     if !method.eq_ignore_ascii_case("POST") {
         return None;
     }
@@ -118,7 +129,6 @@ pub fn route_runtime_metadata_request(
         | routes::hooks::CLAUDE
         | routes::hooks::CODEX
         | routes::STATUSLINE_REFRESH
-        | routes::STATUSLINE_SEGMENT
         | routes::OPERATION_FAILURES_CLEAR => {
             Some(route_unimplemented_project_service_request(method, path))
         }
@@ -207,6 +217,174 @@ fn append_log(current: Value, entry: Value) -> Value {
     object_insert(current, "logs", Value::Array(logs))
 }
 
+fn route_statusline_segment_request(
+    project_state_dir: impl AsRef<Path>,
+    method: &str,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let session = string_field(body, "session");
+    if session.is_empty() {
+        return json_response(400, json!({ "ok": false, "error": "session is required" }));
+    }
+    let line = body.get("line").and_then(Value::as_str);
+    if let Some(line) = line
+        && line != "top"
+        && line != "bottom"
+    {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "line must be top or bottom" }),
+        );
+    }
+
+    if method.eq_ignore_ascii_case("DELETE") {
+        let id = string_field(body, "id");
+        if id.is_empty() {
+            return json_response(400, json!({ "ok": false, "error": "id is required" }));
+        }
+        let _ = drop_statusline_segment(project_state_dir, &session, &id, line);
+        return ok();
+    }
+
+    if !method.eq_ignore_ascii_case("POST") {
+        return json_response(405, json!({ "ok": false, "error": "use POST or DELETE" }));
+    }
+
+    let line = line.unwrap_or("bottom");
+    let ttl = body.get("ttlSeconds").and_then(Value::as_f64);
+    if body.get("ttlSeconds").is_some()
+        && ttl.is_none_or(|ttl| !(ttl.is_finite() && ttl > 0.0 && ttl <= MAX_SEGMENT_TTL_SECONDS))
+    {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "ttlSeconds must be between 1 and 86400" }),
+        );
+    }
+
+    let mut segment = Map::new();
+    if let Some(id) = body.get("id").cloned() {
+        segment.insert("id".to_owned(), id);
+    }
+    segment.insert(
+        "text".to_owned(),
+        Value::String(string_field_with_default(body, "text", "")),
+    );
+    if let Some(tone) = body.get("tone").cloned() {
+        segment.insert("tone".to_owned(), tone);
+    }
+    if let Some(ttl) = ttl {
+        segment.insert(
+            "expiresAt".to_owned(),
+            Value::String(now_iso_after_seconds(ttl)),
+        );
+    }
+    if let Some(data) = body.get("data").cloned() {
+        segment.insert("data".to_owned(), data);
+    }
+    let segment = Value::Object(segment);
+    if let Some(rejection) = segment_rejection(&segment) {
+        return json_response(400, json!({ "ok": false, "error": rejection }));
+    }
+    let _ = put_statusline_segment(project_state_dir, &session, line, segment);
+    ok()
+}
+
+fn put_statusline_segment(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    line: &str,
+    segment: Value,
+) -> Result<MetadataUpdateResult, String> {
+    let id = segment
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    update_session_metadata(project_state_dir, session_id, |current| {
+        let mut statusline = current
+            .get("statusline")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let mut segments = statusline
+            .get(line)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        segments.retain(|entry| entry.get("id").and_then(Value::as_str) != Some(id.as_str()));
+        segments.push(segment);
+        statusline.insert(line.to_owned(), Value::Array(segments));
+        object_insert(current, "statusline", Value::Object(statusline))
+    })
+}
+
+fn drop_statusline_segment(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    id: &str,
+    line: Option<&str>,
+) -> Result<MetadataUpdateResult, String> {
+    update_session_metadata(project_state_dir, session_id, |mut current| {
+        let Value::Object(session) = &mut current else {
+            return current;
+        };
+        let Some(Value::Object(statusline)) = session.get_mut("statusline") else {
+            return current;
+        };
+        let lines = line.map_or_else(|| vec!["top", "bottom"], |line| vec![line]);
+        for current_line in lines {
+            let Some(Value::Array(segments)) = statusline.get_mut(current_line) else {
+                continue;
+            };
+            segments.retain(|entry| entry.get("id").and_then(Value::as_str) != Some(id));
+            if segments.is_empty() {
+                statusline.remove(current_line);
+            }
+        }
+        let top_empty = statusline
+            .get("top")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty);
+        let bottom_empty = statusline
+            .get("bottom")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty);
+        if top_empty && bottom_empty {
+            session.remove("statusline");
+        }
+        current
+    })
+}
+
+fn segment_rejection(segment: &Value) -> Option<String> {
+    if segment
+        .get("id")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Some("a segment needs an id to be replaceable".into());
+    }
+    if !segment.get("text").is_some_and(Value::is_string) {
+        return Some("a segment needs text".into());
+    }
+    if let Some(expires_at) = segment.get("expiresAt").and_then(Value::as_str)
+        && parse_iso_millis(expires_at).is_none()
+    {
+        return Some("expiresAt is not a date".into());
+    }
+    if let Some(data) = segment.get("data") {
+        let size = serde_json::to_string(data)
+            .map(|value| value.len())
+            .unwrap_or_default();
+        if size > MAX_SEGMENT_DATA_BYTES {
+            return Some(format!(
+                "data is {size} bytes; the limit is {MAX_SEGMENT_DATA_BYTES}"
+            ));
+        }
+    }
+    None
+}
+
 fn object_insert(value: Value, key: &str, inserted: Value) -> Value {
     let mut object = object_value(value);
     object.insert(key.to_owned(), inserted);
@@ -243,22 +421,35 @@ fn stable_metadata_payload(value: &Value) -> String {
 }
 
 fn string_field(value: &Value, field: &str) -> String {
+    string_field_with_default(value, field, "")
+}
+
+fn string_field_with_default(value: &Value, field: &str, default_value: &str) -> String {
     value
         .get(field)
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .unwrap_or(default_value)
         .to_owned()
 }
 
 fn ok() -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse {
-        status: 200,
-        body: json!({ "ok": true }),
-    }
+    json_response(200, json!({ "ok": true }))
+}
+
+fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse { status, body }
 }
 
 fn now_iso() -> String {
-    let now = time::OffsetDateTime::now_utc();
+    format_offset_date_time(time::OffsetDateTime::now_utc())
+}
+
+fn now_iso_after_seconds(seconds: f64) -> String {
+    let millis = (seconds * 1000.0).round() as i64;
+    format_offset_date_time(time::OffsetDateTime::now_utc() + time::Duration::milliseconds(millis))
+}
+
+fn format_offset_date_time(now: time::OffsetDateTime) -> String {
     let millis = now.millisecond();
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
@@ -270,4 +461,47 @@ fn now_iso() -> String {
         now.second(),
         millis
     )
+}
+
+fn parse_iso_millis(value: &str) -> Option<u128> {
+    let (date, time) = value.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i64>().ok()?;
+    let month = date_parts.next()?.parse::<i64>().ok()?;
+    let day = date_parts.next()?.parse::<i64>().ok()?;
+    if date_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let time = time.strip_suffix('Z')?;
+    let (hms, millis) = time.split_once('.').unwrap_or((time, "0"));
+    let mut time_parts = hms.split(':');
+    let hour = time_parts.next()?.parse::<i64>().ok()?;
+    let minute = time_parts.next()?.parse::<i64>().ok()?;
+    let second = time_parts.next()?.parse::<i64>().ok()?;
+    if time_parts.next().is_some() || hour > 23 || minute > 59 || second > 59 || millis.len() > 3 {
+        return None;
+    }
+    let mut millis = millis.parse::<u128>().ok()?;
+    for _ in 0..(3 - value
+        .split_once('.')
+        .map_or(0, |(_, rest)| rest.trim_end_matches('Z').len()))
+    {
+        millis *= 10;
+    }
+    let days = days_from_civil(year, month, day)?;
+    Some(
+        (((days as u128 * 24 + hour as u128) * 60 + minute as u128) * 60 + second as u128) * 1000
+            + millis,
+    )
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    (days >= 0).then_some(days)
 }
