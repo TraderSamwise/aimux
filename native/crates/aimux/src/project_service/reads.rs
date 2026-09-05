@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 
@@ -35,9 +36,17 @@ pub fn route_read_request(
         });
     }
 
+    if pathname == routes::STATE {
+        let state = load_metadata_state(context.project_state_dir());
+        return Some(ProjectServiceDispatchResponse {
+            status: 200,
+            body: serde_json::to_value(state)
+                .unwrap_or_else(|_| json!({ "version": 1, "sessions": {} })),
+        });
+    }
+
     if pathname == routes::DIAGNOSTICS
         || pathname == routes::DIAGNOSTICS_LIFECYCLE
-        || pathname == routes::STATE
         || pathname == routes::DESKTOP_STATE
         || pathname == routes::COORDINATION_WORKLIST
         || pathname == routes::PROJECT_OBSERVABILITY
