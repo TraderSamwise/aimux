@@ -196,7 +196,8 @@ const FOOTER_LABEL_SHIMMER_COLORS = {
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const MOBILE_CHROME_COLLAPSE_MAX_WIDTH = 639;
 const CHROME_COLLAPSE_ANIMATION_MS = 140;
-const CHROME_SCROLL_DIRECTION_THRESHOLD = 8;
+const CHROME_HIDE_SCROLL_DIRECTION_THRESHOLD = 8;
+const CHROME_REVEAL_SCROLL_DIRECTION_THRESHOLD = 1;
 const SCROLL_GESTURE_IDLE_RELEASE_MS = 240;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 const COMPOSER_WEB_INPUT_PROPS =
@@ -710,7 +711,7 @@ export default function ChatScreen() {
   const [composerHideProgress] = useState(() => new Animated.Value(0));
   const [chatChromeCollapsed, setChatChromeCollapsedState] = useState(false);
   const chatChromeCollapsedRef = useRef(false);
-  const [chatHeaderCollapseProgress] = useState(() => new Animated.Value(0));
+  const chatHeaderCollapseProgress = useSharedValue(0);
   const [chatHeaderHeight, setChatHeaderHeight] = useState(72);
   const composerScrollReserve = useSharedValue(
     COMPOSER_FOOTER_ESTIMATED_HEIGHT + COMPOSER_SCROLL_SAFETY_PADDING,
@@ -743,9 +744,11 @@ export default function ChatScreen() {
     chat: null,
     terminal: null,
   });
-  const chatChromeDecisionOffsetRef = useRef<Record<ScrollPaneKey, number>>({
-    chat: 0,
-    terminal: 0,
+  const chatChromeGestureRef = useRef<
+    Record<ScrollPaneKey, { lastOffset: number; revealedDuringGesture: boolean }>
+  >({
+    chat: { lastOffset: 0, revealedDuringGesture: false },
+    terminal: { lastOffset: 0, revealedDuringGesture: false },
   });
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
@@ -1114,27 +1117,14 @@ export default function ChatScreen() {
     }),
     [composerHideDistance, composerHideProgress],
   );
-  const chatHeaderVisibilityStyle = useMemo(
-    () => ({
-      height: chatHeaderCollapseProgress.interpolate({
-        inputRange: [0, 1],
-        outputRange: [chatHeaderHeight, 0],
-      }),
-      opacity: chatHeaderCollapseProgress.interpolate({
-        inputRange: [0, 0.7, 1],
-        outputRange: [1, 0.08, 0],
-      }),
-      transform: [
-        {
-          translateY: chatHeaderCollapseProgress.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, -Math.max(1, chatHeaderHeight)],
-          }),
-        },
-      ],
-    }),
-    [chatHeaderCollapseProgress, chatHeaderHeight],
-  );
+  const chatHeaderVisibilityStyle = useAnimatedStyle(() => {
+    const progress = chatHeaderCollapseProgress.value;
+    return {
+      height: chatHeaderHeight * (1 - progress),
+      opacity: progress < 0.7 ? 1 - (progress / 0.7) * 0.92 : (0.08 * (1 - progress)) / 0.3,
+      transform: [{ translateY: -chatHeaderHeight * progress }],
+    };
+  }, [chatHeaderHeight]);
   const setNativeComposerHidden = useCallback(
     (hidden: boolean, options?: { preserveReserve?: boolean }) => {
       if (!usesNativeKeyboardController) return;
@@ -1332,11 +1322,10 @@ export default function ChatScreen() {
   }, [canCollapseChatChrome, setChatChromeCollapsed]);
 
   useEffect(() => {
-    Animated.timing(chatHeaderCollapseProgress, {
+    chatHeaderCollapseProgress.value = withTiming(chatChromeCollapsed ? 1 : 0, {
       duration: CHROME_COLLAPSE_ANIMATION_MS,
-      toValue: chatChromeCollapsed ? 1 : 0,
-      useNativeDriver: false,
-    }).start();
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+    });
   }, [chatChromeCollapsed, chatHeaderCollapseProgress]);
 
   useEffect(() => {
@@ -1590,7 +1579,10 @@ export default function ChatScreen() {
         programmaticScrollRef.current[pane] = false;
         pendingBottomPinRef.current[pane] = false;
         if (nextAnchored) {
-          chatChromeDecisionOffsetRef.current[pane] = offsetY;
+          chatChromeGestureRef.current[pane] = {
+            lastOffset: offsetY,
+            revealedDuringGesture: false,
+          };
           setChatChromeCollapsed(false);
         }
         syncNativeComposerForPane(pane);
@@ -1598,17 +1590,21 @@ export default function ChatScreen() {
       }
 
       if (userActive || missedUserScroll) {
-        const decisionOffset = chatChromeDecisionOffsetRef.current[pane];
+        const chromeGesture = chatChromeGestureRef.current[pane];
+        const scrollDelta = offsetY - chromeGesture.lastOffset;
         if (nextAnchored) {
-          chatChromeDecisionOffsetRef.current[pane] = offsetY;
+          chromeGesture.revealedDuringGesture = false;
           setChatChromeCollapsed(false);
-        } else if (offsetY <= decisionOffset - CHROME_SCROLL_DIRECTION_THRESHOLD) {
-          chatChromeDecisionOffsetRef.current[pane] = offsetY;
+        } else if (scrollDelta >= CHROME_REVEAL_SCROLL_DIRECTION_THRESHOLD) {
+          chromeGesture.revealedDuringGesture = true;
+          setChatChromeCollapsed(false);
+        } else if (
+          scrollDelta <= -CHROME_HIDE_SCROLL_DIRECTION_THRESHOLD &&
+          !chromeGesture.revealedDuringGesture
+        ) {
           setChatChromeCollapsed(true);
-        } else if (offsetY >= decisionOffset + CHROME_SCROLL_DIRECTION_THRESHOLD) {
-          chatChromeDecisionOffsetRef.current[pane] = offsetY;
-          setChatChromeCollapsed(false);
         }
+        chromeGesture.lastOffset = offsetY;
         const stateForUserScroll = missedUserScroll ? onUserScrollBegin(withMetrics) : withMetrics;
         const scrolledState = onUserScroll({
           metrics: nextMetrics,
@@ -1624,7 +1620,10 @@ export default function ChatScreen() {
         scrollPolicyStateRef.current[pane] = withMetrics;
         scrollInitializedRef.current[pane] = true;
         if (nextAnchored) {
-          chatChromeDecisionOffsetRef.current[pane] = offsetY;
+          chatChromeGestureRef.current[pane] = {
+            lastOffset: offsetY,
+            revealedDuringGesture: false,
+          };
           setChatChromeCollapsed(false);
         }
         if (withMetrics.intent.kind === "anchored-to-end" || pendingBottomPinRef.current[pane]) {
@@ -1658,6 +1657,10 @@ export default function ChatScreen() {
 
   const handleScrollBeginDrag = useCallback(
     (pane: ScrollPaneKey) => {
+      chatChromeGestureRef.current[pane] = {
+        lastOffset: scrollPolicyStateRef.current[pane].metrics.contentOffset,
+        revealedDuringGesture: false,
+      };
       markUserScrollActive(pane, "dragging");
     },
     [markUserScrollActive],
@@ -1665,6 +1668,12 @@ export default function ChatScreen() {
 
   const handleMomentumScrollBegin = useCallback(
     (pane: ScrollPaneKey) => {
+      if (!userScrollStateRef.current[pane].active) {
+        chatChromeGestureRef.current[pane] = {
+          lastOffset: scrollPolicyStateRef.current[pane].metrics.contentOffset,
+          revealedDuringGesture: false,
+        };
+      }
       markUserScrollActive(pane, "momentum");
     },
     [markUserScrollActive],
@@ -1708,9 +1717,9 @@ export default function ChatScreen() {
       chat: createUserScrollState(),
       terminal: createUserScrollState(),
     };
-    chatChromeDecisionOffsetRef.current = {
-      chat: 0,
-      terminal: 0,
+    chatChromeGestureRef.current = {
+      chat: { lastOffset: 0, revealedDuringGesture: false },
+      terminal: { lastOffset: 0, revealedDuringGesture: false },
     };
     // eslint-disable-next-line react-hooks/immutability
     keyboardScrollFrozen.value = false;
@@ -2493,7 +2502,7 @@ export default function ChatScreen() {
         >
           {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
           <View className="flex-1">
-            <Animated.View
+            <Reanimated.View
               pointerEvents={chatChromeCollapsed ? "none" : "auto"}
               style={[{ flexShrink: 0, overflow: "hidden" }, chatHeaderVisibilityStyle]}
             >
@@ -2760,7 +2769,7 @@ export default function ChatScreen() {
                   </>
                 )}
               </View>
-            </Animated.View>
+            </Reanimated.View>
             {/*
             Closed by default. These are settings, and pinning them above every
             conversation cost the chat ~250px on every screen for controls with

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Animated,
+  Animated as RNAnimated,
   Platform,
   Pressable,
   View,
@@ -10,6 +10,12 @@ import {
 import { usePathname } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { KeyRound, Menu } from "lucide-react-native";
+import Reanimated, {
+  Easing as ReanimatedEasing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
 import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
@@ -50,8 +56,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const relayStatus = useAtomValue(relayStatusAtom);
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
   const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
-  const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
-  const [appChromeCollapseProgress] = useState(() => new Animated.Value(0));
+  const [translateX] = useState(() => new RNAnimated.Value(-DRAWER_WIDTH));
+  const appChromeCollapseProgress = useSharedValue(0);
   const [appChromeHeight, setAppChromeHeight] = useState(56 + topInset);
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
@@ -62,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [isMobile, setSidebarOpen]);
 
   useEffect(() => {
-    Animated.timing(translateX, {
+    RNAnimated.timing(translateX, {
       toValue: sidebarOpen ? 0 : -DRAWER_WIDTH,
       duration: 250,
       useNativeDriver: true,
@@ -70,12 +76,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [sidebarOpen, translateX]);
 
   useEffect(() => {
-    Animated.timing(appChromeCollapseProgress, {
-      toValue: appChromeCollapsed ? 1 : 0,
+    appChromeCollapseProgress.value = withTiming(appChromeCollapsed ? 1 : 0, {
       duration: APP_CHROME_COLLAPSE_ANIMATION_MS,
-      useNativeDriver: false,
-    }).start();
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+    });
   }, [appChromeCollapseProgress, appChromeCollapsed]);
+
+  const appChromeVisibilityStyle = useAnimatedStyle(() => {
+    const progress = appChromeCollapseProgress.value;
+    return {
+      height: appChromeHeight * (1 - progress),
+      opacity: progress < 0.7 ? 1 - (progress / 0.7) * 0.92 : (0.08 * (1 - progress)) / 0.3,
+      transform: [{ translateY: -appChromeHeight * progress }],
+    };
+  }, [appChromeHeight]);
 
   useEffect(() => {
     if (!isDesktopNative) return undefined;
@@ -115,27 +129,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <View className="flex-1 bg-background">
       <View style={shellZoomStyle}>
-        <Animated.View
+        <Reanimated.View
           pointerEvents={appChromeCollapsed ? "none" : "auto"}
-          style={{
-            height: appChromeCollapseProgress.interpolate({
-              inputRange: [0, 1],
-              outputRange: [appChromeHeight, 0],
-            }),
-            opacity: appChromeCollapseProgress.interpolate({
-              inputRange: [0, 0.7, 1],
-              outputRange: [1, 0.08, 0],
-            }),
-            overflow: "hidden",
-            transform: [
-              {
-                translateY: appChromeCollapseProgress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, -Math.max(1, appChromeHeight)],
-                }),
-              },
-            ],
-          }}
+          style={[{ overflow: "hidden" }, appChromeVisibilityStyle]}
         >
           <View
             onLayout={(event) => {
@@ -167,7 +163,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Pressable>
             ) : null}
           </View>
-        </Animated.View>
+        </Reanimated.View>
         <View className="flex-1 flex-row">
           {isDesktop ? <Sidebar /> : null}
           {isTablet && sidebarOpen ? <Sidebar /> : null}
@@ -183,7 +179,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             />
           ) : null}
           {isMobile ? (
-            <Animated.View
+            <RNAnimated.View
               pointerEvents={sidebarOpen ? "auto" : "none"}
               style={{
                 position: "absolute",
@@ -202,7 +198,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               ) : (
                 <ProjectSidebar />
               )}
-            </Animated.View>
+            </RNAnimated.View>
           ) : null}
         </View>
         {pairingDialogOpen ? (
