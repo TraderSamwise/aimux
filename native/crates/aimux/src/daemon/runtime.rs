@@ -10,6 +10,7 @@ use crate::core_command_transport::{
     execute_loopback_binary_request, execute_loopback_json_request,
 };
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
+use crate::daemon::expose::{expose_focus_route, expose_items_route};
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
@@ -894,12 +895,12 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         json!({ "ok": true, "pid": self.info.pid, "eventLoop": {}, "tmuxExec": {} })
     }
 
-    fn expose_items(&mut self, _path: &str) -> Result<Value, String> {
-        Err(self.unported("expose items"))
+    fn expose_items(&mut self, path: &str) -> Result<Value, String> {
+        expose_items_route(&mut self.resolver, session_prefix_for_project, path)
     }
 
-    fn expose_focus(&mut self, _request: ExposeFocusRequest) -> Result<Value, String> {
-        Err(self.unported("expose focus"))
+    fn expose_focus(&mut self, request: ExposeFocusRequest) -> Result<Value, String> {
+        expose_focus_route(&mut self.resolver, session_prefix_for_project, request)
     }
 
     fn proxy_json_request(

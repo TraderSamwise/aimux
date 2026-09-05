@@ -1,5 +1,6 @@
 pub mod access;
 pub mod core_commands;
+pub mod expose;
 pub mod http;
 pub mod json;
 pub mod listener;

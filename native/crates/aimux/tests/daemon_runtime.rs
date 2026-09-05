@@ -1,15 +1,19 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::core_commands::DaemonCoreCommandRuntime;
+use aimux::daemon::expose::{DaemonExposeFocusRuntime, expose_focus_route_with_runtime};
+use aimux::daemon::json::ExposeFocusRequest;
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{ProjectServiceLauncher, RealDaemonRuntime};
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::auth::DaemonAuthTextRuntime;
 use aimux::daemon_state::{
-    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, ProjectServiceStatus,
-    save_daemon_state, save_metadata_endpoint,
+    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, ProjectServiceState,
+    ProjectServiceStatus, save_daemon_state, save_metadata_endpoint, save_metadata_state,
 };
 use aimux::paths::PathResolver;
+use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::fs::{self, remove_dir_all};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -130,6 +134,134 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
 }
 
 #[test]
+fn native_daemon_global_expose_items_read_project_topology_without_waking_cold_projects() {
+    let fixture = RuntimeFixture::new("global-expose-items");
+    let alpha = fixture.project("alpha");
+    let beta = fixture.project("beta");
+    let cold = fixture.project("cold");
+    let mut resolver = fixture.resolver();
+    let alpha_entry = resolver
+        .register_project(&alpha)
+        .expect("register alpha")
+        .expect("alpha entry");
+    let beta_entry = resolver
+        .register_project(&beta)
+        .expect("register beta")
+        .expect("beta entry");
+    resolver
+        .register_project(&cold)
+        .expect("register cold")
+        .expect("cold entry");
+    let alpha_state_dir = resolver.project_state_dir_for(&alpha);
+    let beta_state_dir = resolver.project_state_dir_for(&beta);
+    write_runtime_topology(
+        runtime_topology_path(&alpha_state_dir),
+        &daemon_expose_topology(&alpha, "aimux-alpha", "alpha-agent", "@1", 1),
+    )
+    .expect("write alpha topology");
+    write_runtime_topology(
+        runtime_topology_path(&beta_state_dir),
+        &daemon_expose_topology(&beta, "aimux-beta", "beta-agent", "@2", 2),
+    )
+    .expect("write beta topology");
+    save_metadata_state(
+        &alpha_state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "alpha-agent".into(),
+                json!({ "derived": { "activity": "running", "attention": "needs_input" } }),
+            )]),
+        },
+    )
+    .expect("save alpha metadata");
+    let mut runtime = fixture.runtime();
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?includePreview=1", CORE_API_ROUTES.expose_items),
+        ),
+    );
+    let body: Value = serde_json::from_slice(&response.body).expect("expose items json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(body["ok"], true);
+    let items = body["items"].as_array().expect("items array");
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["alpha-agent", "beta-agent"]
+    );
+    assert_eq!(items[0]["projectId"], alpha_entry.id);
+    assert_eq!(items[0]["projectName"], "alpha");
+    assert_eq!(
+        items[0]["projectRoot"].as_str(),
+        Some(alpha.to_string_lossy().as_ref())
+    );
+    assert_eq!(items[0]["exposeContext"]["project"], "alpha");
+    assert_eq!(items[0]["exposeContext"]["worktree"], "main");
+    assert!(items[0]["exposeContext"]["tone"].as_i64().is_some());
+    assert_eq!(
+        items[0]["exposeStatus"],
+        json!({ "kind": "needs", "label": "Needs input" })
+    );
+    assert_eq!(items[1]["projectId"], beta_entry.id);
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_expose_focus_resolves_global_item_and_delegates_tmux_focus() {
+    let fixture = RuntimeFixture::new("global-expose-focus");
+    let project = fixture.project("focus");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let state_dir = resolver.project_state_dir_for(&project);
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &daemon_expose_topology(&project, "aimux-focus", "focus-agent", "@7", 7),
+    )
+    .expect("write topology");
+    let mut fake = FakeExposeFocusRuntime::default();
+
+    let body = expose_focus_route_with_runtime(
+        &mut resolver,
+        |_| "aimux".to_owned(),
+        ExposeFocusRequest {
+            window_id: "@7".into(),
+            project_root: Some(project.to_string_lossy().into_owned()),
+            current_client_session: Some("client-session".into()),
+            client_tty: Some("/dev/ttys123".into()),
+        },
+        &mut fake,
+    )
+    .expect("focus response");
+
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["action"], "expose-focus");
+    assert_eq!(body["focusMode"], "client-tty");
+    assert_eq!(body["itemId"], "focus-agent");
+    assert_eq!(body["projectId"], entry.id);
+    assert_eq!(body["projectName"], "focus");
+    assert_eq!(body["target"]["windowId"], "@7");
+    assert_eq!(
+        fake.calls,
+        vec![json!({
+            "windowId": "@7",
+            "currentClientSession": "client-session",
+            "clientTty": "/dev/ttys123"
+        })]
+    );
+    fixture.cleanup();
+}
+
+#[test]
 fn native_daemon_json_proxy_forwards_loopback_project_service_response() {
     let fixture = RuntimeFixture::new("json-proxy");
     let server = OneShotHttpServer::spawn(
@@ -150,6 +282,27 @@ fn native_daemon_json_proxy_forwards_loopback_project_service_response() {
     assert_eq!(response_json, json!({ "ok": true, "value": 42 }));
     assert!(server.join().contains("GET /health?check=1 HTTP/1.1"));
     fixture.cleanup();
+}
+
+#[derive(Debug, Default)]
+struct FakeExposeFocusRuntime {
+    calls: Vec<Value>,
+}
+
+impl DaemonExposeFocusRuntime for FakeExposeFocusRuntime {
+    fn open_target(
+        &mut self,
+        target: &Value,
+        current_client_session: Option<&str>,
+        client_tty: Option<&str>,
+    ) -> Result<Value, String> {
+        self.calls.push(json!({
+            "windowId": target["windowId"],
+            "currentClientSession": current_client_session,
+            "clientTty": client_tty,
+        }));
+        Ok(json!({ "focused": true, "focusMode": "client-tty" }))
+    }
 }
 
 #[test]
@@ -570,6 +723,72 @@ fn request(method: &str, path: &str) -> aimux::daemon::server::DaemonHttpRequest
         stopping: false,
         issued_at: "issued".into(),
     }
+}
+
+fn daemon_expose_topology(
+    project_root: &Path,
+    session_name: &str,
+    session_id: &str,
+    window_id: &str,
+    window_index: i64,
+) -> Value {
+    let project_root = project_root.to_string_lossy();
+    json!({
+        "version": 1,
+        "generatedAt": "2026-09-05T00:00:00.000Z",
+        "rigs": [
+            {
+                "id": "rig-1",
+                "name": "local",
+                "projectRoot": project_root,
+                "createdAt": "2026-09-05T00:00:00.000Z",
+                "updatedAt": "2026-09-05T00:00:00.000Z"
+            }
+        ],
+        "nodes": [
+            {
+                "id": "node-agent",
+                "rigId": "rig-1",
+                "logicalId": session_id,
+                "toolConfigKey": "codex",
+                "cwd": project_root,
+                "label": session_id,
+                "createdAt": "2026-09-05T00:00:00.000Z"
+            }
+        ],
+        "edges": [],
+        "bindings": [
+            {
+                "id": "binding-agent",
+                "nodeId": "node-agent",
+                "tmuxSession": session_name,
+                "tmuxWindowId": window_id,
+                "tmuxWindowIndex": window_index,
+                "tmuxWindowName": "codex",
+                "updatedAt": "2026-09-05T00:00:00.000Z"
+            }
+        ],
+        "sessions": [
+            {
+                "id": session_id,
+                "nodeId": "node-agent",
+                "status": "running",
+                "tool": "codex",
+                "command": "codex",
+                "worktreePath": project_root,
+                "label": session_id,
+                "createdAt": "2026-09-05T00:00:00.000Z",
+                "updatedAt": "2026-09-05T00:00:00.000Z"
+            }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    })
 }
 
 #[derive(Debug)]
