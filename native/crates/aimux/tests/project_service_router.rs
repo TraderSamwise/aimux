@@ -37,7 +37,7 @@ fn router_keeps_unported_routes_explicit() {
     let response = route_project_service_request(
         &context,
         "POST",
-        routes::agents::CREATE_TEAMMATE,
+        routes::agents::STOP_TEAMMATE,
         Some(&json!({})),
     );
     assert_eq!(response.status, 501);
@@ -47,7 +47,7 @@ fn router_keeps_unported_routes_explicit() {
             "ok": false,
             "error": "project service route not ported",
             "method": "POST",
-            "path": "/agents/teammates/create",
+            "path": "/agents/teammates/stop",
             "group": "lifecycle",
         })
     );

@@ -4,6 +4,7 @@ use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use aimux::runtime_topology::{
     coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
@@ -298,6 +299,166 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
     assert_eq!(session["status"], "running");
     assert_eq!(session["toolConfigKey"], "mock");
     assert_eq!(session["worktreePath"], worktree.to_string_lossy().as_ref());
+    cleanup(project);
+}
+
+#[test]
+fn teammate_create_launches_agent_with_team_metadata_and_extra_args() {
+    let project = temp_project("teammate-create");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let worktree = project.join("wt");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-live",
+            "role": "reviewer",
+            "label": "Review lane",
+            "tool": "mock",
+            "sessionId": "mock-reviewer",
+            "worktreePath": worktree,
+            "extraArgs": ["--fast"],
+            "open": true,
+            "order": 2
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-reviewer");
+    assert_eq!(response.body["parentSessionId"], "codex-live");
+    assert_eq!(response.body["teamId"], "team-codex-live");
+    assert_eq!(response.body["role"], "reviewer");
+    assert_eq!(response.body["label"], "Review lane");
+    assert_eq!(response.body["transition"]["operation"], "agent.spawn");
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.created[0].name, "Review lane");
+    assert!(!runtime.created[0].detached);
+    let metadata = &runtime.metadata[0].1;
+    assert_eq!(metadata["args"], json!(["--base", "--fast"]));
+    assert_eq!(metadata["team"]["teamId"], "team-codex-live");
+    assert_eq!(metadata["team"]["parentSessionId"], "codex-live");
+    assert_eq!(metadata["team"]["role"], "reviewer");
+    assert_eq!(metadata["team"]["label"], "Review lane");
+    assert_eq!(metadata["team"]["order"], 2.0);
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-reviewer");
+    assert_eq!(session["team"]["parentSessionId"], "codex-live");
+    assert_eq!(session["label"], "Review lane");
+    assert_eq!(session["worktreePath"], worktree.to_string_lossy().as_ref());
+    cleanup(project);
+}
+
+#[test]
+fn teammate_create_rejects_nested_team_parent() {
+    let project = temp_project("teammate-create-nested");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_teammate_parent_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-child",
+            "tool": "mock",
+            "sessionId": "mock-grandchild"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 400);
+    assert_eq!(
+        response.body["error"],
+        "teammate agents cannot create or delegate to nested teams"
+    );
+    assert!(runtime.created.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn teammate_create_with_initial_task_persists_task_and_thread() {
+    let project = temp_project("teammate-create-task");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-live",
+            "tool": "mock",
+            "sessionId": "mock-worker",
+            "initialTask": {
+                "title": "Review the diff",
+                "body": "Check the changed files\nand report issues."
+            }
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["task"]["assignedBy"], "codex-live");
+    assert_eq!(response.body["task"]["assignedTo"], "mock-worker");
+    assert_eq!(response.body["task"]["description"], "Review the diff");
+    assert_eq!(
+        response.body["task"]["prompt"],
+        "Check the changed files\nand report issues."
+    );
+    assert_eq!(response.body["thread"]["kind"], "task");
+    let exchange: Value =
+        serde_yaml::from_str(&std::fs::read_to_string(runtime_exchange_path(&state_dir)).unwrap())
+            .unwrap();
+    assert_eq!(exchange["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(exchange["threads"].as_array().unwrap().len(), 1);
+    cleanup(project);
+}
+
+#[test]
+fn teammate_create_initial_task_requires_prompt_or_body() {
+    let project = temp_project("teammate-create-task-invalid");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-live",
+            "tool": "mock",
+            "sessionId": "mock-worker",
+            "initialTask": { "title": "No prompt" }
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 400);
+    assert_eq!(
+        response.body["error"],
+        "initialTask requires body or prompt"
+    );
+    assert!(runtime.created.is_empty());
     cleanup(project);
 }
 
@@ -2194,6 +2355,33 @@ fn write_restore_previous_offer_and_gate(aimux_home: &Path, state_dir: &Path, pr
         .to_string(),
     )
     .unwrap();
+}
+
+fn write_teammate_parent_topology(state_dir: &PathBuf) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [
+            { "id": "node-parent", "rigId": "rig-1", "logicalId": "codex-parent", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-child", "rigId": "rig-1", "logicalId": "codex-child", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [],
+        "sessions": [
+            { "id": "codex-parent", "nodeId": "node-parent", "tool": "codex", "command": "codex", "status": "running", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "codex-child", "nodeId": "node-child", "tool": "codex", "command": "codex", "status": "running", "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent" }, "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
 }
 
 fn write_active_worktree_topology(state_dir: &PathBuf, worktree_path: &Path, include_agent: bool) {
