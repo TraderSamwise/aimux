@@ -12,7 +12,6 @@ import {
   View,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
-  type TextInputContentSizeChangeEventData,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
@@ -142,12 +141,9 @@ const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
 const COMPOSER_INPUT_MAX_LINES = 4;
 const COMPOSER_INPUT_VERTICAL_PADDING = 6;
-const COMPOSER_INPUT_HEIGHT_SLOP = 4;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_MAX_HEIGHT =
-  COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES +
-  COMPOSER_INPUT_VERTICAL_PADDING * 2 +
-  COMPOSER_INPUT_HEIGHT_SLOP;
+  COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
@@ -258,7 +254,6 @@ type PendingAttachment = PickedAttachment & {
 
 type ComposerDraftSnapshot = {
   draft: string;
-  inputContentHeight: number;
   pendingAttachments: PendingAttachment[];
 };
 
@@ -285,18 +280,6 @@ const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
 
 function hasComposerDraftContent(text: string): boolean {
   return /\S/.test(text);
-}
-
-function composerInputHeightForContentHeight(contentHeight: number): number {
-  const measured = Number.isFinite(contentHeight) ? Math.ceil(contentHeight) : 0;
-  return Math.min(
-    COMPOSER_INPUT_MAX_HEIGHT,
-    Math.max(COMPOSER_INPUT_MIN_HEIGHT, measured + COMPOSER_INPUT_HEIGHT_SLOP),
-  );
-}
-
-function composerContentHeightForDraft(draft: string, contentHeight: number): number {
-  return draft.length === 0 ? COMPOSER_INPUT_MIN_HEIGHT : contentHeight;
 }
 
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
@@ -504,8 +487,6 @@ export default function ChatScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
-  const [composerInputContentHeight, setComposerInputContentHeight] =
-    useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
@@ -627,7 +608,6 @@ export default function ChatScreen() {
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
     draft: "",
-    inputContentHeight: COMPOSER_INPUT_MIN_HEIGHT,
     pendingAttachments: [],
   });
   const session = sessionId
@@ -660,10 +640,9 @@ export default function ChatScreen() {
   useEffect(() => {
     composerDraftSnapshotRef.current = {
       draft,
-      inputContentHeight: composerInputContentHeight,
       pendingAttachments,
     };
-  }, [composerInputContentHeight, draft, pendingAttachments]);
+  }, [draft, pendingAttachments]);
 
   useEffect(() => {
     const previousKey = activeComposerDraftKeyRef.current;
@@ -677,7 +656,6 @@ export default function ChatScreen() {
     setDraft(saved?.draft ?? "");
     setDraftHasContent(hasComposerDraftContent(saved?.draft ?? ""));
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
-    setComposerInputContentHeight(saved?.inputContentHeight ?? COMPOSER_INPUT_MIN_HEIGHT);
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
     setSendBusy(false);
@@ -691,14 +669,6 @@ export default function ChatScreen() {
       rememberComposerDraft(activeComposerDraftKeyRef.current, composerDraftSnapshotRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    if (draft.length !== 0) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- empty composer must not preserve a stale multiline native measurement
-    setComposerInputContentHeight((current) =>
-      current === COMPOSER_INPUT_MIN_HEIGHT ? current : COMPOSER_INPUT_MIN_HEIGHT,
-    );
-  }, [draft]);
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
@@ -748,17 +718,6 @@ export default function ChatScreen() {
   const compactHeaderActions = width < 430;
   const headerActionsMaxWidth =
     Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
-  const effectiveComposerInputContentHeight = composerContentHeightForDraft(
-    draft,
-    composerInputContentHeight,
-  );
-  const composerInputScrollEnabled =
-    draft.length > 0 &&
-    effectiveComposerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP;
-  const composerInputHeight = composerInputHeightForContentHeight(
-    effectiveComposerInputContentHeight,
-  );
-  const composerExtraContentPadding = useSharedValue(0);
   const composerFooterBottomPadding =
     Platform.OS === "web" || keyboardVisible
       ? COMPOSER_FOOTER_VERTICAL_PADDING
@@ -779,12 +738,6 @@ export default function ChatScreen() {
     Math.floor((width - CHAT_SCROLL_HORIZONTAL_PADDING) * CHAT_ASSISTANT_BUBBLE_MAX_RATIO),
   );
 
-  useEffect(() => {
-    composerExtraContentPadding.value = Math.max(
-      0,
-      composerInputHeight - COMPOSER_INPUT_MIN_HEIGHT,
-    );
-  }, [composerExtraContentPadding, composerInputHeight]);
   const chatDividerWidth = Math.max(
     MIN_CHAT_DIVIDER_WIDTH,
     Math.min(
@@ -966,7 +919,6 @@ export default function ChatScreen() {
       setDraft("");
       setDraftHasContent(false);
       setPendingAttachments([]);
-      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     }
     setSendError(null);
     setPendingComposerAck(null);
@@ -1150,7 +1102,6 @@ export default function ChatScreen() {
       setDraft("");
       setDraftHasContent(false);
       setPendingAttachments([]);
-      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
       setPendingComposerAck(null);
       if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
       void refreshOutputSnapshot().catch(() => {});
@@ -1159,7 +1110,6 @@ export default function ChatScreen() {
         if (sendComposerDraftKey) {
           rememberComposerDraft(sendComposerDraftKey, {
             draft: text,
-            inputContentHeight: composerInputContentHeight,
             pendingAttachments: attachments,
           });
         } else {
@@ -1306,23 +1256,10 @@ export default function ChatScreen() {
     }
   }
 
-  function handleComposerContentSizeChange(
-    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
-  ) {
-    if (draft.length === 0) return;
-    const nextHeight = Math.max(
-      COMPOSER_INPUT_MIN_HEIGHT,
-      Math.ceil(event.nativeEvent.contentSize.height),
-    );
-    setComposerInputContentHeight((current) => (current === nextHeight ? current : nextHeight));
-  }
-
   function handleDraftChange(text: string) {
-    const wasEmpty = draft.length === 0;
     setDraft(text);
     const nextHasContent = hasComposerDraftContent(text);
     setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
-    if (!text || wasEmpty) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     if (sendError) setSendError(null);
   }
 
@@ -1578,13 +1515,11 @@ export default function ChatScreen() {
                   onKeyPress={handleComposerKeyPress}
                   {...COMPOSER_WEB_INPUT_PROPS}
                   {...composerPasteProps}
-                  onContentSizeChange={handleComposerContentSizeChange}
                   placeholder="Ask the agent…"
                   placeholderTextColor="#71717a"
                   multiline
                   lineBreakStrategyIOS="standard"
                   editable={!sendBusy && !composerAwaitingAck}
-                  scrollEnabled={composerInputScrollEnabled}
                   textBreakStrategy="balanced"
                   className="w-full text-sm text-foreground"
                   style={[
@@ -1594,7 +1529,6 @@ export default function ChatScreen() {
                       flexGrow: 0,
                       flexShrink: 1,
                       fontSize: COMPOSER_INPUT_FONT_SIZE,
-                      height: composerInputHeight,
                       lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
                       maxWidth: "100%",
                       maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
@@ -2157,7 +2091,6 @@ export default function ChatScreen() {
                   ref={chatScrollRef}
                   serviceEndpoint={displayServiceEndpoint}
                   dividerWidth={chatDividerWidth}
-                  extraContentPadding={composerExtraContentPadding}
                 />
                 {composerFooter}
               </View>
@@ -2173,7 +2106,6 @@ const AgentChatTranscript = React.forwardRef<
   ChatScrollHandle,
   {
     dividerWidth: number;
-    extraContentPadding?: SharedValue<number>;
     messages: readonly ChatMessage[];
     onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
     onLayout: (event: LayoutChangeEvent) => void;
@@ -2181,15 +2113,7 @@ const AgentChatTranscript = React.forwardRef<
     serviceEndpoint: ServiceEndpoint;
   }
 >(function AgentChatTranscript(
-  {
-    dividerWidth,
-    extraContentPadding,
-    messages,
-    onContentSizeChange,
-    onLayout,
-    onScroll,
-    serviceEndpoint,
-  },
+  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
   ref,
 ) {
   const content =
@@ -2223,7 +2147,6 @@ const AgentChatTranscript = React.forwardRef<
         ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
         className="flex-1 bg-background"
         contentContainerStyle={contentContainerStyle}
-        extraContentPadding={extraContentPadding}
         keyboardDismissMode="interactive"
         keyboardLiftBehavior="whenAtEnd"
         keyboardShouldPersistTaps="handled"
