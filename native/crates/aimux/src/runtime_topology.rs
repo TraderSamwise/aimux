@@ -4,6 +4,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::atomic_write::write_text_atomic_fast;
+
 pub const RUNTIME_TOPOLOGY_VERSION: i64 = 1;
 
 pub fn runtime_topology_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
@@ -40,6 +42,22 @@ pub fn read_runtime_topology(path: impl AsRef<Path>) -> Result<Value, String> {
     };
     let raw = serde_yaml::from_str::<Value>(&contents).map_err(|error| error.to_string())?;
     coerce_runtime_topology(&raw)
+}
+
+pub fn write_runtime_topology(path: impl AsRef<Path>, topology: &Value) -> io::Result<()> {
+    let text = serde_yaml::to_string(topology).unwrap_or_else(|_| "{}\n".to_owned());
+    write_text_atomic_fast(path, text)
+}
+
+pub fn update_runtime_topology(
+    path: impl AsRef<Path>,
+    updater: impl FnOnce(Value) -> Value,
+) -> Result<Value, String> {
+    let path = path.as_ref();
+    let current = read_runtime_topology(path)?;
+    let next = coerce_runtime_topology(&updater(current))?;
+    write_runtime_topology(path, &next).map_err(|error| error.to_string())?;
+    Ok(next)
 }
 
 pub fn coerce_runtime_topology(raw: &Value) -> Result<Value, String> {

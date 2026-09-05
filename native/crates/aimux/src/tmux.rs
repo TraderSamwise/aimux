@@ -477,6 +477,15 @@ pub fn kill_window_argv(window_id: &str) -> Vec<String> {
     ]
 }
 
+pub fn rename_window_argv(window_id: &str, name: &str) -> Vec<String> {
+    vec![
+        "rename-window".to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+        name.to_owned(),
+    ]
+}
+
 pub fn clear_history_argv(window_id: &str) -> Vec<String> {
     vec![
         "clear-history".to_owned(),

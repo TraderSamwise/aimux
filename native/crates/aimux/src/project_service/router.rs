@@ -18,6 +18,7 @@ use super::exchange_reads::route_exchange_read_request;
 use super::hooks::route_hook_request;
 use super::interactions::route_interaction_request;
 use super::library::route_library_request;
+use super::lifecycle::route_lifecycle_request;
 use super::metadata::route_runtime_metadata_request;
 use super::notification_context::route_notification_context_request;
 use super::notifications::route_notifications_request;
@@ -142,6 +143,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_agent_control_request(context, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_lifecycle_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_agent_output_request(context, method, path, body) {

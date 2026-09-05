@@ -15,6 +15,7 @@ pub mod hooks;
 pub mod http;
 pub mod interactions;
 pub mod library;
+pub mod lifecycle;
 pub mod metadata;
 pub mod notification_context;
 pub mod notifications;
