@@ -10,13 +10,11 @@ import {
 import type { RelayNotificationPush, RelayStatusSnapshot } from "../relay-contract.js";
 import type { RemoteActor } from "../remote-actor.js";
 import { log } from "../debug.js";
-import { setMobilePushForwarder } from "../notify.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
 import { countActiveHostedPrincipals } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
 import { runLoginFlow } from "./login-flow.js";
-import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
 import { RelayClient } from "./relay-client.js";
 import { assertOperatorStreamAllowed, assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 
@@ -53,7 +51,6 @@ export function createFullDaemonRemoteFeatures(): DaemonRemoteFeatures {
   return {
     profile: "full",
     async startHostedListener(bridge: DaemonHostedBridge) {
-      setMobilePushForwarder(forwardAlertToMobilePush);
       const config = loadHostedConfig();
       if (!config.enabled) return;
       const validation = validateHostedStartup(config, countActiveHostedPrincipals());
@@ -82,7 +79,6 @@ export function createFullDaemonRemoteFeatures(): DaemonRemoteFeatures {
       if (hosted) await hosted.close().catch(() => {});
       relayClient?.disconnect();
       relayClient = null;
-      setMobilePushForwarder(null);
     },
     connectRelay,
     getRelayStatus,

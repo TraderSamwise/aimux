@@ -6,7 +6,7 @@ vi.mock("../daemon-client.js", () => ({
 }));
 
 import { requestDaemonJson } from "../daemon-client.js";
-import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
+import { forwardAlertToMobilePush } from "../mobile-push-bridge.js";
 
 const request = vi.mocked(requestDaemonJson);
 

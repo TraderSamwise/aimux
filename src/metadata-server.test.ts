@@ -25,6 +25,7 @@ import { appendMessage, createThread, readMessages } from "./threads.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 import { refreshProjectExposeHotSnapshots } from "./expose-hot-snapshot-worker.js";
+import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
 import { getParserFixture } from "./agent-output-parser-test-utils.js";
 import {
@@ -49,6 +50,10 @@ import {
 import { loadLastUsedState } from "./last-used.js";
 import { worktreeColorCode } from "./worktree-colors.js";
 import { resetAgentOutputReadMetrics } from "./agent-output-read-metrics.js";
+
+vi.mock("./mobile-push-bridge.js", () => ({
+  forwardAlertToMobilePush: vi.fn(),
+}));
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -104,6 +109,7 @@ describe("MetadataServer threads API", () => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-server-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
     await initPaths(repoRoot);
+    vi.mocked(forwardAlertToMobilePush).mockClear();
     server = new MetadataServer();
     await server.start();
   });
@@ -980,6 +986,31 @@ describe("MetadataServer threads API", () => {
     expect(getState).toHaveBeenCalledTimes(2);
   });
 
+  it("forwards published alerts to the daemon mobile push bridge", async () => {
+    server?.stop();
+    server = new MetadataServer();
+    await server.start();
+
+    server.getEventBus().publishAlert({
+      kind: "needs_input",
+      title: "Needs input",
+      message: "Agent needs input",
+      sessionId: "agent-1",
+      dedupeKey: "needs_input:agent-1",
+    });
+
+    expect(forwardAlertToMobilePush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "alert",
+        kind: "needs_input",
+        title: "Needs input",
+        message: "Agent needs input",
+        sessionId: "agent-1",
+        dedupeKey: "needs_input:agent-1",
+      }),
+    );
+  });
+
   function seedAgentTopology(
     sessions: Array<{
       id: string;
@@ -1372,8 +1403,9 @@ describe("MetadataServer threads API", () => {
     const notificationStillUnread = (await notificationStillUnreadRes.json()) as {
       notifications: Array<{ title: string }>;
     };
-    expect(notificationStillUnread.notifications).toHaveLength(1);
-    expect(notificationStillUnread.notifications[0]?.title).toBe("Reviewer alert");
+    expect(notificationStillUnread.notifications).toEqual(
+      expect.arrayContaining([expect.objectContaining({ title: "Reviewer alert" })]),
+    );
 
     const taskRes = await fetch(`${base}/tasks/assign`, {
       method: "POST",

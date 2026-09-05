@@ -1,12 +1,11 @@
-import { requestDaemonJson } from "../daemon-client.js";
-import { externalNotificationsDisabled } from "../external-notifications.js";
-import type { AlertEvent } from "../project-events.js";
+import { requestDaemonJson } from "./daemon-client.js";
+import { externalNotificationsDisabled } from "./external-notifications.js";
+import type { AlertEvent } from "./project-events.js";
 
 /**
- * Forwards every non-telemetry alert to the daemon, which relays it to the
- * owner's mobile devices. Fire-and-forget: the daemon owns the single relay
- * connection, so the project service hands off and never blocks the alert path
- * on push delivery.
+ * Forwards every alert to the daemon, which relays it to the owner's mobile
+ * devices. Fire-and-forget: the daemon owns the relay connection, so the
+ * project service hands off and never blocks the alert path on push delivery.
  */
 export function forwardAlertToMobilePush(event: AlertEvent): void {
   if (externalNotificationsDisabled()) return;

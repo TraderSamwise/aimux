@@ -19,10 +19,9 @@ vi.mock("node:child_process", () => ({
   execFile: vi.fn((_file: string, _args: string[], cb?: (err: Error | null) => void) => cb?.(null)),
 }));
 
-import { forwardMobilePushAlert, notifyAlert, resetNotifyConfig, setMobilePushForwarder } from "./notify";
+import { notifyAlert, resetNotifyConfig } from "./notify";
 import { shouldSuppressNotification } from "./notification-context.js";
 
-const forward = vi.fn();
 const suppress = vi.mocked(shouldSuppressNotification);
 
 function alert(overrides: Partial<AlertEvent> = {}): AlertEvent {
@@ -45,55 +44,47 @@ describe("notifyAlert desktop choke point", () => {
     notificationsConfig = { enabled: true, onPrompt: true, onError: true, onComplete: true };
     suppress.mockReturnValue(false);
     resetNotifyConfig();
-    setMobilePushForwarder(forward);
   });
 
   it("sends desktop alerts when host notification settings allow them", () => {
     const event = alert();
     expect(notifyAlert(event)).toBe(true);
-    expect(forward).not.toHaveBeenCalled();
   });
 
-  it("does not forward when notifications are disabled", () => {
+  it("does not send when notifications are disabled", () => {
     notificationsConfig.enabled = false;
     resetNotifyConfig();
     expect(notifyAlert(alert())).toBe(false);
-    expect(forward).not.toHaveBeenCalled();
   });
 
-  it("does not forward externally when the test/runtime guard is enabled", () => {
+  it("does not send externally when the test/runtime guard is enabled", () => {
     process.env.AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS = "1";
     expect(notifyAlert(alert())).toBe(true);
-    expect(forward).not.toHaveBeenCalled();
   });
 
-  it("does not forward when the alert is focus-suppressed", () => {
+  it("does not send when the alert is focus-suppressed", () => {
     suppress.mockReturnValue(true);
     const event = alert({ projectRoot: "/tmp/project" });
     expect(notifyAlert(event)).toBe(false);
     expect(suppress).toHaveBeenCalledWith(event, "/tmp/project");
-    expect(forward).not.toHaveBeenCalled();
   });
 
-  it("does not forward when the alert's category gate is off", () => {
+  it("does not send when the alert's category gate is off", () => {
     notificationsConfig.onPrompt = false;
     resetNotifyConfig();
     expect(notifyAlert(alert({ kind: "needs_input" }))).toBe(false);
-    expect(forward).not.toHaveBeenCalled();
   });
 
   it("gates interaction requests as prompt notifications", () => {
     notificationsConfig.onPrompt = false;
     resetNotifyConfig();
     expect(notifyAlert(alert({ kind: "interaction_request" }))).toBe(false);
-    expect(forward).not.toHaveBeenCalled();
   });
 
   it("gates next-step alerts as prompt notifications", () => {
     notificationsConfig.onPrompt = false;
     resetNotifyConfig();
     expect(notifyAlert(alert({ kind: "next_step" }))).toBe(false);
-    expect(forward).not.toHaveBeenCalled();
   });
 
   it("does not forward telemetry-only interaction requests", () => {
@@ -109,52 +100,9 @@ describe("notifyAlert desktop choke point", () => {
         }),
       ),
     ).toBe(false);
-    expect(forward).not.toHaveBeenCalled();
   });
 
   it("sends completion alerts gated by onComplete", () => {
     expect(notifyAlert(alert({ kind: "task_done" }))).toBe(true);
-    expect(forward).not.toHaveBeenCalled();
-  });
-});
-
-describe("forwardMobilePushAlert", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    delete process.env.AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS;
-    delete process.env.AIMUX_DISABLE_DESKTOP_NOTIFICATIONS;
-    notificationsConfig = { enabled: false, onPrompt: false, onError: false, onComplete: false };
-    suppress.mockReturnValue(false);
-    resetNotifyConfig();
-    setMobilePushForwarder(forward);
-  });
-
-  it("forwards mobile pushes independently from host desktop notification settings", () => {
-    const event = alert();
-    expect(notifyAlert(event)).toBe(false);
-    expect(forwardMobilePushAlert(event)).toBe(true);
-    expect(forward).toHaveBeenCalledWith(event);
-  });
-
-  it("does not forward externally when the test/runtime guard is enabled", () => {
-    process.env.AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS = "1";
-    expect(forwardMobilePushAlert(alert())).toBe(false);
-    expect(forward).not.toHaveBeenCalled();
-  });
-
-  it("does not forward telemetry-only interaction requests", () => {
-    expect(
-      forwardMobilePushAlert(
-        alert({
-          kind: "interaction_request",
-          interaction: {
-            id: "interaction-1",
-            type: "permission",
-            telemetry: true,
-          },
-        }),
-      ),
-    ).toBe(false);
-    expect(forward).not.toHaveBeenCalled();
   });
 });

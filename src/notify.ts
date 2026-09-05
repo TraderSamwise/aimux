@@ -6,8 +6,6 @@ import { sendDesktopNotification } from "./desktop-notifier.js";
 import { externalNotificationsDisabled } from "./external-notifications.js";
 
 let cachedConfig: NotificationConfig | null = null;
-export type MobilePushForwarder = (event: AlertEvent) => void;
-let mobilePushForwarder: MobilePushForwarder | null = null;
 
 function getNotifyConfig(): NotificationConfig {
   if (!cachedConfig) {
@@ -19,25 +17,6 @@ function getNotifyConfig(): NotificationConfig {
 /** Reset cached config (call when config may have changed) */
 export function resetNotifyConfig(): void {
   cachedConfig = null;
-  mobilePushForwarder = null;
-}
-
-export function setMobilePushForwarder(forwarder: MobilePushForwarder | null): void {
-  mobilePushForwarder = forwarder;
-}
-
-export function forwardMobilePushAlert(event: AlertEvent): boolean {
-  if (event.kind === "interaction_request" && event.interaction?.telemetry) return false;
-  if (externalNotificationsDisabled()) {
-    debug(
-      `mobile push suppressed by AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS: ${event.message || event.sessionId || event.kind}`,
-      "notify",
-    );
-    return false;
-  }
-  if (!mobilePushForwarder) return false;
-  mobilePushForwarder(event);
-  return true;
 }
 
 function send(title: string, message: string): void {
