@@ -23,6 +23,9 @@ struct FakeLifecycleRuntime {
     options: Vec<(String, String, String)>,
     killed: Vec<String>,
     renamed: Vec<(String, String)>,
+    main_repo: Option<String>,
+    worktrees_created: Vec<FakeCreateWorktree>,
+    create_worktree_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +38,35 @@ struct FakeCreateWindow {
     detached: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FakeCreateWorktree {
+    main_repo: String,
+    name: String,
+    target_path: String,
+}
+
 impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
+    fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {
+        Ok(self.main_repo.clone().unwrap_or_else(|| cwd.to_owned()))
+    }
+
+    fn create_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        target_path: &str,
+    ) -> Result<(), String> {
+        self.worktrees_created.push(FakeCreateWorktree {
+            main_repo: main_repo.to_owned(),
+            name: name.to_owned(),
+            target_path: target_path.to_owned(),
+        });
+        match &self.create_worktree_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+
     fn create_window(
         &mut self,
         session_name: &str,
@@ -1187,6 +1218,178 @@ fn graveyard_agent_resurrect_allows_missing_graveyarded_worktree() {
 }
 
 #[test]
+fn worktree_create_runs_git_and_persists_active_topology_entry() {
+    let project = temp_project("worktree-create");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let expected_path = project
+        .join(".aimux/worktrees/demo")
+        .to_string_lossy()
+        .into_owned();
+    let project_root = project.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project_root.clone()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "created");
+    assert_eq!(response.body["path"], expected_path);
+    assert_eq!(response.body["transition"]["operation"], "worktree.create");
+    assert_eq!(
+        runtime.worktrees_created,
+        vec![FakeCreateWorktree {
+            main_repo: project_root.clone(),
+            name: "demo".into(),
+            target_path: expected_path.clone(),
+        }]
+    );
+    let topology = read_topology(&state_dir);
+    let worktree = &topology["worktrees"][0];
+    assert_eq!(worktree["path"], expected_path);
+    assert_eq!(worktree["name"], "demo");
+    assert_eq!(worktree["branch"], "demo");
+    assert_eq!(worktree["basePath"], project_root);
+    assert_eq!(worktree["status"], "active");
+    assert!(worktree.get("operationFailure").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn worktree_create_rejects_existing_non_pending_worktree() {
+    let project = temp_project("worktree-create-duplicate");
+    let state_dir = project.join("state");
+    let target_path = project.join(".aimux/worktrees/demo");
+    write_worktree_create_topology(
+        &state_dir,
+        json!([{
+            "id": "wt-demo",
+            "rigId": "rig-1",
+            "path": target_path.to_string_lossy().as_ref(),
+            "name": "demo",
+            "branch": "demo",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }]),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["error"], "Worktree \"demo\" already exists");
+    assert!(runtime.worktrees_created.is_empty());
+    assert_eq!(
+        read_topology(&state_dir)["worktrees"][0]["status"],
+        "active"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn worktree_create_returns_creating_for_existing_pending_entry() {
+    let project = temp_project("worktree-create-pending");
+    let state_dir = project.join("state");
+    let target_path = project.join(".aimux/worktrees/demo");
+    let target_path_string = target_path.to_string_lossy().into_owned();
+    write_worktree_create_topology(
+        &state_dir,
+        json!([{
+            "id": "wt-demo",
+            "rigId": "rig-1",
+            "path": target_path_string,
+            "name": "demo",
+            "branch": "demo",
+            "status": "creating",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }]),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "creating");
+    assert_eq!(
+        response.body["path"],
+        target_path.to_string_lossy().as_ref()
+    );
+    assert!(runtime.worktrees_created.is_empty());
+    assert_eq!(
+        read_topology(&state_dir)["worktrees"][0]["status"],
+        "creating"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn worktree_create_failure_persists_error_topology_entry() {
+    let project = temp_project("worktree-create-failure");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        create_worktree_error: Some("fatal: branch failed".into()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["error"], "fatal: branch failed");
+    assert_eq!(runtime.worktrees_created.len(), 1);
+    let topology = read_topology(&state_dir);
+    assert_eq!(topology["worktrees"][0]["status"], "error");
+    assert_eq!(
+        topology["worktrees"][0]["operationFailure"],
+        "fatal: branch failed"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn worktree_graveyard_stops_services_and_moves_topology_entry() {
     let project = temp_project("worktree-graveyard");
     let state_dir = project.join("state");
@@ -1542,6 +1745,33 @@ fn write_graveyard_agent_topology(
         "services": [],
         "worktrees": [],
         "worktreeGraveyard": worktree_graveyard,
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_worktree_create_topology(state_dir: &PathBuf, worktrees: Value) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "aimux",
+            "projectRoot": "/repo",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        "worktrees": worktrees,
+        "worktreeGraveyard": [],
         "teamRoles": [],
         "remoteClients": [],
         "lifecycleOperations": [],

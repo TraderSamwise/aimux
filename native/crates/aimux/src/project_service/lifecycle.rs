@@ -39,6 +39,13 @@ static LIFECYCLE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const LIVE_STATUSES: &[&str] = &["starting", "running", "idle"];
 
 pub trait ProjectLifecycleRuntime {
+    fn find_main_repo(&mut self, cwd: &str) -> Result<String, String>;
+    fn create_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        target_path: &str,
+    ) -> Result<(), String>;
     fn create_window(
         &mut self,
         session_name: &str,
@@ -58,6 +65,19 @@ pub trait ProjectLifecycleRuntime {
 pub struct SystemProjectLifecycleRuntime;
 
 impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
+    fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {
+        find_git_main_repo(cwd)
+    }
+
+    fn create_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        target_path: &str,
+    ) -> Result<(), String> {
+        create_git_worktree(main_repo, name, target_path)
+    }
+
     fn create_window(
         &mut self,
         session_name: &str,
@@ -147,6 +167,7 @@ pub fn route_lifecycle_request_with_runtime(
         routes::graveyard_actions::RESURRECT_AGENT => {
             Some(route_graveyard_agent_resurrect(context, body))
         }
+        routes::worktree_actions::CREATE => Some(route_worktree_create(context, body, runtime)),
         routes::worktree_actions::GRAVEYARD => {
             Some(route_worktree_graveyard(context, body, runtime))
         }
@@ -2509,6 +2530,68 @@ fn route_worktree_graveyard(
     )
 }
 
+fn route_worktree_create(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let Some(name) = trimmed_string(body.get("name")) else {
+        return json_error(400, "name is required");
+    };
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    let main_repo = match runtime.find_main_repo(&project_root) {
+        Ok(main_repo) => main_repo,
+        Err(error) => return json_error(500, error),
+    };
+    let config = load_config_for_project(context.project_root());
+    let target_path = worktree_create_path(&config, &main_repo, &name);
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    if existing_worktree_create_is_pending(&topology, &target_path) {
+        return lifecycle_response(
+            json!({ "path": target_path, "status": "creating" }),
+            "worktree.create",
+            "worktree",
+            Some(&target_path),
+        );
+    }
+    if existing_worktree_create_conflicts(&topology, &target_path) {
+        return json_error(500, format!("Worktree \"{name}\" already exists"));
+    }
+    let created_at = now_iso();
+    let topology_input = WorktreeCreateTopologyInput {
+        project_state_dir: &project_state_dir,
+        project_root: &project_root,
+        main_repo: &main_repo,
+        name: &name,
+        target_path: &target_path,
+        created_at: &created_at,
+    };
+    if let Err(error) = upsert_created_worktree_topology(&topology_input, "creating", None) {
+        return json_error(500, error);
+    }
+    match runtime.create_worktree(&main_repo, &name, &target_path) {
+        Ok(()) => {
+            if let Err(error) = upsert_created_worktree_topology(&topology_input, "active", None) {
+                return json_error(500, error);
+            }
+            lifecycle_response(
+                json!({ "path": target_path, "status": "created" }),
+                "worktree.create",
+                "worktree",
+                Some(&target_path),
+            )
+        }
+        Err(error) => {
+            let _ = upsert_created_worktree_topology(&topology_input, "error", Some(&error));
+            json_error(500, error)
+        }
+    }
+}
+
 fn route_worktree_remove(
     context: &ProjectServiceRequestContext,
     body: &Value,
@@ -2755,6 +2838,97 @@ fn route_graveyard_worktree_delete(
         "worktree",
         Some(&path),
     )
+}
+
+fn worktree_create_path(config: &Value, main_repo: &str, name: &str) -> String {
+    let base_dir = trimmed_string(
+        config
+            .get("worktrees")
+            .and_then(|value| value.get("baseDir")),
+    )
+    .unwrap_or_else(|| ".aimux/worktrees".into());
+    let base_path = PathBuf::from(base_dir);
+    let target_base = if base_path.is_absolute() {
+        base_path
+    } else {
+        Path::new(main_repo).join(base_path)
+    };
+    target_base.join(name).to_string_lossy().into_owned()
+}
+
+fn existing_worktree_create_is_pending(topology: &Value, target_path: &str) -> bool {
+    array_field(topology, "worktrees")
+        .into_iter()
+        .any(|worktree| {
+            string_field(&worktree, "path") == target_path
+                && (worktree.get("pending").and_then(Value::as_bool) == Some(true)
+                    || string_field(&worktree, "status") == "creating")
+        })
+}
+
+fn existing_worktree_create_conflicts(topology: &Value, target_path: &str) -> bool {
+    array_field(topology, "worktrees")
+        .into_iter()
+        .any(|worktree| {
+            string_field(&worktree, "path") == target_path
+                && worktree.get("pending").and_then(Value::as_bool) != Some(true)
+                && worktree
+                    .get("operationFailure")
+                    .and_then(Value::as_str)
+                    .is_none()
+                && string_field(&worktree, "status") != "creating"
+        })
+}
+
+struct WorktreeCreateTopologyInput<'a> {
+    project_state_dir: &'a Path,
+    project_root: &'a str,
+    main_repo: &'a str,
+    name: &'a str,
+    target_path: &'a str,
+    created_at: &'a str,
+}
+
+fn upsert_created_worktree_topology(
+    input: &WorktreeCreateTopologyInput<'_>,
+    status: &str,
+    operation_failure: Option<&str>,
+) -> Result<(), String> {
+    update_runtime_topology(
+        runtime_topology_path(input.project_state_dir),
+        |mut topology| {
+            let now = now_iso();
+            let rig_id = ensure_rig(&mut topology, input.project_root, &now);
+            let mut worktree = json!({
+                "id": worktree_id_for_path(input.target_path),
+                "rigId": rig_id,
+                "path": input.target_path,
+                "name": input.name,
+                "branch": input.name,
+                "status": status,
+                "createdAt": input.created_at,
+                "updatedAt": now,
+            });
+            if status == "active" {
+                object_insert_mut(
+                    &mut worktree,
+                    "basePath",
+                    Value::String(input.main_repo.into()),
+                );
+            }
+            if let Some(error) = operation_failure {
+                object_insert_mut(
+                    &mut worktree,
+                    "operationFailure",
+                    Value::String(error.into()),
+                );
+            }
+            upsert_array_item(&mut topology, "worktrees", worktree);
+            object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
+            topology
+        },
+    )
+    .map(|_| ())
 }
 
 fn apply_service_window_policy(
@@ -3590,9 +3764,56 @@ fn prune_git_worktrees(main_repo: &str) {
     );
 }
 
+fn find_git_main_repo(cwd: &str) -> Result<String, String> {
+    let output = run_git_argv_output(
+        cwd,
+        &["worktree", "list", "--porcelain"],
+        "git worktree list failed".to_owned(),
+    )?;
+    let first_line = output.lines().next().unwrap_or_default();
+    if let Some(main_repo) = first_line.strip_prefix("worktree ") {
+        return Ok(main_repo.to_owned());
+    }
+    run_git_argv_output(
+        cwd,
+        &["rev-parse", "--show-toplevel"],
+        "git rev-parse --show-toplevel failed".to_owned(),
+    )
+    .map(|output| output.trim().to_owned())
+}
+
+fn create_git_worktree(main_repo: &str, name: &str, target_path: &str) -> Result<(), String> {
+    if branch_exists_in_repo(main_repo, name) {
+        run_git_argv(
+            main_repo,
+            &["worktree", "add", target_path, name],
+            format!("git worktree add exited for {target_path}"),
+        )
+    } else {
+        run_git_argv(
+            main_repo,
+            &["worktree", "add", target_path, "-b", name],
+            format!("git worktree add exited for {target_path}"),
+        )
+    }
+}
+
+fn branch_exists_in_repo(cwd: &str, branch: &str) -> bool {
+    let mut command = git_command(cwd);
+    command.args(["show-ref", "--verify", "--quiet"]);
+    command.arg(format!("refs/heads/{branch}"));
+    command.status().is_ok_and(|status| status.success())
+}
+
 fn run_git_argv(cwd: &str, argv: &[&str], fallback_error: String) -> Result<(), String> {
-    match Command::new("git").args(argv).current_dir(cwd).output() {
-        Ok(output) if output.status.success() => Ok(()),
+    run_git_argv_output(cwd, argv, fallback_error).map(|_| ())
+}
+
+fn run_git_argv_output(cwd: &str, argv: &[&str], fallback_error: String) -> Result<String, String> {
+    match git_command(cwd).args(argv).output() {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             if stderr.is_empty() {
@@ -3603,6 +3824,21 @@ fn run_git_argv(cwd: &str, argv: &[&str], fallback_error: String) -> Result<(), 
         }
         Err(error) => Err(format!("{fallback_error}: {error}")),
     }
+}
+
+fn git_command(cwd: &str) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(cwd);
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(key);
+    }
+    command
 }
 
 fn short_id() -> String {
