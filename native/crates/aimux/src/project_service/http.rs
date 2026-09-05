@@ -186,6 +186,18 @@ pub fn prepare_project_service_bytes_response(
     )
 }
 
+pub fn prepare_project_service_empty_response(
+    status: u16,
+    mut headers: BTreeMap<String, String>,
+) -> PreparedProjectServiceResponse {
+    headers.insert("connection".to_owned(), "close".to_owned());
+    PreparedProjectServiceResponse {
+        status,
+        headers,
+        body: Vec::new(),
+    }
+}
+
 pub fn parse_optional_integer(raw: Option<&str>, field: &str) -> Result<Option<i64>, String> {
     match raw {
         None => Ok(None),
