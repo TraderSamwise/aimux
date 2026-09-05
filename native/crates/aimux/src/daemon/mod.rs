@@ -8,4 +8,5 @@ pub mod router;
 pub mod routing;
 pub mod server;
 pub mod status;
+pub mod stream;
 pub mod text;
