@@ -55,6 +55,7 @@ use crate::paths::{PathResolver, compute_project_id};
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
+use crate::remote_credentials;
 use crate::tmux::{
     TmuxTarget, is_tmux_client_session_for_host, kill_session_argv, project_session,
 };
@@ -466,7 +467,18 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     }
 
     fn relay_status(&self) -> Value {
-        json!({ "status": "off" })
+        let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
+            return json!({ "status": "off" });
+        };
+        if credentials.remote_enabled {
+            json!({
+                "status": "disconnected",
+                "relayUrl": credentials.relay_url,
+                "lastConnectedAt": Value::Null,
+            })
+        } else {
+            json!({ "status": "off" })
+        }
     }
 
     fn resolve_project_root(&self, cwd: &str) -> String {
@@ -599,14 +611,23 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
     }
 
     fn has_remote_credentials(&self) -> bool {
-        false
+        remote_credentials::load_credentials(&self.resolver).is_some()
     }
 
     fn enable_relay_for_user_request(&mut self) -> Value {
-        json!({ "status": "off", "error": self.unported("relay enable") })
+        match remote_credentials::set_remote_enabled(&self.resolver, true) {
+            Ok(Some(credentials)) => json!({
+                "status": "disconnected",
+                "relayUrl": credentials.relay_url,
+                "lastConnectedAt": Value::Null,
+            }),
+            Ok(None) => json!({ "status": "off" }),
+            Err(error) => json!({ "status": "auth_failed", "lastError": error.to_string() }),
+        }
     }
 
     fn disable_relay(&mut self) -> Value {
+        let _ = remote_credentials::set_remote_enabled(&self.resolver, false);
         json!({ "status": "off" })
     }
 
@@ -969,18 +990,35 @@ impl DaemonCollaborationTextRuntime for RealDaemonRuntime {
 
 impl DaemonAuthTextRuntime for RealDaemonRuntime {
     fn remote_status_text_payload(&self) -> Value {
-        json!({ "credentials": null, "relay": self.relay_status() })
+        let credentials = remote_credentials::load_credentials(&self.resolver).map(|credentials| {
+            json!({
+                "relayUrl": credentials.relay_url,
+                "remoteEnabled": credentials.remote_enabled,
+            })
+        });
+        json!({ "credentials": credentials, "relay": self.relay_status() })
     }
 
     fn whoami_text_payload(&self) -> Value {
-        json!({ "credentials": null, "relay": self.relay_status() })
+        let credentials = remote_credentials::load_credentials(&self.resolver).map(|credentials| {
+            json!({
+                "userId": credentials.user_id,
+                "relayUrl": credentials.relay_url,
+                "remoteEnabled": credentials.remote_enabled,
+            })
+        });
+        json!({ "credentials": credentials })
     }
 
     fn require_remote_credentials(&self) -> Result<(), AuthTextError> {
-        Err(AuthTextError {
-            status: 401,
-            error: "Not logged in. Run `aimux login` first.".into(),
-        })
+        if remote_credentials::load_credentials(&self.resolver).is_some() {
+            Ok(())
+        } else {
+            Err(AuthTextError {
+                status: 401,
+                error: "Not logged in. Run `aimux login` first.".into(),
+            })
+        }
     }
 
     fn enable_relay_for_user_request(&mut self) -> Value {
@@ -991,10 +1029,14 @@ impl DaemonAuthTextRuntime for RealDaemonRuntime {
         <Self as DaemonCoreCommandRuntime>::relay_auth_failed_message(self, relay)
     }
 
-    fn disable_relay(&mut self) {}
+    fn disable_relay(&mut self) {
+        <Self as DaemonCoreCommandRuntime>::disable_relay(self);
+    }
 
     fn clear_credentials(&mut self) -> String {
-        "none".into()
+        remote_credentials::clear_credentials(&self.resolver)
+            .as_str()
+            .into()
     }
 
     fn run_auth_flow(&mut self, action: AuthAction) -> Result<AuthFlowResult, AuthFlowError> {

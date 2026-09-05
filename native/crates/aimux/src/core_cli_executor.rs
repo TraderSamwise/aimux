@@ -22,6 +22,7 @@ use crate::logs::{
     LogSelectionOptions, clear_log_file, parse_line_count, read_last_log_lines, selected_log_path,
 };
 use crate::paths::PathResolver;
+use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 use crate::tmux::{attach_session_argv, switch_client_argv};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -58,6 +59,11 @@ pub trait CoreCliRuntime {
     fn resolve_project_root(&self, path: &str) -> String;
     fn load_daemon_info(&self) -> Option<AimuxDaemonInfo>;
     fn load_daemon_state(&self) -> DaemonState;
+    fn has_remote_credentials(&self) -> bool;
+    fn credentials_for_status(&self) -> Option<Value>;
+    fn whoami_payload(&self) -> Value;
+    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String>;
+    fn clear_credentials(&self) -> String;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
     fn request_daemon_text(&mut self, path: &str) -> Result<String, String>;
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
@@ -97,6 +103,45 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     fn load_daemon_state(&self) -> DaemonState {
         let resolver = PathResolver::from_env();
         load_daemon_state(resolver.daemon_state_path())
+    }
+
+    fn has_remote_credentials(&self) -> bool {
+        let resolver = PathResolver::from_env();
+        load_credentials(&resolver).is_some()
+    }
+
+    fn credentials_for_status(&self) -> Option<Value> {
+        let resolver = PathResolver::from_env();
+        load_credentials(&resolver).map(|credentials| {
+            json!({
+                "relayUrl": credentials.relay_url,
+                "remoteEnabled": credentials.remote_enabled,
+            })
+        })
+    }
+
+    fn whoami_payload(&self) -> Value {
+        let resolver = PathResolver::from_env();
+        let credentials = load_credentials(&resolver).map(|credentials| {
+            json!({
+                "userId": credentials.user_id,
+                "relayUrl": credentials.relay_url,
+                "remoteEnabled": credentials.remote_enabled,
+            })
+        });
+        json!({ "credentials": credentials })
+    }
+
+    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String> {
+        let resolver = PathResolver::from_env();
+        set_remote_enabled(&resolver, enabled)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn clear_credentials(&self) -> String {
+        let resolver = PathResolver::from_env();
+        clear_credentials(&resolver).as_str().into()
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -188,7 +233,7 @@ pub fn run_core_cli_with(
     let context = CoreCliContext {
         current_project_root,
         daemon_running: runtime.load_daemon_info().is_some(),
-        has_credentials: false,
+        has_credentials: runtime.has_remote_credentials(),
     };
     let plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
         runtime.resolve_project_root(project)
@@ -222,6 +267,7 @@ fn run_plan(
         CoreCliAction::TextRoute { path } => run_text_route(&path, runtime),
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
         CoreCliAction::RemoteStatus { relay_request } => {
+            let credentials = runtime.credentials_for_status();
             let relay = match relay_request {
                 Some(request) => runtime
                     .request_core_command(&request)
@@ -229,10 +275,10 @@ fn run_plan(
                     .unwrap_or_else(|_| json!({ "status": "off" })),
                 None => json!({ "status": "off" }),
             };
-            let payload = json!({ "loggedIn": false, "relay": relay.clone() });
+            let payload = json!({ "credentials": credentials, "relay": relay.clone() });
             render_json_or_lines(
                 output_mode,
-                payload.clone(),
+                json!({ "loggedIn": payload.get("credentials").is_some_and(|value| !value.is_null()), "relay": relay }),
                 render_core_remote_status_lines(&payload),
             )
         }
@@ -254,6 +300,8 @@ fn run_plan(
             let daemon_disconnected = relay_request.is_some();
             if let Some(request) = relay_request {
                 runtime.request_core_command(&request)?;
+            } else {
+                runtime.set_remote_enabled(false)?;
             }
             render_json_or_lines(
                 output_mode,
@@ -262,7 +310,7 @@ fn run_plan(
             )
         }
         CoreCliAction::Whoami => {
-            let payload = json!({ "credentials": null });
+            let payload = runtime.whoami_payload();
             render_json_or_lines(
                 output_mode,
                 core_whoami_json(&payload),
@@ -273,10 +321,11 @@ fn run_plan(
             if let Some(request) = relay_disable {
                 let _ = runtime.request_core_command(&request);
             }
+            let result = runtime.clear_credentials();
             render_json_or_lines(
                 output_mode,
-                json!({ "result": "none" }),
-                render_core_logout_lines("none"),
+                json!({ "result": result }),
+                render_core_logout_lines(&result),
             )
         }
         CoreCliAction::Login {

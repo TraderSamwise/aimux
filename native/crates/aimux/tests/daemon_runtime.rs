@@ -14,6 +14,7 @@ use aimux::daemon_state::{
     ProjectServiceStatus, save_daemon_state, save_metadata_endpoint, save_metadata_state,
 };
 use aimux::paths::PathResolver;
+use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::TmuxTarget;
 use serde_json::{Map, Value, json};
@@ -774,6 +775,46 @@ fn native_daemon_auth_reports_local_logged_out_state() {
     fixture.cleanup();
 }
 
+#[test]
+fn native_daemon_auth_reads_and_updates_credentials() {
+    let fixture = RuntimeFixture::new("auth-credentials");
+    let resolver = fixture.resolver();
+    save_credentials_at(resolver.auth_path(), &credentials()).expect("save credentials");
+    let mut runtime = fixture.runtime();
+
+    assert!(runtime.has_remote_credentials());
+    assert_eq!(
+        runtime.remote_status_text_payload()["credentials"],
+        json!({ "relayUrl": "wss://relay.example", "remoteEnabled": true })
+    );
+    assert_eq!(
+        runtime.whoami_text_payload()["credentials"],
+        json!({
+            "userId": "user-1",
+            "relayUrl": "wss://relay.example",
+            "remoteEnabled": true
+        })
+    );
+
+    let disabled = DaemonCoreCommandRuntime::disable_relay(&mut runtime);
+    assert_eq!(disabled["status"], "off");
+    assert!(
+        !load_credentials(&resolver)
+            .expect("credentials")
+            .remote_enabled
+    );
+    let enabled = DaemonCoreCommandRuntime::enable_relay_for_user_request(&mut runtime);
+    assert_eq!(enabled["status"], "disconnected");
+    assert!(
+        load_credentials(&resolver)
+            .expect("credentials")
+            .remote_enabled
+    );
+    assert_eq!(runtime.clear_credentials(), "cleared");
+    assert!(!runtime.has_remote_credentials());
+    fixture.cleanup();
+}
+
 #[derive(Debug)]
 struct RuntimeFixture {
     root: PathBuf,
@@ -1009,6 +1050,17 @@ fn persist_service(
         },
     )
     .expect("daemon state");
+}
+
+fn credentials() -> AimuxCredentials {
+    AimuxCredentials {
+        version: 1,
+        relay_url: "wss://relay.example".into(),
+        token: "token-1".into(),
+        user_id: "user-1".into(),
+        created_at: "2026-09-05T00:00:00.000Z".into(),
+        remote_enabled: true,
+    }
 }
 
 struct OneShotHttpServer {

@@ -16,6 +16,9 @@ struct FakeRuntime {
     text_routes: Vec<String>,
     open_targets: Vec<Value>,
     restart_calls: Vec<Option<String>>,
+    credentials: Option<Value>,
+    cleared_credentials: Cell<usize>,
+    remote_enabled: Cell<Option<bool>>,
     fail_commands: bool,
     restart_failures: i64,
     log_path: PathBuf,
@@ -33,6 +36,9 @@ impl Default for FakeRuntime {
             text_routes: Vec::new(),
             open_targets: Vec::new(),
             restart_calls: Vec::new(),
+            credentials: None,
+            cleared_credentials: Cell::new(0),
+            remote_enabled: Cell::new(None),
             fail_commands: false,
             restart_failures: 0,
             log_path: PathBuf::from("/tmp/aimux.log"),
@@ -61,6 +67,38 @@ impl CoreCliRuntime for FakeRuntime {
 
     fn load_daemon_state(&self) -> DaemonState {
         self.daemon_state.clone()
+    }
+
+    fn has_remote_credentials(&self) -> bool {
+        self.credentials.is_some()
+    }
+
+    fn credentials_for_status(&self) -> Option<Value> {
+        self.credentials.as_ref().map(|credentials| {
+            json!({
+                "relayUrl": credentials["relayUrl"].clone(),
+                "remoteEnabled": credentials["remoteEnabled"].clone(),
+            })
+        })
+    }
+
+    fn whoami_payload(&self) -> Value {
+        json!({ "credentials": self.credentials.clone() })
+    }
+
+    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.remote_enabled.set(Some(enabled));
+        Ok(())
+    }
+
+    fn clear_credentials(&self) -> String {
+        self.cleared_credentials
+            .set(self.cleared_credentials.get() + 1);
+        if self.credentials.is_some() {
+            "cleared".into()
+        } else {
+            "none".into()
+        }
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -349,6 +387,82 @@ fn unsupported_runtime_features_fail_before_side_effects() {
         ["Error: remote access is unavailable in the local build"]
     );
     assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn remote_status_and_whoami_use_native_credentials_without_leaking_token() {
+    let mut runtime = FakeRuntime {
+        credentials: Some(json!({
+            "userId": "user-1",
+            "relayUrl": "wss://relay.example",
+            "remoteEnabled": true,
+            "token": "secret-token"
+        })),
+        ..FakeRuntime::default()
+    };
+
+    let status = run_core_cli_with(&args(&["remote", "status", "--json"]), &mut runtime);
+    assert_eq!(status.code, 0);
+    assert_eq!(runtime.commands[0].command, CORE_COMMAND_NAMES.relay_status);
+    let status_json: Value = serde_json::from_str(&status.stdout[0]).expect("status json");
+    assert_eq!(status_json["loggedIn"], true);
+    assert_eq!(status_json["relay"]["status"], "connected");
+    assert!(!status.stdout[0].contains("secret-token"));
+
+    let whoami = run_core_cli_with(&args(&["whoami", "--json"]), &mut runtime);
+    assert_eq!(whoami.code, 0);
+    let whoami_json: Value = serde_json::from_str(&whoami.stdout[0]).expect("whoami json");
+    assert_eq!(
+        whoami_json,
+        json!({
+            "loggedIn": true,
+            "userId": "user-1",
+            "relayUrl": "wss://relay.example",
+            "remoteEnabled": true
+        })
+    );
+}
+
+#[test]
+fn remote_disable_without_daemon_updates_native_credentials_locally() {
+    let mut runtime = FakeRuntime {
+        daemon_info: None,
+        credentials: Some(json!({
+            "userId": "user-1",
+            "relayUrl": "wss://relay.example",
+            "remoteEnabled": true
+        })),
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["remote", "disable"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(execution.stdout, ["✓ Remote access disabled."]);
+    assert!(runtime.commands.is_empty());
+    assert_eq!(runtime.remote_enabled.get(), Some(false));
+}
+
+#[test]
+fn logout_clears_native_credentials_after_best_effort_relay_disable() {
+    let mut runtime = FakeRuntime {
+        credentials: Some(json!({
+            "userId": "user-1",
+            "relayUrl": "wss://relay.example",
+            "remoteEnabled": true
+        })),
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["logout"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(execution.stdout, ["✓ Logged out. Remote access disabled."]);
+    assert_eq!(
+        runtime.commands[0].command,
+        CORE_COMMAND_NAMES.relay_disable
+    );
+    assert_eq!(runtime.cleared_credentials.get(), 1);
 }
 
 #[test]
