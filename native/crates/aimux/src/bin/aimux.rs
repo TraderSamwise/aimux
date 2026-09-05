@@ -1,5 +1,6 @@
 use aimux::core_cli_executor::run_core_cli;
 use aimux::core_cli_routing::core_command_args;
+use aimux::daemon::runtime::run_daemon_internal;
 use aimux::launcher_env::{CliEntry, cli_entry_for};
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
@@ -22,6 +23,10 @@ enum Command {
     BuildInfo {
         #[arg(long)]
         json: bool,
+    },
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommand,
     },
     Contracts {
         #[command(subcommand)]
@@ -46,6 +51,11 @@ enum ContractsCommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum DaemonCommand {
+    Run,
 }
 
 #[derive(Debug, Subcommand)]
@@ -88,6 +98,12 @@ fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.command {
         Command::BuildInfo { json } => print_value(aimux::build_info(), json),
+        Command::Daemon {
+            command: DaemonCommand::Run,
+        } => {
+            run_daemon_internal()?;
+            Ok(())
+        }
         Command::Contracts {
             command: ContractsCommand::List { json },
         } => print_value(aimux::contract_manifest(), json),
