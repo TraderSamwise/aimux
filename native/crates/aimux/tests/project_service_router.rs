@@ -1,4 +1,3 @@
-use aimux::project_api_contract::routes;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
 use std::fs::remove_dir_all;
@@ -31,24 +30,26 @@ fn router_uses_rust_plan_handler_for_dynamic_plan_routes() {
 }
 
 #[test]
-fn router_keeps_unported_routes_explicit() {
-    let project = temp_project("unported");
+fn router_keeps_fallback_errors_explicit() {
+    let project = temp_project("fallback");
     let context = ProjectServiceRequestContext::new(&project);
-    let response = route_project_service_request(
-        &context,
-        "POST",
-        routes::graveyard_actions::CLEANUP,
-        Some(&json!({})),
+
+    let missing = route_project_service_request(&context, "GET", "/nope?x=1", None);
+    assert_eq!(missing.status, 404);
+    assert_eq!(
+        missing.body,
+        json!({ "ok": false, "error": "not found", "path": "/nope" })
     );
-    assert_eq!(response.status, 501);
+
+    let response = route_project_service_request(&context, "GET", "/agents/spawn", None);
+    assert_eq!(response.status, 405);
     assert_eq!(
         response.body,
         json!({
             "ok": false,
-            "error": "project service route not ported",
-            "method": "POST",
-            "path": "/graveyard/cleanup",
-            "group": "lifecycle",
+            "error": "method not allowed",
+            "path": "/agents/spawn",
+            "allowed": ["POST"],
         })
     );
     cleanup(project);

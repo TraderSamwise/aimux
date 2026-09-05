@@ -35,6 +35,7 @@ use super::agents::{
 use super::coordination_mutations::derive_runtime_exchange_indexes;
 use super::coordination_mutations::route_coordination_mutation_request;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::graveyard_cleanup::build_graveyard_cleanup_plan;
 use super::prompt_context::clear_prompt_context;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
@@ -200,6 +201,7 @@ pub fn route_lifecycle_request_with_runtime(
         routes::graveyard_actions::DELETE_WORKTREE => {
             Some(route_graveyard_worktree_delete(context, body))
         }
+        routes::graveyard_actions::CLEANUP => Some(route_graveyard_cleanup(context, body)),
         _ => None,
     }
 }
@@ -3633,6 +3635,165 @@ fn route_graveyard_worktree_delete(
     )
 }
 
+fn route_graveyard_cleanup(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let dry_run = body.get("dryRun").and_then(Value::as_bool) == Some(true);
+    let project_state_dir = context.project_state_dir();
+    let plan = match build_graveyard_cleanup_plan(context.project_root(), &project_state_dir) {
+        Ok(plan) => plan,
+        Err(error) => return json_error(500, error),
+    };
+    let mut results = Vec::new();
+    let mut removed_worktree_paths = std::collections::BTreeSet::new();
+    if plan.get("enabled").and_then(Value::as_bool) == Some(true) {
+        for worktree in array_field(&plan, "worktrees") {
+            let path = string_field(&worktree, "path");
+            if dry_run {
+                results.push(json!({ "kind": "worktree", "id": path, "status": "dry-run" }));
+                continue;
+            }
+            let response = route_graveyard_worktree_delete(context, &json!({ "path": path }));
+            if response.status == 200
+                && response.body.get("status").and_then(Value::as_str) == Some("removed")
+            {
+                removed_worktree_paths.insert(path.clone());
+                results.push(json!({ "kind": "worktree", "id": path, "status": "removed" }));
+            } else {
+                results.push(json!({
+                    "kind": "worktree",
+                    "id": path,
+                    "status": "failed",
+                    "error": response.body.get("error").and_then(Value::as_str).unwrap_or("worktree cleanup failed"),
+                }));
+            }
+        }
+        let worktree_paths_with_handled_agents = if dry_run {
+            array_field(&plan, "worktrees")
+                .into_iter()
+                .map(|worktree| string_field(&worktree, "path"))
+                .collect::<std::collections::BTreeSet<_>>()
+        } else {
+            removed_worktree_paths
+        };
+        for agent in array_field(&plan, "agents") {
+            let session_id = string_field(&agent, "sessionId");
+            let worktree_path = trimmed_string(agent.get("worktreePath"));
+            if worktree_path
+                .as_ref()
+                .is_some_and(|path| worktree_paths_with_handled_agents.contains(path))
+            {
+                continue;
+            }
+            if dry_run {
+                results.push(json!({ "kind": "agent", "id": session_id, "status": "dry-run" }));
+                continue;
+            }
+            match delete_graveyard_agent(context, &session_id) {
+                Ok(removed_assets) => results.push(json!({
+                    "kind": "agent",
+                    "id": session_id,
+                    "status": "removed",
+                    "removedAssets": removed_assets,
+                })),
+                Err(error) => results.push(json!({
+                    "kind": "agent",
+                    "id": session_id,
+                    "status": "failed",
+                    "error": error,
+                })),
+            }
+        }
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "dryRun": dry_run,
+            "plan": plan,
+            "results": results,
+        }),
+    )
+}
+
+fn delete_graveyard_agent(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+) -> Result<Vec<String>, String> {
+    let project_state_dir = context.project_state_dir();
+    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
+    let Some(existing) = array_field(&topology, "sessions")
+        .into_iter()
+        .find(|session| string_field(session, "id") == session_id)
+    else {
+        return Err(format!("Graveyard session \"{session_id}\" not found"));
+    };
+    if string_field(&existing, "status") != "graveyard" {
+        return Err(format!("Graveyard session \"{session_id}\" not found"));
+    }
+    let node_id = string_field(&existing, "nodeId");
+    let removed_assets =
+        delete_agent_assets(context.project_root(), &project_state_dir, session_id);
+    update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
+        remove_session_topology(&mut topology, session_id, &node_id);
+        object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
+        topology
+    })?;
+    Ok(removed_assets)
+}
+
+fn remove_session_topology(topology: &mut Value, session_id: &str, node_id: &str) {
+    let mut sessions = array_field(topology, "sessions");
+    sessions.retain(|session| string_field(session, "id") != session_id);
+    object_insert_mut(topology, "sessions", Value::Array(sessions));
+    let mut bindings = array_field(topology, "bindings");
+    bindings.retain(|binding| string_field(binding, "nodeId") != node_id);
+    object_insert_mut(topology, "bindings", Value::Array(bindings));
+    let mut nodes = array_field(topology, "nodes");
+    nodes.retain(|node| string_field(node, "id") != node_id);
+    object_insert_mut(topology, "nodes", Value::Array(nodes));
+    let mut edges = array_field(topology, "edges");
+    edges.retain(|edge| {
+        string_field(edge, "sourceNodeId") != node_id
+            && string_field(edge, "targetNodeId") != node_id
+    });
+    object_insert_mut(topology, "edges", Value::Array(edges));
+    let mut team_roles = array_field(topology, "teamRoles");
+    team_roles.retain(|role| {
+        string_field(role, "nodeId") != node_id && string_field(role, "parentNodeId") != node_id
+    });
+    object_insert_mut(topology, "teamRoles", Value::Array(team_roles));
+    let remote_clients = array_field(topology, "remoteClients")
+        .into_iter()
+        .map(|mut client| {
+            if let Value::Object(map) = &mut client
+                && let Some(Value::Array(ids)) = map.get_mut("ownsSessionIds")
+            {
+                ids.retain(|id| id.as_str() != Some(session_id));
+            }
+            client
+        })
+        .collect::<Vec<_>>();
+    object_insert_mut(topology, "remoteClients", Value::Array(remote_clients));
+    let mut lifecycle_operations = array_field(topology, "lifecycleOperations");
+    lifecycle_operations.retain(|operation| {
+        !(string_field(operation, "targetKind") == "session"
+            && string_field(operation, "targetId") == session_id)
+    });
+    object_insert_mut(
+        topology,
+        "lifecycleOperations",
+        Value::Array(lifecycle_operations),
+    );
+    let mut exchange_refs = array_field(topology, "exchangeRefs");
+    exchange_refs.retain(|reference| {
+        string_field(reference, "sessionId") != session_id
+            && string_field(reference, "nodeId") != node_id
+    });
+    object_insert_mut(topology, "exchangeRefs", Value::Array(exchange_refs));
+}
+
 fn worktree_create_path(config: &Value, main_repo: &str, name: &str) -> String {
     let base_dir = trimmed_string(
         config
@@ -3941,48 +4102,67 @@ fn topology_item_worktree_path(item: &Value, node_by_id: &Map<String, Value>) ->
     })
 }
 
-fn delete_agent_assets(project_root: &Path, project_state_dir: &Path, session_id: &str) {
+fn delete_agent_assets(
+    project_root: &Path,
+    project_state_dir: &Path,
+    session_id: &str,
+) -> Vec<String> {
     let aimux_dir = project_root.join(".aimux");
+    let mut removed_assets = Vec::new();
     remove_file_if_exists(
         aimux_dir
             .join("recordings")
             .join(format!("{session_id}.log")),
+        &mut removed_assets,
     );
     remove_file_if_exists(
         aimux_dir
             .join("recordings")
             .join(format!("{session_id}.txt")),
+        &mut removed_assets,
     );
     remove_file_if_exists(
         aimux_dir
             .join("history")
             .join(format!("{session_id}.jsonl")),
+        &mut removed_assets,
     );
-    remove_dir_if_exists(aimux_dir.join("context").join(session_id));
-    remove_file_if_exists(aimux_dir.join("plans").join(format!("{session_id}.md")));
-    remove_file_if_exists(aimux_dir.join("status").join(format!("{session_id}.md")));
+    remove_dir_if_exists(
+        aimux_dir.join("context").join(session_id),
+        &mut removed_assets,
+    );
+    remove_file_if_exists(
+        aimux_dir.join("plans").join(format!("{session_id}.md")),
+        &mut removed_assets,
+    );
+    remove_file_if_exists(
+        aimux_dir.join("status").join(format!("{session_id}.md")),
+        &mut removed_assets,
+    );
     remove_file_if_exists(
         project_state_dir
             .join("claude-settings")
             .join(format!("{session_id}.json")),
+        &mut removed_assets,
     );
     let mut state = load_metadata_state(project_state_dir);
     if state.sessions.remove(session_id).is_some() {
         let _ = save_metadata_state(project_state_dir, &state);
     }
+    removed_assets
 }
 
-fn remove_file_if_exists(path: impl AsRef<Path>) {
+fn remove_file_if_exists(path: impl AsRef<Path>, removed_assets: &mut Vec<String>) {
     let path = path.as_ref();
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
+    if path.exists() && std::fs::remove_file(path).is_ok() {
+        removed_assets.push(path.to_string_lossy().into_owned());
     }
 }
 
-fn remove_dir_if_exists(path: impl AsRef<Path>) {
+fn remove_dir_if_exists(path: impl AsRef<Path>, removed_assets: &mut Vec<String>) {
     let path = path.as_ref();
-    if path.exists() {
-        let _ = std::fs::remove_dir_all(path);
+    if path.exists() && std::fs::remove_dir_all(path).is_ok() {
+        removed_assets.push(path.to_string_lossy().into_owned());
     }
 }
 

@@ -11,6 +11,7 @@ pub mod event_streams;
 pub mod exchange_reads;
 pub mod exchange_retention;
 pub mod expose_ordering;
+pub mod graveyard_cleanup;
 pub mod hooks;
 pub mod http;
 pub mod interactions;
