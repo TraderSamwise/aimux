@@ -1,5 +1,6 @@
 use aimux::project_api_contract::routes;
 use aimux::project_service::dispatcher::ProjectServiceDispatchResponse;
+use aimux::project_service::event_streams::encode_sse_event;
 use aimux::project_service::server::{
     ProjectServiceHttpRequest, handle_project_service_http_request,
 };
@@ -101,6 +102,30 @@ fn dispatches_binary_route_responses_without_json_encoding() {
     assert_eq!(
         response.headers.get("cache-control"),
         Some(&"private, max-age=31536000, immutable".to_owned())
+    );
+}
+
+#[test]
+fn dispatches_sse_route_responses_without_attachment_cache_headers() {
+    let response = handle_project_service_http_request(
+        request("GET", routes::EVENTS, [], []),
+        |_method, _path, _body| {
+            ProjectServiceDispatchResponse::sse_snapshot(encode_sse_event("ready", &json!({})))
+        },
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, b"event: ready\ndata: {}\n\n".to_vec());
+    assert_eq!(
+        response.headers.get("content-type"),
+        Some(&"text/event-stream".to_owned())
+    );
+    assert_eq!(
+        response.headers.get("cache-control"),
+        Some(&"no-cache, no-transform".to_owned())
+    );
+    assert_eq!(
+        response.headers.get("x-accel-buffering"),
+        Some(&"no".to_owned())
     );
 }
 

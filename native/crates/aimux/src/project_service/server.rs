@@ -5,8 +5,8 @@ use super::dispatcher::ProjectServiceDispatchResponse;
 use super::http::{
     MAX_BODY_BYTES, PreparedProjectServiceResponse, ProjectServiceBodyError,
     prepare_project_service_bytes_response, prepare_project_service_empty_response,
-    prepare_project_service_json_response, project_service_cors_headers, read_json_body_limited,
-    reject_project_service_cors_response,
+    prepare_project_service_json_response, prepare_project_service_sse_response,
+    project_service_cors_headers, read_json_body_limited, reject_project_service_cors_response,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +60,9 @@ where
 
     let response = route(&request.method, &request.path, body.as_ref());
     if let Some(bytes) = response.bytes {
+        if response.content_type.as_deref() == Some("text/event-stream") {
+            return prepare_project_service_sse_response(response.status, bytes, cors);
+        }
         return prepare_project_service_bytes_response(
             response.status,
             bytes,

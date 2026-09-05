@@ -1,4 +1,5 @@
 use aimux::daemon_state::load_metadata_state;
+use aimux::project_service::interactions::register_interaction_watcher;
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
@@ -237,6 +238,63 @@ fn interaction_request_without_stream_watcher_returns_false_without_registering(
         None,
     );
     assert_eq!(pending.body["requests"].as_array().unwrap().len(), 0);
+    cleanup(project);
+}
+
+#[test]
+fn interaction_request_registers_and_waits_when_stream_watcher_is_active() {
+    let project = temp_project("request-with-watch");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let _watcher = register_interaction_watcher(&state_dir);
+
+    let request_context = context.clone();
+    let waiting = thread::spawn(move || {
+        route_project_service_request(
+            &request_context,
+            "POST",
+            "/agents/interaction/request",
+            Some(&json!({
+                "session": "s9",
+                "type": "permission",
+                "payload": { "toolName": "Bash" },
+                "timeoutMs": 5000
+            })),
+        )
+    });
+
+    let id = loop {
+        let pending = route_project_service_request(
+            &context,
+            "GET",
+            "/agents/interaction/pending?sessionId=s9",
+            None,
+        );
+        if let Some(id) = pending.body["requests"]
+            .as_array()
+            .and_then(|requests| requests.first())
+            .and_then(|request| request["id"].as_str())
+        {
+            break id.to_owned();
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    let responded = route_project_service_request(
+        &context,
+        "POST",
+        "/agents/interaction/respond",
+        Some(&json!({ "id": id, "response": { "decision": "allow_once" } })),
+    );
+    assert_eq!(responded.status, 200);
+
+    let settled = waiting.join().expect("request thread should finish");
+    assert_eq!(settled.status, 200);
+    assert_eq!(settled.body["request"]["status"], "resolved");
+    assert_eq!(
+        settled.body["request"]["response"]["decision"],
+        "allow_once"
+    );
     cleanup(project);
 }
 

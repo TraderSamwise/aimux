@@ -315,6 +315,13 @@ struct ProjectInteractionRegistry {
 }
 
 impl ProjectInteractionRegistry {
+    fn register_watcher(self: &Arc<Self>) -> InteractionWatcherGuard {
+        self.watcher_count.fetch_add(1, Ordering::Relaxed);
+        InteractionWatcherGuard {
+            registry: Arc::clone(self),
+        }
+    }
+
     fn register(&self, input: RegisterInteractionInput) -> InteractionRegistration {
         let mut registry = self.inner.lock().expect("interaction registry poisoned");
         registry.prune_settled();
@@ -396,6 +403,27 @@ impl ProjectInteractionRegistry {
     fn watcher_count(&self) -> u64 {
         self.watcher_count.load(Ordering::Relaxed)
     }
+}
+
+#[derive(Debug)]
+pub struct InteractionWatcherGuard {
+    registry: Arc<ProjectInteractionRegistry>,
+}
+
+impl Drop for InteractionWatcherGuard {
+    fn drop(&mut self) {
+        self.registry.watcher_count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+pub fn register_interaction_watcher(
+    project_state_dir: impl AsRef<Path>,
+) -> InteractionWatcherGuard {
+    registry_for(project_state_dir.as_ref()).register_watcher()
+}
+
+pub fn pending_interactions_for_stream(project_state_dir: impl AsRef<Path>) -> Vec<Value> {
+    registry_for(project_state_dir.as_ref()).list_pending(None)
 }
 
 impl InteractionRegistry {

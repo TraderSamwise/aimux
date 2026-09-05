@@ -5,6 +5,7 @@ pub mod attachments;
 pub mod coordination_worklist;
 pub mod desktop_state;
 pub mod dispatcher;
+pub mod event_streams;
 pub mod exchange_reads;
 pub mod exchange_retention;
 pub mod expose_ordering;

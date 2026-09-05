@@ -186,6 +186,25 @@ pub fn prepare_project_service_bytes_response(
     )
 }
 
+pub fn prepare_project_service_sse_response(
+    status: u16,
+    body: Vec<u8>,
+    mut headers: BTreeMap<String, String>,
+) -> PreparedProjectServiceResponse {
+    headers.insert("content-type".to_owned(), "text/event-stream".to_owned());
+    headers.insert(
+        "cache-control".to_owned(),
+        "no-cache, no-transform".to_owned(),
+    );
+    headers.insert("connection".to_owned(), "keep-alive".to_owned());
+    headers.insert("x-accel-buffering".to_owned(), "no".to_owned());
+    PreparedProjectServiceResponse {
+        status,
+        headers,
+        body,
+    }
+}
+
 pub fn prepare_project_service_empty_response(
     status: u16,
     mut headers: BTreeMap<String, String>,

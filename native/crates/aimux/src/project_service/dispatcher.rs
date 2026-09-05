@@ -38,6 +38,15 @@ impl ProjectServiceDispatchResponse {
             content_type: Some(content_type.into()),
         }
     }
+
+    pub fn sse_snapshot(bytes: Vec<u8>) -> Self {
+        Self {
+            status: 200,
+            body: Value::Null,
+            bytes: Some(bytes),
+            content_type: Some("text/event-stream".to_owned()),
+        }
+    }
 }
 
 pub fn parse_project_service_method(method: &str) -> Option<Method> {
