@@ -287,6 +287,18 @@ function hasComposerDraftContent(text: string): boolean {
   return /\S/.test(text);
 }
 
+function composerInputHeightForContentHeight(contentHeight: number): number {
+  const measured = Number.isFinite(contentHeight) ? Math.ceil(contentHeight) : 0;
+  return Math.min(
+    COMPOSER_INPUT_MAX_HEIGHT,
+    Math.max(COMPOSER_INPUT_MIN_HEIGHT, measured + COMPOSER_INPUT_HEIGHT_SLOP),
+  );
+}
+
+function composerContentHeightForDraft(draft: string, contentHeight: number): number {
+  return draft.length === 0 ? COMPOSER_INPUT_MIN_HEIGHT : contentHeight;
+}
+
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
   if (!key) return;
   if (snapshot.draft.length === 0 && snapshot.pendingAttachments.length === 0) {
@@ -494,8 +506,6 @@ export default function ChatScreen() {
   const [composerWidth, setComposerWidth] = useState(0);
   const [composerInputContentHeight, setComposerInputContentHeight] =
     useState(COMPOSER_INPUT_MIN_HEIGHT);
-  const [composerInputLayoutHeight, setComposerInputLayoutHeight] =
-    useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
@@ -682,6 +692,14 @@ export default function ChatScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (draft.length !== 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- empty composer must not preserve a stale multiline native measurement
+    setComposerInputContentHeight((current) =>
+      current === COMPOSER_INPUT_MIN_HEIGHT ? current : COMPOSER_INPUT_MIN_HEIGHT,
+    );
+  }, [draft]);
+
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
     if (!sessionId) return;
@@ -730,10 +748,16 @@ export default function ChatScreen() {
   const compactHeaderActions = width < 430;
   const headerActionsMaxWidth =
     Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
+  const effectiveComposerInputContentHeight = composerContentHeightForDraft(
+    draft,
+    composerInputContentHeight,
+  );
   const composerInputScrollEnabled =
     draft.length > 0 &&
-    composerInputLayoutHeight >= COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP &&
-    composerInputContentHeight > composerInputLayoutHeight;
+    effectiveComposerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP;
+  const composerInputHeight = composerInputHeightForContentHeight(
+    effectiveComposerInputContentHeight,
+  );
   const composerExtraContentPadding = useSharedValue(0);
   const composerFooterBottomPadding =
     Platform.OS === "web" || keyboardVisible
@@ -758,9 +782,9 @@ export default function ChatScreen() {
   useEffect(() => {
     composerExtraContentPadding.value = Math.max(
       0,
-      composerInputLayoutHeight - COMPOSER_INPUT_MIN_HEIGHT,
+      composerInputHeight - COMPOSER_INPUT_MIN_HEIGHT,
     );
-  }, [composerExtraContentPadding, composerInputLayoutHeight]);
+  }, [composerExtraContentPadding, composerInputHeight]);
   const chatDividerWidth = Math.max(
     MIN_CHAT_DIVIDER_WIDTH,
     Math.min(
@@ -1285,6 +1309,7 @@ export default function ChatScreen() {
   function handleComposerContentSizeChange(
     event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
   ) {
+    if (draft.length === 0) return;
     const nextHeight = Math.max(
       COMPOSER_INPUT_MIN_HEIGHT,
       Math.ceil(event.nativeEvent.contentSize.height),
@@ -1292,19 +1317,12 @@ export default function ChatScreen() {
     setComposerInputContentHeight((current) => (current === nextHeight ? current : nextHeight));
   }
 
-  function handleComposerInputLayout(event: LayoutChangeEvent) {
-    const nextHeight = Math.max(
-      COMPOSER_INPUT_MIN_HEIGHT,
-      Math.ceil(event.nativeEvent.layout.height),
-    );
-    setComposerInputLayoutHeight((current) => (current === nextHeight ? current : nextHeight));
-  }
-
   function handleDraftChange(text: string) {
+    const wasEmpty = draft.length === 0;
     setDraft(text);
     const nextHasContent = hasComposerDraftContent(text);
     setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
-    if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
+    if (!text || wasEmpty) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     if (sendError) setSendError(null);
   }
 
@@ -1561,7 +1579,6 @@ export default function ChatScreen() {
                   {...COMPOSER_WEB_INPUT_PROPS}
                   {...composerPasteProps}
                   onContentSizeChange={handleComposerContentSizeChange}
-                  onLayout={handleComposerInputLayout}
                   placeholder="Ask the agent…"
                   placeholderTextColor="#71717a"
                   multiline
@@ -1577,6 +1594,7 @@ export default function ChatScreen() {
                       flexGrow: 0,
                       flexShrink: 1,
                       fontSize: COMPOSER_INPUT_FONT_SIZE,
+                      height: composerInputHeight,
                       lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
                       maxWidth: "100%",
                       maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
