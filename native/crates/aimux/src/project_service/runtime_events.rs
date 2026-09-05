@@ -205,8 +205,7 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
 
     if activity.as_deref() == Some("running") {
         became_idle_at = None;
-    } else if event_string(current, "activity").as_deref() == Some("running") && activity.is_some()
-    {
+    } else if activity.is_some() && became_idle_at.is_none() {
         became_idle_at = event_string(event, "ts").or_else(|| Some(now_iso()));
     }
 
@@ -246,6 +245,15 @@ pub fn notification_for_event(
             unread,
             ..NotificationWriteInput::default()
         }),
+        "task_done" => Some(NotificationWriteInput {
+            kind: Some("task_done".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} completed"),
+            body: fallback_string(&message, "Agent completed the task."),
+            dedupe_key: Some(format!("complete:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        }),
         "task_failed" => Some(NotificationWriteInput {
             kind: Some("task_failed".to_owned()),
             session_id: Some(session_id.to_owned()),
@@ -255,6 +263,7 @@ pub fn notification_for_event(
             unread,
             ..NotificationWriteInput::default()
         }),
+        "status" => notification_for_status_event(session_id, &message, tone.as_deref(), unread),
         "notify" if tone.as_deref() == Some("error") => Some(NotificationWriteInput {
             kind: Some("task_failed".to_owned()),
             session_id: Some(session_id.to_owned()),
@@ -284,6 +293,60 @@ pub fn notification_for_event(
         }),
         _ => None,
     }
+}
+
+fn notification_for_status_event(
+    session_id: &str,
+    message: &str,
+    tone: Option<&str>,
+    unread: bool,
+) -> Option<NotificationWriteInput> {
+    let normalized_message = message.to_lowercase();
+    if tone == Some("error") {
+        return Some(NotificationWriteInput {
+            kind: Some("task_failed".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} errored"),
+            body: fallback_string(message, "Agent reported an error state."),
+            dedupe_key: Some(format!("error:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        });
+    }
+    if status_message_needs_input(&normalized_message) {
+        return Some(NotificationWriteInput {
+            kind: Some("needs_input".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} needs input"),
+            body: fallback_string(message, "Agent is waiting for input."),
+            dedupe_key: Some(format!("needs_input:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        });
+    }
+    if status_message_blocked(&normalized_message) {
+        return Some(NotificationWriteInput {
+            kind: Some("blocked".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} is blocked"),
+            body: fallback_string(message, "Agent reported a blocked state."),
+            dedupe_key: Some(format!("blocked:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        });
+    }
+    if tone == Some("success") || status_message_done(&normalized_message) {
+        return Some(NotificationWriteInput {
+            kind: Some("task_done".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            title: format!("{session_id} completed"),
+            body: fallback_string(message, "Agent completed the task."),
+            dedupe_key: Some(format!("complete:{session_id}")),
+            unread,
+            ..NotificationWriteInput::default()
+        });
+    }
+    None
 }
 
 pub fn notification_for_attention(
