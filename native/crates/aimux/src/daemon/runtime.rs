@@ -579,7 +579,31 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
     }
 
     fn doctor_versions_report(&mut self) -> Result<(Value, String), String> {
-        Err(self.unported("doctor versions"))
+        let generated_at = now_iso();
+        let projects = self.list_projects_for_route();
+        let service_alive = projects
+            .iter()
+            .filter(|project| project.service_alive)
+            .count();
+        let state = self.daemon_state();
+        let report = json!({
+            "generatedAt": generated_at,
+            "daemon": self.current_daemon_info(&now_iso()),
+            "expectedServiceManifest": self.project_service_info(),
+            "projectCount": projects.len(),
+            "serviceAliveCount": service_alive,
+            "daemonStateProjectCount": state.projects.len(),
+            "projects": projects,
+            "relay": self.relay_status(),
+        });
+        let text = format!(
+            "Runtime Coherence\n  daemon: pid {} on http://127.0.0.1:{}\n  projects: {} known, {} service alive",
+            self.info.pid,
+            self.info.port,
+            report["projectCount"].as_u64().unwrap_or(0),
+            report["serviceAliveCount"].as_u64().unwrap_or(0)
+        );
+        Ok((report, text))
     }
 
     fn doctor_disk_report(

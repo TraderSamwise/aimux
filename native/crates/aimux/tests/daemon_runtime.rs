@@ -1,3 +1,4 @@
+use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::core_commands::DaemonCoreCommandRuntime;
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{ProjectServiceLauncher, RealDaemonRuntime};
@@ -178,6 +179,45 @@ fn native_daemon_binary_proxy_preserves_content_bytes_and_type() {
             .join()
             .contains("GET /attachments/att-1/content HTTP/1.1")
     );
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_doctor_versions_reports_catalog_and_service_counts() {
+    let fixture = RuntimeFixture::new("doctor-versions");
+    let cold = fixture.project("cold");
+    let live = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    resolver.register_project(&cold).expect("register cold");
+    let live_entry = resolver
+        .register_project(&live)
+        .expect("register live")
+        .expect("live entry");
+    persist_service(
+        &resolver,
+        &live_entry.id,
+        &live,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    let mut runtime = fixture.runtime();
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let text = String::from_utf8(response.body).expect("json text");
+    let report: Value = serde_json::from_str(&text).expect("report json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(report["projectCount"], json!(2));
+    assert_eq!(report["serviceAliveCount"], json!(1));
+    assert_eq!(report["daemonStateProjectCount"], json!(1));
+    assert_eq!(report["projects"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report["relay"]["status"], "off");
     fixture.cleanup();
 }
 
