@@ -67,6 +67,10 @@ impl DaemonRouteUrl {
             .map(|values| values.iter().map(String::as_str).collect())
             .unwrap_or_default()
     }
+
+    pub fn has_search_param(&self, name: &str) -> bool {
+        self.query.contains_key(name)
+    }
 }
 
 pub fn text_or_json_lines(

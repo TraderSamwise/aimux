@@ -65,6 +65,10 @@ fn extracts_client_suffix_only_for_aimux_client_sessions() {
         Some("deadbeef".into())
     );
     assert_eq!(
+        client_suffix_for_session(Some("aimux-repo-client-DEADBEEF")),
+        None
+    );
+    assert_eq!(
         client_suffix_for_session(Some("aimux-repo-client-nope")),
         None
     );

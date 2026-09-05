@@ -91,8 +91,11 @@ pub fn resolve_project_relative_path(project_root: &str, target_path: &str) -> S
 pub fn client_suffix_for_session(session_name: Option<&str>) -> Option<String> {
     let session_name = session_name?;
     let suffix = session_name.rsplit_once("-client-")?.1;
-    (suffix.len() == 8 && suffix.chars().all(|char| char.is_ascii_hexdigit()))
-        .then(|| suffix.to_owned())
+    (suffix.len() == 8
+        && suffix
+            .chars()
+            .all(|char| matches!(char, '0'..='9' | 'a'..='f')))
+    .then(|| suffix.to_owned())
 }
 
 fn path_resolve_relative(project_root: &str, target_path: &str) -> String {
