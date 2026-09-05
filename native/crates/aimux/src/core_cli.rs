@@ -32,6 +32,7 @@ pub enum CoreCliOperation {
     DaemonStatus,
     DaemonProjects,
     DaemonProjectEnsure,
+    DoctorVersions,
     Logs,
     ProjectsList,
     Restart,
@@ -249,6 +250,9 @@ pub enum CoreCliAction {
     Command {
         request: CoreCommandCall,
         open_dashboard_after: bool,
+    },
+    TextRoute {
+        path: String,
     },
     RestartControlPlane {
         project_root: Option<String>,
@@ -489,6 +493,17 @@ where
                 CoreCliFallback::None,
             )
         }
+        ("doctor", "versions") => (
+            CoreCliOperation::DoctorVersions,
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text)
+                } else {
+                    CORE_API_ROUTES.doctor_versions_text.to_owned()
+                },
+            },
+            CoreCliFallback::None,
+        ),
         ("logs", _) => {
             let parsed = parse_core_logs_args(&args).expect("eligible logs command must parse");
             let fallback = if parsed.subcommand == CoreLogsSubcommand::Tail {

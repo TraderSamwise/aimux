@@ -163,6 +163,35 @@ pub fn request_daemon_json(
     request_daemon_json_at(path, init, daemon_info_path)
 }
 
+pub fn request_daemon_text(
+    path: &str,
+    init: DaemonRequestInit,
+) -> Result<String, CoreCommandTransportError> {
+    let daemon_info_path = PathResolver::from_env().daemon_info_path();
+    let info =
+        load_daemon_info(daemon_info_path).ok_or(CoreCommandTransportError::DaemonNotRunning)?;
+    let mut init = init;
+    init.headers
+        .entry("accept".to_owned())
+        .or_insert_with(|| "text/plain".to_owned());
+    let response = execute_loopback_binary_request(
+        &build_daemon_json_request(&info, path, init)?,
+        10 * 1024 * 1024,
+    )?;
+    let text = String::from_utf8(response.body).map_err(|error| {
+        CoreCommandTransportError::InvalidHttpResponse(format!(
+            "daemon text response was not UTF-8: {error}"
+        ))
+    })?;
+    if !(200..300).contains(&response.status) {
+        return Err(CoreCommandTransportError::DaemonRequest {
+            status: response.status,
+            message: text.trim().to_owned(),
+        });
+    }
+    Ok(text)
+}
+
 pub fn request_daemon_json_at(
     path: &str,
     init: DaemonRequestInit,

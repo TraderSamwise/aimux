@@ -3,6 +3,7 @@ use crate::core_cli::{
     CoreCommandOk, classify_core_cli_with_project_resolver,
 };
 use crate::core_command_client::request_core_command;
+use crate::core_command_transport::{DaemonRequestInit, request_daemon_text};
 use crate::core_text::{
     core_whoami_json, render_core_daemon_projects_lines, render_core_daemon_status_lines,
     render_core_host_status_lines, render_core_login_lines, render_core_logout_lines,
@@ -12,7 +13,9 @@ use crate::core_text::{
     render_core_remote_disable_lines, render_core_remote_enable_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
+use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{AimuxDaemonInfo, DaemonState, load_daemon_info, load_daemon_state};
+use crate::daemon_supervisor::ensure_daemon_running;
 use crate::logs::{
     LogSelectionOptions, clear_log_file, parse_line_count, read_last_log_lines, selected_log_path,
 };
@@ -52,6 +55,7 @@ pub trait CoreCliRuntime {
     fn load_daemon_info(&self) -> Option<AimuxDaemonInfo>;
     fn load_daemon_state(&self) -> DaemonState;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
+    fn request_daemon_text(&mut self, path: &str) -> Result<String, String>;
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
@@ -89,6 +93,12 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
         request_core_command(request.command, request.payload.clone(), request.options)
             .map_err(|error| error.to_string())
+    }
+
+    fn request_daemon_text(&mut self, path: &str) -> Result<String, String> {
+        ensure_daemon_running(EnsureDaemonRunningOptions::default())
+            .map_err(|error| error.to_string())?;
+        request_daemon_text(path, DaemonRequestInit::default()).map_err(|error| error.to_string())
     }
 
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -155,6 +165,7 @@ fn run_plan(
             open_dashboard_after,
             runtime,
         ),
+        CoreCliAction::TextRoute { path } => run_text_route(&path, runtime),
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
         CoreCliAction::RemoteStatus { relay_request } => {
             let relay = match relay_request {
@@ -233,6 +244,16 @@ fn run_plan(
             Err("control-plane restart is not yet ported to native CLI".into())
         }
     }
+}
+
+fn run_text_route(
+    path: &str,
+    runtime: &mut impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let text = runtime.request_daemon_text(path)?;
+    Ok(CoreCliExecution::ok(vec![
+        text.strip_suffix('\n').unwrap_or(&text).to_owned(),
+    ]))
 }
 
 fn run_command_action(

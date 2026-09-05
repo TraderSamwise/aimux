@@ -12,6 +12,7 @@ struct FakeRuntime {
     daemon_info: Option<AimuxDaemonInfo>,
     daemon_state: DaemonState,
     commands: Vec<CoreCommandCall>,
+    text_routes: Vec<String>,
     fail_commands: bool,
     log_path: PathBuf,
     log_output: String,
@@ -25,6 +26,7 @@ impl Default for FakeRuntime {
             daemon_info: Some(daemon_info()),
             daemon_state: DaemonState::empty(),
             commands: Vec::new(),
+            text_routes: Vec::new(),
             fail_commands: false,
             log_path: PathBuf::from("/tmp/aimux.log"),
             log_output: String::new(),
@@ -60,6 +62,15 @@ impl CoreCliRuntime for FakeRuntime {
             return Err("offline".into());
         }
         Ok(command_ok(request.command, response_for(request)))
+    }
+
+    fn request_daemon_text(&mut self, path: &str) -> Result<String, String> {
+        self.text_routes.push(path.to_owned());
+        Ok(if path.ends_with("?json=1") {
+            "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
+        } else {
+            "Runtime Coherence\n  ok\n".into()
+        })
     }
 
     fn selected_log_path(&self, _options: &aimux::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -260,6 +271,30 @@ fn logs_execute_without_daemon_requests() {
     assert_eq!(clear.code, 0);
     assert_eq!(clear.stdout, ["Cleared /tmp/aimux.log"]);
     assert_eq!(runtime.clear_count.get(), 1);
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn doctor_versions_executes_daemon_text_route() {
+    let mut runtime = FakeRuntime::default();
+
+    let text = run_core_cli_with(&args(&["doctor", "versions"]), &mut runtime);
+    assert_eq!(text.code, 0);
+    assert_eq!(text.stdout, ["Runtime Coherence\n  ok"]);
+
+    let json = run_core_cli_with(&args(&["doctor", "versions", "--json"]), &mut runtime);
+    assert_eq!(json.code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&json.stdout[0]).expect("doctor json"),
+        json!({ "generatedAt": "now", "projects": [] })
+    );
+    assert_eq!(
+        runtime.text_routes,
+        [
+            "/core/doctor/versions-text",
+            "/core/doctor/versions-text?json=1"
+        ]
+    );
     assert!(runtime.commands.is_empty());
 }
 

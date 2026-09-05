@@ -326,6 +326,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         }
         (Some("daemon"), Some("restart")) => parse_core_daemon_restart_args(args).is_some(),
         (Some("daemon"), Some("project-ensure")) => true,
+        (Some("doctor"), Some("versions")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),
         (Some("projects"), Some("list")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("remote"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
