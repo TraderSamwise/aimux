@@ -394,7 +394,7 @@ fn recency_ms(value: &str) -> u128 {
     parse_recency_timestamp(value).unwrap_or_default()
 }
 
-fn parse_recency_timestamp(value: &str) -> Option<u128> {
+pub fn parse_recency_timestamp(value: &str) -> Option<u128> {
     parse_iso_millis(value)
 }
 
