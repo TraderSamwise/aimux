@@ -18,7 +18,7 @@ export type ChatScrollCommand =
     }
   | { kind: "none" };
 
-export const CHAT_SCROLL_END_THRESHOLD = 36;
+export const CHAT_SCROLL_END_THRESHOLD = 20;
 
 export function createChatScrollPolicy(): ChatScrollPolicy {
   return { intent: "pinned" };

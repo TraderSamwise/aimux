@@ -820,18 +820,6 @@ export default function ChatScreen() {
     [cancelPendingChatScroll],
   );
 
-  const handleChatEndVisible = useCallback(
-    (visible: boolean) => {
-      if (!visible) {
-        cancelPendingChatScroll();
-        chatScrollPolicyRef.current = { intent: "reading" };
-        return;
-      }
-      chatScrollPolicyRef.current = createChatScrollPolicy();
-    },
-    [cancelPendingChatScroll],
-  );
-
   useEffect(() => {
     if (!endpointHost || !endpointPort) return;
     const timer = setTimeout(() => {
@@ -2104,7 +2092,6 @@ export default function ChatScreen() {
                   onContentSizeChange={handleChatContentSizeChange}
                   onLayout={handleChatLayout}
                   onScroll={handleChatScroll}
-                  onEndVisible={handleChatEndVisible}
                   ref={chatScrollRef}
                   serviceEndpoint={displayServiceEndpoint}
                   dividerWidth={chatDividerWidth}
@@ -2124,22 +2111,13 @@ const AgentChatTranscript = React.forwardRef<
   {
     dividerWidth: number;
     messages: readonly ChatMessage[];
-    onEndVisible: (visible: boolean) => void;
     onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
     onLayout: (event: LayoutChangeEvent) => void;
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
     serviceEndpoint: ServiceEndpoint;
   }
 >(function AgentChatTranscript(
-  {
-    dividerWidth,
-    messages,
-    onContentSizeChange,
-    onEndVisible,
-    onLayout,
-    onScroll,
-    serviceEndpoint,
-  },
+  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
   ref,
 ) {
   const content =
@@ -2177,7 +2155,6 @@ const AgentChatTranscript = React.forwardRef<
         keyboardLiftBehavior="whenAtEnd"
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={onContentSizeChange}
-        onEndVisible={onEndVisible}
         onLayout={onLayout}
         onScroll={onScroll}
         scrollEventThrottle={16}
