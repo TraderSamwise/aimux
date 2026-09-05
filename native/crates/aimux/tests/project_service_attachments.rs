@@ -1,3 +1,4 @@
+use aimux::project_api_contract::routes;
 use aimux::project_service::attachments::{attachments_dir, get_attachment};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
@@ -133,6 +134,133 @@ fn shared_guest_can_read_own_content_but_not_metadata_or_other_session() {
     assert_eq!(
         other.body["error"],
         "shared guest cannot access another session"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn publishes_local_project_file_as_session_bound_path_attachment() {
+    let project = temp_project("publish");
+    let source_path = project.join("notes.txt");
+    write(&source_path, b"published notes").expect("source");
+    let context = ProjectServiceRequestContext::new(&project);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS_PUBLISH,
+        Some(&json!({ "path": source_path, "sessionId": "codex-1" })),
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["attachment"]["kind"], "text");
+    assert_eq!(response.body["attachment"]["filename"], "notes.txt");
+    assert_eq!(response.body["attachment"]["mimeType"], "text/plain");
+    assert_eq!(response.body["attachment"]["sizeBytes"], 15);
+    assert_eq!(response.body["attachment"]["source"], "path");
+    assert_eq!(response.body["attachment"]["sessionId"], "codex-1");
+    assert!(
+        response.body["referenceText"]
+            .as_str()
+            .unwrap()
+            .contains("notes.txt (text/plain, 15 bytes):")
+    );
+
+    let content_url = response.body["attachment"]["contentUrl"].as_str().unwrap();
+    let content = route_project_service_request(&context, "GET", content_url, None);
+    assert_eq!(content.status, 200);
+    assert_eq!(content.bytes, Some(b"published notes".to_vec()));
+    assert_eq!(content.content_type, Some("text/plain".to_owned()));
+    cleanup(project);
+}
+
+#[test]
+fn publish_persists_hosted_display_metadata() {
+    let project = temp_project("publish-hosted");
+    let source_path = project.join("screen.png");
+    write(&source_path, b"png-bytes").expect("source");
+    let context = ProjectServiceRequestContext::new(&project);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS_PUBLISH,
+        Some(&json!({
+            "path": source_path,
+            "sessionId": "codex-1",
+            "hostedAttachment": {
+                "contentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+                "expiresAt": "2099-01-01T00:00:00.000Z",
+                "sizeBytes": 9
+            }
+        })),
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.body["attachment"]["hostedContentUrl"],
+        "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content"
+    );
+    assert_eq!(
+        response.body["attachment"]["hostedExpiresAt"],
+        "2099-01-01T00:00:00.000Z"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn publish_rejects_remote_missing_invalid_and_sensitive_sources() {
+    let project = temp_project("publish-errors");
+    let source_path = project.join("notes.txt");
+    write(&source_path, b"published notes").expect("source");
+    let guest_context = ProjectServiceRequestContext::new(&project).with_request_headers([
+        ("x-aimux-actor-role", "guest"),
+        ("x-aimux-share-session-id", "codex-1"),
+    ]);
+
+    let remote = route_project_service_request(
+        &guest_context,
+        "POST",
+        routes::ATTACHMENTS_PUBLISH,
+        Some(&json!({ "path": source_path, "sessionId": "codex-1" })),
+    );
+    assert_eq!(remote.status, 403);
+    assert_eq!(remote.body["error"], "attachment publish is local only");
+
+    let context = ProjectServiceRequestContext::new(&project);
+    let missing_session = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS_PUBLISH,
+        Some(&json!({ "path": source_path })),
+    );
+    assert_eq!(missing_session.status, 400);
+    assert_eq!(missing_session.body["error"], "sessionId is required");
+
+    let invalid_session = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS_PUBLISH,
+        Some(&json!({ "path": source_path, "sessionId": "../codex" })),
+    );
+    assert_eq!(invalid_session.status, 400);
+    assert_eq!(invalid_session.body["error"], "sessionId is invalid");
+
+    let env_path = project.join(".env");
+    write(&env_path, b"secret").expect("env");
+    let sensitive = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS_PUBLISH,
+        Some(&json!({ "path": env_path, "sessionId": "codex-1" })),
+    );
+    assert_eq!(sensitive.status, 400);
+    assert!(
+        sensitive.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("looks like a credential or secret file")
     );
     cleanup(project);
 }

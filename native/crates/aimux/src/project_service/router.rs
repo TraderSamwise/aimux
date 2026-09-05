@@ -130,7 +130,7 @@ pub fn route_project_service_request(
     if let Some(response) = route_notifications_request(context, method, path, body) {
         return response;
     }
-    if let Some(response) = route_attachment_request(context, method, path) {
+    if let Some(response) = route_attachment_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_library_request(context, method, path) {
