@@ -93,6 +93,12 @@ import {
   type ChatScrollMetrics,
   type ChatScrollPolicy,
 } from "@/lib/chat-scroll-policy";
+import {
+  chatVisibleTranscriptForLiveChange,
+  chatVisibleTranscriptForPinned,
+  chatVisibleTranscriptMessages,
+  type ChatVisibleTranscript,
+} from "@/lib/chat-visible-transcript";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
@@ -145,7 +151,9 @@ type ChatScrollDebugSnapshot = {
   event: string;
   intent: ChatScrollPolicy["intent"];
   lastCommandReason: string | null;
+  liveMessageCount: number;
   offsetY: number;
+  visibleMessageCount: number;
   viewportHeight: number;
 };
 const COMPOSER_INPUT_FONT_SIZE = 14;
@@ -499,6 +507,9 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [visibleChatTranscript, setVisibleChatTranscript] = useState<
+    ChatVisibleTranscript<ChatMessage>
+  >(() => chatVisibleTranscriptForPinned({ liveMessages: [], sessionKey: "" }));
   const [chatScrollDebugSnapshot, setChatScrollDebugSnapshot] =
     useState<ChatScrollDebugSnapshot | null>(null);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
@@ -618,6 +629,12 @@ export default function ChatScreen() {
   const chatScrollDebugSnapshotRef = useRef<ChatScrollDebugSnapshot | null>(null);
   const chatScrollFrameRef = useRef<number | null>(null);
   const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
+  const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(
+    chatVisibleTranscriptForPinned({ liveMessages: [], sessionKey: "" }),
+  );
+  const visibleChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(
+    chatVisibleTranscriptForPinned({ liveMessages: [], sessionKey: "" }),
+  );
   const chatInitialLayoutKeyRef = useRef<string | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
@@ -765,6 +782,19 @@ export default function ChatScreen() {
     ),
   );
 
+  const applyVisibleChatTranscript = useCallback((next: ChatVisibleTranscript<ChatMessage>) => {
+    const current = visibleChatTranscriptRef.current;
+    if (current.sessionKey === next.sessionKey && current.messages === next.messages) return;
+    visibleChatTranscriptRef.current = next;
+    setVisibleChatTranscript(next);
+  }, []);
+
+  const showLiveChatTranscript = useCallback(() => {
+    const live = liveChatTranscriptRef.current;
+    if (live.sessionKey !== sessionKey) return;
+    applyVisibleChatTranscript(live);
+  }, [applyVisibleChatTranscript, sessionKey]);
+
   const publishChatScrollDebugSnapshot = useCallback(
     (event: string, metrics = chatScrollMetricsRef.current, force = false) => {
       if (!__DEV__) return;
@@ -775,7 +805,9 @@ export default function ChatScreen() {
         event,
         intent: chatScrollPolicyRef.current.intent,
         lastCommandReason: previousSnapshot?.lastCommandReason ?? null,
+        liveMessageCount: liveChatTranscriptRef.current.messages.length,
         offsetY: metrics.offsetY,
+        visibleMessageCount: visibleChatTranscriptRef.current.messages.length,
         viewportHeight: metrics.viewportHeight,
       };
       const commandPrefix = "scrollToEnd:";
@@ -836,13 +868,14 @@ export default function ChatScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      chatInitialLayoutKeyRef.current = sessionId ?? null;
+      chatInitialLayoutKeyRef.current = sessionKey || null;
       chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+      showLiveChatTranscript();
       const interaction = InteractionManager.runAfterInteractions(() => {
         executeChatScrollCommand(chatCommandForNavigationFocus());
       });
       return () => interaction.cancel();
-    }, [executeChatScrollCommand, sessionId]),
+    }, [executeChatScrollCommand, sessionKey, showLiveChatTranscript]),
   );
 
   const handleChatLayout = useCallback(
@@ -852,7 +885,7 @@ export default function ChatScreen() {
         viewportHeight: event.nativeEvent.layout.height,
       };
       publishChatScrollDebugSnapshot("layout");
-      const layoutKey = sessionId ?? "unscoped";
+      const layoutKey = sessionKey || "unscoped";
       if (chatInitialLayoutKeyRef.current !== layoutKey) {
         chatInitialLayoutKeyRef.current = layoutKey;
         executeChatScrollCommand(chatCommandForInitialLayout());
@@ -860,7 +893,7 @@ export default function ChatScreen() {
       }
       executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
     },
-    [executeChatScrollCommand, publishChatScrollDebugSnapshot, sessionId],
+    [executeChatScrollCommand, publishChatScrollDebugSnapshot, sessionKey],
   );
 
   const handleChatContentSizeChange = useCallback(
@@ -889,6 +922,9 @@ export default function ChatScreen() {
         cancelPendingChatScroll();
       }
       chatScrollPolicyRef.current = nextPolicy;
+      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+        showLiveChatTranscript();
+      }
       const transitionEvent =
         previousIntent === nextPolicy.intent
           ? "scroll"
@@ -899,7 +935,7 @@ export default function ChatScreen() {
         previousIntent !== nextPolicy.intent,
       );
     },
-    [cancelPendingChatScroll, publishChatScrollDebugSnapshot],
+    [cancelPendingChatScroll, publishChatScrollDebugSnapshot, showLiveChatTranscript],
   );
 
   useEffect(() => {
@@ -942,6 +978,24 @@ export default function ChatScreen() {
   const allMessages = useMemo<ChatMessage[]>(() => {
     return mergeAcceptedComposerMessages(parsedMessages, acceptedComposerMessages);
   }, [acceptedComposerMessages, parsedMessages]);
+  const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
+    liveMessages: allMessages,
+    sessionKey,
+  });
+
+  useEffect(() => {
+    const live = chatVisibleTranscriptForPinned({
+      liveMessages: allMessages,
+      sessionKey,
+    });
+    liveChatTranscriptRef.current = live;
+    const next = chatVisibleTranscriptForLiveChange(visibleChatTranscriptRef.current, {
+      intent: chatScrollPolicyRef.current.intent,
+      liveMessages: allMessages,
+      sessionKey,
+    });
+    applyVisibleChatTranscript(next);
+  }, [allMessages, applyVisibleChatTranscript, sessionKey]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
@@ -1102,6 +1156,9 @@ export default function ChatScreen() {
     clearLocalInterruptHold(sessionId);
     const baselineUserMessageCount = userMessageCount;
     const baselineMessageCount = allMessages.length;
+    chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+    showLiveChatTranscript();
+    executeChatScrollCommand(chatCommandForNavigationFocus());
     setSendBusy(true);
     setSendError(null);
     const sendStillOwnsActiveComposer = () =>
@@ -2153,7 +2210,7 @@ export default function ChatScreen() {
             ) : (
               <View className="flex-1 bg-background">
                 <AgentChatTranscript
-                  messages={allMessages}
+                  messages={visibleMessages}
                   onContentSizeChange={handleChatContentSizeChange}
                   onLayout={handleChatLayout}
                   onScroll={handleChatScroll}
@@ -2195,6 +2252,9 @@ function ChatScrollDebugOverlay({ snapshot }: { snapshot: ChatScrollDebugSnapsho
       </Text>
       <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
         {`cmd ${snapshot.lastCommandReason ?? "none"}`}
+      </Text>
+      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
+        {`msgs ${snapshot.visibleMessageCount}/${snapshot.liveMessageCount}`}
       </Text>
     </View>
   );
