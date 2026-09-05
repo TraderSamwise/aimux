@@ -50,6 +50,9 @@ interface TranscriptBlock {
 
 export interface ParsedAgentOutputLike {
   blocks?: readonly TranscriptBlock[];
+  parser?: {
+    tool?: string;
+  };
 }
 
 const ATTACHED_FILE_LINE = new RegExp(
@@ -101,6 +104,32 @@ function stripTrailingTerminalChrome(text: string): string {
       .trim();
   }
   return lines.join("\n").trim();
+}
+
+function stripTrailingCodexMessageChrome(text: string): string {
+  const lines = normalizeText(text).split("\n");
+  const chromeStart = lines.findIndex((line) => /^Approaching rate limits$/i.test(line.trim()));
+  if (chromeStart > 0) {
+    return lines.slice(0, chromeStart).join("\n").trim();
+  }
+  return lines.join("\n").trim();
+}
+
+function looksLikeCodexChatFurniture(text: string): boolean {
+  const normalized = normalizeText(text).replace(/\s+/g, " ");
+  if (!normalized) return true;
+  return (
+    /^Ask Codex to do anything \? for shortcuts$/i.test(normalized) ||
+    /^Update available! .* Release notes:/i.test(normalized) ||
+    /^1\. Update now \(runs `npm install -g @openai\/codex`\) 2\. Skip 3\. Skip until next version Press enter to continue$/i.test(
+      normalized,
+    ) ||
+    /^You are in .+ Do you trust the contents of this directory\?/i.test(normalized) ||
+    /^1\. Yes, continue 2\. No, quit Press enter to continue$/i.test(normalized) ||
+    /^1\. Switch to gpt-[\w.-]+ .+ 2\. Keep current model 3\. Keep current model \(never show again\).+ Press enter to confirm or esc to go back$/i.test(
+      normalized,
+    )
+  );
 }
 
 function attachmentKindForMimeType(mimeType?: string): AgentTranscriptAttachmentPart["kind"] | "image" {
@@ -355,6 +384,7 @@ export function messagesFromParsedAgentOutput(
   } = {},
 ): AgentTranscriptMessage[] {
   const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
+  const tool = parsed?.parser?.tool;
   const messages: AgentTranscriptMessage[] = [];
   const labels: AttachmentLabels = { byId: new Map(), nextImage: 1, nextFile: 1 };
   // The same words twice is a legitimate conversation — "yes", "yes" — so a
@@ -366,9 +396,12 @@ export function messagesFromParsedAgentOutput(
     if (type !== "prompt" && type !== "response") continue;
     const raw =
       type === "response"
-        ? stripTrailingTerminalChrome(String(block.text ?? ""))
+        ? tool === "codex"
+          ? stripTrailingCodexMessageChrome(stripTrailingTerminalChrome(String(block.text ?? "")))
+          : stripTrailingTerminalChrome(String(block.text ?? ""))
         : normalizeText(String(block.text ?? ""));
     if (!raw) continue;
+    if (tool === "codex" && looksLikeCodexChatFurniture(raw)) continue;
 
     const role = type === "prompt" ? "user" : "assistant";
     const base = contentId(role, raw);

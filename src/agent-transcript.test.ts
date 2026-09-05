@@ -30,6 +30,70 @@ describe("messagesFromParsedAgentOutput", () => {
     expect(messages[1]!.text).toBe("Published events: 21");
   });
 
+  it("drops Codex startup and chooser furniture from structured chat", () => {
+    const messages = messagesFromParsedAgentOutput({
+      parser: { tool: "codex" },
+      blocks: [
+        { type: "prompt", text: "Ask Codex to do anything\n\n  ? for shortcuts" },
+        {
+          type: "prompt",
+          text:
+            "Update available! 0.150.1 -> 0.153.4\n\n" +
+            "Release notes: https://github.com/openai/codex/releases/latest",
+        },
+        {
+          type: "prompt",
+          text:
+            "1. Update now (runs `npm install -g @openai/codex`)\n" +
+            "  2. Skip\n" +
+            "  3. Skip until next version\n\n" +
+            "  Press enter to continue",
+        },
+        {
+          type: "prompt",
+          text:
+            "You are in /Users/sam/cs/aimux-chat-torture-1788585200\n\n" +
+            "  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection.",
+        },
+        {
+          type: "prompt",
+          text: "1. Yes, continue\n  2. No, quit\n\n  Press enter to continue",
+        },
+      ],
+    });
+
+    expect(messages).toEqual([]);
+  });
+
+  it("strips Codex rate-limit chooser chrome from assistant responses", () => {
+    const messages = messagesFromParsedAgentOutput({
+      parser: { tool: "codex" },
+      blocks: [
+        { type: "prompt", text: "say ack" },
+        {
+          type: "response",
+          text:
+            "ACK_LONG_CODEX_1\n\n\n" +
+            "  Approaching rate limits\n" +
+            "  Switch to gpt-5.6-luna for lower credit usage?",
+        },
+        {
+          type: "prompt",
+          text:
+            "1. Switch to gpt-5.6-luna                 Fast and affordable agentic coding model.\n" +
+            "  2. Keep current model\n" +
+            "  3. Keep current model (never show again)  Hide future rate limit reminders about switching models.\n\n" +
+            "  Press enter to confirm or esc to go back",
+        },
+      ],
+    });
+
+    expect(messages.map((message) => `${message.role}:${message.text}`)).toEqual([
+      "user:say ack",
+      "assistant:ACK_LONG_CODEX_1",
+    ]);
+  });
+
   it("strips terminal completion chrome that leaked into a response block", () => {
     const messages = messagesFromParsedAgentOutput(
       parsed([
