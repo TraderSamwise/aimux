@@ -131,6 +131,7 @@ import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_HORIZONTAL_PADDING = 32;
+const CHAT_SCROLL_RELEASE_DELAY_MS = 80;
 const CHAT_ASSISTANT_BUBBLE_MAX_RATIO = 0.9;
 const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 12.4;
 const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
@@ -602,6 +603,10 @@ export default function ChatScreen() {
   });
   const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
   const chatScrollFrameRef = useRef<number | null>(null);
+  const chatUserScrollActiveRef = useRef(false);
+  const chatMomentumScrollActiveRef = useRef(false);
+  const chatScrollGestureStartMetricsRef = useRef<ChatScrollMetrics | null>(null);
+  const chatScrollReleaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatInitialLayoutKeyRef = useRef<string | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
@@ -755,6 +760,12 @@ export default function ChatScreen() {
     chatScrollFrameRef.current = null;
   }, []);
 
+  const cancelChatScrollReleaseTimeout = useCallback(() => {
+    if (chatScrollReleaseTimeoutRef.current === null) return;
+    clearTimeout(chatScrollReleaseTimeoutRef.current);
+    chatScrollReleaseTimeoutRef.current = null;
+  }, []);
+
   const executeChatScrollCommand = useCallback(
     (command: ChatScrollCommand) => {
       if (command.kind === "none") return;
@@ -764,7 +775,7 @@ export default function ChatScreen() {
         if (
           command.reason !== "initial" &&
           command.reason !== "navigation" &&
-          chatScrollPolicyRef.current.intent !== "pinned"
+          (chatScrollPolicyRef.current.intent !== "pinned" || chatUserScrollActiveRef.current)
         ) {
           return;
         }
@@ -774,17 +785,33 @@ export default function ChatScreen() {
     [cancelPendingChatScroll],
   );
 
-  useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
+  useEffect(
+    () => () => {
+      cancelPendingChatScroll();
+      cancelChatScrollReleaseTimeout();
+    },
+    [cancelChatScrollReleaseTimeout, cancelPendingChatScroll],
+  );
 
   useFocusEffect(
     useCallback(() => {
       chatInitialLayoutKeyRef.current = sessionId ?? null;
+      chatUserScrollActiveRef.current = false;
+      chatMomentumScrollActiveRef.current = false;
+      chatScrollGestureStartMetricsRef.current = null;
+      cancelChatScrollReleaseTimeout();
       chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
       const interaction = InteractionManager.runAfterInteractions(() => {
         executeChatScrollCommand(chatCommandForNavigationFocus());
       });
-      return () => interaction.cancel();
-    }, [executeChatScrollCommand, sessionId]),
+      return () => {
+        interaction.cancel();
+        chatUserScrollActiveRef.current = false;
+        chatMomentumScrollActiveRef.current = false;
+        chatScrollGestureStartMetricsRef.current = null;
+        cancelChatScrollReleaseTimeout();
+      };
+    }, [cancelChatScrollReleaseTimeout, executeChatScrollCommand, sessionId]),
   );
 
   const handleChatLayout = useCallback(
@@ -815,21 +842,118 @@ export default function ChatScreen() {
     [executeChatScrollCommand],
   );
 
-  const handleChatScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const recordChatScrollMetrics = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>): ChatScrollMetrics => {
       const metrics: ChatScrollMetrics = {
         contentHeight: event.nativeEvent.contentSize.height,
         offsetY: event.nativeEvent.contentOffset.y,
         viewportHeight: event.nativeEvent.layoutMeasurement.height,
       };
       chatScrollMetricsRef.current = metrics;
+      return metrics;
+    },
+    [],
+  );
+
+  const applyUserChatScrollPolicy = useCallback(
+    (metrics: ChatScrollMetrics): ChatScrollPolicy => {
       const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
       if (nextPolicy.intent === "reading") {
         cancelPendingChatScroll();
       }
       chatScrollPolicyRef.current = nextPolicy;
+      return nextPolicy;
     },
     [cancelPendingChatScroll],
+  );
+
+  const chatGestureMovedOffset = useCallback((metrics: ChatScrollMetrics): boolean => {
+    const startMetrics = chatScrollGestureStartMetricsRef.current;
+    if (!startMetrics) return true;
+    return Math.abs(metrics.offsetY - startMetrics.offsetY) > 0.5;
+  }, []);
+
+  const releaseChatUserScroll = useCallback(() => {
+    chatUserScrollActiveRef.current = false;
+    chatMomentumScrollActiveRef.current = false;
+    chatScrollGestureStartMetricsRef.current = null;
+    executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current));
+  }, [executeChatScrollCommand]);
+
+  const scheduleChatUserScrollRelease = useCallback(() => {
+    cancelChatScrollReleaseTimeout();
+    chatScrollReleaseTimeoutRef.current = setTimeout(() => {
+      chatScrollReleaseTimeoutRef.current = null;
+      if (!chatMomentumScrollActiveRef.current) {
+        releaseChatUserScroll();
+      }
+    }, CHAT_SCROLL_RELEASE_DELAY_MS);
+  }, [cancelChatScrollReleaseTimeout, releaseChatUserScroll]);
+
+  const handleChatScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const previousMetrics = chatScrollMetricsRef.current;
+      const metrics = recordChatScrollMetrics(event);
+      const webUserScroll =
+        Platform.OS === "web" &&
+        Math.abs(metrics.offsetY - previousMetrics.offsetY) > 0.5 &&
+        Math.abs(metrics.contentHeight - previousMetrics.contentHeight) < 0.5;
+      if (webUserScroll || (chatUserScrollActiveRef.current && chatGestureMovedOffset(metrics))) {
+        applyUserChatScrollPolicy(metrics);
+      }
+    },
+    [applyUserChatScrollPolicy, chatGestureMovedOffset, recordChatScrollMetrics],
+  );
+
+  const handleChatScrollBeginDrag = useCallback(() => {
+    chatUserScrollActiveRef.current = true;
+    chatScrollGestureStartMetricsRef.current = chatScrollMetricsRef.current;
+    cancelChatScrollReleaseTimeout();
+    cancelPendingChatScroll();
+  }, [cancelChatScrollReleaseTimeout, cancelPendingChatScroll]);
+
+  const handleChatScrollEndDrag = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const metrics = recordChatScrollMetrics(event);
+      if (chatGestureMovedOffset(metrics)) {
+        applyUserChatScrollPolicy(metrics);
+      }
+      if (!chatMomentumScrollActiveRef.current) {
+        scheduleChatUserScrollRelease();
+      }
+    },
+    [
+      applyUserChatScrollPolicy,
+      chatGestureMovedOffset,
+      recordChatScrollMetrics,
+      scheduleChatUserScrollRelease,
+    ],
+  );
+
+  const handleChatMomentumScrollBegin = useCallback(() => {
+    chatMomentumScrollActiveRef.current = true;
+    chatUserScrollActiveRef.current = true;
+    chatScrollGestureStartMetricsRef.current ??= chatScrollMetricsRef.current;
+    cancelChatScrollReleaseTimeout();
+    cancelPendingChatScroll();
+  }, [cancelChatScrollReleaseTimeout, cancelPendingChatScroll]);
+
+  const handleChatMomentumScrollEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      cancelChatScrollReleaseTimeout();
+      const metrics = recordChatScrollMetrics(event);
+      if (chatGestureMovedOffset(metrics)) {
+        applyUserChatScrollPolicy(metrics);
+      }
+      releaseChatUserScroll();
+    },
+    [
+      applyUserChatScrollPolicy,
+      cancelChatScrollReleaseTimeout,
+      chatGestureMovedOffset,
+      recordChatScrollMetrics,
+      releaseChatUserScroll,
+    ],
   );
 
   useEffect(() => {
@@ -2086,7 +2210,11 @@ export default function ChatScreen() {
                   messages={allMessages}
                   onContentSizeChange={handleChatContentSizeChange}
                   onLayout={handleChatLayout}
+                  onMomentumScrollBegin={handleChatMomentumScrollBegin}
+                  onMomentumScrollEnd={handleChatMomentumScrollEnd}
                   onScroll={handleChatScroll}
+                  onScrollBeginDrag={handleChatScrollBeginDrag}
+                  onScrollEndDrag={handleChatScrollEndDrag}
                   ref={chatScrollRef}
                   serviceEndpoint={displayServiceEndpoint}
                   dividerWidth={chatDividerWidth}
@@ -2108,11 +2236,26 @@ const AgentChatTranscript = React.forwardRef<
     messages: readonly ChatMessage[];
     onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
     onLayout: (event: LayoutChangeEvent) => void;
+    onMomentumScrollBegin: () => void;
+    onMomentumScrollEnd: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+    onScrollBeginDrag: () => void;
+    onScrollEndDrag: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
     serviceEndpoint: ServiceEndpoint;
   }
 >(function AgentChatTranscript(
-  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
+  {
+    dividerWidth,
+    messages,
+    onContentSizeChange,
+    onLayout,
+    onMomentumScrollBegin,
+    onMomentumScrollEnd,
+    onScroll,
+    onScrollBeginDrag,
+    onScrollEndDrag,
+    serviceEndpoint,
+  },
   ref,
 ) {
   const content =
@@ -2151,7 +2294,11 @@ const AgentChatTranscript = React.forwardRef<
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={onContentSizeChange}
         onLayout={onLayout}
+        onMomentumScrollBegin={onMomentumScrollBegin}
+        onMomentumScrollEnd={onMomentumScrollEnd}
         onScroll={onScroll}
+        onScrollBeginDrag={onScrollBeginDrag}
+        onScrollEndDrag={onScrollEndDrag}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator
       >
@@ -2169,7 +2316,11 @@ const AgentChatTranscript = React.forwardRef<
       keyboardShouldPersistTaps="handled"
       onContentSizeChange={onContentSizeChange}
       onLayout={onLayout}
+      onMomentumScrollBegin={onMomentumScrollBegin}
+      onMomentumScrollEnd={onMomentumScrollEnd}
       onScroll={onScroll}
+      onScrollBeginDrag={onScrollBeginDrag}
+      onScrollEndDrag={onScrollEndDrag}
       scrollEventThrottle={16}
       showsVerticalScrollIndicator
     >
