@@ -739,6 +739,7 @@ export default function ChatScreen() {
   const composerInputScrollEnabled =
     composerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP;
   const composerInputHeight = composerInputHeightForContentHeight(composerInputContentHeight);
+  const composerExtraContentPadding = useSharedValue(0);
   const composerFooterBottomPadding =
     Platform.OS === "web" || keyboardVisible
       ? COMPOSER_FOOTER_VERTICAL_PADDING
@@ -758,6 +759,13 @@ export default function ChatScreen() {
     260,
     Math.floor((width - CHAT_SCROLL_HORIZONTAL_PADDING) * CHAT_ASSISTANT_BUBBLE_MAX_RATIO),
   );
+
+  useEffect(() => {
+    composerExtraContentPadding.value = Math.max(
+      0,
+      composerInputHeight - COMPOSER_INPUT_MIN_HEIGHT,
+    );
+  }, [composerExtraContentPadding, composerInputHeight]);
   const chatDividerWidth = Math.max(
     MIN_CHAT_DIVIDER_WIDTH,
     Math.min(
@@ -2129,6 +2137,7 @@ export default function ChatScreen() {
                   ref={chatScrollRef}
                   serviceEndpoint={displayServiceEndpoint}
                   dividerWidth={chatDividerWidth}
+                  extraContentPadding={composerExtraContentPadding}
                 />
                 {composerFooter}
               </View>
@@ -2144,6 +2153,7 @@ const AgentChatTranscript = React.forwardRef<
   ChatScrollHandle,
   {
     dividerWidth: number;
+    extraContentPadding?: SharedValue<number>;
     messages: readonly ChatMessage[];
     onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
     onLayout: (event: LayoutChangeEvent) => void;
@@ -2151,7 +2161,15 @@ const AgentChatTranscript = React.forwardRef<
     serviceEndpoint: ServiceEndpoint;
   }
 >(function AgentChatTranscript(
-  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
+  {
+    dividerWidth,
+    extraContentPadding,
+    messages,
+    onContentSizeChange,
+    onLayout,
+    onScroll,
+    serviceEndpoint,
+  },
   ref,
 ) {
   const content =
@@ -2185,6 +2203,7 @@ const AgentChatTranscript = React.forwardRef<
         ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
         className="flex-1 bg-background"
         contentContainerStyle={contentContainerStyle}
+        extraContentPadding={extraContentPadding}
         keyboardDismissMode="interactive"
         keyboardLiftBehavior="whenAtEnd"
         keyboardShouldPersistTaps="handled"
