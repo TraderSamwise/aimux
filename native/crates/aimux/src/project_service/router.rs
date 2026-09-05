@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
 
+use super::agent_controls::route_agent_control_request;
 use super::agent_output::route_agent_output_request;
 use super::agents::route_agent_read_request;
 use super::attachments::route_attachment_request;
@@ -134,6 +135,9 @@ pub fn route_project_service_request(
         return response;
     }
     if let Some(response) = route_worktree_read_request(context, method, path) {
+        return response;
+    }
+    if let Some(response) = route_agent_control_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_agent_output_request(context, method, path, body) {
