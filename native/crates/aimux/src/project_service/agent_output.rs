@@ -1,15 +1,25 @@
 use serde_json::{Map, Value, json};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
+use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use crate::tmux::{CapturePaneOptions, capture_pane_argv};
+use crate::tmux::{
+    CapturePaneOptions, TMUX_SEND_TEXT_CHUNK_BYTES, capture_pane_argv, resize_window_argv,
+    send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
+    split_text_for_tmux_send_keys,
+};
 
+use super::attachments::get_attachment_record;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
-use super::http::{parse_optional_integer, query_params, trimmed_query};
+use super::http::{
+    parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
+    trimmed_query,
+};
 use super::router::ProjectServiceRequestContext;
 
 pub const DEFAULT_AGENT_OUTPUT_START_LINE: i64 = -120;
@@ -26,6 +36,8 @@ const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
     "preview",
     "interrupt",
 ];
+
+static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentOutputCaptureWindow {
@@ -49,6 +61,30 @@ pub trait AgentOutputCaptureRuntime {
         window_id: &str,
         options: CapturePaneOptions,
     ) -> Result<String, String>;
+
+    fn resize_window(&mut self, _window_id: &str, _cols: i64, _rows: i64) -> Result<(), String> {
+        Err("live pane resize not supported by this service".into())
+    }
+
+    fn send_text(&mut self, _window_id: &str, _text: &str) -> Result<(), String> {
+        Err("agent input not supported by this service".into())
+    }
+
+    fn send_key(&mut self, _window_id: &str, _key: &str) -> Result<(), String> {
+        Err("agent input not supported by this service".into())
+    }
+
+    fn send_carriage_return(&mut self, _window_id: &str) -> Result<(), String> {
+        Err("agent input not supported by this service".into())
+    }
+
+    fn submit_prompt(&mut self, window_id: &str) -> Result<(), String> {
+        self.send_carriage_return(window_id)
+    }
+
+    fn send_escape(&mut self, _window_id: &str) -> Result<(), String> {
+        Err("agent interrupt not supported by this service".into())
+    }
 }
 
 pub struct SystemAgentOutputCaptureRuntime;
@@ -60,19 +96,55 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         options: CapturePaneOptions,
     ) -> Result<String, String> {
         let argv = capture_pane_argv(window_id, options);
-        let output = Command::new("tmux")
-            .args(argv)
-            .output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            return Err(if error.is_empty() {
-                format!("tmux capture-pane failed for {window_id}")
-            } else {
-                error
-            });
-        }
+        let output = run_tmux_argv(argv, format!("tmux capture-pane failed for {window_id}"))?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn resize_window(&mut self, window_id: &str, cols: i64, rows: i64) -> Result<(), String> {
+        run_tmux_argv(
+            resize_window_argv(window_id, cols, rows),
+            format!("tmux resize-window failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        run_tmux_argv(
+            send_text_argv(window_id, text),
+            format!("tmux send-keys text failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
+        run_tmux_argv(
+            send_key_argv(window_id, key),
+            format!("tmux send-keys {key} failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
+        run_tmux_argv(
+            send_carriage_return_argv(window_id),
+            format!("tmux send carriage return failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn submit_prompt(&mut self, window_id: &str) -> Result<(), String> {
+        spawn_tmux_argv(
+            send_carriage_return_argv(window_id),
+            format!("tmux submit prompt failed for {window_id}"),
+        )
+    }
+
+    fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
+        run_tmux_argv(
+            send_escape_argv(window_id),
+            format!("tmux send escape failed for {window_id}"),
+        )
+        .map(|_| ())
     }
 }
 
@@ -80,25 +152,39 @@ pub fn route_agent_output_request(
     context: &ProjectServiceRequestContext,
     method: &str,
     path: &str,
+    body: Option<&Value>,
 ) -> Option<ProjectServiceDispatchResponse> {
     let mut runtime = SystemAgentOutputCaptureRuntime;
-    route_agent_output_request_with_runtime(context, method, path, &mut runtime)
+    route_agent_output_request_with_runtime(context, method, path, body, &mut runtime)
 }
 
 pub fn route_agent_output_request_with_runtime(
     context: &ProjectServiceRequestContext,
     method: &str,
     path: &str,
+    body: Option<&Value>,
     runtime: &mut impl AgentOutputCaptureRuntime,
 ) -> Option<ProjectServiceDispatchResponse> {
-    if !method.eq_ignore_ascii_case("GET") {
-        return None;
-    }
     let pathname = project_service_pathname(path);
-    if pathname != routes::agents::OUTPUT && pathname != routes::live_pane::OUTPUT {
+    if method.eq_ignore_ascii_case("GET")
+        && (pathname == routes::agents::OUTPUT || pathname == routes::live_pane::OUTPUT)
+    {
+        return Some(read_agent_output_route(context, path, runtime));
+    }
+    if !method.eq_ignore_ascii_case("POST") {
         return None;
     }
-    Some(read_agent_output_route(context, path, runtime))
+    match pathname {
+        routes::live_pane::ATTACH => Some(attach_live_pane_route(context, body, runtime)),
+        routes::live_pane::RESIZE => Some(resize_live_pane_route(context, body, runtime)),
+        routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
+            Some(interrupt_live_pane_route(context, body, runtime))
+        }
+        routes::agents::INPUT | routes::live_pane::INPUT => {
+            Some(input_live_pane_route(context, pathname, body, runtime))
+        }
+        _ => None,
+    }
 }
 
 pub fn bounded_agent_output_start_line(start_line: Option<i64>) -> i64 {
@@ -245,14 +331,30 @@ fn read_agent_output_route(
     if let Err(error) = parse_agent_output_read_purpose(params.get("purpose").map(String::as_str)) {
         return json_error(400, error);
     }
+    match read_agent_output_payload(context, &session_id, start_line, mode, runtime) {
+        Ok(payload) => ProjectServiceDispatchResponse::json(200, payload),
+        Err(response) => *response,
+    }
+}
+
+fn read_agent_output_payload(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    start_line: Option<i64>,
+    mode: AgentOutputResponseMode,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> Result<Value, Box<ProjectServiceDispatchResponse>> {
     let capture_window = agent_output_capture_window(start_line);
     let project_state_dir = context.project_state_dir();
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
-        Err(error) => return json_error(500, error),
+        Err(error) => return Err(Box::new(json_error(500, error))),
     };
-    let Some(window_id) = resolve_session_window_id(&topology, &session_id) else {
-        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    let Some(window_id) = resolve_session_window_id(&topology, session_id) else {
+        return Err(Box::new(json_error(
+            500,
+            format!("Session \"{session_id}\" is not running"),
+        )));
     };
     let output_ansi = match runtime.capture_pane(
         &window_id,
@@ -263,12 +365,12 @@ fn read_agent_output_route(
         },
     ) {
         Ok(output) => output,
-        Err(error) => return json_error(500, error),
+        Err(error) => return Err(Box::new(json_error(500, error))),
     };
     let output = strip_sgr(&output_ansi);
     let metadata = load_metadata_state(&project_state_dir);
     let mut result = Map::new();
-    insert_string(&mut result, "sessionId", &session_id);
+    insert_string(&mut result, "sessionId", session_id);
     insert_string(&mut result, "output", &output);
     insert_string(&mut result, "outputAnsi", &output_ansi);
     insert_number(&mut result, "startLine", capture_window.start_line);
@@ -289,7 +391,7 @@ fn read_agent_output_route(
     );
     if let Some(derived) = metadata
         .sessions
-        .get(&session_id)
+        .get(session_id)
         .and_then(|metadata| metadata.get("derived"))
     {
         for key in ["activity", "activityText", "attention"] {
@@ -309,7 +411,274 @@ fn read_agent_output_route(
             body.insert(key, value);
         }
     }
-    ProjectServiceDispatchResponse::json(200, Value::Object(body))
+    Ok(Value::Object(body))
+}
+
+fn attach_live_pane_route(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let start_line = match body.get("startLine") {
+        None => None,
+        Some(value) => match parse_integer_value(value, "startLine") {
+            Ok(value) => Some(value),
+            Err(error) => return json_error(400, error),
+        },
+    };
+    let capture_window = agent_output_capture_window(start_line);
+    let mut resize = None;
+    if body.get("cols").is_some() || body.get("rows").is_some() {
+        let cols = match body.get("cols") {
+            Some(value) => match parse_positive_integer_value(value, "cols") {
+                Ok(value) => value,
+                Err(error) => return json_error(400, error),
+            },
+            None => return json_error(400, "cols must be an integer"),
+        };
+        let rows = match body.get("rows") {
+            Some(value) => match parse_positive_integer_value(value, "rows") {
+                Ok(value) => value,
+                Err(error) => return json_error(400, error),
+            },
+            None => return json_error(400, "rows must be an integer"),
+        };
+        let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+            return json_error(500, format!("Session \"{session_id}\" is not running"));
+        };
+        if let Err(error) = runtime.resize_window(&window_id, cols, rows) {
+            return json_error(500, error);
+        }
+        resize = Some((cols, rows));
+    }
+    let mut payload = match read_agent_output_payload(
+        context,
+        &session_id,
+        start_line,
+        AgentOutputResponseMode::Full,
+        runtime,
+    ) {
+        Ok(payload) => payload,
+        Err(response) => return *response,
+    };
+    if let Value::Object(map) = &mut payload {
+        let mut stream = Map::new();
+        stream.insert("route".into(), Value::String(routes::EVENTS.to_owned()));
+        stream.insert("sessionId".into(), Value::String(session_id.clone()));
+        insert_number(
+            &mut stream,
+            "startLine",
+            map.get("startLine")
+                .and_then(Value::as_i64)
+                .unwrap_or(capture_window.start_line),
+        );
+        insert_number(
+            &mut stream,
+            "requestedStartLine",
+            map.get("requestedStartLine")
+                .and_then(Value::as_i64)
+                .unwrap_or(capture_window.requested_start_line),
+        );
+        if let Some(end_line) = map
+            .get("endLine")
+            .and_then(Value::as_i64)
+            .or(capture_window.end_line)
+        {
+            insert_number(&mut stream, "endLine", end_line);
+        }
+        insert_number(
+            &mut stream,
+            "captureLineLimit",
+            map.get("captureLineLimit")
+                .and_then(Value::as_i64)
+                .unwrap_or(capture_window.max_lines),
+        );
+        insert_bool(
+            &mut stream,
+            "outputTailOnly",
+            map.get("outputTailOnly")
+                .and_then(Value::as_bool)
+                .unwrap_or(capture_window.tail_only),
+        );
+        insert_bool(
+            &mut stream,
+            "outputStartLineClamped",
+            map.get("outputStartLineClamped")
+                .and_then(Value::as_bool)
+                .unwrap_or(capture_window.clamped),
+        );
+        map.insert("stream".into(), Value::Object(stream));
+        if let Some((cols, rows)) = resize {
+            map.insert("resize".into(), json!({ "cols": cols, "rows": rows }));
+        }
+    }
+    ProjectServiceDispatchResponse::json(200, payload)
+}
+
+fn resize_live_pane_route(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let cols = match body.get("cols") {
+        Some(value) => match parse_positive_integer_value(value, "cols") {
+            Ok(value) => value,
+            Err(error) => return json_error(400, error),
+        },
+        None => return json_error(400, "cols must be an integer"),
+    };
+    let rows = match body.get("rows") {
+        Some(value) => match parse_positive_integer_value(value, "rows") {
+            Ok(value) => value,
+            Err(error) => return json_error(400, error),
+        },
+        None => return json_error(400, "rows must be an integer"),
+    };
+    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    };
+    if let Err(error) = runtime.resize_window(&window_id, cols, rows) {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "sessionId": session_id, "cols": cols, "rows": rows }),
+    )
+}
+
+fn interrupt_live_pane_route(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    };
+    if let Err(error) = runtime.send_escape(&window_id) {
+        return json_error(500, error);
+    }
+    let now = now_iso();
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "accepted": true,
+            "transition": {
+                "operationId": operation_id("agent.interrupt", &session_id),
+                "operation": "agent.interrupt",
+                "targetKind": "agent",
+                "targetId": session_id,
+                "phase": "succeeded",
+                "startedAt": now,
+                "updatedAt": now,
+            }
+        }),
+    )
+}
+
+fn input_live_pane_route(
+    context: &ProjectServiceRequestContext,
+    pathname: &str,
+    body: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let text = body_raw_string(body, "text").unwrap_or_default();
+    let attachment_ids = body
+        .get("attachmentIds")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let remote_actor = remote_actor_from_headers(&context.request_headers);
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Guest)
+    {
+        if pathname != routes::live_pane::INPUT {
+            return json_error(403, "shared guests can only write to their shared session");
+        }
+        if remote_actor
+            .as_ref()
+            .and_then(|actor| actor.share_session_id.as_deref())
+            != Some(session_id.as_str())
+        {
+            return json_error(403, "shared guest cannot access another session");
+        }
+        if text.trim().is_empty() && attachment_ids.is_empty() {
+            return json_error(403, "shared guest input requires text or attachments");
+        }
+    } else if text.trim().is_empty() && attachment_ids.is_empty() {
+        return json_error(400, "text is required");
+    }
+    let mut attachments = Vec::new();
+    for attachment_id in &attachment_ids {
+        let Some(record) = get_attachment_record(
+            context.project_root(),
+            attachment_id,
+            Some(session_id.as_str()),
+        ) else {
+            return json_error(400, format!("attachment not found: {attachment_id}"));
+        };
+        attachments.push(record);
+    }
+    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    };
+    let input_text = match remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Guest)
+        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &text))
+        .or_else(|| shared_chat_body_actor_prompt(body, &text))
+    {
+        Some(value) => value,
+        None => text,
+    };
+    let formatted_text = format_agent_input_with_attachments(&input_text, &attachments);
+    let prompt = normalize_submitted_prompt(&formatted_text);
+    if let Err(error) = send_prompt_to_tmux(runtime, &window_id, &prompt) {
+        return json_error(500, error);
+    }
+    if let Err(error) = runtime.submit_prompt(&window_id) {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "sessionId": session_id, "accepted": true }),
+    )
+}
+
+fn resolve_live_window_id(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+) -> Option<String> {
+    let project_state_dir = context.project_state_dir();
+    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir)).ok()?;
+    resolve_session_window_id(&topology, session_id)
 }
 
 fn resolve_session_window_id(topology: &Value, session_id: &str) -> Option<String> {
@@ -324,8 +693,282 @@ fn resolve_session_window_id(topology: &Value, session_id: &str) -> Option<Strin
         })
 }
 
+fn send_prompt_to_tmux(
+    runtime: &mut impl AgentOutputCaptureRuntime,
+    window_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let mut pending = String::new();
+    for character in text.chars() {
+        match character {
+            '\r' => {
+                flush_tmux_text(runtime, window_id, &mut pending)?;
+                runtime.send_carriage_return(window_id)?;
+            }
+            '\n' => {
+                flush_tmux_text(runtime, window_id, &mut pending)?;
+                runtime.send_key(window_id, "C-j")?;
+            }
+            value => pending.push(value),
+        }
+    }
+    flush_tmux_text(runtime, window_id, &mut pending)
+}
+
+fn flush_tmux_text(
+    runtime: &mut impl AgentOutputCaptureRuntime,
+    window_id: &str,
+    pending: &mut String,
+) -> Result<(), String> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    for chunk in split_text_for_tmux_send_keys(pending, TMUX_SEND_TEXT_CHUNK_BYTES) {
+        runtime.send_text(window_id, &chunk)?;
+    }
+    pending.clear();
+    Ok(())
+}
+
+pub fn normalize_submitted_prompt(data: &str) -> String {
+    let trimmed = data.trim_end_matches(['\r', '\n']);
+    let mut output = String::with_capacity(trimmed.len());
+    let mut whitespace = String::new();
+    let mut whitespace_has_line_break = false;
+    for character in trimmed.chars() {
+        if character.is_whitespace() {
+            if character == '\r' || character == '\n' {
+                whitespace_has_line_break = true;
+            }
+            whitespace.push(character);
+        } else {
+            if !whitespace.is_empty() {
+                if whitespace_has_line_break {
+                    output.push(' ');
+                } else {
+                    output.push_str(&whitespace);
+                }
+                whitespace.clear();
+                whitespace_has_line_break = false;
+            }
+            output.push(character);
+        }
+    }
+    if !whitespace.is_empty() {
+        if whitespace_has_line_break {
+            output.push(' ');
+        } else {
+            output.push_str(&whitespace);
+        }
+    }
+    output
+}
+
+fn remote_actor_from_headers(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Option<RemoteActor> {
+    parse_remote_actor(headers)
+}
+
+fn shared_chat_remote_actor_prompt(actor: &RemoteActor, text: &str) -> Option<String> {
+    shared_chat_actor_prompt(
+        match actor.role {
+            RemoteActorRole::Owner => "owner",
+            RemoteActorRole::Guest => "guest",
+            RemoteActorRole::Operator => "operator",
+        },
+        actor.display_name.as_deref(),
+        actor.email.as_deref(),
+        text,
+    )
+}
+
+fn shared_chat_body_actor_prompt(body: &Value, text: &str) -> Option<String> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    let actor = body.get("sharedChatActor")?.as_object()?;
+    let role = actor.get("role")?.as_str()?;
+    if role != "owner" && role != "guest" {
+        return None;
+    }
+    let has_identity = actor
+        .get("displayName")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+        || actor
+            .get("email")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some();
+    if !has_identity {
+        return None;
+    }
+    shared_chat_actor_prompt(
+        role,
+        actor.get("displayName").and_then(Value::as_str),
+        actor.get("email").and_then(Value::as_str),
+        text,
+    )
+}
+
+fn shared_chat_actor_prompt(
+    role: &str,
+    display_name: Option<&str>,
+    email: Option<&str>,
+    text: &str,
+) -> Option<String> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    if role != "owner" && role != "guest" {
+        return None;
+    }
+    let display_name = display_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let email = email.map(str::trim).filter(|value| !value.is_empty());
+    let fallback = if role == "owner" {
+        "chat owner"
+    } else {
+        "shared guest"
+    };
+    let raw_name = display_name.or(email).unwrap_or(fallback);
+    let name = collapse_whitespace(raw_name)
+        .chars()
+        .take(80)
+        .collect::<String>();
+    Some(format!(
+        "[{}] {}",
+        if name.is_empty() { fallback } else { &name },
+        text.trim()
+    ))
+}
+
+fn format_agent_input_with_attachments(text: &str, attachments: &[Value]) -> String {
+    if attachments.is_empty() {
+        return text.to_owned();
+    }
+    let body = if text.trim().is_empty() {
+        "Please review the attached file(s).".to_owned()
+    } else {
+        text.trim().to_owned()
+    };
+    let attachment_lines = attachments
+        .iter()
+        .map(|attachment| {
+            format!(
+                "- {} ({}, {} bytes): {}",
+                string_field(attachment, "filename").unwrap_or("attachment"),
+                string_field(attachment, "mimeType").unwrap_or("application/octet-stream"),
+                attachment
+                    .get("sizeBytes")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                string_field(attachment, "contentPath").unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{body}\n\nAttached files:\n{attachment_lines}")
+}
+
+fn collapse_whitespace(value: &str) -> String {
+    let mut output = String::new();
+    let mut pending_space = false;
+    for character in value.chars() {
+        if character.is_whitespace() {
+            pending_space = true;
+        } else {
+            if pending_space && !output.is_empty() {
+                output.push(' ');
+            }
+            output.push(character);
+            pending_space = false;
+        }
+    }
+    output
+}
+
+fn run_tmux_argv(
+    argv: Vec<String>,
+    fallback_error: String,
+) -> Result<std::process::Output, String> {
+    let output = Command::new("tmux")
+        .args(argv)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if error.is_empty() {
+            fallback_error
+        } else {
+            error
+        });
+    }
+    Ok(output)
+}
+
+fn spawn_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
+    std::thread::Builder::new()
+        .name("aimux-submit-prompt".into())
+        .spawn(move || {
+            let _ = Command::new("tmux").args(argv).status();
+        })
+        .map(|_| ())
+        .map_err(|error| {
+            let message = error.to_string();
+            if message.is_empty() {
+                fallback_error
+            } else {
+                message
+            }
+        })
+}
+
+fn operation_id(operation: &str, target_id: &str) -> String {
+    let sequence = OPERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!(
+        "{operation}:{target_id}:{}-{nanos}-{sequence}",
+        std::process::id()
+    )
+}
+
 fn json_error(status: u16, error: impl Into<String>) -> ProjectServiceDispatchResponse {
     ProjectServiceDispatchResponse::json(status, json!({ "ok": false, "error": error.into() }))
+}
+
+fn body_raw_string(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+fn body_trimmed_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_owned)
+}
+
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
 }
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

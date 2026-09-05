@@ -133,7 +133,7 @@ fn get_attachment_for_display(
     id: &str,
     session_id: Option<&str>,
 ) -> Option<Value> {
-    let record = get_attachment_record(project_root, id)?;
+    let record = get_attachment_record(project_root, id, None)?;
     if let Some(session_id) = session_id
         && string_field(&record, "sessionId").is_some_and(|owner| owner != session_id)
     {
@@ -142,7 +142,11 @@ fn get_attachment_for_display(
     Some(record)
 }
 
-fn get_attachment_record(project_root: impl AsRef<Path>, id: &str) -> Option<Value> {
+pub fn get_attachment_record(
+    project_root: impl AsRef<Path>,
+    id: &str,
+    session_id: Option<&str>,
+) -> Option<Value> {
     let normalized_id = id.trim();
     if normalized_id.is_empty() || !is_valid_attachment_id(normalized_id) {
         return None;
@@ -154,6 +158,11 @@ fn get_attachment_record(project_root: impl AsRef<Path>, id: &str) -> Option<Val
     let parsed = serde_json::from_str::<Value>(&fs::read_to_string(metadata_path).ok()?).ok()?;
     let content_path = string_field(&parsed, "contentPath")?;
     if !Path::new(content_path).exists() {
+        return None;
+    }
+    if let Some(session_id) = session_id
+        && string_field(&parsed, "sessionId") != Some(session_id)
+    {
         return None;
     }
     Some(parsed)

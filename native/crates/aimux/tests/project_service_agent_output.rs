@@ -3,7 +3,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
     agent_output_capture_window, bounded_agent_output_end_line, bounded_agent_output_start_line,
-    parse_agent_output_read_purpose, parse_agent_output_response_mode,
+    normalize_submitted_prompt, parse_agent_output_read_purpose, parse_agent_output_response_mode,
     project_agent_output_payload, route_agent_output_request_with_runtime, strip_sgr,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
@@ -21,6 +21,17 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 struct FakeCaptureRuntime {
     output: String,
     calls: Vec<(String, CapturePaneOptions)>,
+    actions: Vec<FakeRuntimeAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FakeRuntimeAction {
+    Capture(String),
+    Resize(String, i64, i64),
+    Text(String, String),
+    Key(String, String),
+    CarriageReturn(String),
+    Escape(String),
 }
 
 impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
@@ -30,7 +41,41 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         options: CapturePaneOptions,
     ) -> Result<String, String> {
         self.calls.push((window_id.to_owned(), options));
+        self.actions
+            .push(FakeRuntimeAction::Capture(window_id.to_owned()));
         Ok(self.output.clone())
+    }
+
+    fn resize_window(&mut self, window_id: &str, cols: i64, rows: i64) -> Result<(), String> {
+        self.actions
+            .push(FakeRuntimeAction::Resize(window_id.to_owned(), cols, rows));
+        Ok(())
+    }
+
+    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.actions.push(FakeRuntimeAction::Text(
+            window_id.to_owned(),
+            text.to_owned(),
+        ));
+        Ok(())
+    }
+
+    fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
+        self.actions
+            .push(FakeRuntimeAction::Key(window_id.to_owned(), key.to_owned()));
+        Ok(())
+    }
+
+    fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
+        self.actions
+            .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
+        Ok(())
+    }
+
+    fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
+        self.actions
+            .push(FakeRuntimeAction::Escape(window_id.to_owned()));
+        Ok(())
     }
 }
 
@@ -124,6 +169,7 @@ fn output_routes_validate_query_params_before_touching_tmux() {
         &context,
         "GET",
         routes::agents::OUTPUT,
+        None,
         &mut runtime,
     )
     .unwrap();
@@ -137,6 +183,7 @@ fn output_routes_validate_query_params_before_touching_tmux() {
         &context,
         "GET",
         "/agents/output?sessionId=codex-1&startLine=10.5",
+        None,
         &mut runtime,
     )
     .unwrap();
@@ -156,6 +203,7 @@ fn output_routes_validate_query_params_before_touching_tmux() {
         &context,
         "GET",
         "/live-pane/output?sessionId=codex-1&purpose=forever",
+        None,
         &mut runtime,
     )
     .unwrap();
@@ -174,12 +222,14 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
     let mut runtime = FakeCaptureRuntime {
         output: "\u{1b}[32mhello\u{1b}[0m\n".into(),
         calls: Vec::new(),
+        actions: Vec::new(),
     };
 
     let response = route_agent_output_request_with_runtime(
         &context,
         "GET",
         "/live-pane/output?sessionId=codex-1&startLine=-999999&purpose=terminal",
+        None,
         &mut runtime,
     )
     .unwrap();
@@ -221,12 +271,14 @@ fn output_route_omits_terminal_fields_in_chat_mode_and_bounds_forward_reads() {
     let mut runtime = FakeCaptureRuntime {
         output: "\u{1b}[31mnew line\u{1b}[0m".into(),
         calls: Vec::new(),
+        actions: Vec::new(),
     };
 
     let response = route_agent_output_request_with_runtime(
         &context,
         "GET",
         "/agents/output?sessionId=codex-1&startLine=25&mode=chat",
+        None,
         &mut runtime,
     )
     .unwrap();
@@ -262,6 +314,7 @@ fn output_route_rejects_offline_sessions_without_capture() {
         &context,
         "GET",
         "/agents/output?sessionId=codex-offline",
+        None,
         &mut runtime,
     )
     .unwrap();
@@ -273,6 +326,365 @@ fn output_route_rejects_offline_sessions_without_capture() {
     );
     assert!(runtime.calls.is_empty());
     cleanup(project);
+}
+
+#[test]
+fn live_pane_attach_resizes_before_full_output_and_returns_stream_metadata() {
+    let project = temp_project("attach");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "\u{1b}[32mhello\u{1b}[0m".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::ATTACH,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "startLine": 10,
+            "cols": 120,
+            "rows": 40
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["sessionId"], "codex-1");
+    assert_eq!(response.body["output"], "hello");
+    assert_eq!(response.body["resize"], json!({ "cols": 120, "rows": 40 }));
+    assert_eq!(response.body["stream"]["route"], routes::EVENTS);
+    assert_eq!(response.body["stream"]["sessionId"], "codex-1");
+    assert_eq!(response.body["stream"]["startLine"], 10);
+    assert_eq!(response.body["stream"]["requestedStartLine"], 10);
+    assert_eq!(response.body["stream"]["endLine"], 2009);
+    assert_eq!(response.body["stream"]["captureLineLimit"], 2000);
+    assert_eq!(response.body["stream"]["outputTailOnly"], false);
+    assert_eq!(response.body["stream"]["outputStartLineClamped"], false);
+    assert_eq!(
+        runtime.actions,
+        vec![
+            FakeRuntimeAction::Resize("@1".into(), 120, 40),
+            FakeRuntimeAction::Capture("@1".into())
+        ]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn live_pane_attach_omits_stream_end_line_for_tail_reads() {
+    let project = temp_project("attach-tail");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "tail".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::ATTACH,
+        Some(&json!({ "sessionId": "codex-1" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["stream"]["startLine"], -120);
+    assert!(response.body["stream"].get("endLine").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn live_pane_mutation_routes_validate_before_touching_tmux() {
+    let project = temp_project("mutations-validation");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let attach_partial_resize = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::ATTACH,
+        Some(&json!({ "sessionId": "codex-1", "cols": 80 })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(attach_partial_resize.status, 400);
+    assert_eq!(
+        attach_partial_resize.body["error"],
+        "rows must be an integer"
+    );
+
+    let bad_resize = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::RESIZE,
+        Some(&json!({ "sessionId": "codex-1", "cols": 0, "rows": 24 })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(bad_resize.status, 400);
+    assert_eq!(bad_resize.body["error"], "cols must be an integer >= 1");
+
+    let empty_input = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "   " })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(empty_input.status, 400);
+    assert_eq!(empty_input.body["error"], "text is required");
+
+    let attachment_input = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "attachmentIds": ["att_1"] })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(attachment_input.status, 400);
+    assert_eq!(
+        attachment_input.body["error"],
+        "attachment not found: att_1"
+    );
+    assert!(runtime.actions.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn shared_guest_input_is_limited_to_live_pane_shared_session() {
+    let project = temp_project("guest-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_request_headers([
+            ("x-aimux-actor-role", "guest"),
+            ("x-aimux-actor-display-name", "Ada Guest"),
+            ("x-aimux-share-session-id", "codex-1"),
+        ]);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let rejected_agents_route = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "hi" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(rejected_agents_route.status, 403);
+    assert_eq!(
+        rejected_agents_route.body["error"],
+        "shared guests can only write to their shared session"
+    );
+
+    let rejected_session = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({ "sessionId": "codex-offline", "text": "hi" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(rejected_session.status, 403);
+    assert_eq!(
+        rejected_session.body["error"],
+        "shared guest cannot access another session"
+    );
+
+    let accepted = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "hi" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(accepted.status, 200);
+    assert_eq!(
+        runtime.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "[Ada Guest] hi".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn input_formats_session_bound_attachments_into_submitted_prompt() {
+    let project = temp_project("attachment-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    write_attachment(
+        &project,
+        "att_notes",
+        "codex-1",
+        "notes.md",
+        "text/markdown",
+        42,
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "text": "Review this",
+            "attachmentIds": ["att_notes"]
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let content_path = project
+        .join(".aimux")
+        .join("attachments")
+        .join("att_notes.md");
+    assert_eq!(
+        runtime.actions,
+        vec![
+            FakeRuntimeAction::Text(
+                "@1".into(),
+                format!(
+                    "Review this Attached files: - notes.md (text/markdown, 42 bytes): {}",
+                    content_path.display()
+                )
+            ),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn body_shared_chat_actor_requires_identity_before_prefixing() {
+    let project = temp_project("body-actor");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "text": "hello",
+            "sharedChatActor": { "role": "owner" }
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        runtime.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "hello".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
+    let project = temp_project("mutations");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let resize = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::RESIZE,
+        Some(&json!({ "sessionId": "codex-1", "cols": 100, "rows": 32 })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(resize.status, 200);
+    assert_eq!(
+        resize.body,
+        json!({ "ok": true, "sessionId": "codex-1", "cols": 100, "rows": 32 })
+    );
+
+    let interrupt = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INTERRUPT,
+        Some(&json!({ "sessionId": "codex-1" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(interrupt.status, 200);
+    assert_eq!(interrupt.body["ok"], true);
+    assert_eq!(interrupt.body["accepted"], true);
+    assert_eq!(interrupt.body["transition"]["operation"], "agent.interrupt");
+    assert_eq!(interrupt.body["transition"]["targetId"], "codex-1");
+    assert_eq!(interrupt.body["transition"]["phase"], "succeeded");
+
+    let input = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "text": "line one\nline two\n",
+            "sharedChatActor": { "role": "guest", "displayName": "  Shared   User  " }
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(input.status, 200);
+    assert_eq!(
+        input.body,
+        json!({ "ok": true, "sessionId": "codex-1", "accepted": true })
+    );
+    assert_eq!(
+        runtime.actions,
+        vec![
+            FakeRuntimeAction::Resize("@1".into(), 100, 32),
+            FakeRuntimeAction::Escape("@1".into()),
+            FakeRuntimeAction::Text("@1".into(), "[Shared User] line one line two".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn prompt_normalization_matches_submitted_tmux_prompt_contract() {
+    assert_eq!(
+        normalize_submitted_prompt("Aimux task\n\nRun:\n  aimux task show t1\n"),
+        "Aimux task Run: aimux task show t1"
+    );
+    assert_eq!(
+        normalize_submitted_prompt("  keep  spacing  "),
+        "  keep  spacing  "
+    );
+    assert_eq!(normalize_submitted_prompt("a  \n  b"), "a b");
+    assert_eq!(normalize_submitted_prompt("single line"), "single line");
 }
 
 fn write_state(state_dir: &PathBuf) {
@@ -298,6 +710,41 @@ fn write_state(state_dir: &PathBuf) {
                 }),
             )]),
         },
+    )
+    .unwrap();
+}
+
+fn write_attachment(
+    project: &std::path::Path,
+    id: &str,
+    session_id: &str,
+    filename: &str,
+    mime_type: &str,
+    size_bytes: i64,
+) {
+    let attachments_dir = project.join(".aimux").join("attachments");
+    create_dir_all(&attachments_dir).unwrap();
+    let extension = std::path::Path::new(filename)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    let content_path = attachments_dir.join(format!("{id}{extension}"));
+    write(&content_path, b"attachment").unwrap();
+    write(
+        attachments_dir.join(format!("{id}.json")),
+        serde_json::to_string(&json!({
+            "id": id,
+            "kind": "file",
+            "filename": filename,
+            "mimeType": mime_type,
+            "sizeBytes": size_bytes,
+            "contentPath": content_path,
+            "sessionId": session_id,
+            "createdAt": "2026-09-05T00:00:00.000Z",
+            "source": "upload"
+        }))
+        .unwrap(),
     )
     .unwrap();
 }

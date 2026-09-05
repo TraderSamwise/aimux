@@ -136,7 +136,7 @@ pub fn route_project_service_request(
     if let Some(response) = route_worktree_read_request(context, method, path) {
         return response;
     }
-    if let Some(response) = route_agent_output_request(context, method, path) {
+    if let Some(response) = route_agent_output_request(context, method, path, body) {
         return response;
     }
     if let Some(response) = route_desktop_state_request(context, method, path) {
