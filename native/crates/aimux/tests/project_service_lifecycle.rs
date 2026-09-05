@@ -463,6 +463,136 @@ fn teammate_create_initial_task_requires_prompt_or_body() {
 }
 
 #[test]
+fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
+    let project = temp_project("teammate-stop");
+    let state_dir = project.join("state");
+    write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::STOP_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-parent",
+            "teammateSessionId": "codex-child"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["parentSessionId"], "codex-parent");
+    assert_eq!(response.body["teammateSessionId"], "codex-child");
+    assert_eq!(response.body["sessionId"], "codex-child");
+    assert_eq!(response.body["status"], "offline");
+    assert_eq!(response.body["transition"]["operation"], "agent.stop");
+    assert_eq!(runtime.killed, vec!["@child"]);
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-child")["status"],
+        "offline"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn teammate_resume_routes_through_agent_resume_with_parent_metadata() {
+    let project = temp_project("teammate-resume");
+    let state_dir = project.join("state");
+    write_teammate_lifecycle_topology(&state_dir, "offline", Some("backend-child"));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-parent",
+            "teammateSessionId": "codex-child"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["parentSessionId"], "codex-parent");
+    assert_eq!(response.body["teammateSessionId"], "codex-child");
+    assert_eq!(response.body["sessionId"], "codex-child");
+    assert_eq!(response.body["status"], "running");
+    assert_eq!(response.body["transition"]["operation"], "agent.resume");
+    assert_eq!(runtime.created.len(), 1);
+    cleanup(project);
+}
+
+#[test]
+fn teammate_kill_routes_through_agent_kill_with_parent_metadata() {
+    let project = temp_project("teammate-kill");
+    let state_dir = project.join("state");
+    write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::KILL_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-parent",
+            "teammateSessionId": "codex-child"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["parentSessionId"], "codex-parent");
+    assert_eq!(response.body["teammateSessionId"], "codex-child");
+    assert_eq!(response.body["status"], "graveyard");
+    assert_eq!(response.body["previousStatus"], "running");
+    assert_eq!(response.body["transition"]["operation"], "agent.kill");
+    assert_eq!(runtime.killed, vec!["@child"]);
+    cleanup(project);
+}
+
+#[test]
+fn teammate_resurrect_routes_through_graveyard_resurrect_with_parent_metadata() {
+    let project = temp_project("teammate-resurrect");
+    let state_dir = project.join("state");
+    write_teammate_lifecycle_topology(&state_dir, "graveyard", Some("backend-child"));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESURRECT_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-parent",
+            "teammateSessionId": "codex-child"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["parentSessionId"], "codex-parent");
+    assert_eq!(response.body["teammateSessionId"], "codex-child");
+    assert_eq!(response.body["sessionId"], "codex-child");
+    assert_eq!(response.body["status"], "offline");
+    assert_eq!(
+        response.body["transition"]["operation"],
+        "graveyard.agent.resurrect"
+    );
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-child")["status"],
+        "offline"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn agent_fork_creates_handoff_thread_and_native_fork_launch() {
     let project = temp_project("agent-fork");
     write_project_tool_config(&project);
@@ -2371,6 +2501,69 @@ fn write_teammate_parent_topology(state_dir: &PathBuf) {
         "sessions": [
             { "id": "codex-parent", "nodeId": "node-parent", "tool": "codex", "command": "codex", "status": "running", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "codex-child", "nodeId": "node-child", "tool": "codex", "command": "codex", "status": "running", "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent" }, "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_teammate_lifecycle_topology(
+    state_dir: &PathBuf,
+    teammate_status: &str,
+    backend_session_id: Option<&str>,
+) {
+    let mut teammate = json!({
+        "id": "codex-child",
+        "nodeId": "node-child",
+        "tool": "codex",
+        "toolConfigKey": "codex",
+        "command": "codex",
+        "args": [],
+        "status": teammate_status,
+        "team": {
+            "teamId": "team-codex-parent",
+            "parentSessionId": "codex-parent",
+            "role": "reviewer"
+        },
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+    });
+    if let Some(backend_session_id) = backend_session_id {
+        teammate["backendSessionId"] = json!(backend_session_id);
+    }
+    let bindings = if teammate_status == "running" {
+        json!([{
+            "id": "tmux:codex-child",
+            "nodeId": "node-child",
+            "tmuxSession": "aimux",
+            "tmuxWindowId": "@child",
+            "tmuxWindowIndex": 3,
+            "tmuxWindowName": "codex",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }])
+    } else {
+        json!([])
+    };
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [
+            { "id": "node-parent", "rigId": "rig-1", "logicalId": "codex-parent", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-child", "rigId": "rig-1", "logicalId": "codex-child", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": bindings,
+        "sessions": [
+            { "id": "codex-parent", "nodeId": "node-parent", "tool": "codex", "toolConfigKey": "codex", "command": "codex", "args": [], "status": "running", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            teammate
         ],
         "services": [],
         "worktrees": [],

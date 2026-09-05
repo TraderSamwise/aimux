@@ -11,8 +11,8 @@ use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
 use crate::paths::{PathResolver, compute_project_id};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
-    read_runtime_topology, runtime_topology_path, topology_session_to_session_state,
-    update_runtime_topology,
+    list_topology_session_states, read_runtime_topology, runtime_topology_path,
+    topology_session_to_session_state, update_runtime_topology,
 };
 use crate::session_bootstrap::{
     build_codex_migration_continuity_preamble, build_fork_preamble, build_session_preamble,
@@ -29,7 +29,9 @@ use crate::tmux::{
 };
 use crate::tool_hooks::{codex_launch_hook_args, inject_claude_hook_args, install_codex_hooks};
 
-use super::agents::{resolve_direct_teammates, topology_desktop_session_list};
+use super::agents::{
+    resolve_direct_teammates, select_direct_teammates, topology_desktop_session_list,
+};
 use super::coordination_mutations::derive_runtime_exchange_indexes;
 use super::coordination_mutations::route_coordination_mutation_request;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -169,6 +171,12 @@ pub fn route_lifecycle_request_with_runtime(
         routes::agents::CREATE_TEAMMATE => {
             Some(route_agent_create_teammate(context, body, runtime))
         }
+        routes::agents::STOP_TEAMMATE => Some(route_agent_stop_teammate(context, body, runtime)),
+        routes::agents::RESUME_TEAMMATE => {
+            Some(route_agent_resume_teammate(context, body, runtime))
+        }
+        routes::agents::KILL_TEAMMATE => Some(route_agent_kill_teammate(context, body, runtime)),
+        routes::agents::RESURRECT_TEAMMATE => Some(route_agent_resurrect_teammate(context, body)),
         routes::agents::RECORD_BACKEND_SESSION => Some(route_record_backend_session(context, body)),
         routes::services::CREATE => Some(route_service_create(context, body, runtime)),
         routes::services::RESUME => Some(route_service_resume(context, body, runtime)),
@@ -717,6 +725,168 @@ fn route_agent_create_teammate(
         );
     }
     lifecycle_response(response, "agent.spawn", "agent", Some(&result.session_id))
+}
+
+fn route_agent_stop_teammate(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let resolved = match resolve_lifecycle_direct_teammate(context, body, false) {
+        Ok(resolved) => resolved,
+        Err(response) => return *response,
+    };
+    let mut response = route_agent_stop(
+        context,
+        &json!({ "sessionId": resolved.teammate_session_id }),
+        runtime,
+    );
+    attach_teammate_response_ids(
+        &mut response,
+        &resolved.parent_session_id,
+        &resolved.teammate_session_id,
+    );
+    response
+}
+
+fn route_agent_resume_teammate(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let resolved = match resolve_lifecycle_direct_teammate(context, body, false) {
+        Ok(resolved) => resolved,
+        Err(response) => return *response,
+    };
+    let mut response = resume_agent_session(
+        context,
+        &resolved.teammate_session_id,
+        runtime,
+        "agent.resume",
+    );
+    attach_teammate_response_ids(
+        &mut response,
+        &resolved.parent_session_id,
+        &resolved.teammate_session_id,
+    );
+    response
+}
+
+fn route_agent_kill_teammate(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let resolved = match resolve_lifecycle_direct_teammate(context, body, false) {
+        Ok(resolved) => resolved,
+        Err(response) => return *response,
+    };
+    let mut response = route_agent_kill(
+        context,
+        &json!({ "sessionId": resolved.teammate_session_id }),
+        runtime,
+    );
+    attach_teammate_response_ids(
+        &mut response,
+        &resolved.parent_session_id,
+        &resolved.teammate_session_id,
+    );
+    response
+}
+
+fn route_agent_resurrect_teammate(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let resolved = match resolve_lifecycle_direct_teammate(context, body, true) {
+        Ok(resolved) => resolved,
+        Err(response) => return *response,
+    };
+    let mut response = route_graveyard_agent_resurrect(
+        context,
+        &json!({ "sessionId": resolved.teammate_session_id }),
+    );
+    attach_teammate_response_ids(
+        &mut response,
+        &resolved.parent_session_id,
+        &resolved.teammate_session_id,
+    );
+    response
+}
+
+struct ResolvedLifecycleTeammate {
+    parent_session_id: String,
+    teammate_session_id: String,
+}
+
+fn resolve_lifecycle_direct_teammate(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    graveyard: bool,
+) -> Result<ResolvedLifecycleTeammate, Box<ProjectServiceDispatchResponse>> {
+    let parent_session_id = trimmed_string(body.get("parentSessionId")).unwrap_or_default();
+    let teammate_session_id = trimmed_string(body.get("teammateSessionId")).unwrap_or_default();
+    if teammate_session_id.is_empty() {
+        return Err(Box::new(json_error(400, "teammateSessionId is required")));
+    }
+    let project_state_dir = context.project_state_dir();
+    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+        .map_err(|error| Box::new(json_error(500, error)))?;
+    let metadata_state = load_metadata_state(&project_state_dir);
+    let config = load_config_for_project(context.project_root());
+    let tools = config
+        .get("tools")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let active_sessions =
+        topology_desktop_session_list(&topology, &metadata_state.sessions, &tools);
+    let resolved = resolve_direct_teammates(&active_sessions, &parent_session_id)
+        .map_err(|error| Box::new(json_error(error.status, error.error)))?;
+    let teammate = if graveyard {
+        let graveyard_sessions = list_topology_session_states(&topology, Some(&["graveyard"]));
+        select_direct_teammates(&graveyard_sessions, &parent_session_id)
+            .into_iter()
+            .find(|session| string_field(session, "id") == teammate_session_id)
+    } else {
+        resolved
+            .teammates
+            .into_iter()
+            .find(|session| string_field(session, "id") == teammate_session_id)
+    };
+    if teammate.is_none() {
+        let error = if graveyard {
+            format!(
+                "graveyard teammate \"{teammate_session_id}\" is not attached to parent \"{parent_session_id}\""
+            )
+        } else {
+            format!(
+                "teammate \"{teammate_session_id}\" is not attached to parent \"{parent_session_id}\""
+            )
+        };
+        return Err(Box::new(json_error(404, error)));
+    }
+    Ok(ResolvedLifecycleTeammate {
+        parent_session_id: string_field(&resolved.parent, "id"),
+        teammate_session_id,
+    })
+}
+
+fn attach_teammate_response_ids(
+    response: &mut ProjectServiceDispatchResponse,
+    parent_session_id: &str,
+    teammate_session_id: &str,
+) {
+    object_insert_mut(
+        &mut response.body,
+        "parentSessionId",
+        Value::String(parent_session_id.to_owned()),
+    );
+    object_insert_mut(
+        &mut response.body,
+        "teammateSessionId",
+        Value::String(teammate_session_id.to_owned()),
+    );
 }
 
 fn route_agent_fork(
