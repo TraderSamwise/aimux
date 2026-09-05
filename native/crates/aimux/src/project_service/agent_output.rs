@@ -20,6 +20,7 @@ use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
     trimmed_query,
 };
+use super::metadata::update_session_metadata;
 use super::router::ProjectServiceRequestContext;
 
 pub const DEFAULT_AGENT_OUTPUT_START_LINE: i64 = -120;
@@ -572,6 +573,7 @@ fn interrupt_live_pane_route(
     if let Err(error) = runtime.send_escape(&window_id) {
         return json_error(500, error);
     }
+    mark_session_interrupted(context, &session_id);
     let now = now_iso();
     ProjectServiceDispatchResponse::json(
         200,
@@ -679,6 +681,26 @@ fn resolve_live_window_id(
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir)).ok()?;
     resolve_session_window_id(&topology, session_id)
+}
+
+fn mark_session_interrupted(context: &ProjectServiceRequestContext, session_id: &str) {
+    let now = now_iso();
+    let _ = update_session_metadata(context.project_state_dir(), session_id, |current| {
+        let mut current_object = object_value(current);
+        let mut derived = current_object
+            .get("derived")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let was_running = derived.get("activity").and_then(Value::as_str) == Some("running");
+        derived.insert("activity".into(), Value::String("interrupted".into()));
+        derived.insert("attention".into(), Value::String("normal".into()));
+        if was_running {
+            derived.insert("becameIdleAt".into(), Value::String(now));
+        }
+        current_object.insert("derived".into(), Value::Object(derived));
+        Value::Object(current_object)
+    });
 }
 
 fn resolve_session_window_id(topology: &Value, session_id: &str) -> Option<String> {
@@ -1000,5 +1022,12 @@ fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
         && !value.is_null()
     {
         map.insert(key.into(), value);
+    }
+}
+
+fn object_value(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(map) => map,
+        _ => Map::new(),
     }
 }

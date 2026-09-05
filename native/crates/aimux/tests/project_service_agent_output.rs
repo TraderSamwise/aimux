@@ -1,4 +1,4 @@
-use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
@@ -643,6 +643,11 @@ fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
     assert_eq!(interrupt.body["transition"]["operation"], "agent.interrupt");
     assert_eq!(interrupt.body["transition"]["targetId"], "codex-1");
     assert_eq!(interrupt.body["transition"]["phase"], "succeeded");
+    let metadata = load_metadata_state(&state_dir);
+    let derived = metadata.sessions["codex-1"]["derived"].as_object().unwrap();
+    assert_eq!(derived["activity"], "interrupted");
+    assert_eq!(derived["attention"], "normal");
+    assert!(derived.get("becameIdleAt").is_some());
 
     let input = route_agent_output_request_with_runtime(
         &context,
