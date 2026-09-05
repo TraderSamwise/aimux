@@ -33,6 +33,7 @@ use super::coordination_mutations::derive_runtime_exchange_indexes;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
+use super::worktree_cache_cleanup::run_worktree_cache_cleanup;
 
 static LIFECYCLE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -168,6 +169,9 @@ pub fn route_lifecycle_request_with_runtime(
             Some(route_graveyard_agent_resurrect(context, body))
         }
         routes::worktree_actions::CREATE => Some(route_worktree_create(context, body, runtime)),
+        routes::worktree_actions::CACHE_CLEANUP => {
+            Some(route_worktree_cache_cleanup(context, body, runtime))
+        }
         routes::worktree_actions::GRAVEYARD => {
             Some(route_worktree_graveyard(context, body, runtime))
         }
@@ -2589,6 +2593,24 @@ fn route_worktree_create(
             let _ = upsert_created_worktree_topology(&topology_input, "error", Some(&error));
             json_error(500, error)
         }
+    }
+}
+
+fn route_worktree_cache_cleanup(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    let main_repo = match runtime.find_main_repo(&project_root) {
+        Ok(main_repo) => main_repo,
+        Err(error) => return json_error(500, error),
+    };
+    match run_worktree_cache_cleanup(context, body, &main_repo) {
+        Ok(result) => {
+            ProjectServiceDispatchResponse::json(200, json!({ "ok": true, "result": result }))
+        }
+        Err(error) => json_error(500, error),
     }
 }
 

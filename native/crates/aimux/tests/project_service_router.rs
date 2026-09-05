@@ -37,7 +37,7 @@ fn router_keeps_unported_routes_explicit() {
     let response = route_project_service_request(
         &context,
         "POST",
-        routes::worktree_actions::CACHE_CLEANUP,
+        routes::agents::RESTORE_PREVIOUS,
         Some(&json!({})),
     );
     assert_eq!(response.status, 501);
@@ -47,7 +47,7 @@ fn router_keeps_unported_routes_explicit() {
             "ok": false,
             "error": "project service route not ported",
             "method": "POST",
-            "path": "/worktrees/cache-cleanup",
+            "path": "/agents/restore-previous",
             "group": "lifecycle",
         })
     );

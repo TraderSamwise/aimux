@@ -1390,6 +1390,125 @@ fn worktree_create_failure_persists_error_topology_entry() {
 }
 
 #[test]
+fn worktree_cache_cleanup_dry_run_plans_targets_and_skips_protected_worktrees() {
+    let project = temp_project("worktree-cache-cleanup-plan");
+    std::fs::create_dir_all(&project).unwrap();
+    let state_dir = project.join("state");
+    let cold = project.join(".aimux/worktrees/cold");
+    let active = project.join(".aimux/worktrees/active");
+    let outside = project.join("manual");
+    std::fs::create_dir_all(cold.join("node_modules/pkg")).unwrap();
+    std::fs::create_dir_all(cold.join("apps/web/.next/cache")).unwrap();
+    std::fs::create_dir_all(cold.join(".git/node_modules")).unwrap();
+    std::fs::create_dir_all(active.join("node_modules")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(cold.join("node_modules/pkg/index.js"), "module").unwrap();
+    std::fs::write(cold.join("apps/web/.next/cache/blob"), "cache").unwrap();
+    std::fs::write(cold.join(".git/node_modules/ignored"), "ignored").unwrap();
+    std::fs::write(active.join("node_modules/live.js"), "live").unwrap();
+    write_cache_cleanup_topology(&state_dir, &project, &cold, &active, &outside);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CACHE_CLEANUP,
+        Some(&json!({ "dryRun": true, "includeActive": false })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let result = &response.body["result"];
+    assert_eq!(result["dryRun"], true);
+    assert_eq!(result["plan"]["dryRun"], true);
+    assert_eq!(result["plan"]["includeActive"], false);
+    assert_eq!(
+        result["plan"]["cacheDirNames"],
+        json!(["node_modules", ".next"])
+    );
+    let mut relative_paths = result["plan"]["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|target| target["relativePath"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    relative_paths.sort();
+    assert_eq!(relative_paths, vec!["apps/web/.next", "node_modules"]);
+    assert!(
+        result["plan"]["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|target| !target["path"].as_str().unwrap().contains("/.git/"))
+    );
+    let skipped = result["plan"]["skipped"].as_array().unwrap();
+    assert!(
+        skipped
+            .iter()
+            .any(|entry| entry["reason"] == "main-worktree")
+    );
+    assert!(
+        skipped
+            .iter()
+            .any(|entry| entry["reason"] == "outside-aimux-worktrees")
+    );
+    let active_skip = skipped
+        .iter()
+        .find(|entry| entry["reason"] == "active-runtime")
+        .unwrap();
+    assert_eq!(active_skip["sessions"], json!(["agent-active"]));
+    assert_eq!(active_skip["services"], json!(["svc-active"]));
+    assert!(
+        result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["status"] == "dry-run")
+    );
+    assert!(cold.join("node_modules").exists());
+    assert!(cold.join("apps/web/.next").exists());
+    cleanup(project);
+}
+
+#[test]
+fn worktree_cache_cleanup_apply_removes_validated_cache_targets() {
+    let project = temp_project("worktree-cache-cleanup-apply");
+    std::fs::create_dir_all(&project).unwrap();
+    let state_dir = project.join("state");
+    let cold = project.join(".aimux/worktrees/cold");
+    std::fs::create_dir_all(cold.join("node_modules/pkg")).unwrap();
+    std::fs::write(cold.join("node_modules/pkg/index.js"), "module").unwrap();
+    write_cache_cleanup_single_worktree_topology(&state_dir, &project, &cold);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CACHE_CLEANUP,
+        Some(&json!({ "dryRun": false, "includeActive": true })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let result = &response.body["result"];
+    assert_eq!(result["dryRun"], false);
+    assert_eq!(result["results"][0]["status"], "removed");
+    assert!(result["reclaimedBytes"].as_u64().unwrap() > 0);
+    assert!(!cold.join("node_modules").exists());
+    cleanup(project);
+}
+
+#[test]
 fn worktree_graveyard_stops_services_and_moves_topology_entry() {
     let project = temp_project("worktree-graveyard");
     let state_dir = project.join("state");
@@ -1771,6 +1890,96 @@ fn write_worktree_create_topology(state_dir: &PathBuf, worktrees: Value) {
         "sessions": [],
         "services": [],
         "worktrees": worktrees,
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_cache_cleanup_topology(
+    state_dir: &PathBuf,
+    project: &Path,
+    cold: &Path,
+    active: &Path,
+    outside: &Path,
+) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "aimux",
+            "projectRoot": project.to_string_lossy().as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "nodes": [
+            { "id": "node-active", "rigId": "rig-1", "logicalId": "agent-active", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "service-active", "rigId": "rig-1", "logicalId": "svc-active", "role": "service", "runtime": "service", "toolConfigKey": "service", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [],
+        "sessions": [{
+            "id": "agent-active",
+            "nodeId": "node-active",
+            "tool": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "running",
+            "worktreePath": active.to_string_lossy().as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "services": [{
+            "id": "svc-active",
+            "rigId": "rig-1",
+            "nodeId": "service-active",
+            "status": "running",
+            "command": "zsh",
+            "args": ["-lc", "yarn dev"],
+            "worktreePath": active.to_string_lossy().as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "path": project.to_string_lossy().as_ref(), "name": "main", "status": "active", "branch": "master", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "cold", "rigId": "rig-1", "path": cold.to_string_lossy().as_ref(), "name": "cold", "status": "active", "branch": "cold", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "active", "rigId": "rig-1", "path": active.to_string_lossy().as_ref(), "name": "active", "status": "active", "branch": "active", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "outside", "rigId": "rig-1", "path": outside.to_string_lossy().as_ref(), "name": "outside", "status": "active", "branch": "outside", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_cache_cleanup_single_worktree_topology(state_dir: &PathBuf, project: &Path, cold: &Path) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "aimux",
+            "projectRoot": project.to_string_lossy().as_ref(),
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        "worktrees": [
+            { "id": "cold", "rigId": "rig-1", "path": cold.to_string_lossy().as_ref(), "name": "cold", "status": "active", "branch": "cold", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
         "worktreeGraveyard": [],
         "teamRoles": [],
         "remoteClients": [],
