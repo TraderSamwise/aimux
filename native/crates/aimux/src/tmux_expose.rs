@@ -21,11 +21,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const EXPOSE_HTTP_TIMEOUT_MS: u64 = 4_000;
 pub const EXPOSE_CLIENT_TTL_MS: &str = "10000";
 const CAPTURE_LINES: i64 = 40;
+const ITEM_RELOAD_EVERY_TICKS: u64 = 5;
 const GAP: i64 = 1;
 const MIN_TILE_WIDTH: i64 = 30;
 const MIN_TILE_HEIGHT: i64 = 5;
@@ -180,6 +181,99 @@ pub trait ExposeTmuxCapture {
     fn capture_target(&mut self, item: &Value) -> Result<String, String>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExposeInputEvent {
+    Data(usize),
+    Timeout,
+    End,
+    Error,
+}
+
+pub trait ExposeInputSource {
+    fn read_timeout(&mut self, buffer: &mut [u8], timeout: Duration) -> ExposeInputEvent;
+}
+
+struct BlockingExposeInput<'a, R: Read> {
+    inner: &'a mut R,
+}
+
+impl<R: Read> ExposeInputSource for BlockingExposeInput<'_, R> {
+    fn read_timeout(&mut self, buffer: &mut [u8], _timeout: Duration) -> ExposeInputEvent {
+        match self.inner.read(buffer) {
+            Ok(0) => ExposeInputEvent::End,
+            Ok(count) => ExposeInputEvent::Data(count),
+            Err(_) => ExposeInputEvent::Error,
+        }
+    }
+}
+
+#[cfg(unix)]
+struct StdinPollingInput {
+    stdin: std::io::Stdin,
+}
+
+#[cfg(unix)]
+impl Default for StdinPollingInput {
+    fn default() -> Self {
+        Self {
+            stdin: std::io::stdin(),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ExposeInputSource for StdinPollingInput {
+    fn read_timeout(&mut self, buffer: &mut [u8], timeout: Duration) -> ExposeInputEvent {
+        let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+        let mut fd = libc::pollfd {
+            fd: libc::STDIN_FILENO,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut fd, 1, timeout_ms) };
+        if ready == 0 {
+            return ExposeInputEvent::Timeout;
+        }
+        if ready < 0 {
+            return if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                ExposeInputEvent::Timeout
+            } else {
+                ExposeInputEvent::Error
+            };
+        }
+        match self.stdin.read(buffer) {
+            Ok(0) => ExposeInputEvent::End,
+            Ok(count) => ExposeInputEvent::Data(count),
+            Err(_) => ExposeInputEvent::Error,
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct StdinPollingInput {
+    stdin: std::io::Stdin,
+}
+
+#[cfg(not(unix))]
+impl Default for StdinPollingInput {
+    fn default() -> Self {
+        Self {
+            stdin: std::io::stdin(),
+        }
+    }
+}
+
+#[cfg(not(unix))]
+impl ExposeInputSource for StdinPollingInput {
+    fn read_timeout(&mut self, buffer: &mut [u8], _timeout: Duration) -> ExposeInputEvent {
+        match self.stdin.read(buffer) {
+            Ok(0) => ExposeInputEvent::End,
+            Ok(count) => ExposeInputEvent::Data(count),
+            Err(_) => ExposeInputEvent::Error,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct SystemExposeHttpClient;
 
@@ -313,6 +407,16 @@ pub fn match_client_size(listing: &str, client_tty: &str) -> String {
         }
     }
     String::new()
+}
+
+pub fn refresh_delay_ms(count: usize) -> u64 {
+    if count > 8 {
+        return 1000;
+    }
+    if count > 4 {
+        return 500;
+    }
+    250
 }
 
 pub fn expose_preview_footer_crop_rows(visible_line_count: i64) -> i64 {
@@ -674,15 +778,9 @@ pub fn tmux_expose_options_from_socket_header(
 pub fn run_tmux_expose(options: TmuxExposeOptions) -> i32 {
     let mut client = SystemExposeHttpClient;
     let mut capture = SystemExposeTmuxCapture::default();
-    let mut input = std::io::stdin();
+    let mut input = StdinPollingInput::default();
     let mut output = std::io::stdout();
-    run_tmux_expose_with_client_and_capture(
-        options,
-        &mut input,
-        &mut output,
-        &mut client,
-        &mut capture,
-    )
+    run_tmux_expose_with_input_source(options, &mut input, &mut output, &mut client, &mut capture)
 }
 
 pub fn run_tmux_expose_with_client(
@@ -698,6 +796,17 @@ pub fn run_tmux_expose_with_client(
 pub fn run_tmux_expose_with_client_and_capture(
     options: TmuxExposeOptions,
     input: &mut impl Read,
+    output: &mut impl Write,
+    client: &mut impl ExposeHttpClient,
+    capture: &mut impl ExposeTmuxCapture,
+) -> i32 {
+    let mut input = BlockingExposeInput { inner: input };
+    run_tmux_expose_with_input_source(options, &mut input, output, client, capture)
+}
+
+pub fn run_tmux_expose_with_input_source(
+    options: TmuxExposeOptions,
+    input: &mut impl ExposeInputSource,
     output: &mut impl Write,
     client: &mut impl ExposeHttpClient,
     capture: &mut impl ExposeTmuxCapture,
@@ -735,12 +844,7 @@ pub fn run_tmux_expose_with_client_and_capture(
             client,
         ) {
             Ok(view) => {
-                write_hot_expose_scope_view(
-                    &options.project_state_dir,
-                    hot_snapshot_key_for_scope(&options, scope),
-                    view.clone(),
-                    None,
-                );
+                write_loaded_hot_snapshot(&options, scope, &view);
                 view
             }
             Err(error) => {
@@ -751,9 +855,10 @@ pub fn run_tmux_expose_with_client_and_capture(
     };
     let mut sort_mode = read_expose_ui_state(&options.project_state_dir).sort_mode;
     let mut items = order_items(&view, &options.project_root, sort_mode);
-    let mut index = 0_usize;
+    let mut index = selected_or_current_index(&items, None, options.current_window_id.as_deref());
     let mut leader_pending = false;
     let mut captures = seed_preview_snapshots(&items);
+    let mut refresh_tick = 0_u64;
     let mut layout =
         render_grid_expose(output, &view, &items, &captures, index, &options, sort_mode)
             .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
@@ -763,10 +868,51 @@ pub fn run_tmux_expose_with_client_and_capture(
     }
     let mut buffer = [0_u8; 8192];
     loop {
-        let count = match input.read(&mut buffer) {
-            Ok(0) => return finish_plain_expose(output, 0),
-            Ok(count) => count,
-            Err(_) => return finish_plain_expose(output, 1),
+        let count = match input.read_timeout(
+            &mut buffer,
+            Duration::from_millis(refresh_delay_ms(items.len())),
+        ) {
+            ExposeInputEvent::End => return finish_plain_expose(output, 0),
+            ExposeInputEvent::Error => return finish_plain_expose(output, 1),
+            ExposeInputEvent::Timeout => {
+                refresh_tick += 1;
+                let reloaded = refresh_tick >= ITEM_RELOAD_EVERY_TICKS;
+                let mut changed = false;
+                if reloaded {
+                    refresh_tick = 0;
+                    let selected_window_id = item_window_id(items.get(index)).map(str::to_owned);
+                    if let Ok(next_view) = load_expose_scope_items_with(
+                        scope,
+                        &context,
+                        &options.project_state_dir,
+                        &deps,
+                        client,
+                    ) {
+                        view = next_view;
+                        view_stale = false;
+                        write_loaded_hot_snapshot(&options, scope, &view);
+                        items = order_items(&view, &options.project_root, sort_mode);
+                        captures = seed_preview_snapshots(&items);
+                        index = selected_or_current_index(
+                            &items,
+                            selected_window_id.as_deref(),
+                            options.current_window_id.as_deref(),
+                        );
+                        changed = true;
+                    }
+                }
+                if refresh_captures(&items, &mut captures, capture) {
+                    changed = true;
+                }
+                if changed {
+                    layout = render_grid_expose(
+                        output, &view, &items, &captures, index, &options, sort_mode,
+                    )
+                    .unwrap_or(layout);
+                }
+                continue;
+            }
+            ExposeInputEvent::Data(count) => count,
         };
         for key in parse_key_events(&buffer[..count]) {
             if matches!(
@@ -811,6 +957,7 @@ pub fn run_tmux_expose_with_client_and_capture(
             }
             if key == ExposeKey::Char('g') {
                 scope = next_expose_scope(scope);
+                let selected_window_id = item_window_id(items.get(index)).map(str::to_owned);
                 if let Some(hot_view) = read_hot_expose_scope_view(
                     &options.project_state_dir,
                     &hot_snapshot_key_for_scope(&options, scope),
@@ -833,15 +980,14 @@ pub fn run_tmux_expose_with_client_and_capture(
                 ) {
                     view = next_view;
                     view_stale = false;
-                    write_hot_expose_scope_view(
-                        &options.project_state_dir,
-                        hot_snapshot_key_for_scope(&options, scope),
-                        view.clone(),
-                        None,
-                    );
+                    write_loaded_hot_snapshot(&options, scope, &view);
                     items = order_items(&view, &options.project_root, sort_mode);
                     captures = seed_preview_snapshots(&items);
-                    index = index.min(items.len().saturating_sub(1));
+                    index = selected_or_current_index(
+                        &items,
+                        selected_window_id.as_deref(),
+                        options.current_window_id.as_deref(),
+                    );
                     let _ = refresh_captures(&items, &mut captures, capture);
                     layout = render_grid_expose(
                         output, &view, &items, &captures, index, &options, sort_mode,
@@ -895,12 +1041,7 @@ pub fn run_tmux_expose_with_client_and_capture(
                     ) {
                         view = next_view;
                         view_stale = false;
-                        write_hot_expose_scope_view(
-                            &options.project_state_dir,
-                            hot_snapshot_key_for_scope(&options, scope),
-                            view.clone(),
-                            None,
-                        );
+                        write_loaded_hot_snapshot(&options, scope, &view);
                         items = order_items(&view, &options.project_root, sort_mode);
                         captures = seed_preview_snapshots(&items);
                         let _ = refresh_captures(&items, &mut captures, capture);
@@ -1254,6 +1395,36 @@ fn focus_or_select(
         return true;
     }
     focus_expose_item_with(item, context, &options.project_state_dir, deps, client).unwrap_or(false)
+}
+
+fn write_loaded_hot_snapshot(
+    options: &TmuxExposeOptions,
+    scope: ExposeScope,
+    view: &ExposeScopeView,
+) {
+    write_hot_expose_scope_view(
+        &options.project_state_dir,
+        hot_snapshot_key_for_scope(options, scope),
+        view.clone(),
+        None,
+    );
+}
+
+fn selected_or_current_index(
+    items: &[Value],
+    selected_window_id: Option<&str>,
+    current_window_id: Option<&str>,
+) -> usize {
+    selected_window_id
+        .and_then(|window_id| find_window_index(items, window_id))
+        .or_else(|| current_window_id.and_then(|window_id| find_window_index(items, window_id)))
+        .unwrap_or(0)
+}
+
+fn find_window_index(items: &[Value], window_id: &str) -> Option<usize> {
+    items
+        .iter()
+        .position(|item| item_window_id(Some(item)) == Some(window_id))
 }
 
 fn hot_snapshot_key_for_scope(

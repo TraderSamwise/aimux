@@ -2,11 +2,12 @@ use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::core_command_transport::DaemonHttpMethod;
 use aimux::project_api_contract::routes;
 use aimux::tmux_expose::{
-    EXPOSE_HTTP_TIMEOUT_MS, ExposeConfig, ExposeHttpClient, ExposeHttpRequest, ExposeScope,
-    ExposeScopeView, ExposeSortMode, ExposeSublabel, ExposeTmuxCapture, ExposeUiState,
-    FastControlContext, LoadExposeScopeDeps, focus_expose_item_with, initial_expose_scope,
-    load_expose_scope_items_with, load_overseer_expose_item_with, next_expose_scope,
-    parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client_and_capture,
+    EXPOSE_HTTP_TIMEOUT_MS, ExposeConfig, ExposeHttpClient, ExposeHttpRequest, ExposeInputEvent,
+    ExposeInputSource, ExposeScope, ExposeScopeView, ExposeSortMode, ExposeSublabel,
+    ExposeTmuxCapture, ExposeUiState, FastControlContext, LoadExposeScopeDeps,
+    focus_expose_item_with, initial_expose_scope, load_expose_scope_items_with,
+    load_overseer_expose_item_with, next_expose_scope, parse_expose_args, read_expose_ui_state,
+    run_tmux_expose_with_client_and_capture, run_tmux_expose_with_input_source,
     tmux_expose_options_from_socket_header, write_expose_ui_state, write_selected_window,
 };
 use aimux::tmux_expose_hot_snapshot::{
@@ -32,6 +33,17 @@ struct FakeCapture {
     calls: Vec<String>,
 }
 
+#[derive(Debug)]
+struct ScriptedInput {
+    events: VecDeque<ScriptedInputEvent>,
+}
+
+#[derive(Debug)]
+enum ScriptedInputEvent {
+    Bytes(Vec<u8>),
+    Timeout,
+}
+
 impl Default for FakeCapture {
     fn default() -> Self {
         Self {
@@ -46,6 +58,32 @@ impl FakeCapture {
         Self {
             responses: values.into_iter().collect(),
             calls: Vec::new(),
+        }
+    }
+}
+
+impl ScriptedInput {
+    fn new(events: impl IntoIterator<Item = ScriptedInputEvent>) -> Self {
+        Self {
+            events: events.into_iter().collect(),
+        }
+    }
+}
+
+impl ExposeInputSource for ScriptedInput {
+    fn read_timeout(
+        &mut self,
+        buffer: &mut [u8],
+        _timeout: std::time::Duration,
+    ) -> ExposeInputEvent {
+        match self.events.pop_front() {
+            None => ExposeInputEvent::End,
+            Some(ScriptedInputEvent::Timeout) => ExposeInputEvent::Timeout,
+            Some(ScriptedInputEvent::Bytes(bytes)) => {
+                let count = bytes.len().min(buffer.len());
+                buffer[..count].copy_from_slice(&bytes[..count]);
+                ExposeInputEvent::Data(count)
+            }
         }
     }
 }
@@ -757,6 +795,109 @@ fn runner_writes_zoomed_project_items_to_hot_snapshot_cache() {
     .expect("project snapshot");
     assert_eq!(cached.scope, ExposeScope::Project);
     assert_eq!(cached.items.len(), 1);
+    assert_eq!(cached.items[0]["target"]["windowId"], "@2");
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_refreshes_live_captures_on_timeout_tick() {
+    let state_dir = temp_dir("runner-refresh-capture");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [hot_item("@1", "warm preview line\n")]
+    })]);
+    let mut capture = FakeCapture::with_responses([
+        Ok("first live line\n".into()),
+        Ok("second live line\n".into()),
+    ]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_input_source(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8_lossy(&output);
+    assert!(rendered.contains("warm preview line"));
+    assert!(rendered.contains("first live line"));
+    assert!(rendered.contains("second live line"));
+    assert_eq!(capture.calls, vec!["@1", "@1"]);
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_reloads_items_every_fifth_timeout_tick() {
+    let state_dir = temp_dir("runner-refresh-reload");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([
+        json!({
+            "ok": true,
+            "items": [hot_item("@1", "initial preview line\n")]
+        }),
+        json!({
+            "ok": true,
+            "items": [hot_item("@2", "reloaded preview line\n")]
+        }),
+    ]);
+    let mut capture = FakeCapture::with_responses([
+        Err("tmux unavailable".into()),
+        Err("tmux unavailable".into()),
+        Err("tmux unavailable".into()),
+        Err("tmux unavailable".into()),
+        Err("tmux unavailable".into()),
+        Err("tmux unavailable".into()),
+    ]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_input_source(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8_lossy(&output);
+    assert!(rendered.contains("initial preview line"));
+    assert!(rendered.contains("reloaded preview line"));
+    assert_eq!(client.requests.len(), 2);
+    let cached = read_hot_expose_scope_view(
+        &state_dir,
+        &HotExposeScopeKey {
+            project_root: "/repo".into(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+    )
+    .expect("reloaded snapshot");
     assert_eq!(cached.items[0]["target"]["windowId"], "@2");
     cleanup(state_dir);
 }
