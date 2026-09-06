@@ -115,6 +115,17 @@ Priority fixture groups:
   project/worktree/agent/service topology projection captured by running
   TypeScript `runtime-brand` and `openrig-topology` helpers.
 
+## CLI
+
+- `cli/agent-id.json`: CLI agent identity payload and text renderer behavior
+  captured by running TypeScript `cli/agent-id` helpers.
+- `cli/agent-list.json`: CLI agent inventory flat and worktree-grouped text
+  renderer behavior captured by running TypeScript `cli/agent-list` helpers.
+- `cli/attachment.json`: CLI attachment MIME and relay URL helper behavior
+  captured by running TypeScript `cli/attachment` helpers.
+- `cli/team.json`: CLI team payload and text renderer behavior captured by
+  running TypeScript `cli/team` helpers.
+
 ## Agent Output
 
 - `agent-display/labels.json`: app generated-label detection, tool-name
