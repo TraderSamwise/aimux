@@ -327,6 +327,9 @@ Priority fixture groups:
 
 ## Hosted
 
+- `hosted/audit.json`: hosted audit JSONL append, prompt-body side file,
+  pending sidecar visibility/recovery, retention pruning, and rotated-file
+  pruning behavior captured by running TypeScript hosted-audit helpers.
 - `hosted/auth.json`: hosted trusted-header stripping, bearer-token parsing,
   and live/missing/unknown/revoked token authentication behavior captured by
   running TypeScript hosted-auth helpers, with generated principal identities

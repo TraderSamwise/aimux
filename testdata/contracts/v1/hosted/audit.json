@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "source": "src/full/hosted-audit.test.ts",
+  "generatedBy": "scripts/capture-hosted-audit-contract.mjs",
+  "description": "Hosted audit JSONL append, prompt-body side file, pending sidecar visibility/recovery, retention pruning, and rotated-file pruning behavior captured by running TypeScript hosted-audit helpers.",
+  "cases": [
+    {
+      "id": "hosted-audit-001",
+      "name": "writes one JSONL record per call, 0600",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "append-jsonl-mode" },
+      "output": { "count": 2, "firstPrincipalId": "prn_a", "secondStatus": 403, "mode": 384 },
+      "inputSha256": "e1e2ce4be8a02b1dcadb4555ddf7a8d3e2976ebcf86e98065afe711aac611664"
+    },
+    {
+      "id": "hosted-audit-002",
+      "name": "keeps the prompt hash and omits the text when bodies are not audited",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "prompt-hash-no-text" },
+      "output": {
+        "promptHash": "cced8cb94faab1bfa7ecd0ebe173b4f580e1359cd7c5dc24b8aee61789c5f307",
+        "expectedHash": "cced8cb94faab1bfa7ecd0ebe173b4f580e1359cd7c5dc24b8aee61789c5f307",
+        "promptRef": null,
+        "rawContainsText": false
+      },
+      "inputSha256": "2aa6bff886616b8afdf31f84c04ea2be2a52783e374cf961dc0611dd8dc6e530"
+    },
+    {
+      "id": "hosted-audit-003",
+      "name": "keeps bodies in their own file, so a flood cannot rotate out the records",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "prompt-body-side-file" },
+      "output": { "auditContainsText": false, "promptText": "what did we take on Friday", "promptMode": 384 },
+      "inputSha256": "6b44d4011d9dfa0c6c0b4a5e9e1b3ad8e21a35fbe993c1987f075654bac3ce22"
+    },
+    {
+      "id": "hosted-audit-004",
+      "name": "never throws when the log cannot be written",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "append-never-throws" },
+      "output": { "threw": false },
+      "inputSha256": "9dfd7db3ec2462a4179d7615d96b86e721241517c8607dfa5aa06ae4f8806f8d"
+    },
+    {
+      "id": "hosted-audit-005",
+      "name": "is visible to a tail before the prune folds it in",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "pending-visible-to-tail" },
+      "output": ["in the live file", "arrived during a prune"],
+      "inputSha256": "3ce4832dff8ff71dd141bd14232b970cefc91b26a94a4b19a8aa274d4897aa2b"
+    },
+    {
+      "id": "hosted-audit-006",
+      "name": "folds pending records into the live file and then removes the sidecar",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "fold-pending" },
+      "output": { "containsPending": true, "containsLive": true, "pendingExists": false, "stagedExists": false },
+      "inputSha256": "e134861f56622b261b8c23e37382f080c42ec28be4f09b6202c477d556669a9d"
+    },
+    {
+      "id": "hosted-audit-007",
+      "name": "recovers records staged by a prune that died before writing them",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "recover-staged" },
+      "output": { "rawContains": true, "stagedExists": false },
+      "inputSha256": "dd38409bd1f5f0a6da90be9deaf7f4d5278b06298b84718b8d6373336352781c"
+    },
+    {
+      "id": "hosted-audit-008",
+      "name": "leaves a fresh sidecar alone while recovering a staged one",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "staged-and-fresh-pending" },
+      "output": { "afterFirst": { "rawContainsStaged": true, "pendingExists": true }, "rawContainsNewPending": true },
+      "inputSha256": "4be164f905de7285bd42b941b110e3ce061c9d872097a4e106f53d57b679d1bd"
+    },
+    {
+      "id": "hosted-audit-009",
+      "name": "is never rotated, because nothing would ever read a rotated sidecar back",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "pending-not-rotated" },
+      "output": { "sizeGreaterThanLimit": true, "rotatedSidecarExists": false },
+      "inputSha256": "c1e15f4dbb2c825d64502f98b2b09258a1fcb95549066589f1632268d5f7d934"
+    },
+    {
+      "id": "hosted-audit-010",
+      "name": "drops expired pending records on the retention window",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "drop-expired-pending" },
+      "output": { "rawContainsExpired": false },
+      "inputSha256": "4e3cda95ac5f03d617b0c181f7236122714f541338fd51da0b7af9249ef36144"
+    },
+    {
+      "id": "hosted-audit-011",
+      "name": "drops expired records from the live log, not just rotations",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "drop-expired-live" },
+      "output": { "count": 1, "detail": "recent", "rawContainsAncient": false },
+      "inputSha256": "13324bc50305ee2353f1743944e63d3af22cca090d1977ebde0de4f4e57a40e7"
+    },
+    {
+      "id": "hosted-audit-012",
+      "name": "prunes prompt bodies on the same window as the records",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "prune-prompts" },
+      "output": { "hasOld": false, "newText": "recent", "rawContainsAncient": false },
+      "inputSha256": "1c5a6d3169b89bd7017e7190ea933c24026014bf0518dacd0272ecb30a1e42e3"
+    },
+    {
+      "id": "hosted-audit-013",
+      "name": "removes rotated files past the retention window and keeps fresh ones",
+      "source": "src/full/hosted-audit.test.ts",
+      "api": "hosted-audit",
+      "input": { "scenario": "rotated-retention" },
+      "output": { "oldExists": false, "newExists": true, "liveExists": true },
+      "inputSha256": "638d8fe1923321a34358d9b6a521fcd1d6f435353a90c9d8d3a20bc3d8c413b8"
+    }
+  ]
+}
