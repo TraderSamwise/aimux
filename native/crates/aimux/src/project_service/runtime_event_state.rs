@@ -182,7 +182,17 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
 }
 
 fn is_agent_output_event_kind(kind: &str) -> bool {
-    kind != "prompt" && kind != "task_assigned"
+    matches!(
+        kind,
+        "response"
+            | "task_done"
+            | "task_failed"
+            | "needs_input"
+            | "blocked"
+            | "interrupted"
+            | "notify"
+            | "status"
+    )
 }
 
 fn increment_unseen(current: i64, suppress_unseen: bool) -> i64 {

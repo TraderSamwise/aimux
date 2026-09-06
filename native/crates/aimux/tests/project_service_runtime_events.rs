@@ -327,6 +327,45 @@ fn runtime_event_normalizes_history_and_tracks_output_timestamp() {
 }
 
 #[test]
+fn runtime_event_unknown_kind_updates_history_without_output_timestamp() {
+    let project = temp_project("unknown-kind-history");
+    let state_dir = project.join("state");
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "running",
+                "attention": "normal",
+                "unseenCount": 2,
+                "lastOutputAt": "2026-01-01T00:00:00.000Z"
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+
+    let response = route_runtime_event(
+        &state_dir,
+        "codex-1",
+        json!({
+            "kind": "custom_control",
+            "message": "metadata only",
+            "ts": "2026-01-01T00:00:10.000Z"
+        }),
+    )
+    .expect("event route");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["lastOutputAt"], "2026-01-01T00:00:00.000Z");
+    assert_eq!(derived["lastEvent"]["kind"], "custom_control");
+    assert_eq!(derived["events"].as_array().expect("events").len(), 1);
+    cleanup(project);
+}
+
+#[test]
 fn runtime_event_records_focused_alerts_as_read() {
     let project = temp_project("focused-alert");
     let state_dir = project.join("state");
