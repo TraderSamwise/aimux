@@ -15,6 +15,7 @@ use crate::daemon::expose::{
     DaemonExposeFocusRuntime, SystemDaemonExposeFocusRuntime, expose_focus_route,
     expose_items_route, open_target_for_client,
 };
+use crate::daemon::http::DaemonResponseBody;
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
@@ -61,7 +62,7 @@ use crate::tmux::{
     TmuxTarget, is_tmux_client_session_for_host, kill_session_argv, project_session,
 };
 use anyhow::{Context, Result};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Formatter};
 use std::path::{Path, PathBuf};
@@ -70,6 +71,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+const OVERSEER_INPUT_READY_TIMEOUT_MS: u64 = 15_000;
 
 pub struct RealDaemonRuntime {
     resolver: PathResolver,
@@ -123,10 +126,6 @@ impl RealDaemonRuntime {
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
         }
-    }
-
-    fn unported(&self, feature: &str) -> String {
-        format!("{feature} is not yet ported to the native daemon runtime")
     }
 
     fn resolve_project_root_value(&self, value: &str) -> String {
@@ -193,6 +192,65 @@ impl RealDaemonRuntime {
                 502,
                 format!("Error: {error}"),
             )),
+        }
+    }
+
+    fn project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<(String, Value), CoreCommandFailure> {
+        match self.request_project_service_json(project, route_path, body, timeout_ms) {
+            ProjectServiceJsonResult::Ok { project_root, json } => Ok((project_root, json)),
+            ProjectServiceJsonResult::Err { response } => Err(core_failure_from_response(response)),
+        }
+    }
+
+    fn read_project_agents(
+        &mut self,
+        project_root: &str,
+    ) -> Result<Vec<Value>, CoreCommandFailure> {
+        let (_, json) =
+            self.project_service_json(project_root, project_routes::agents::LIST, None, None)?;
+        let Some(agents) = json.get("agents").and_then(Value::as_array) else {
+            return Err(CoreCommandFailure {
+                status: 502,
+                error: "project service returned invalid agent list response".to_owned(),
+            });
+        };
+        Ok(agents
+            .iter()
+            .filter(|agent| agent_id(agent).is_some())
+            .cloned()
+            .collect())
+    }
+
+    fn wait_for_project_agent_input(
+        &mut self,
+        project_root: &str,
+        session_id: &str,
+    ) -> Result<Value, CoreCommandFailure> {
+        let deadline = current_unix_millis() + u128::from(OVERSEER_INPUT_READY_TIMEOUT_MS);
+        let mut last_status = "missing".to_owned();
+        loop {
+            let agents = self.read_project_agents(project_root)?;
+            if let Some(agent) = find_agent(&agents, session_id) {
+                last_status = agent_status(agent).unwrap_or("unknown").to_owned();
+                if is_agent_input_ready(agent) {
+                    return Ok(agent.clone());
+                }
+            }
+            if current_unix_millis() >= deadline {
+                return Err(CoreCommandFailure {
+                    status: 504,
+                    error: format!(
+                        "overseer {session_id} was not ready for input before timeout ({last_status})"
+                    ),
+                });
+            }
+            thread::sleep(Duration::from_millis(100));
         }
     }
 
@@ -597,15 +655,131 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
 
     fn overseer_watch(
         &mut self,
-        _project_root: &str,
-        _session_id: &str,
-        _goal: Option<&str>,
-        _instructions: Option<&str>,
+        project_root: &str,
+        session_id: &str,
+        goal: Option<&str>,
+        instructions: Option<&str>,
     ) -> Result<Value, CoreCommandFailure> {
-        Err(CoreCommandFailure {
-            status: 501,
-            error: self.unported("overseer watch"),
-        })
+        let project_root = self.resolve_project_root_value(project_root);
+        if let Err(error) = <Self as DaemonCoreCommandRuntime>::ensure_project(self, &project_root)
+        {
+            return Err(CoreCommandFailure { status: 502, error });
+        }
+        let initial_agents = self.read_project_agents(&project_root)?;
+        let Some(target) = find_agent(&initial_agents, session_id) else {
+            return Err(CoreCommandFailure {
+                status: 404,
+                error: format!("agent not found: {session_id}"),
+            });
+        };
+        if is_project_control_agent(target) {
+            return Err(CoreCommandFailure {
+                status: 400,
+                error: format!("cannot watch project control session: {session_id}"),
+            });
+        }
+        if !is_agent_live(target) {
+            return Err(CoreCommandFailure {
+                status: 400,
+                error: format!("cannot watch offline agent: {session_id}"),
+            });
+        }
+
+        let overseer_session_id = initial_agents
+            .iter()
+            .find(|agent| is_overseer_agent(agent) && is_agent_input_ready(agent))
+            .and_then(agent_id)
+            .map(str::to_owned)
+            .map(Ok)
+            .unwrap_or_else(|| {
+                let (_, spawned) = self.project_service_json(
+                    &project_root,
+                    project_routes::agents::SPAWN,
+                    Some(json!({
+                        "tool": load_config_for_project(&project_root)
+                            .get("defaultTool")
+                            .and_then(Value::as_str)
+                            .unwrap_or("claude"),
+                        "open": false,
+                        "overseer": true,
+                    })),
+                    None,
+                )?;
+                let Some(session_id) = trimmed_value_string(spawned.get("sessionId")) else {
+                    return Err(CoreCommandFailure {
+                        status: 502,
+                        error: "project service returned invalid overseer spawn response"
+                            .to_owned(),
+                    });
+                };
+                Ok(session_id.to_owned())
+            })?;
+
+        self.wait_for_project_agent_input(&project_root, &overseer_session_id)?;
+        let mut loop_body = Map::new();
+        loop_body.insert("sessionId".to_owned(), Value::String(session_id.to_owned()));
+        loop_body.insert("active".to_owned(), Value::Bool(true));
+        loop_body.insert("action".to_owned(), Value::String("add".to_owned()));
+        loop_body.insert("source".to_owned(), Value::String("dashboard".to_owned()));
+        loop_body.insert(
+            "updatedBy".to_owned(),
+            Value::String("dashboard".to_owned()),
+        );
+        if let Some(goal) = goal {
+            loop_body.insert("goal".to_owned(), Value::String(goal.to_owned()));
+        }
+        self.project_service_json(
+            &project_root,
+            project_routes::agents::LOOP,
+            Some(Value::Object(loop_body)),
+            None,
+        )?;
+
+        let updated_agents = self.read_project_agents(&project_root)?;
+        let updated_target = find_agent(&updated_agents, session_id)
+            .cloned()
+            .unwrap_or_else(|| target.clone());
+        let watched = updated_agents
+            .iter()
+            .filter(|agent| !is_project_control_agent(agent))
+            .filter(|agent| agent.pointer("/loop/active").and_then(Value::as_bool) == Some(true))
+            .cloned()
+            .collect::<Vec<_>>();
+        let prompt = overseer_watch_prompt(&updated_target, &watched, instructions);
+        self.project_service_json(
+            &project_root,
+            project_routes::agents::INPUT,
+            Some(json!({
+                "sessionId": overseer_session_id,
+                "text": prompt,
+            })),
+            None,
+        )?;
+
+        let mut result = Map::new();
+        result.insert("projectRoot".to_owned(), Value::String(project_root));
+        result.insert("sessionId".to_owned(), Value::String(session_id.to_owned()));
+        result.insert(
+            "overseerSessionId".to_owned(),
+            Value::String(overseer_session_id),
+        );
+        result.insert(
+            "watchedSessionIds".to_owned(),
+            Value::Array(
+                watched
+                    .iter()
+                    .filter_map(agent_id)
+                    .map(|id| Value::String(id.to_owned()))
+                    .collect(),
+            ),
+        );
+        if let Some(instructions) = instructions {
+            result.insert(
+                "instructions".to_owned(),
+                Value::String(instructions.to_owned()),
+            );
+        }
+        Ok(Value::Object(result))
     }
 
     fn restart_control_plane(
@@ -1201,6 +1375,167 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
                 CoreCommandTransportError::DaemonRequest { message, .. } => message,
                 other => other.to_string(),
             })
+    }
+}
+
+fn core_failure_from_response(
+    response: crate::daemon::routing::DaemonRouteResponse,
+) -> CoreCommandFailure {
+    let error = match response.body {
+        DaemonResponseBody::Json(value) => value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("project service request failed")
+            .to_owned(),
+        DaemonResponseBody::Text(value) => value
+            .trim()
+            .strip_prefix("Error: ")
+            .unwrap_or_else(|| value.trim())
+            .to_owned(),
+        DaemonResponseBody::Bytes(_) => "project service request failed".to_owned(),
+    };
+    CoreCommandFailure {
+        status: response.status,
+        error,
+    }
+}
+
+fn find_agent<'a>(agents: &'a [Value], session_id: &str) -> Option<&'a Value> {
+    agents
+        .iter()
+        .find(|agent| agent_id(agent) == Some(session_id))
+}
+
+fn agent_id(agent: &Value) -> Option<&str> {
+    trimmed_value_string(agent.get("id"))
+}
+
+fn agent_status(agent: &Value) -> Option<&str> {
+    trimmed_value_string(agent.get("status"))
+}
+
+fn is_agent_live(agent: &Value) -> bool {
+    if agent.get("exited").and_then(Value::as_bool) == Some(true) {
+        return false;
+    }
+    if agent
+        .pointer("/semantic/runtime/isAlive")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return false;
+    }
+    !matches!(agent_status(agent), Some("offline" | "exited"))
+}
+
+fn is_agent_input_ready(agent: &Value) -> bool {
+    if !is_agent_live(agent) || js_truthy(agent.get("pendingAction")) {
+        return false;
+    }
+    if let Some(can_receive_input) = agent
+        .pointer("/semantic/runtime/canReceiveInput")
+        .and_then(Value::as_bool)
+    {
+        return can_receive_input;
+    }
+    matches!(agent_status(agent), Some("running" | "idle" | "waiting"))
+}
+
+fn is_project_control_agent(agent: &Value) -> bool {
+    agent.get("projectControl").and_then(Value::as_bool) == Some(true)
+        || is_overseer_agent(agent)
+        || is_scribe_agent(agent)
+}
+
+fn is_overseer_agent(agent: &Value) -> bool {
+    agent.get("overseer").and_then(Value::as_bool) == Some(true)
+        || team_role(agent) == Some("overseer")
+}
+
+fn is_scribe_agent(agent: &Value) -> bool {
+    if agent.get("scribe").and_then(Value::as_bool) == Some(false) {
+        return false;
+    }
+    agent.get("scribe").and_then(Value::as_bool) == Some(true) || team_role(agent) == Some("scribe")
+}
+
+fn team_role(agent: &Value) -> Option<&str> {
+    trimmed_value_string(agent.pointer("/team/role"))
+        .or_else(|| trimmed_value_string(agent.get("role")))
+}
+
+fn agent_watch_label(agent: &Value) -> &str {
+    trimmed_value_string(agent.get("tool"))
+        .or_else(|| trimmed_value_string(agent.get("toolConfigKey")))
+        .or_else(|| trimmed_value_string(agent.get("command")))
+        .or_else(|| trimmed_value_string(agent.get("label")))
+        .or_else(|| agent_id(agent))
+        .unwrap_or("unknown")
+}
+
+fn agent_watch_goal(agent: &Value) -> Option<&str> {
+    trimmed_value_string(agent.pointer("/loop/goal"))
+        .or_else(|| trimmed_value_string(agent.get("goal")))
+        .or_else(|| trimmed_value_string(agent.pointer("/task/description")))
+}
+
+fn overseer_watch_prompt(target: &Value, watched: &[Value], instructions: Option<&str>) -> String {
+    let target_line = format!(
+        "- {} ({}): {}",
+        agent_id(target).unwrap_or("unknown"),
+        agent_watch_label(target),
+        agent_watch_goal(target).unwrap_or("No goal.")
+    );
+    let watched_lines = if watched.is_empty() {
+        vec!["- None.".to_owned()]
+    } else {
+        watched
+            .iter()
+            .map(|agent| {
+                format!(
+                    "- {} ({}): {}",
+                    agent_id(agent).unwrap_or("unknown"),
+                    agent_watch_label(agent),
+                    agent_watch_goal(agent).unwrap_or("No goal.")
+                )
+            })
+            .collect()
+    };
+    [
+        vec![
+            "Overseer watch update.".to_owned(),
+            String::new(),
+            "Selected agent:".to_owned(),
+            target_line,
+            String::new(),
+            "Current watch list:".to_owned(),
+        ],
+        watched_lines,
+        vec![
+            String::new(),
+            "Special instructions:".to_owned(),
+            instructions.unwrap_or("None.").to_owned(),
+            String::new(),
+            "Start watching now. Treat the current watch list above as the source of truth."
+                .to_owned(),
+        ],
+    ]
+    .concat()
+    .join("\n")
+}
+
+fn trimmed_value_string(value: Option<&Value>) -> Option<&str> {
+    let value = value.and_then(Value::as_str)?.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn js_truthy(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Null) | None => false,
+        Some(Value::Number(value)) => value.as_f64().is_some_and(|number| number != 0.0),
+        Some(Value::String(value)) => !value.is_empty(),
+        Some(Value::Array(_)) | Some(Value::Object(_)) => true,
     }
 }
 

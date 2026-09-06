@@ -21,11 +21,12 @@ use aimux::tmux::TmuxTarget;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs::{self, remove_dir_all};
-use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::io::{ErrorKind, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -665,6 +666,195 @@ fn core_projects_ensure_route_uses_native_supervision_runtime() {
 }
 
 #[test]
+fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
+    let fixture = RuntimeFixture::new("overseer-watch");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let server = ScriptedHttpServer::spawn(vec![
+        json!({ "agents": [
+            { "id": "codex-1", "tool": "codex", "status": "running" }
+        ]}),
+        json!({ "sessionId": "claude-overseer" }),
+        json!({ "agents": [
+            { "id": "codex-1", "tool": "codex", "status": "running" },
+            { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+        json!({ "agents": [
+            { "id": "codex-1", "tool": "codex", "status": "running", "loop": { "active": true, "goal": "keep going" } },
+            { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+    ]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_660));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let result = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "codex-1",
+            Some("keep going"),
+            Some("watch CI"),
+        )
+        .expect("overseer watch");
+
+    assert!(launcher.calls().is_empty());
+    assert_eq!(result["projectRoot"], json!(project.to_string_lossy()));
+    assert_eq!(result["sessionId"], "codex-1");
+    assert_eq!(result["overseerSessionId"], "claude-overseer");
+    assert_eq!(result["watchedSessionIds"], json!(["codex-1"]));
+    assert_eq!(result["instructions"], "watch CI");
+
+    let requests = server.join();
+    assert_request_path(&requests[0], "GET", "/agents");
+    assert_request_path(&requests[1], "POST", "/agents/spawn");
+    assert_eq!(
+        request_json_body(&requests[1]),
+        json!({ "tool": "claude", "open": false, "overseer": true })
+    );
+    assert_request_path(&requests[2], "GET", "/agents");
+    assert_request_path(&requests[3], "POST", "/agents/loop");
+    assert_eq!(
+        request_json_body(&requests[3]),
+        json!({
+            "sessionId": "codex-1",
+            "active": true,
+            "action": "add",
+            "source": "dashboard",
+            "updatedBy": "dashboard",
+            "goal": "keep going"
+        })
+    );
+    assert_request_path(&requests[4], "GET", "/agents");
+    assert_request_path(&requests[5], "POST", "/agents/input");
+    let input = request_json_body(&requests[5]);
+    assert_eq!(input["sessionId"], "claude-overseer");
+    let text = input["text"].as_str().expect("input text");
+    assert!(text.contains("Current watch list:"));
+    assert!(text.contains("- codex-1 (codex): keep going"));
+    assert!(text.contains("Special instructions:\nwatch CI"));
+    fixture.cleanup();
+}
+
+#[test]
+fn overseer_watch_refuses_missing_agent_before_mutation() {
+    let fixture = RuntimeFixture::new("overseer-watch-missing");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let server = ScriptedHttpServer::spawn(vec![json!({ "agents": [] })]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let mut runtime = fixture.runtime();
+
+    let error = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "missing",
+            None,
+            None,
+        )
+        .expect_err("missing agent fails");
+
+    assert_eq!(error.status, 404);
+    assert_eq!(error.error, "agent not found: missing");
+    let requests = server.join();
+    assert_eq!(requests.len(), 1);
+    assert_request_path(&requests[0], "GET", "/agents");
+    fixture.cleanup();
+}
+
+#[test]
+fn overseer_watch_refuses_project_control_agent_before_mutation() {
+    let fixture = RuntimeFixture::new("overseer-watch-control");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let server = ScriptedHttpServer::spawn(vec![json!({ "agents": [
+        { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
+    ]})]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let mut runtime = fixture.runtime();
+
+    let error = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "claude-overseer",
+            None,
+            None,
+        )
+        .expect_err("project control agent fails");
+
+    assert_eq!(error.status, 400);
+    assert_eq!(
+        error.error,
+        "cannot watch project control session: claude-overseer"
+    );
+    let requests = server.join();
+    assert_eq!(requests.len(), 1);
+    assert_request_path(&requests[0], "GET", "/agents");
+    fixture.cleanup();
+}
+
+#[test]
 fn stop_project_marks_service_stopped_and_removes_endpoint() {
     let fixture = RuntimeFixture::new("stop");
     let project = fixture.project("repo");
@@ -1103,5 +1293,100 @@ impl OneShotHttpServer {
 
     fn join(self) -> String {
         self.handle.join().expect("server thread")
+    }
+}
+
+struct ScriptedHttpServer {
+    port: u16,
+    handle: std::thread::JoinHandle<Vec<String>>,
+}
+
+impl ScriptedHttpServer {
+    fn spawn(responses: Vec<Value>) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                let body = response.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write response");
+                requests.push(request);
+            }
+            requests
+        });
+        Self { port, handle }
+    }
+
+    fn join(self) -> Vec<String> {
+        self.handle.join().expect("server thread")
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(20)))
+        .expect("set test request timeout");
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => buffer.extend_from_slice(&chunk[..count]),
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                break;
+            }
+            Err(error) => panic!("read request: {error}"),
+        }
+        if request_is_complete(&buffer) {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&buffer).into_owned()
+}
+
+fn request_is_complete(buffer: &[u8]) -> bool {
+    let Some(header_end) = find_header_end(buffer) else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&buffer[..header_end]);
+    let Some(content_length) = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    }) else {
+        return false;
+    };
+    buffer.len() >= header_end + 4 + content_length
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn assert_request_path(request: &str, method: &str, path: &str) {
+    let mut parts = request.lines().next().unwrap_or_default().split(' ');
+    assert_eq!(parts.next(), Some(method));
+    assert_eq!(parts.next(), Some(path));
+}
+
+fn request_json_body(request: &str) -> Value {
+    let body = request
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body.trim())
+        .unwrap_or_default();
+    if body.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str(body).expect("request JSON body")
     }
 }
