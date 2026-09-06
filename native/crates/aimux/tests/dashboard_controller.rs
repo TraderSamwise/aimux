@@ -1,5 +1,6 @@
 use aimux::dashboard_controller::{
-    DashboardController, DashboardControllerEffect, DashboardKey, DashboardSubscreenAction,
+    DashboardController, DashboardControllerEffect, DashboardKey, DashboardOrchestrationMode,
+    DashboardOrchestrationTarget, DashboardSubscreenAction, orchestration_targets_from_resource,
     parse_dashboard_key, parse_dashboard_keys,
 };
 use aimux::dashboard_model::{
@@ -849,6 +850,168 @@ fn teammate_picker_handles_missing_parent_and_empty_teammates() {
 }
 
 #[test]
+fn orchestration_hotkeys_load_route_options_for_selected_session() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 1;
+    controller.navigation.item_index = 0;
+
+    let DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } =
+        controller.handle_key(&snapshot, DashboardKey::Printable('s'))
+    else {
+        panic!("expected message route load");
+    };
+    assert_eq!(mode, DashboardOrchestrationMode::Message);
+    assert_eq!(
+        path,
+        "/orchestration/routes?mode=message&selectedSessionId=claude-1&worktreePath=%3CWORKTREE%3E"
+    );
+
+    let DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } =
+        controller.handle_key(&snapshot, DashboardKey::Printable('H'))
+    else {
+        panic!("expected handoff route load");
+    };
+    assert_eq!(mode, DashboardOrchestrationMode::Handoff);
+    assert!(path.starts_with("/orchestration/routes?mode=handoff&"));
+
+    let DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } =
+        controller.handle_key(&snapshot, DashboardKey::Printable('T'))
+    else {
+        panic!("expected task route load");
+    };
+    assert_eq!(mode, DashboardOrchestrationMode::Task);
+    assert!(path.starts_with("/orchestration/routes?mode=task&"));
+}
+
+#[test]
+fn orchestration_targets_parse_project_service_response() {
+    let targets = orchestration_targets_from_resource(&json!({
+        "ok": true,
+        "options": [{
+            "label": "Claude One",
+            "sessionId": "session-1",
+            "sourceSessionId": "source-1",
+            "assignee": "sam",
+            "tool": "claude",
+            "worktreePath": "/repo",
+            "recipientIds": ["session-1", "session-2"]
+        }]
+    }))
+    .expect("valid targets");
+
+    assert_eq!(
+        targets,
+        vec![DashboardOrchestrationTarget {
+            label: "Claude One".into(),
+            session_id: Some("session-1".into()),
+            source_session_id: Some("source-1".into()),
+            assignee: Some("sam".into()),
+            tool: Some("claude".into()),
+            worktree_path: Some("/repo".into()),
+            recipient_ids: vec!["session-1".into(), "session-2".into()],
+        }]
+    );
+    assert!(orchestration_targets_from_resource(&json!({ "ok": true })).is_err());
+}
+
+#[test]
+fn orchestration_route_picker_opens_input_and_cancels() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.set_orchestration_route_options(
+        DashboardOrchestrationMode::Message,
+        vec![
+            orchestration_target("Target A"),
+            orchestration_target("Target B"),
+        ],
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('2')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.orchestration_route_picker.is_none());
+    assert_eq!(
+        controller
+            .orchestration_input
+            .as_ref()
+            .map(|state| state.target.label.as_str()),
+        Some("Target B")
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Back),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.orchestration_input.is_none());
+}
+
+#[test]
+fn orchestration_input_submits_message_handoff_and_task_requests() {
+    let snapshot = snapshot();
+
+    let message = submit_orchestration_text(
+        &snapshot,
+        DashboardOrchestrationMode::Message,
+        orchestration_target("Reviewer"),
+        "hello",
+    );
+    assert_eq!(message.method, "POST");
+    assert_eq!(message.path, routes::threads::SEND);
+    assert_eq!(
+        message.body,
+        json!({
+            "kind": "request",
+            "from": "source-1",
+            "to": ["target-1"],
+            "assignee": "sam",
+            "tool": "claude",
+            "worktreePath": "/repo",
+            "body": "hello",
+        })
+    );
+
+    let handoff = submit_orchestration_text(
+        &snapshot,
+        DashboardOrchestrationMode::Handoff,
+        orchestration_target("Reviewer"),
+        "take over",
+    );
+    assert_eq!(handoff.path, routes::handoff::SEND);
+    assert_eq!(
+        handoff.body,
+        json!({
+            "from": "source-1",
+            "to": ["target-1"],
+            "assignee": "sam",
+            "tool": "claude",
+            "worktreePath": "/repo",
+            "body": "take over",
+        })
+    );
+
+    let task = submit_orchestration_text(
+        &snapshot,
+        DashboardOrchestrationMode::Task,
+        orchestration_target("Reviewer"),
+        "write tests",
+    );
+    assert_eq!(task.path, routes::tasks::ASSIGN);
+    assert_eq!(
+        task.body,
+        json!({
+            "from": "source-1",
+            "to": ["target-1"],
+            "assignee": "sam",
+            "tool": "claude",
+            "worktreePath": "/repo",
+            "description": "write tests",
+        })
+    );
+}
+
+#[test]
 fn empty_worktree_cache_cleanup_preview_dismisses_without_apply() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
@@ -992,4 +1155,42 @@ fn snapshot() -> DesktopStateSnapshot {
     serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
         .expect("valid fixture")
         .runtime_full
+}
+
+fn orchestration_target(label: &str) -> DashboardOrchestrationTarget {
+    DashboardOrchestrationTarget {
+        label: label.into(),
+        session_id: Some("target-1".into()),
+        source_session_id: Some("source-1".into()),
+        assignee: Some("sam".into()),
+        tool: Some("claude".into()),
+        worktree_path: Some("/repo".into()),
+        recipient_ids: vec!["target-1".into()],
+    }
+}
+
+fn submit_orchestration_text(
+    snapshot: &DesktopStateSnapshot,
+    mode: DashboardOrchestrationMode,
+    target: DashboardOrchestrationTarget,
+    text: &str,
+) -> aimux::dashboard_actions::DashboardActionRequest {
+    let mut controller = DashboardController::new(snapshot);
+    controller.set_orchestration_route_options(mode, vec![target]);
+    assert_eq!(
+        controller.handle_key(snapshot, DashboardKey::Printable('1')),
+        DashboardControllerEffect::Render
+    );
+    for key in text
+        .bytes()
+        .map(|byte| DashboardKey::Printable(byte as char))
+    {
+        controller.handle_key(snapshot, key);
+    }
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected orchestration request");
+    };
+    request
 }

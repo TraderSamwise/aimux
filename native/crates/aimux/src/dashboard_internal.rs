@@ -5,6 +5,7 @@ use crate::dashboard_client::{
 };
 use crate::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardScreen, DashboardSubscreenAction,
+    orchestration_targets_from_resource,
 };
 use crate::dashboard_event_stream::{
     DashboardEventStreamHandle, DashboardEventStreamMessage, spawn_dashboard_project_event_stream,
@@ -24,6 +25,7 @@ use crate::dashboard_renderer::{
     render_dashboard_subscreen_frame,
 };
 use crate::dashboard_service_input::{
+    render_orchestration_input_overlay, render_orchestration_route_picker_overlay,
     render_service_input_overlay, render_teammate_picker_overlay,
     render_worktree_cache_cleanup_confirm_overlay, render_worktree_input_overlay,
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
@@ -258,6 +260,27 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 }
                                 Err(error) => {
                                     controller.footer_message = Some(error.to_string());
+                                }
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            match fetch_dashboard_resource(endpoint, &path).and_then(|resource| {
+                                orchestration_targets_from_resource(&resource)
+                                    .map_err(anyhow::Error::msg)
+                            }) {
+                                Ok(options) => {
+                                    controller.set_orchestration_route_options(mode, options);
+                                }
+                                Err(error) => {
+                                    controller.footer_message = Some(format!(
+                                        "Failed to load orchestration targets: {error}"
+                                    ));
                                 }
                             }
                         } else {
@@ -540,6 +563,30 @@ fn render_dashboard_snapshot(
                 scroll_offset: frame.scroll_offset,
             };
         }
+    }
+    if let Some(route_picker) = controller.orchestration_route_picker.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_orchestration_route_picker_overlay(
+            route_picker,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if let Some(input) = controller.orchestration_input.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_orchestration_input_overlay(
+            input,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
     }
     frame
 }

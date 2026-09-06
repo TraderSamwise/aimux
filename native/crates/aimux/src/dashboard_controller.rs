@@ -14,7 +14,7 @@ use crate::dashboard_tool_picker::{
     DashboardToolPickerState,
 };
 use crate::project_api_contract::routes;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardController {
@@ -35,6 +35,8 @@ pub struct DashboardController {
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
     pub teammate_picker: Option<DashboardTeammatePickerState>,
+    pub orchestration_route_picker: Option<DashboardOrchestrationRoutePickerState>,
+    pub orchestration_input: Option<DashboardOrchestrationInputState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,9 +45,123 @@ pub enum DashboardControllerEffect {
     Request(DashboardActionRequest),
     WorktreeCacheCleanupPreview(DashboardActionRequest),
     WorktreeCacheCleanupApply(DashboardActionRequest),
+    LoadOrchestrationRoutes {
+        mode: DashboardOrchestrationMode,
+        path: String,
+    },
     OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
     Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardOrchestrationMode {
+    Message,
+    Handoff,
+    Task,
+}
+
+impl DashboardOrchestrationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Message => "message",
+            Self::Handoff => "handoff",
+            Self::Task => "task",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Message => "Send message",
+            Self::Handoff => "Handoff",
+            Self::Task => "Assign task",
+        }
+    }
+
+    pub fn action_label(self) -> &'static str {
+        match self {
+            Self::Task => "assign",
+            Self::Message | Self::Handoff => "send",
+        }
+    }
+
+    fn submit_path(self) -> &'static str {
+        match self {
+            Self::Message => routes::threads::SEND,
+            Self::Handoff => routes::handoff::SEND,
+            Self::Task => routes::tasks::ASSIGN,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardOrchestrationTarget {
+    pub label: String,
+    pub session_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub assignee: Option<String>,
+    pub tool: Option<String>,
+    pub worktree_path: Option<String>,
+    pub recipient_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardOrchestrationRoutePickerState {
+    pub mode: DashboardOrchestrationMode,
+    pub options: Vec<DashboardOrchestrationTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardOrchestrationInputState {
+    pub mode: DashboardOrchestrationMode,
+    pub target: DashboardOrchestrationTarget,
+    pub buffer: String,
+}
+
+impl DashboardOrchestrationInputState {
+    pub fn submit_request(&self, body_text: String) -> DashboardActionRequest {
+        let mut body = Map::new();
+        if matches!(self.mode, DashboardOrchestrationMode::Message) {
+            body.insert("kind".into(), Value::String("request".into()));
+        }
+        body.insert(
+            "from".into(),
+            Value::String(
+                self.target
+                    .source_session_id
+                    .clone()
+                    .unwrap_or_else(|| "user".into()),
+            ),
+        );
+        if let Some(session_id) = self.target.session_id.as_ref() {
+            body.insert(
+                "to".into(),
+                Value::Array(vec![Value::String(session_id.clone())]),
+            );
+        }
+        if let Some(assignee) = self.target.assignee.as_ref() {
+            body.insert("assignee".into(), Value::String(assignee.clone()));
+        }
+        if let Some(tool) = self.target.tool.as_ref() {
+            body.insert("tool".into(), Value::String(tool.clone()));
+        }
+        if let Some(worktree_path) = self.target.worktree_path.as_ref() {
+            body.insert("worktreePath".into(), Value::String(worktree_path.clone()));
+        }
+        match self.mode {
+            DashboardOrchestrationMode::Message | DashboardOrchestrationMode::Handoff => {
+                body.insert("body".into(), Value::String(body_text));
+            }
+            DashboardOrchestrationMode::Task => {
+                body.insert("description".into(), Value::String(body_text));
+            }
+        }
+        DashboardActionRequest {
+            method: "POST",
+            path: self.mode.submit_path(),
+            body: Value::Object(body),
+        }
+    }
 }
 
 impl DashboardController {
@@ -68,6 +184,8 @@ impl DashboardController {
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
             teammate_picker: None,
+            orchestration_route_picker: None,
+            orchestration_input: None,
         }
     }
 
@@ -103,6 +221,12 @@ impl DashboardController {
         }
         if self.teammate_picker.is_some() {
             return self.handle_teammate_picker_key(snapshot, key);
+        }
+        if self.orchestration_route_picker.is_some() {
+            return self.handle_orchestration_route_picker_key(key);
+        }
+        if self.orchestration_input.is_some() {
+            return self.handle_orchestration_input_key(key);
         }
         if self.service_input.is_some() {
             return self.handle_service_input_key(snapshot, key);
@@ -167,6 +291,15 @@ impl DashboardController {
                 })
             }
             DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
+            DashboardKey::Printable('s') => {
+                self.load_orchestration_routes(snapshot, DashboardOrchestrationMode::Message)
+            }
+            DashboardKey::Printable('H') => {
+                self.load_orchestration_routes(snapshot, DashboardOrchestrationMode::Handoff)
+            }
+            DashboardKey::Printable('T') => {
+                self.load_orchestration_routes(snapshot, DashboardOrchestrationMode::Task)
+            }
             DashboardKey::Digit(digit) => match self.navigation.handle_digit(snapshot, digit) {
                 DashboardNavigationOutcome::EntrySelected(entry) => {
                     match plan_dashboard_action(Some(entry), DashboardActionKind::Enter) {
@@ -334,6 +467,8 @@ impl DashboardController {
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
         self.teammate_picker = None;
+        self.orchestration_route_picker = None;
+        self.orchestration_input = None;
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
     }
@@ -1009,6 +1144,101 @@ impl DashboardController {
             .filter(|session| !is_teammate_session(session))
     }
 
+    fn load_orchestration_routes(
+        &self,
+        snapshot: &DesktopStateSnapshot,
+        mode: DashboardOrchestrationMode,
+    ) -> DashboardControllerEffect {
+        let mut params = vec![format!("mode={}", mode.as_str())];
+        if let Some(session) = self.selected_session_for_tool_action(snapshot) {
+            params.push(format!("selectedSessionId={}", form_encode(&session.id)));
+        }
+        if let Some(path) = self.navigation.focused_worktree_path(snapshot) {
+            params.push(format!("worktreePath={}", form_encode(path)));
+        }
+        DashboardControllerEffect::LoadOrchestrationRoutes {
+            mode,
+            path: format!("{}?{}", routes::orchestration::ROUTES, params.join("&")),
+        }
+    }
+
+    pub fn set_orchestration_route_options(
+        &mut self,
+        mode: DashboardOrchestrationMode,
+        options: Vec<DashboardOrchestrationTarget>,
+    ) {
+        if options.is_empty() {
+            self.footer_message = Some("No orchestration targets available".into());
+            return;
+        }
+        self.orchestration_route_picker =
+            Some(DashboardOrchestrationRoutePickerState { mode, options });
+    }
+
+    fn handle_orchestration_route_picker_key(
+        &mut self,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        if matches!(key, DashboardKey::Back) {
+            self.orchestration_route_picker = None;
+            return DashboardControllerEffect::Render;
+        }
+        let (DashboardKey::Digit(digit) | DashboardKey::Printable(digit)) = key else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if !digit.is_ascii_digit() || digit == '0' {
+            return DashboardControllerEffect::Ignored;
+        }
+        let Some(index) = digit.to_digit(10).map(|digit| digit as usize - 1) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        let Some(picker) = self.orchestration_route_picker.take() else {
+            return DashboardControllerEffect::Ignored;
+        };
+        let Some(target) = picker.options.get(index).cloned() else {
+            self.orchestration_route_picker = None;
+            return DashboardControllerEffect::Render;
+        };
+        self.orchestration_input = Some(DashboardOrchestrationInputState {
+            mode: picker.mode,
+            target,
+            buffer: String::new(),
+        });
+        DashboardControllerEffect::Render
+    }
+
+    fn handle_orchestration_input_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.orchestration_input = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => {
+                let Some(input) = self.orchestration_input.take() else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                let body = input.buffer.trim().to_owned();
+                if body.is_empty() {
+                    return DashboardControllerEffect::Render;
+                }
+                DashboardControllerEffect::Request(input.submit_request(body))
+            }
+            DashboardKey::Backspace | DashboardKey::Delete => {
+                if let Some(input) = self.orchestration_input.as_mut() {
+                    input.buffer.pop();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(character) => {
+                if let Some(input) = self.orchestration_input.as_mut() {
+                    input.buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
     fn handle_launch_options_key(
         &mut self,
         snapshot: &DesktopStateSnapshot,
@@ -1509,6 +1739,70 @@ fn compare_optional_created_at(left: Option<&str>, right: Option<&str>) -> std::
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
     }
+}
+
+pub fn orchestration_targets_from_resource(
+    resource: &Value,
+) -> Result<Vec<DashboardOrchestrationTarget>, String> {
+    let options = resource
+        .get("options")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "project service returned invalid orchestration targets".to_owned())?;
+    options
+        .iter()
+        .map(orchestration_target_from_value)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn orchestration_target_from_value(value: &Value) -> Result<DashboardOrchestrationTarget, String> {
+    let label = value
+        .get("label")
+        .and_then(Value::as_str)
+        .filter(|label| !label.is_empty())
+        .ok_or_else(|| "orchestration target missing label".to_owned())?
+        .to_owned();
+    let recipient_ids = value
+        .get("recipientIds")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(DashboardOrchestrationTarget {
+        label,
+        session_id: optional_string(value, "sessionId"),
+        source_session_id: optional_string(value, "sourceSessionId"),
+        assignee: optional_string(value, "assignee"),
+        tool: optional_string(value, "tool"),
+        worktree_path: optional_string(value, "worktreePath"),
+        recipient_ids,
+    })
+}
+
+fn optional_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn form_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            b' ' => encoded.push('+'),
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn session_label(session: &DashboardSession) -> &str {

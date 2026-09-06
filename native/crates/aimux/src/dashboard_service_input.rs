@@ -1,3 +1,6 @@
+use crate::dashboard_controller::{
+    DashboardOrchestrationInputState, DashboardOrchestrationRoutePickerState,
+};
 use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
 };
@@ -199,6 +202,110 @@ pub fn render_worktree_cache_cleanup_confirm_overlay(
         } else {
             OverlayVariant::Blue
         },
+        icon: None,
+    })
+}
+
+pub fn render_orchestration_route_picker_overlay(
+    state: &DashboardOrchestrationRoutePickerState,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let visible_count = state
+        .options
+        .len()
+        .min(usize::max(3, rows.saturating_sub(10)));
+    let mut body = state
+        .options
+        .iter()
+        .take(visible_count)
+        .enumerate()
+        .map(|(index, target)| {
+            let number = if index < 9 {
+                format!("[{}]", index + 1)
+            } else {
+                "   ".into()
+            };
+            let recipients = if target.recipient_ids.len() > 1 {
+                format!(
+                    " {}",
+                    style(
+                        &format!("({} recipients)", target.recipient_ids.len()),
+                        Tone::Muted
+                    )
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "  {} {}{}",
+                style(&number, Tone::Muted),
+                style(&target.label, Tone::Strong),
+                recipients
+            )
+        })
+        .collect::<Vec<_>>();
+    if state.options.len() > visible_count {
+        body.push(format!(
+            "  {}",
+            style(
+                &format!("{} more", state.options.len() - visible_count),
+                Tone::Muted
+            )
+        ));
+    }
+    body.push(String::new());
+    body.push(footer_hints("[1-9] choose  [Esc] cancel"));
+    render_overlay_box(&OverlayBoxSpec {
+        title: &format!("{}: choose target", state.mode.title()),
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
+        icon: None,
+    })
+}
+
+pub fn render_orchestration_input_overlay(
+    state: &DashboardOrchestrationInputState,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let mut body = vec![format!(
+        "  {} {}",
+        style("To:", Tone::Muted),
+        style(&state.target.label, Tone::Strong)
+    )];
+    if let Some(worktree_path) = state.target.worktree_path.as_ref() {
+        body.push(format!(
+            "  {} {worktree_path}",
+            style("Worktree:", Tone::Muted)
+        ));
+    }
+    if !state.target.recipient_ids.is_empty() {
+        body.push(format!(
+            "  {} {}",
+            style("Recipients:", Tone::Muted),
+            state.target.recipient_ids.join(", ")
+        ));
+    }
+    body.push(String::new());
+    body.push(format!(
+        "  {} {}_",
+        style("Text:", Tone::Muted),
+        state.buffer
+    ));
+    body.push(String::new());
+    body.push(footer_hints(&format!(
+        "[Enter] {}  [Esc] cancel",
+        state.mode.action_label()
+    )));
+    render_overlay_box(&OverlayBoxSpec {
+        title: state.mode.title(),
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
         icon: None,
     })
 }
