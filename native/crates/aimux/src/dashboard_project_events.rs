@@ -1,4 +1,4 @@
-use crate::project_api_contract::event_names;
+use crate::project_api_contract::{PROJECT_API_VIEWS, event_names};
 use serde_json::{Map, Value};
 use std::fmt::{self, Display, Formatter};
 
@@ -193,7 +193,15 @@ pub struct DashboardProjectRefreshState {
 
 impl DashboardProjectRefreshState {
     pub fn observe(&mut self, event: &DashboardProjectEvent) {
-        if event_requests_desktop_state(event) {
+        self.observe_for_screen(event, None);
+    }
+
+    pub fn observe_for_screen(
+        &mut self,
+        event: &DashboardProjectEvent,
+        active_screen: Option<&str>,
+    ) {
+        if event_requests_refresh(event, active_screen) {
             self.refresh_pending = true;
         }
     }
@@ -231,6 +239,14 @@ impl DashboardProjectRefreshState {
     }
 }
 
+pub fn event_requests_refresh(event: &DashboardProjectEvent, active_screen: Option<&str>) -> bool {
+    if event_requests_desktop_state(event) {
+        return true;
+    }
+    let views = event_refresh_views(event);
+    !dashboard_project_refresh_work(&views, active_screen).is_empty()
+}
+
 pub fn event_requests_desktop_state(event: &DashboardProjectEvent) -> bool {
     match event {
         DashboardProjectEvent::Ready(_) => true,
@@ -245,6 +261,24 @@ pub fn event_requests_desktop_state(event: &DashboardProjectEvent) -> bool {
                         .any(|candidate| candidate == &view)
                 })
             }),
+    }
+}
+
+fn event_refresh_views(event: &DashboardProjectEvent) -> Vec<String> {
+    match event {
+        DashboardProjectEvent::Ready(_) => PROJECT_API_VIEWS
+            .iter()
+            .map(|view| (*view).to_owned())
+            .collect(),
+        DashboardProjectEvent::ProjectUpdate(payload) => payload
+            .get("views")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        DashboardProjectEvent::Alert(_) => Vec::new(),
     }
 }
 

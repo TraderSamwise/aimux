@@ -100,6 +100,25 @@ pub fn execute_dashboard_action(
     Ok(response.json)
 }
 
+pub fn fetch_dashboard_resource(endpoint: &ProjectServiceEndpoint, path: &str) -> Result<Value> {
+    let response = execute_loopback_json_request(&build_project_service_json_request(
+        endpoint,
+        DaemonHttpMethod::Get,
+        path,
+        None,
+    )?)
+    .map_err(map_transport_error)?;
+    if !(200..300).contains(&response.status)
+        || response.json.get("ok").and_then(Value::as_bool) == Some(false)
+    {
+        return Err(anyhow!(
+            "dashboard resource request failed: {}",
+            response.status
+        ));
+    }
+    Ok(response.json)
+}
+
 pub fn build_project_service_json_request(
     endpoint: &ProjectServiceEndpoint,
     method: DaemonHttpMethod,

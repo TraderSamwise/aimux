@@ -1,9 +1,11 @@
 use crate::config::load_config_for_project;
 use crate::dashboard_client::{
-    ProjectServiceEndpoint, execute_dashboard_action, fetch_desktop_state,
-    resolve_project_service_endpoint,
+    ProjectServiceEndpoint, execute_dashboard_action, fetch_dashboard_resource,
+    fetch_desktop_state, resolve_project_service_endpoint,
 };
-use crate::dashboard_controller::{DashboardController, DashboardControllerEffect};
+use crate::dashboard_controller::{
+    DashboardController, DashboardControllerEffect, DashboardScreen,
+};
 use crate::dashboard_event_stream::{
     DashboardEventStreamHandle, DashboardEventStreamMessage, spawn_dashboard_project_event_stream,
 };
@@ -17,7 +19,10 @@ use crate::dashboard_project_events::{
     DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_footer_flash,
 };
 use crate::dashboard_readiness::mark_native_dashboard_ready;
-use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
+use crate::dashboard_renderer::{
+    DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
+    render_dashboard_subscreen_frame,
+};
 use crate::dashboard_service_input::render_service_input_overlay;
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
@@ -52,7 +57,7 @@ struct DashboardSnapshotLoad {
 }
 
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
-    let mut controller = None;
+    let mut controller: Option<DashboardController> = None;
     let mut focus_state = DashboardFocusState::default();
     let mut ready_marked = false;
     let mut scroll_offset = 0;
@@ -107,6 +112,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             &mut event_stream,
             &mut event_stream_retry_at,
             &mut refresh_state,
+            controller
+                .as_ref()
+                .map(|controller| controller.screen.as_str()),
             controller.as_mut(),
         ) {
             render_now = true;
@@ -135,6 +143,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 &options,
                 controller,
                 &visible_model.snapshot,
+                loaded.endpoint.as_ref(),
                 visible_model.hidden_offline_agent_count,
                 scroll_offset,
             );
@@ -220,6 +229,7 @@ fn drain_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
     refresh_state: &mut DashboardProjectRefreshState,
+    active_screen: Option<&str>,
     mut controller: Option<&mut DashboardController>,
 ) -> bool {
     let Some(stream) = event_stream.as_ref() else {
@@ -238,7 +248,7 @@ fn drain_dashboard_event_stream(
                     controller.footer_message = Some(message);
                     render = true;
                 }
-                refresh_state.observe(&event);
+                refresh_state.observe_for_screen(&event, active_screen);
             }
             DashboardEventStreamMessage::Error(error) => {
                 stream_closed = true;
@@ -323,9 +333,13 @@ fn render_dashboard_snapshot(
     options: &NativeDashboardOptions,
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
+    endpoint: Option<&ProjectServiceEndpoint>,
     hidden_offline_agent_count: usize,
     scroll_offset: usize,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
+    if controller.screen != DashboardScreen::Dashboard {
+        return render_dashboard_subscreen_snapshot(options, controller, endpoint, scroll_offset);
+    }
     controller.navigation.clamp(snapshot);
     let (selected_session_id, selected_service_id) =
         match controller.navigation.selected_entry(snapshot) {
@@ -393,6 +407,49 @@ fn render_dashboard_snapshot(
         };
     }
     frame
+}
+
+fn render_dashboard_subscreen_snapshot(
+    options: &NativeDashboardOptions,
+    controller: &DashboardController,
+    endpoint: Option<&ProjectServiceEndpoint>,
+    scroll_offset: usize,
+) -> crate::tui_render::screen_frame::ScreenFrameResult {
+    let (resource, error) = match dashboard_screen_resource_path(controller.screen) {
+        Some(path) => match endpoint {
+            Some(endpoint) => match fetch_dashboard_resource(endpoint, path) {
+                Ok(resource) => (Some(resource), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
+            None => (None, Some("Project-service endpoint unavailable".into())),
+        },
+        None => (None, None),
+    };
+    render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: controller.screen,
+        resource: resource.as_ref(),
+        error: error.as_deref(),
+        cols: options.cols,
+        rows: options.rows,
+        scroll_offset,
+        footer_message: controller.footer_message.as_deref(),
+        details_sidebar_visible: controller.details_sidebar_visible,
+    })
+}
+
+fn dashboard_screen_resource_path(screen: DashboardScreen) -> Option<&'static str> {
+    match screen {
+        DashboardScreen::Dashboard | DashboardScreen::Help => None,
+        DashboardScreen::Coordination => {
+            Some(crate::project_api_contract::routes::COORDINATION_WORKLIST)
+        }
+        DashboardScreen::Project => {
+            Some(crate::project_api_contract::routes::PROJECT_OBSERVABILITY)
+        }
+        DashboardScreen::Library => Some(crate::project_api_contract::routes::LIBRARY),
+        DashboardScreen::Topology => Some(crate::project_api_contract::routes::TOPOLOGY),
+        DashboardScreen::Graveyard => Some(crate::project_api_contract::routes::GRAVEYARD),
+    }
 }
 
 fn load_dashboard_snapshot(options: &NativeDashboardOptions) -> Result<DashboardSnapshotLoad> {

@@ -1,6 +1,6 @@
 use aimux::dashboard_project_events::{
     DashboardProjectEvent, DashboardProjectRefreshState, ProjectEventsSseDecoder,
-    event_requests_desktop_state,
+    event_requests_desktop_state, event_requests_refresh,
 };
 use serde_json::json;
 
@@ -97,6 +97,25 @@ fn ready_refreshes_but_plain_alert_does_not() {
 
     assert!(event_requests_desktop_state(&ready));
     assert!(!event_requests_desktop_state(&alert));
+}
+
+#[test]
+fn active_subscreen_views_request_refresh_without_desktop_state() {
+    let event = DashboardProjectEvent::ProjectUpdate(
+        json!({ "type": "project_update", "views": ["library"] })
+            .as_object()
+            .expect("object")
+            .clone(),
+    );
+    let mut state = DashboardProjectRefreshState::default();
+
+    state.observe_for_screen(&event, Some("project"));
+    assert!(!state.refresh_pending());
+    assert!(!event_requests_refresh(&event, Some("project")));
+
+    state.observe_for_screen(&event, Some("library"));
+    assert!(state.refresh_pending());
+    assert!(event_requests_refresh(&event, Some("library")));
 }
 
 #[test]
