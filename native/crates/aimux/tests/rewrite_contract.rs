@@ -12,10 +12,20 @@ fn contract_manifest_keeps_zero_node_end_state_visible() {
 #[test]
 fn rewrite_status_tracks_translation_first_phases() {
     let status = rewrite_status();
-    assert_eq!(status.version, 1);
+    assert_eq!(status.version, 2);
     assert!(status.strategy.contains("translation first"));
     assert!(status.end_state.contains("zero Node"));
+    assert_eq!(status.progress_estimate_percent, 12);
+    assert!(status.active_slice.contains("native dashboard parity"));
+    assert!(
+        status
+            .checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.contains("runtime event route"))
+    );
     assert_eq!(status.phases.len(), 9);
     assert_eq!(status.phases[0].id, "phase-0");
+    assert_eq!(status.phases[1].status, aimux::PhaseStatus::InProgress);
+    assert_eq!(status.phases[7].status, aimux::PhaseStatus::InProgress);
     assert_eq!(status.phases[8].id, "phase-8");
 }

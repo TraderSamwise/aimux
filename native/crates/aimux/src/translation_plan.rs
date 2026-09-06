@@ -21,6 +21,9 @@ pub struct RewriteStatus {
     pub version: u32,
     pub strategy: &'static str,
     pub end_state: &'static str,
+    pub progress_estimate_percent: u8,
+    pub active_slice: &'static str,
+    pub checkpoints: &'static [&'static str],
     pub phases: &'static [RewritePhase],
 }
 
@@ -37,7 +40,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-1",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::InProgress,
         objective: "Port pure contracts and data models line-for-line enough to drive golden fixtures.",
         acceptance: &[
             "contract fixture generator runs",
@@ -46,13 +49,13 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-2",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::InProgress,
         objective: "Port CLI/core command text and JSON behavior.",
         acceptance: &["CLI stdout, stderr, and exit codes match"],
     },
     RewritePhase {
         id: "phase-3",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::InProgress,
         objective: "Port project-service HTTP and SSE behavior.",
         acceptance: &["project API route and SSE fixtures match"],
     },
@@ -67,7 +70,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-5",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::InProgress,
         objective: "Port output capture, ANSI parsing, transcript reconciliation, and preview behavior.",
         acceptance: &[
             "adversarial ANSI fixtures pass",
@@ -76,7 +79,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-6",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::InProgress,
         objective: "Port runtime exchange mutations, tasks, handoffs, threads, reviews, and stores.",
         acceptance: &[
             "store round-trip fixtures pass",
@@ -85,7 +88,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-7",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::InProgress,
         objective: "Port dashboard TUI and app/relay integration parity.",
         acceptance: &[
             "desktop-state golden fixtures match",
@@ -105,9 +108,19 @@ const PHASES: &[RewritePhase] = &[
 
 pub fn rewrite_status() -> RewriteStatus {
     RewriteStatus {
-        version: 1,
+        version: 2,
         strategy: "translation first: preserve functional behavior, function logic, loops, and data shapes; split large TypeScript monoliths into smaller Rust modules when the split does not change behavior.",
         end_state: "zero Node in the normal Aimux CLI, daemon, project-service, tmux runtime, and dashboard hot path",
+        progress_estimate_percent: 12,
+        active_slice: "native dashboard parity, runtime-event/project-service parity, and daemon supervision cutover",
+        checkpoints: &[
+            "native CLI scaffold and rewrite status command",
+            "project API contract constants and mutation invalidation mapping",
+            "project-service router claims declared routes without 501 fallback",
+            "runtime event route derives activity, attention, event history, notifications, and focused unread suppression",
+            "dashboard desktop-state model, renderer, navigation, action planning, input loop, focus sync, and process selection",
+            "output capture/projection cache and expose preview attachment slices",
+        ],
         phases: PHASES,
     }
 }
