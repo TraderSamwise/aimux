@@ -432,6 +432,13 @@ Priority fixture groups:
   argument construction, preamble overflow side effects, and fork/switch/migrate
   continuity preambles captured by running TypeScript `session-bootstrap`.
 
+## Service Client
+
+- `service-client/client.json`: daemon JSON request behavior, core command
+  daemon-start gating/transport options, and CLI control-plane restart
+  orchestration/callback side effects captured by running TypeScript client
+  helpers with mocked dependencies.
+
 ## Launch
 
 - `launch/managed-env.json`: managed launch environment allowlist, terminal
