@@ -9,11 +9,11 @@ use crate::core_cli_routing::{
     parse_core_host_topology_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_migration_args,
-    parse_core_notification_args, parse_core_outline_args, parse_core_overseer_clear_args,
-    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_repair_args,
-    parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args, parse_core_worktree_args,
+    parse_core_notification_args, parse_core_notification_test_args, parse_core_outline_args,
+    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
+    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_task_args,
+    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -106,6 +106,8 @@ pub enum CoreCliOperation {
     DoctorLifecycle,
     DoctorTmux,
     DoctorInstalls,
+    DoctorNotifications,
+    NotificationsTest,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -409,6 +411,11 @@ pub enum CoreCliAction {
         fix: bool,
         retention_days: Option<String>,
         keep_recent: Option<String>,
+    },
+    DoctorNotifications,
+    NotificationTest {
+        title: String,
+        body: String,
     },
     RuntimeMigrationAudit {
         project_root: String,
@@ -1433,6 +1440,22 @@ where
                 CoreCliFallback::None,
             )
         }
+        ("notifications", "test") => {
+            let parsed = parse_core_notification_test_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid notifications test arguments",
+                }
+            })?;
+            (
+                CoreCliOperation::NotificationsTest,
+                CoreCliAction::NotificationTest {
+                    title: parsed.title,
+                    body: parsed.body,
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("outline", "list" | "show" | "update") => {
             let parsed = parse_core_outline_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
@@ -2211,7 +2234,7 @@ where
             },
             CoreCliFallback::None,
         ),
-        ("doctor", "disk" | "exchange" | "lifecycle" | "tmux" | "installs") => {
+        ("doctor", "disk" | "exchange" | "lifecycle" | "tmux" | "installs" | "notifications") => {
             let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
             if parsed.subcommand == "disk" {
                 let project_root = parsed.project.as_deref().map(&resolve_project_root);
@@ -2235,6 +2258,12 @@ where
                         retention_days: parsed.retention_days,
                         keep_recent: parsed.keep_recent,
                     },
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "notifications" {
+                (
+                    CoreCliOperation::DoctorNotifications,
+                    CoreCliAction::DoctorNotifications,
                     CoreCliFallback::None,
                 )
             } else if parsed.subcommand == "exchange" {

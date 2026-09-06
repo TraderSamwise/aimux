@@ -290,6 +290,33 @@ impl CoreCliRuntime for FakeRuntime {
     fn runtime_migration_rollback(&self, manifest: &str) -> Result<String, String> {
         Ok(format!("migration rollback {manifest}"))
     }
+
+    fn desktop_notifier_doctor_report(&self) -> Result<Value, String> {
+        Ok(json!({
+            "platform": "macos",
+            "transport": "mac-helper",
+            "helperPath": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+            "helperCandidates": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+        }))
+    }
+
+    fn desktop_notifier_doctor_text(&self) -> Result<String, String> {
+        Ok("Desktop notifications\nPlatform: macos\nTransport: mac-helper".into())
+    }
+
+    fn send_desktop_notification_test(&self, title: &str, body: &str) -> Result<Value, String> {
+        Ok(json!({
+            "ok": true,
+            "attempt": {
+                "transport": "mac-helper",
+                "helperPath": format!("/tmp/{title}-{body}/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
+                "ok": true,
+                "exitCode": 0,
+                "stdout": "",
+                "stderr": "",
+            }
+        }))
+    }
 }
 
 fn args(values: &[&str]) -> Vec<String> {
@@ -1219,6 +1246,53 @@ fn notification_commands_execute_native_text_routes_without_core_command_fallbac
         ]
     );
     assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn desktop_notification_commands_execute_native_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let doctor_text = run_core_cli_with(&args(&["doctor", "notifications"]), &mut runtime);
+    let doctor_json =
+        run_core_cli_with(&args(&["doctor", "notifications", "--json"]), &mut runtime);
+    let test_text = run_core_cli_with(
+        &args(&["notifications", "test", "--title", "Ping", "--body=Ready"]),
+        &mut runtime,
+    );
+    let test_json = run_core_cli_with(
+        &args(&[
+            "notifications",
+            "test",
+            "--title= ",
+            "--body",
+            " ",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(
+        doctor_text.stdout,
+        ["Desktop notifications\nPlatform: macos\nTransport: mac-helper"]
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&doctor_json.stdout[0]).unwrap()["transport"],
+        "mac-helper"
+    );
+    assert_eq!(
+        test_text.stdout,
+        [
+            "Sent notification via mac-helper (/tmp/Ping-Ready/aimux-notifier.app/Contents/MacOS/aimux-notifier)."
+        ]
+    );
+    let payload = serde_json::from_str::<Value>(&test_json.stdout[0]).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(
+        payload["attempt"]["helperPath"],
+        "/tmp/Aimux notification test-Desktop notification delivery is working./aimux-notifier.app/Contents/MacOS/aimux-notifier"
+    );
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
 }
 
 #[test]

@@ -250,6 +250,55 @@ fn migration_audit_stays_native_even_when_node_fallback_is_configured() {
     cleanup(root);
 }
 
+#[test]
+fn doctor_notifications_stays_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-doctor-notifications");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .env("AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS", "1")
+        .args(["doctor", "notifications", "--json"])
+        .output()
+        .expect("run native aimux");
+
+    assert!(output.status.success());
+    assert!(
+        !log.exists(),
+        "doctor notifications should not invoke node fallback"
+    );
+    let body: Value = serde_json::from_slice(&output.stdout).expect("doctor notifications json");
+    assert_eq!(body["transport"], "disabled");
+    cleanup(root);
+}
+
+#[test]
+fn notifications_test_stays_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-notifications-test");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .env("AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS", "1")
+        .args(["notifications", "test", "--json"])
+        .output()
+        .expect("run native aimux");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        !log.exists(),
+        "notifications test should not invoke node fallback"
+    );
+    let body: Value = serde_json::from_slice(&output.stdout).expect("notifications test json");
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["attempt"]["transport"], "disabled");
+    cleanup(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {

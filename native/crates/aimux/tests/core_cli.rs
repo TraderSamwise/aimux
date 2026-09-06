@@ -1235,6 +1235,54 @@ fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
             keep_recent: Some("2".into()),
         }
     );
+
+    let notifications =
+        classify_core_cli(&["doctor", "notifications", "--json"], &context(true, true))
+            .expect("doctor notifications plan");
+    assert_eq!(
+        notifications.operation,
+        CoreCliOperation::DoctorNotifications
+    );
+    assert_eq!(notifications.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(notifications.action, CoreCliAction::DoctorNotifications);
+}
+
+#[test]
+fn desktop_notification_test_plans_native_local_action() {
+    let notification = classify_core_cli(
+        &[
+            "notifications",
+            "test",
+            "--title",
+            "Ping",
+            "--body=Ready",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("notifications test plan");
+    assert_eq!(notification.operation, CoreCliOperation::NotificationsTest);
+    assert_eq!(notification.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        notification.action,
+        CoreCliAction::NotificationTest {
+            title: "Ping".into(),
+            body: "Ready".into(),
+        }
+    );
+
+    let defaults = classify_core_cli(
+        &["notifications", "test", "--title= ", "--body", " "],
+        &context(true, true),
+    )
+    .expect("notifications test defaults");
+    assert_eq!(
+        defaults.action,
+        CoreCliAction::NotificationTest {
+            title: "Aimux notification test".into(),
+            body: "Desktop notification delivery is working.".into(),
+        }
+    );
 }
 
 #[test]

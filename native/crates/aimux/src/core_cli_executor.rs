@@ -23,6 +23,11 @@ use crate::daemon_state::{
 };
 use crate::daemon_supervisor::{ensure_daemon_running, stop_daemon};
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
+use crate::desktop_notifier::{
+    DesktopNotificationPayload, build_desktop_notifier_doctor_report, notification_test_json,
+    render_desktop_notifier_doctor_report, render_notification_test_failure,
+    render_notification_test_success, send_desktop_notification_and_wait,
+};
 use crate::install_cleanup::{
     DEFAULT_INSTALL_KEEP_RECENT, DEFAULT_INSTALL_RETENTION_DAYS, PlanInstallCleanupOptions,
     RunInstallCleanupInput, is_install_cleanup_dry_run, plan_install_cleanup,
@@ -103,6 +108,9 @@ pub trait CoreCliRuntime {
     fn runtime_migration_audit(&self, project_root: &str) -> Result<String, String>;
     fn runtime_migration_import(&self, project_root: &str) -> Result<String, String>;
     fn runtime_migration_rollback(&self, manifest: &str) -> Result<String, String>;
+    fn desktop_notifier_doctor_report(&self) -> Result<Value, String>;
+    fn desktop_notifier_doctor_text(&self) -> Result<String, String>;
+    fn send_desktop_notification_test(&self, title: &str, body: &str) -> Result<Value, String>;
 }
 
 #[derive(Debug, Default)]
@@ -319,6 +327,26 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             rollback_runtime_migration(manifest_path).map_err(|error| error.to_string())?;
         render_runtime_migration_rollback_result(&manifest).map_err(|error| error.to_string())
     }
+
+    fn desktop_notifier_doctor_report(&self) -> Result<Value, String> {
+        serde_json::to_value(build_desktop_notifier_doctor_report())
+            .map_err(|error| error.to_string())
+    }
+
+    fn desktop_notifier_doctor_text(&self) -> Result<String, String> {
+        Ok(render_desktop_notifier_doctor_report(
+            &build_desktop_notifier_doctor_report(),
+        ))
+    }
+
+    fn send_desktop_notification_test(&self, title: &str, body: &str) -> Result<Value, String> {
+        let attempt = send_desktop_notification_and_wait(&DesktopNotificationPayload {
+            title: title.to_owned(),
+            message: body.to_owned(),
+            sound: true,
+        });
+        Ok(notification_test_json(&attempt))
+    }
 }
 
 pub fn run_core_cli(raw_args: &[String]) -> CoreCliExecution {
@@ -484,6 +512,10 @@ fn run_plan(
         CoreCliAction::RuntimeMigrationRollback { manifest } => Ok(CoreCliExecution::ok(vec![
             runtime.runtime_migration_rollback(&manifest)?,
         ])),
+        CoreCliAction::DoctorNotifications => run_doctor_notifications(output_mode, runtime),
+        CoreCliAction::NotificationTest { title, body } => {
+            run_notification_test(output_mode, &title, &body, runtime)
+        }
     }
 }
 
@@ -494,6 +526,63 @@ fn resolve_path_from(cwd: &str, path: &str) -> PathBuf {
     } else {
         PathBuf::from(cwd).join(path)
     }
+}
+
+fn run_doctor_notifications(
+    output_mode: CoreCliOutputMode,
+    runtime: &impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    match output_mode {
+        CoreCliOutputMode::Json => Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&runtime.desktop_notifier_doctor_report()?)
+                .map_err(|error| error.to_string())?,
+        ])),
+        CoreCliOutputMode::Text => Ok(CoreCliExecution::ok(vec![
+            runtime.desktop_notifier_doctor_text()?,
+        ])),
+    }
+}
+
+fn run_notification_test(
+    output_mode: CoreCliOutputMode,
+    title: &str,
+    body: &str,
+    runtime: &impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let payload = runtime.send_desktop_notification_test(title, body)?;
+    let ok = payload.get("ok").and_then(Value::as_bool) == Some(true);
+    if output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution {
+            code: if ok { 0 } else { 1 },
+            stdout: vec![
+                serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?,
+            ],
+            stderr: Vec::new(),
+        });
+    }
+    let attempt = payload.get("attempt").cloned().unwrap_or(Value::Null);
+    let text = if ok {
+        render_notification_test_success_value(&attempt)
+    } else {
+        render_notification_test_failure_value(&attempt)
+    };
+    Ok(CoreCliExecution {
+        code: if ok { 0 } else { 1 },
+        stdout: if ok { vec![text.clone()] } else { Vec::new() },
+        stderr: if ok { Vec::new() } else { vec![text] },
+    })
+}
+
+fn render_notification_test_success_value(attempt: &Value) -> String {
+    serde_json::from_value(attempt.clone())
+        .map(|attempt| render_notification_test_success(&attempt))
+        .unwrap_or_else(|_| "Sent notification via unknown.".into())
+}
+
+fn render_notification_test_failure_value(attempt: &Value) -> String {
+    serde_json::from_value(attempt.clone())
+        .map(|attempt| render_notification_test_failure(&attempt))
+        .unwrap_or_else(|_| "Failed to send notification via unknown.".into())
 }
 
 fn run_stop_daemon(

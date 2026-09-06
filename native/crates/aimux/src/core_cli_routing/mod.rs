@@ -1293,6 +1293,66 @@ pub fn parse_core_notification_args<S: AsRef<str>>(args: &[S]) -> Option<CoreNot
     Some(parsed)
 }
 
+pub fn parse_core_notification_test_args<S: AsRef<str>>(
+    args: &[S],
+) -> Option<CoreNotificationTestArgs> {
+    if args.first().map(AsRef::as_ref) != Some("notifications")
+        || args.get(1).map(AsRef::as_ref) != Some("test")
+    {
+        return None;
+    }
+    let mut title = "Aimux notification test".to_owned();
+    let mut body = "Desktop notification delivery is working.".to_owned();
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--title" {
+            title = required_value(args, index)?.to_owned();
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--title=") {
+            title = value.to_owned();
+            index += 1;
+            continue;
+        }
+        if arg == "--body" {
+            body = required_value(args, index)?.to_owned();
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--body=") {
+            body = value.to_owned();
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    let title = {
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            "Aimux notification test".to_owned()
+        } else {
+            trimmed.to_owned()
+        }
+    };
+    let body = {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            "Desktop notification delivery is working.".to_owned()
+        } else {
+            trimmed.to_owned()
+        }
+    };
+    Some(CoreNotificationTestArgs { title, body, json })
+}
+
 fn split_notification_ids(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -2490,7 +2550,7 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         return None;
     }
     let subcommand = match args.get(1).map(AsRef::as_ref) {
-        Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs") => {
+        Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs" | "notifications") => {
             args[1].as_ref().to_owned()
         }
         _ => return None,
@@ -3160,6 +3220,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             Some("notify" | "list-notifications" | "read-notifications" | "clear-notifications"),
             _,
         ) => true,
+        (Some("notifications"), Some("test")) => parse_core_notification_test_args(args).is_some(),
         (Some("outline"), Some("list" | "show" | "update")) => {
             parse_core_outline_args(args).is_some()
         }
@@ -3181,9 +3242,10 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("daemon"), Some("project-ensure")) => true,
         (Some("debug-state"), Some(_)) => args.len() == 2 && !args[1].as_ref().starts_with('-'),
         (Some("doctor"), Some("versions")) => has_only_allowed_flags(&args[2..], &["--json"]),
-        (Some("doctor"), Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs")) => {
-            parse_core_doctor_args(args).is_some()
-        }
+        (
+            Some("doctor"),
+            Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs" | "notifications"),
+        ) => parse_core_doctor_args(args).is_some(),
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),
         (Some("repair"), _) => parse_core_repair_args(args).is_some(),
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),

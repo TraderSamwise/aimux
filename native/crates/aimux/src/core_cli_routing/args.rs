@@ -202,6 +202,14 @@ pub struct CoreNotificationArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreNotificationTestArgs {
+    pub title: String,
+    pub body: String,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreOutlineArgs {
     pub subcommand: String,
     #[serde(skip_serializing_if = "Option::is_none")]
