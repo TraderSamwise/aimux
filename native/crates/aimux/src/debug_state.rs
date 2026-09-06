@@ -799,6 +799,11 @@ fn list_git_worktrees(repo_root: &str) -> Result<Vec<Value>, String> {
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(repo_root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_COMMON_DIR")
         .output()
         .map_err(|error| format!("git worktree list failed: {error}"))?;
     if !output.status.success() {
@@ -835,6 +840,10 @@ fn list_git_worktrees(repo_root: &str) -> Result<Vec<Value>, String> {
                         .to_owned(),
                 ),
             );
+        } else if line.starts_with("HEAD ") || line == "detached" {
+            if !current.contains_key("branch") {
+                current.insert("branch".into(), Value::String("(detached)".to_owned()));
+            }
         } else if line == "bare" {
             current.insert("isBare".into(), Value::Bool(true));
         }
@@ -847,7 +856,10 @@ fn list_git_worktrees(repo_root: &str) -> Result<Vec<Value>, String> {
                 .insert("isBare".into(), Value::Bool(false));
         }
     }
-    Ok(rows)
+    Ok(rows
+        .into_iter()
+        .filter_map(add_worktree_created_at)
+        .collect())
 }
 
 fn push_worktree_row(rows: &mut Vec<Value>, current: &mut Map<String, Value>) {
@@ -856,6 +868,52 @@ fn push_worktree_row(rows: &mut Vec<Value>, current: &mut Map<String, Value>) {
     } else {
         current.clear();
     }
+}
+
+fn add_worktree_created_at(worktree: Value) -> Option<Value> {
+    let mut object = match worktree {
+        Value::Object(object) => object,
+        _ => Map::new(),
+    };
+    let path = object
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::to_owned)?;
+    let is_bare = object
+        .get("isBare")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if is_bare {
+        return Some(Value::Object(object));
+    }
+    let metadata = fs::metadata(&path).ok()?;
+    let created = metadata
+        .created()
+        .or_else(|_| metadata.modified())
+        .ok()
+        .and_then(system_time_to_iso);
+    if let Some(created) = created {
+        object.insert("createdAt".into(), Value::String(created));
+    }
+    Some(Value::Object(object))
+}
+
+fn system_time_to_iso(time: std::time::SystemTime) -> Option<String> {
+    let duration = time
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .ok()?;
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(duration.as_secs() as i64).ok()?;
+    let timestamp = timestamp + time::Duration::nanoseconds(duration.subsec_nanos() as i64);
+    Some(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        timestamp.year(),
+        u8::from(timestamp.month()),
+        timestamp.day(),
+        timestamp.hour(),
+        timestamp.minute(),
+        timestamp.second(),
+        timestamp.millisecond()
+    ))
 }
 
 fn list_project_managed_windows(paths: &ReadOnlyProjectPaths) -> Result<Vec<Value>, String> {

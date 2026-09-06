@@ -1,8 +1,9 @@
-use aimux::debug_state::build_debug_state_report_with_inputs;
+use aimux::debug_state::{build_debug_state_report, build_debug_state_report_with_inputs};
 use aimux::paths::ReadOnlyProjectPaths;
 use serde_json::{Value, json};
 use std::fs::{self, create_dir_all};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -341,4 +342,116 @@ fn marks_ambiguous_exact_matches_instead_of_guessing() {
         build_debug_state_report_with_inputs(&paths, "same", Some(Ok(vec![])), Some(Ok(vec![])));
     assert_eq!(report["targetResolution"]["status"], "ambiguous");
     assert_eq!(report["targetResolution"]["entityCount"], 2);
+}
+
+#[test]
+fn git_worktrees_match_live_detached_worktrees_with_created_at() {
+    let repo = make_git_repo("detached");
+    let detached = repo.with_file_name("repo-detached");
+    run_git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            detached.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+
+    let report = build_debug_state_report(&repo, "(detached)");
+    let worktrees = report["sources"]["gitWorktrees"]["value"]["worktrees"]
+        .as_array()
+        .expect("worktrees");
+    let detached_row = worktrees
+        .iter()
+        .find(|row| row["branch"] == "(detached)")
+        .expect("detached worktree row");
+    assert_eq!(detached_row["branch"], "(detached)");
+    assert_eq!(detached_row["isBare"], false);
+    assert!(
+        detached_row["createdAt"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z'))
+    );
+    assert_eq!(report["targetResolution"]["status"], "matched");
+
+    cleanup(repo.parent().unwrap().to_path_buf());
+}
+
+#[test]
+fn git_worktrees_ignore_stale_missing_linked_worktrees() {
+    let repo = make_git_repo("stale");
+    let stale = repo.with_file_name("repo-stale-linked");
+    run_git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "stale-branch",
+            stale.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    fs::remove_dir_all(&stale).expect("remove linked worktree without pruning git metadata");
+
+    let report = build_debug_state_report(&repo, "stale-branch");
+    assert_eq!(
+        report["sources"]["gitWorktrees"]["value"]["worktrees"],
+        json!([])
+    );
+    assert_eq!(report["targetResolution"]["status"], "missing");
+
+    cleanup(repo.parent().unwrap().to_path_buf());
+}
+
+fn make_git_repo(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "aimux-rust-debug-state-git-{label}-{}-{}",
+        std::process::id(),
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    cleanup(root.clone());
+    let repo = root.join("repo");
+    create_dir_all(&repo).unwrap();
+    run_git(&repo, &["init", "-b", "master"]);
+    fs::write(repo.join("README.md"), "test\n").unwrap();
+    run_git(&repo, &["add", "README.md"]);
+    run_git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Aimux Test",
+            "-c",
+            "user.email=aimux@example.test",
+            "commit",
+            "-m",
+            "init",
+        ],
+    );
+    repo
+}
+
+fn run_git(cwd: &PathBuf, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_COMMON_DIR")
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn cleanup(path: PathBuf) {
+    let _ = fs::remove_dir_all(path);
 }
