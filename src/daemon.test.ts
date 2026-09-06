@@ -782,6 +782,12 @@ describe("daemon supervision", () => {
           counts: { tui: 0, web: 0, mobile: 0, expose: 1, api: 0 },
           activePreviewClients: 1,
         },
+        hotSnapshots: {
+          enabled: true,
+          scheduled: false,
+          refreshing: false,
+          workerRunning: false,
+        },
       },
     });
   });
@@ -918,6 +924,19 @@ describe("daemon supervision", () => {
 
     const snapshotText = existsSync(path) ? readFileSync(path, "utf8") : "";
     expect(snapshotText).not.toContain("SECRET_TOKEN=should-expire");
+  });
+
+  it("does not start global expose hot snapshot refresh without preview clients", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const testDaemon = daemon as unknown as {
+      globalExposeHotSnapshotRefreshing: boolean;
+      refreshGlobalExposeHotSnapshots: () => void;
+    };
+
+    testDaemon.refreshGlobalExposeHotSnapshots();
+
+    expect(testDaemon.globalExposeHotSnapshotRefreshing).toBe(false);
   });
 
   it("does not refresh global expose hot snapshots when config disables them", async () => {

@@ -468,6 +468,7 @@ describe("MetadataServer threads API", () => {
       },
       exposePreviewCache,
       exposePaneOutputTap,
+      exposeHotSnapshots: true,
     });
     await server.start();
     const endpoint = server.getAddress();
@@ -483,6 +484,12 @@ describe("MetadataServer threads API", () => {
         counts: { tui: 1, web: 0, mobile: 0, expose: 0, api: 0 },
         activePreviewClients: 1,
       },
+      hotSnapshots: {
+        enabled: true,
+        scheduled: true,
+        refreshing: false,
+        workerRunning: false,
+      },
       cache: { trackedTargets: 1 },
       taps: { trackedTargets: 1 },
     });
@@ -491,6 +498,29 @@ describe("MetadataServer threads API", () => {
       kind: "tui",
       surface: "desktop-state",
       requestedPreview: true,
+    });
+  });
+
+  it("keeps expose hot snapshot refresh unscheduled without preview clients", async () => {
+    server?.stop();
+    server = new MetadataServer({ exposeHotSnapshots: true });
+    await server.start();
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const testServer = server as unknown as { refreshExposeHotSnapshots: () => void };
+
+    testServer.refreshExposeHotSnapshots();
+    const diagnostics = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
+    const json = await diagnostics.json();
+
+    expect(json.previews).toMatchObject({
+      clients: { activePreviewClients: 0 },
+      hotSnapshots: {
+        enabled: true,
+        scheduled: false,
+        refreshing: false,
+        workerRunning: false,
+      },
     });
   });
 

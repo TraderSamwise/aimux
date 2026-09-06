@@ -793,6 +793,7 @@ export class AimuxDaemon {
   private scheduleGlobalExposeHotSnapshotRefresh(delayMs = GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
     if (!this.server || this.stopping) return;
     if (!loadGlobalConfig().expose.hotSnapshotsEnabled) return;
+    if (!this.visualClientLeases.hasActivePreviewClients()) return;
     if (this.globalExposeHotSnapshotTimer) clearTimeout(this.globalExposeHotSnapshotTimer);
     this.globalExposeHotSnapshotTimer = setTimeout(() => {
       this.globalExposeHotSnapshotTimer = null;
@@ -910,6 +911,7 @@ export class AimuxDaemon {
     for (const project of projects) {
       pruneExpiredHotExposeSnapshots(getProjectStateDirById(project.id));
     }
+    if (!this.visualClientLeases.hasActivePreviewClients()) return;
     if (this.globalExposeHotSnapshotRefreshing) {
       this.scheduleGlobalExposeHotSnapshotRefresh();
       return;
@@ -1003,7 +1005,9 @@ export class AimuxDaemon {
       requestedChatPreview: routeUrl.searchParams.get("includeChatPreview") === "1",
       ttlMs: routeUrl.searchParams.get("clientTtlMs"),
     });
-    return this.visualClientLeases.hasActivePreviewClients();
+    const active = this.visualClientLeases.hasActivePreviewClients();
+    if (active) this.scheduleGlobalExposeHotSnapshotRefresh();
+    return active;
   }
 
   private exposeFocusRoute(body: unknown): DaemonRouteResponse {
@@ -4381,6 +4385,12 @@ export class AimuxDaemon {
           tmuxExec,
           previews: {
             clients: this.visualClientLeases.snapshot(),
+            hotSnapshots: {
+              enabled: loadGlobalConfig().expose.hotSnapshotsEnabled,
+              scheduled: Boolean(this.globalExposeHotSnapshotTimer),
+              refreshing: this.globalExposeHotSnapshotRefreshing,
+              workerRunning: Boolean(this.globalExposeHotSnapshotWorker),
+            },
           },
           // The verdict, not just the numbers: a reader (or a smoke check) should
           // not have to re-derive the thresholds to know whether this is healthy.

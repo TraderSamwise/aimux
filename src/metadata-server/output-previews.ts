@@ -172,6 +172,12 @@ export class ProjectOutputPreviewCoordinator {
   diagnostics(): Record<string, unknown> {
     return {
       clients: this.visualClientLeases.snapshot(),
+      hotSnapshots: {
+        enabled: this.exposeHotSnapshotsEnabled,
+        scheduled: Boolean(this.exposeHotSnapshotTimer),
+        refreshing: this.exposeHotSnapshotRefreshing,
+        workerRunning: Boolean(this.exposeHotSnapshotWorker),
+      },
       cache: this.exposePreviewCache?.stats?.() ?? null,
       taps: this.exposePaneOutputTap?.stats?.() ?? null,
     };
@@ -308,7 +314,9 @@ export class ProjectOutputPreviewCoordinator {
       requestedChatPreview: input.requestedChatPreview === true,
       ttlMs: url.searchParams.get("clientTtlMs"),
     });
-    return this.visualClientLeases.hasActivePreviewClients();
+    const active = this.visualClientLeases.hasActivePreviewClients();
+    if (active) this.scheduleExposeHotSnapshotRefresh();
+    return active;
   }
 
   attachExposePreviewSnapshots(
@@ -466,6 +474,7 @@ export class ProjectOutputPreviewCoordinator {
 
   scheduleExposeHotSnapshotRefresh(delayMs = EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
     if (!this.exposeHotSnapshotsEnabled || this.exposeHotSnapshotTimer || !this.options.isServerRunning()) return;
+    if (!this.visualClientLeases.hasActivePreviewClients()) return;
     this.exposeHotSnapshotTimer = setTimeout(() => {
       this.exposeHotSnapshotTimer = null;
       this.options.runInProjectContext(() => this.refreshExposeHotSnapshots());
@@ -476,6 +485,7 @@ export class ProjectOutputPreviewCoordinator {
   refreshExposeHotSnapshots(): void {
     if (!this.exposeHotSnapshotsEnabled || !this.options.isServerRunning()) return;
     pruneExpiredHotExposeSnapshots(getProjectStateDir());
+    if (!this.visualClientLeases.hasActivePreviewClients()) return;
     if (this.exposeHotSnapshotRefreshing) {
       this.scheduleExposeHotSnapshotRefresh();
       return;
