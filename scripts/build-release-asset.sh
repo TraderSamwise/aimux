@@ -87,7 +87,8 @@ artifact_mtime_ms() {
   printf '%s000' "$timestamp"
 }
 
-MAIN_ARTIFACT="$PKG_DIR/dist/main.js"
+MAIN_ARTIFACT_NAME="main.js"
+MAIN_ARTIFACT="$PKG_DIR/dist/$MAIN_ARTIFACT_NAME"
 NATIVE_ARTIFACT="$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
 BUILD_STAMP="$(artifact_mtime_ms "$PKG_DIR/dist/launcher-bin.js").$(artifact_mtime_ms "$MAIN_ARTIFACT").$(artifact_mtime_ms "$NATIVE_ARTIFACT")-$(cat "$PKG_DIR/dist/launcher-bin.js" "$MAIN_ARTIFACT" "$NATIVE_ARTIFACT" | shasum -a 1 | awk '{ print substr($1, 1, 12) }')"
 printf '%s\n' "$BUILD_STAMP" > "$PKG_DIR/BUILD_STAMP"

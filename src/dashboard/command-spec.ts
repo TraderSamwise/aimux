@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { getAimuxDashboardLaunchCommand } from "../cli-launcher.js";
+import { getAimuxDashboardLaunchCommand, type AimuxCliLaunchCommand } from "../cli-launcher.js";
 import { DEFAULT_DAEMON_PORT, DEFAULT_ENV, DEFAULT_HOME, DEFAULT_WEB_APP_URL } from "../launcher-defaults.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
 
@@ -80,7 +80,7 @@ function buildDashboardEnvCommandPrefix(
   return args.length > 0 ? `env ${args.join(" ")} ` : "";
 }
 
-function dashboardEnvForLaunch(env: NodeJS.ProcessEnv, source: "stable-shim" | "current-entry"): NodeJS.ProcessEnv {
+function dashboardEnvForLaunch(env: NodeJS.ProcessEnv, source: AimuxCliLaunchCommand["source"]): NodeJS.ProcessEnv {
   if (source === "stable-shim") return env;
   const { AIMUX_CLI_BIN: _cliBin, AIMUX_INSTALL_ROOT: _installRoot, ...rest } = env;
   return rest;
@@ -112,9 +112,11 @@ export function getDashboardCommandSpec(
   const scriptPath = resolveDashboardScriptPath();
   const launch = getAimuxDashboardLaunchCommand({ env, currentArgvEntry: scriptPath });
   const artifactPaths =
-    launch.source === "stable-shim"
-      ? (resolveStableShimArtifactPaths(launch.stableShimPath) ?? [scriptPath, resolveDashboardImplementationPath()])
-      : [scriptPath, resolveDashboardImplementationPath()];
+    launch.source === "native-binary"
+      ? [launch.command]
+      : launch.source === "stable-shim"
+        ? (resolveStableShimArtifactPaths(launch.stableShimPath) ?? [scriptPath, resolveDashboardImplementationPath()])
+        : [scriptPath, resolveDashboardImplementationPath()];
   const aimuxCommand = [launch.command, ...launch.args].map(shellQuote).join(" ");
   const dashboardEnv = dashboardEnvForLaunch(env, launch.source);
   const unsetKeys = launch.source === "current-entry" ? STABLE_SHIM_ENV_KEYS : [];
