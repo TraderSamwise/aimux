@@ -1,6 +1,7 @@
 use crate::dashboard_client::{fetch_desktop_state, resolve_project_service_endpoint};
 use crate::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use crate::dashboard_navigation::{DashboardEntryRef, DashboardNavigationState};
+use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use anyhow::{Context, Result};
 use std::fs;
@@ -19,6 +20,7 @@ pub struct NativeDashboardOptions {
 
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
     let mut navigation = None;
+    let mut ready_marked = false;
     loop {
         let snapshot = load_dashboard_snapshot(&options)?;
         let navigation = navigation.get_or_insert_with(|| DashboardNavigationState::new(&snapshot));
@@ -46,6 +48,10 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             scroll_offset: 0,
         });
         print!("{}", frame.frame);
+        if !ready_marked {
+            let _ = mark_native_dashboard_ready(&options.project_root);
+            ready_marked = true;
+        }
         if options.once {
             return Ok(());
         }
