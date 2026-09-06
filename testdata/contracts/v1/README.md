@@ -59,6 +59,9 @@ Priority fixture groups:
 
 ## App State
 
+- `app-state/chat-output.json`: app chat output store snapshot/event ingestion,
+  local interrupt hold, ANSI fallback, activity text retention/clearing, and
+  transcript window merge behavior captured by running TypeScript Jotai atoms.
 - `app-state/helpers.json`: chat transcript loading visibility, native pinned
   offset, terminal output hydration, visible-pane output mode, and active
   shared-session mapping/equality/merge/hydration behavior captured by running
@@ -76,9 +79,17 @@ Priority fixture groups:
   plan key shape, request-scope matching, and request-key construction captured
   by running TypeScript project store helpers, with random request scope
   normalized after execution.
+- `app-state/project-list.json`: app daemon project list reconciliation,
+  selected-project retention, explicit selection guard, and per-project view
+  memory captured by running TypeScript Jotai atoms and project-list helpers.
+- `app-state/resource-request-tracker.json`: app project resource request
+  tracker sequence, stale marker, and endpoint-generation invalidation behavior
+  captured by running TypeScript, with nondeterministic key tokens normalized.
 - `app-state/settings.json`: durable app settings defaults, persisted-settings
   normalization, monitor viewport clamping, share normalization, and desktop
   zoom helpers captured by running TypeScript settings helpers.
+- `app-state/ui-defaults.json`: ephemeral app sidebar and project-picker
+  defaults captured by running TypeScript Jotai atoms.
 
 ## App Runtime
 
