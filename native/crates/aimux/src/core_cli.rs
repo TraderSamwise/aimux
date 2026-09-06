@@ -1,19 +1,19 @@
 use crate::core_cli_routing::{
     CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreHostRestartArgs, CoreLogsArgs,
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_input_args,
-    parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_attachment_publish_args, parse_core_collaboration_args,
-    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
-    parse_core_graveyard_args, parse_core_host_agent_read_args_result,
-    parse_core_host_agent_stream_args_result, parse_core_host_restart_args,
-    parse_core_host_topology_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_migration_args,
-    parse_core_notification_args, parse_core_notification_test_args, parse_core_outline_args,
-    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
-    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
-    parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_task_args,
-    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_agent_list_args, parse_core_agent_migrate_args, parse_core_agent_ps_args,
+    parse_core_agent_rename_args, parse_core_attachment_publish_args,
+    parse_core_collaboration_args, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
+    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
+    parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
+    parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
+    parse_core_migration_args, parse_core_notification_args, parse_core_notification_test_args,
+    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_repair_args, parse_core_restart_args,
+    parse_core_runtime_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
+    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,7 @@ pub enum CoreCliOperation {
     HostAgentRead,
     HostAgentStream,
     AgentInput,
+    AgentList,
     AgentRename,
     AgentMigrate,
     AgentPs,
@@ -629,6 +630,18 @@ fn agent_ps_text_path(project: &str, json: bool) -> String {
     path
 }
 
+fn agent_list_text_path(project: &str, json: bool) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.agent_list_text,
+        encode_query_component(project)
+    );
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
 fn notification_list_text_path(
     project: &str,
     unread: bool,
@@ -972,6 +985,27 @@ where
                         "sessionId": parsed.session_id,
                         "text": parsed.text,
                     })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("list", _) => {
+            let parsed = parse_core_agent_list_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid list arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::AgentList,
+                CoreCliAction::TextRoute {
+                    path: agent_list_text_path(&project_root, parsed.json),
+                    body: None,
                 },
                 CoreCliFallback::None,
             )
@@ -1739,8 +1773,15 @@ where
                 CoreCliFallback::None,
             )
         }
-        ("thread", "list" | "show" | "open" | "send" | "mark-seen" | "status") => {
-            let parsed = parse_core_thread_args(&args).ok_or_else(|| {
+        ("thread", "list" | "show" | "open" | "send" | "mark-seen" | "status") | ("threads", _) => {
+            let thread_args = if command == "threads" {
+                let mut alias = vec!["thread".to_owned(), "list".to_owned()];
+                alias.extend(args.iter().skip(1).cloned());
+                alias
+            } else {
+                args.clone()
+            };
+            let parsed = parse_core_thread_args(&thread_args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
                     message: "error: invalid thread arguments",

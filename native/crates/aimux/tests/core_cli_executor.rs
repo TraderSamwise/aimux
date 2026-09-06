@@ -156,6 +156,8 @@ impl CoreCliRuntime for FakeRuntime {
             "pane output\n".into()
         } else if path.starts_with("/core/agents/ps-text?") {
             "claude-1  [claude]  ready\n".into()
+        } else if path.starts_with("/core/agents/list-text?") {
+            "Main Checkout  /repo\n  ready  canonical=claude  aimux=claude-1\n".into()
         } else if path == "/core/agents/input-text" {
             "delivered to claude-1\n".into()
         } else if path.starts_with("/core/agents/rename-text") {
@@ -754,12 +756,24 @@ fn agent_ps_executes_native_text_route_without_core_command_fallback() {
     let mut runtime = FakeRuntime::default();
 
     let ps = run_core_cli_with(&args(&["ps", "--project", "/repo", "--json"]), &mut runtime);
+    let list = run_core_cli_with(
+        &args(&["list", "--project", "/repo", "--json"]),
+        &mut runtime,
+    );
 
     assert_eq!(ps.code, 0);
     assert_eq!(ps.stdout, ["claude-1  [claude]  ready"]);
+    assert_eq!(list.code, 0);
+    assert_eq!(
+        list.stdout,
+        ["Main Checkout  /repo\n  ready  canonical=claude  aimux=claude-1"]
+    );
     assert_eq!(
         runtime.text_routes,
-        [("/core/agents/ps-text?project=%2Frepo&json=1".into(), None,)]
+        [
+            ("/core/agents/ps-text?project=%2Frepo&json=1".into(), None,),
+            ("/core/agents/list-text?project=%2Frepo&json=1".into(), None,),
+        ]
     );
     assert!(runtime.commands.is_empty());
 }
@@ -1769,8 +1783,12 @@ fn thread_commands_execute_native_text_routes_without_core_command_fallback() {
         ]),
         &mut runtime,
     );
+    let threads = run_core_cli_with(
+        &args(&["threads", "--project=/repo", "--json"]),
+        &mut runtime,
+    );
 
-    for execution in [list, show, open, send, mark_seen, status] {
+    for execution in [list, show, open, send, mark_seen, status, threads] {
         assert_eq!(execution.stdout, ["task task-1\nthread thread-1"]);
     }
     assert_eq!(
@@ -1823,6 +1841,7 @@ fn thread_commands_execute_native_text_routes_without_core_command_fallback() {
                     "waitingOn": "claude-1,codex-1",
                 })),
             ),
+            ("/core/thread/list-text?project=%2Frepo&json=1".into(), None,),
         ]
     );
     assert!(runtime.commands.is_empty());

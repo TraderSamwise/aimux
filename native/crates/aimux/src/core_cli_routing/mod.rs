@@ -161,6 +161,17 @@ pub fn parse_core_agent_ps_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPs
     parse_project_json_flags(&args[1..])
 }
 
+pub fn parse_core_agent_list_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentListArgs> {
+    if args.first().map(AsRef::as_ref) != Some("list") {
+        return None;
+    }
+    let parsed = parse_project_json_flags(&args[1..])?;
+    Some(CoreAgentListArgs {
+        project: parsed.project,
+        json: parsed.json,
+    })
+}
+
 pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentInputArgs> {
     if args.first().map(AsRef::as_ref) != Some("input") {
         return None;
@@ -3177,6 +3188,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     match (command, subcommand) {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
         (Some("init"), _) => args.len() == 1,
+        (Some("list"), _) => parse_core_agent_list_args(args).is_some(),
         (Some("ps"), _) => true,
         (Some("input"), _) => true,
         (Some("rename"), _) => true,
@@ -3209,6 +3221,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         }
         (Some("thread"), Some("send")) => thread_positional_count(args) >= 2,
         (Some("thread"), Some("open")) => parse_core_thread_args(args).is_some(),
+        (Some("threads"), _) => parse_core_threads_alias_args(args).is_some(),
         (Some("worktree"), None) | (Some("worktree"), Some("list" | "cleanup-caches")) => true,
         (
             Some("worktree"),
@@ -3257,6 +3270,12 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("security"), Some("unlock")) => args.len() == 2,
         _ => false,
     }
+}
+
+fn parse_core_threads_alias_args<S: AsRef<str>>(args: &[S]) -> Option<CoreThreadArgs> {
+    let mut alias = vec!["thread".to_owned(), "list".to_owned()];
+    alias.extend(args.iter().skip(1).map(|arg| arg.as_ref().to_owned()));
+    parse_core_thread_args(&alias)
 }
 
 fn thread_positional_count<S: AsRef<str>>(args: &[S]) -> usize {

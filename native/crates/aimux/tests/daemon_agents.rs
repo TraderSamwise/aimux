@@ -242,6 +242,30 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
     .expect("ps json route");
     assert_eq!(json_text(ps_json)[0]["id"], "claude-1");
 
+    let list = route_agent_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?project=/repo", CORE_API_ROUTES.agent_list_text),
+        None,
+    )
+    .expect("list route");
+    let list_text = text_body(list);
+    assert!(list_text.contains("wt  /repo/wt"));
+    assert!(
+        list_text
+            .contains("  running  canonical=claude  aimux=claude-1  state=busy/needed  role=dev")
+    );
+    assert!(list_text.contains("    task: Ship (todo)"));
+
+    let list_json = route_agent_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?project=/repo&json=1", CORE_API_ROUTES.agent_list_text),
+        None,
+    )
+    .expect("list json route");
+    assert_eq!(json_text(list_json)[0]["id"], "claude-1");
+
     let invalid_ps = route_agent_text_request(
         &mut FakeAgentRuntime {
             invalid_agents: true,
@@ -256,6 +280,22 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
     assert_eq!(
         text_body(invalid_ps),
         "Error: project service returned invalid agent ps response: agents entries are invalid\n"
+    );
+
+    let invalid_list = route_agent_text_request(
+        &mut FakeAgentRuntime {
+            invalid_agents: true,
+            ..FakeAgentRuntime::default()
+        },
+        "GET",
+        &format!("{}?project=/repo", CORE_API_ROUTES.agent_list_text),
+        None,
+    )
+    .expect("list route");
+    assert_eq!(invalid_list.status, 502);
+    assert_eq!(
+        text_body(invalid_list),
+        "Error: project service returned invalid agent list response: agents entries are invalid\n"
     );
 
     let missing_label = route_agent_text_request(

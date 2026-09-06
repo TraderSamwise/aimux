@@ -793,6 +793,22 @@ fn thread_commands_plan_native_text_routes() {
         }
     );
 
+    let threads = classify_core_cli_with_project_resolver(
+        &[
+            "threads",
+            "--session",
+            "claude 1",
+            "--json",
+            "--project",
+            "./child",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("threads alias plan");
+    assert_eq!(threads.operation, CoreCliOperation::ThreadList);
+    assert_eq!(threads.action, list.action);
+
     let show = classify_core_cli(&["thread", "show", "thread 1"], &context(true, true))
         .expect("thread show plan");
     assert_eq!(show.operation, CoreCliOperation::ThreadShow);
@@ -1308,6 +1324,22 @@ fn agent_ps_plans_native_text_route_with_project_resolution() {
         default_project.action,
         CoreCliAction::TextRoute {
             path: "/core/agents/ps-text?project=%2Frepo".into(),
+            body: None,
+        }
+    );
+
+    let list = classify_core_cli_with_project_resolver(
+        &["list", "--project", "./child dir", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("list plan");
+    assert_eq!(list.operation, CoreCliOperation::AgentList);
+    assert_eq!(list.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        list.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/list-text?project=%2Fresolved%2F.%2Fchild%20dir&json=1".into(),
             body: None,
         }
     );

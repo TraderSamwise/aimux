@@ -1,7 +1,7 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{
-    render_core_agent_input_lines, render_core_agent_migrate_lines, render_core_agent_ps_lines,
-    render_core_agent_rename_lines, render_core_lifecycle_fork_lines,
+    render_core_agent_input_lines, render_core_agent_list_lines, render_core_agent_migrate_lines,
+    render_core_agent_ps_lines, render_core_agent_rename_lines, render_core_lifecycle_fork_lines,
     render_core_lifecycle_kill_lines, render_core_lifecycle_spawn_lines,
     render_core_lifecycle_stop_lines, render_core_loop_add_lines, render_core_loop_block_lines,
     render_core_loop_done_lines, render_core_loop_remove_lines,
@@ -100,6 +100,9 @@ pub fn route_agent_text_request(
     }
     if method == "GET" && pathname == CORE_API_ROUTES.agent_ps_text {
         return Some(agent_ps_text_route(runtime, &route_url, body));
+    }
+    if method == "GET" && pathname == CORE_API_ROUTES.agent_list_text {
+        return Some(agent_list_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.agent_rename_text {
         return Some(agent_rename_text_route(runtime, &route_url, body));
@@ -419,6 +422,39 @@ pub fn agent_ps_text_route(
         route_url,
         json!(agents),
         &render_core_agent_ps_lines(&payload),
+    )
+}
+
+pub fn agent_list_text_route(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let (json, project_root) = match unwrap_project_result(
+        runtime.get_project_service_json(&project, project_routes::agents::LIST),
+    ) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let agents = match required_project_service_array(&json, "agent list", "agents") {
+        Ok(agents) => agents,
+        Err(response) => return response,
+    };
+    if agents.iter().any(|agent| !agent.is_object()) {
+        return text_error(
+            502,
+            "Error: project service returned invalid agent list response: agents entries are invalid",
+        );
+    }
+    let payload = json!({ "agents": agents, "projectRoot": project_root });
+    text_or_json_lines(
+        route_url,
+        json!(agents),
+        &render_core_agent_list_lines(&payload),
     )
 }
 

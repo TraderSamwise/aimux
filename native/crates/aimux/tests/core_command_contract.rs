@@ -19,6 +19,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("hostAgentStreamText", "/core/host-agent-stream-text"),
         ("hostStatusText", "/core/host-status-text"),
         ("agentInputText", "/core/agents/input-text"),
+        ("agentListText", "/core/agents/list-text"),
         ("agentMigrateText", "/core/agents/migrate-text"),
         ("agentPsText", "/core/agents/ps-text"),
         ("agentRenameText", "/core/agents/rename-text"),

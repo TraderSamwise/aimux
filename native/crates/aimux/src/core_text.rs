@@ -5,6 +5,8 @@
 //! guards, so adding Rust DTOs here would change that contract prematurely.
 
 use serde_json::Value;
+use std::collections::BTreeMap;
+use std::path::Path;
 
 fn field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     value.as_object().and_then(|object| object.get(key))
@@ -481,6 +483,150 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
         }
     }
     output
+}
+
+pub fn render_core_agent_list_lines(payload: &Value) -> Vec<String> {
+    let agents = array(payload, "agents");
+    if agents.is_empty() {
+        return vec!["no agents".into()];
+    }
+    let project_root = field(payload, "projectRoot")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut groups: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    for agent in agents {
+        let worktree_path = field(agent, "worktreePath").and_then(Value::as_str);
+        groups
+            .entry(agent_worktree_sort_key(worktree_path, project_root))
+            .or_default()
+            .push(agent);
+    }
+
+    let mut output = Vec::new();
+    for (group_index, (path, mut group_agents)) in groups.into_iter().enumerate() {
+        if group_index > 0 {
+            output.push(String::new());
+        }
+        let label = agent_worktree_label(
+            if path.is_empty() { None } else { Some(&path) },
+            project_root,
+        );
+        if !path.is_empty() {
+            output.push(format!("{label}  {path}"));
+        } else if !project_root.is_empty() {
+            output.push(format!("{label}  {project_root}"));
+        } else {
+            output.push(label);
+        }
+        group_agents.sort_by(|left, right| {
+            js_string_or_undefined(field(left, "id"))
+                .cmp(&js_string_or_undefined(field(right, "id")))
+        });
+        for agent in group_agents {
+            output.push(render_agent_list_summary(agent));
+            if let Some(task) = object(agent, "task")
+                && let (Some(description), Some(status)) = (
+                    task.get("description").and_then(Value::as_str),
+                    task.get("status").and_then(Value::as_str),
+                )
+            {
+                output.push(format!("    task: {description} ({status})"));
+            }
+        }
+    }
+    output
+}
+
+fn agent_canonical_id(agent: &Value) -> String {
+    field(agent, "toolConfigKey")
+        .or_else(|| field(agent, "tool"))
+        .or_else(|| field(agent, "command"))
+        .filter(|value| !value.is_null())
+        .map(|value| js_string(Some(value)))
+        .unwrap_or_else(|| "?".into())
+}
+
+fn agent_worktree_label(path: Option<&str>, project_root: &str) -> String {
+    match path {
+        None => "Main Checkout".into(),
+        Some(path) if !project_root.is_empty() && path == project_root => "Main Checkout".into(),
+        Some(path) => Path::new(path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(path)
+            .to_owned(),
+    }
+}
+
+fn agent_worktree_sort_key(path: Option<&str>, project_root: &str) -> String {
+    match path {
+        None => String::new(),
+        Some(path) if !project_root.is_empty() && path == project_root => String::new(),
+        Some(path) => path.to_owned(),
+    }
+}
+
+fn render_agent_list_summary(agent: &Value) -> String {
+    let mut tags = Vec::new();
+    if let Some(role) = field(agent, "role")
+        .and_then(Value::as_str)
+        .filter(|role| !role.is_empty())
+    {
+        tags.push(format!("role={role}"));
+    }
+    if field(agent, "overseer").and_then(Value::as_bool) == Some(true) {
+        tags.push("overseer".into());
+    }
+    if field(agent, "scribe").and_then(Value::as_bool) == Some(true) {
+        tags.push("scribe".into());
+    }
+    if object(agent, "loop")
+        .and_then(|loop_value| loop_value.get("active"))
+        .is_some_and(|active| truthy(Some(active)))
+    {
+        let goal = object(agent, "loop")
+            .and_then(|loop_value| loop_value.get("goal"))
+            .and_then(Value::as_str)
+            .filter(|goal| !goal.is_empty())
+            .map(|goal| format!("={goal}"))
+            .unwrap_or_default();
+        tags.push(format!("loop{goal}"));
+    }
+
+    let state = ["activity", "attention"]
+        .into_iter()
+        .filter_map(|key| field(agent, key).and_then(Value::as_str))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+    let mut detail = vec![
+        format!("canonical={}", agent_canonical_id(agent)),
+        format!("aimux={}", js_string_or_undefined(field(agent, "id"))),
+    ];
+    if let Some(backend_session_id) = field(agent, "backendSessionId")
+        .and_then(Value::as_str)
+        .filter(|backend_session_id| !backend_session_id.is_empty())
+    {
+        detail.push(format!("backend={backend_session_id}"));
+    }
+    if !state.is_empty() {
+        detail.push(format!("state={state}"));
+    }
+    if !tags.is_empty() {
+        detail.push(tags.join(" "));
+    }
+    let status = field(agent, "status")
+        .filter(|value| !value.is_null())
+        .map(|value| js_string(Some(value)))
+        .unwrap_or_else(|| "?".into());
+    format!("  {status}  {}", detail.join("  "))
+}
+
+fn js_string_or_undefined(value: Option<&Value>) -> String {
+    value
+        .map(|value| js_string(Some(value)))
+        .unwrap_or_else(|| "undefined".into())
 }
 
 pub fn render_core_agent_input_lines(payload: &Value) -> Vec<String> {

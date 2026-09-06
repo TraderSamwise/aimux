@@ -95,6 +95,32 @@ fn renders_agent_and_team_details() {
         ]
     );
     assert_eq!(
+        render_core_agent_list_lines(&json!({
+            "projectRoot": "/repo",
+            "agents": [
+                {
+                    "id": "codex-2", "toolConfigKey": "codex-heavy", "tool": "codex",
+                    "status": "working", "activity": "editing", "scribe": true,
+                    "loop": { "active": true }
+                },
+                {
+                    "id": "codex-1", "tool": "codex", "role": "builder", "status": "idle",
+                    "attention": "needed", "overseer": true, "backendSessionId": "backend-1",
+                    "loop": { "active": true, "goal": "ship" }, "worktreePath": "/repo/wt",
+                    "task": { "description": "Implement port", "status": "active" }
+                }
+            ]
+        })),
+        vec![
+            "Main Checkout  /repo",
+            "  working  canonical=codex-heavy  aimux=codex-2  state=editing  scribe loop",
+            "",
+            "wt  /repo/wt",
+            "  idle  canonical=codex  aimux=codex-1  backend=backend-1  state=needed  role=builder overseer loop=ship",
+            "    task: Implement port (active)",
+        ]
+    );
+    assert_eq!(
         render_core_team_show_lines(&json!({ "config": {
             "roles": { "builder": { "description": "Writes code", "reviewedBy": "lead", "canEdit": true } },
             "defaultRole": "builder"
