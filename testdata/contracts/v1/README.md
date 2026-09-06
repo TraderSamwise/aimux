@@ -116,6 +116,12 @@ Priority fixture groups:
   side-effect state captured by running TypeScript dashboard operation-failure
   helpers.
 
+## Project Observability
+
+- `project-observability/observability.json`: project summary, task progress,
+  story ordering, review tagging, story-limit, and empty-input behavior captured
+  by running TypeScript `buildProjectObservability`.
+
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
