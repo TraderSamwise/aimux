@@ -98,7 +98,10 @@ fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"k"), DashboardKey::Up);
     assert_eq!(parse_dashboard_key(b"\x1b[A"), DashboardKey::Up);
     assert_eq!(parse_dashboard_key(b"\r"), DashboardKey::Enter);
+    assert_eq!(parse_dashboard_key(b"l"), DashboardKey::Enter);
+    assert_eq!(parse_dashboard_key(b"\x1b[C"), DashboardKey::Enter);
     assert_eq!(parse_dashboard_key(b"h"), DashboardKey::Back);
+    assert_eq!(parse_dashboard_key(b"\x1b[D"), DashboardKey::Back);
     assert_eq!(parse_dashboard_key(b"x"), DashboardKey::Stop);
     assert_eq!(parse_dashboard_key(b"q"), DashboardKey::Quit);
     assert_eq!(parse_dashboard_key(b"4"), DashboardKey::Digit('4'));

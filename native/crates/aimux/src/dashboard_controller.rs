@@ -117,8 +117,8 @@ pub enum DashboardKey {
 
 pub fn parse_dashboard_key(bytes: &[u8]) -> DashboardKey {
     match bytes {
-        b"\r" | b"\n" => DashboardKey::Enter,
-        b"\x1b" | b"h" => DashboardKey::Back,
+        b"\r" | b"\n" | b"l" | b"\x1b[C" => DashboardKey::Enter,
+        b"\x1b" | b"h" | b"\x1b[D" => DashboardKey::Back,
         b"q" => DashboardKey::Quit,
         b"x" => DashboardKey::Stop,
         b"j" | b"\x1b[B" => DashboardKey::Down,

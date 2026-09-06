@@ -29,6 +29,7 @@ pub struct DashboardRenderInput<'a> {
     pub hide_offline_agents: bool,
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
+    pub footer_message: Option<&'a str>,
 }
 
 pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameResult {
@@ -179,6 +180,9 @@ fn render_worktree_groups(input: &DashboardRenderInput<'_>) -> Vec<String> {
 }
 
 fn footer_hint_text(input: &DashboardRenderInput<'_>) -> String {
+    if let Some(message) = input.footer_message {
+        return format!("[!] {message}");
+    }
     if !input.snapshot.worktree_groups.is_empty() && input.nav_level == DashboardNavLevel::Worktrees
     {
         return "↑↓/jk worktrees  [1-9] worktree  [Enter/→/l] step in  [Tab] details  [n] agent  [v] service  [q] quit"

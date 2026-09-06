@@ -23,6 +23,7 @@ pub mod dashboard_model;
 pub mod dashboard_navigation;
 pub mod dashboard_readiness;
 pub mod dashboard_renderer;
+pub mod dashboard_terminal;
 pub mod debug_state;
 pub mod expose_socket;
 pub mod launcher_env;

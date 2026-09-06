@@ -30,6 +30,7 @@ fn renders_empty_dashboard_with_create_hint() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
+        footer_message: None,
     });
     let plain = strip_ansi(&result.frame);
 
@@ -59,6 +60,7 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
         hide_offline_agents: true,
         hidden_offline_agent_count: 7,
         scroll_offset: 0,
+        footer_message: None,
     });
     let plain = strip_ansi(&result.frame);
 
