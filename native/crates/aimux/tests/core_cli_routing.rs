@@ -8,8 +8,8 @@ use aimux::core_cli_routing::{
     parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_project_ensure_args, parse_core_restart_args,
-    parse_core_runtime_restart_args,
+    parse_core_loop_mutation_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -318,6 +318,36 @@ fn loop_parsers_match_mutation_and_exit_forms() {
         parse_core_loop_mutation_args(&["loop", "remove", "claude-1", "--goal", "x"]).is_none()
     );
     assert!(parse_core_loop_exit_args(&["loop", "done", "--session"]).is_none());
+}
+
+#[test]
+fn overseer_parsers_match_start_and_clear_forms() {
+    let start = parse_core_overseer_start_args(&[
+        "overseer",
+        "start",
+        "--tool",
+        "claude",
+        "--worktree=feature",
+        "--no-open",
+        "--json",
+    ])
+    .expect("overseer start");
+    assert_eq!(start.tool.as_deref(), Some("claude"));
+    assert_eq!(start.worktree.as_deref(), Some("feature"));
+    assert!(!start.open);
+    assert!(start.json);
+
+    let default_tool = parse_core_overseer_start_args(&["overseer", "start"])
+        .expect("overseer start default tool");
+    assert_eq!(default_tool.tool, None);
+
+    let clear = parse_core_overseer_clear_args(&["overseer", "clear", "boss", "--project=/repo"])
+        .expect("overseer clear");
+    assert_eq!(clear.session_id, "boss");
+    assert_eq!(clear.project.as_deref(), Some("/repo"));
+
+    assert!(parse_core_overseer_start_args(&["overseer", "start", "--tool"]).is_none());
+    assert!(parse_core_overseer_clear_args(&["overseer", "clear"]).is_none());
 }
 
 #[test]

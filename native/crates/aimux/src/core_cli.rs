@@ -6,8 +6,8 @@ use crate::core_cli_routing::{
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_project_ensure_args, parse_core_restart_args,
-    parse_core_runtime_restart_args,
+    parse_core_loop_mutation_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,8 @@ pub enum CoreCliOperation {
     LoopRemove,
     LoopDone,
     LoopBlock,
+    OverseerStart,
+    OverseerClear,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -857,6 +859,56 @@ where
                 CoreCliAction::TextRoute {
                     path: text_route_path(route, parsed.json),
                     body: Some(Value::Object(body)),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("overseer", "start") => {
+            let parsed = parse_core_overseer_start_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid overseer start arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::OverseerStart,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.overseer_start_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "tool": parsed.tool,
+                        "worktreePath": parsed.worktree,
+                        "open": parsed.open,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("overseer", "clear") => {
+            let parsed = parse_core_overseer_clear_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid overseer clear arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::OverseerClear,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.overseer_clear_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                    })),
                 },
                 CoreCliFallback::None,
             )

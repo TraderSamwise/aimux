@@ -159,6 +159,8 @@ impl CoreCliRuntime for FakeRuntime {
             "forked codex-2\nthread thread-1\n".into()
         } else if path.starts_with("/core/loop/") {
             "loop ok\n".into()
+        } else if path.starts_with("/core/overseer/") {
+            "overseer ok\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -744,6 +746,51 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
                     "source": "agent",
                     "reason": "blocked",
                 })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn overseer_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let start = run_core_cli_with(
+        &args(&[
+            "overseer",
+            "start",
+            "--tool",
+            "claude",
+            "--worktree",
+            "feature",
+            "--no-open",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let clear = run_core_cli_with(
+        &args(&["overseer", "clear", "boss", "--project=/repo"]),
+        &mut runtime,
+    );
+
+    assert_eq!(start.stdout, ["overseer ok"]);
+    assert_eq!(clear.stdout, ["overseer ok"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/overseer/start-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "tool": "claude",
+                    "worktreePath": "feature",
+                    "open": false,
+                })),
+            ),
+            (
+                "/core/overseer/clear-text".into(),
+                Some(json!({ "project": "/repo", "sessionId": "boss" })),
             ),
         ]
     );

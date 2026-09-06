@@ -587,6 +587,58 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
 }
 
 #[test]
+fn overseer_commands_plan_native_text_routes() {
+    let start = classify_core_cli(
+        &[
+            "overseer",
+            "start",
+            "--tool",
+            "claude",
+            "--worktree",
+            "feature",
+            "--no-open",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("overseer start plan");
+    assert_eq!(start.operation, CoreCliOperation::OverseerStart);
+    assert_eq!(
+        start.action,
+        CoreCliAction::TextRoute {
+            path: "/core/overseer/start-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "tool": "claude",
+                "worktreePath": "feature",
+                "open": false,
+            })),
+        }
+    );
+
+    let clear = classify_core_cli(
+        &["overseer", "clear", "boss", "--project=/repo"],
+        &context(true, true),
+    )
+    .expect("overseer clear plan");
+    assert_eq!(clear.operation, CoreCliOperation::OverseerClear);
+    assert_eq!(
+        clear.action,
+        CoreCliAction::TextRoute {
+            path: "/core/overseer/clear-text".into(),
+            body: Some(json!({ "project": "/repo", "sessionId": "boss" })),
+        }
+    );
+
+    assert_eq!(
+        classify_core_cli(&["overseer", "clear"], &context(true, true))
+            .expect_err("missing overseer session")
+            .exit_code(),
+        1
+    );
+}
+
+#[test]
 fn invalid_host_agent_stream_args_fail_before_node_fallback() {
     let invalid_lines = classify_core_cli(
         &["host", "agent-stream", "claude-1", "--lines", "-5"],

@@ -730,6 +730,139 @@ pub fn parse_core_loop_exit_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLoopEx
     })
 }
 
+pub fn parse_core_overseer_start_args<S: AsRef<str>>(args: &[S]) -> Option<CoreOverseerStartArgs> {
+    if args.first().map(AsRef::as_ref) != Some("overseer")
+        || args.get(1).map(AsRef::as_ref) != Some("start")
+    {
+        return None;
+    }
+    let mut tool = None;
+    let mut project = None;
+    let mut worktree = None;
+    let mut open = true;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--no-open" {
+            open = false;
+            index += 1;
+            continue;
+        }
+        if arg == "--tool" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--tool=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--worktree" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--worktree=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(CoreOverseerStartArgs {
+        tool,
+        project,
+        worktree,
+        open,
+        json,
+    })
+}
+
+pub fn parse_core_overseer_clear_args<S: AsRef<str>>(args: &[S]) -> Option<CoreOverseerClearArgs> {
+    if args.first().map(AsRef::as_ref) != Some("overseer")
+        || args.get(1).map(AsRef::as_ref) != Some("clear")
+    {
+        return None;
+    }
+    let mut session_id = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return None;
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreOverseerClearArgs {
+        session_id: session_id?,
+        project,
+        json,
+    })
+}
+
 #[allow(clippy::collapsible_if)]
 pub fn parse_core_logs_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLogsArgs> {
     if args.first().map(AsRef::as_ref) != Some("logs") {
@@ -1220,6 +1353,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("kill"), _) => true,
         (Some("stop"), _) => stop_has_session_or_invalid_agent_shape(args),
         (Some("loop"), Some("add" | "remove" | "done" | "block")) => true,
+        (Some("overseer"), Some("start" | "clear")) => true,
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,
