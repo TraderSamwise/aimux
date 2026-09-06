@@ -9,7 +9,9 @@ use aimux::tmux_expose::{
     parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client_and_capture,
     tmux_expose_options_from_socket_header, write_expose_ui_state, write_selected_window,
 };
-use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
+use aimux::tmux_expose_hot_snapshot::{
+    HotExposeScopeKey, read_hot_expose_scope_view, write_hot_expose_scope_view,
+};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::fs;
@@ -659,6 +661,103 @@ fn runner_replaces_preview_snapshot_with_live_capture_output() {
     assert!(rendered.contains("warm preview line"));
     assert!(rendered.contains("live capture line"));
     assert_eq!(capture.calls, vec!["@1"]);
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_writes_loaded_items_to_hot_snapshot_cache() {
+    let state_dir = temp_dir("runner-hot-write");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("meta-dashboard".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Global);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [hot_item("@9", "loaded preview line\n")]
+    })]);
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut input: &[u8] = b"q";
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_client_and_capture(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
+        0
+    );
+
+    let cached = read_hot_expose_scope_view(
+        &state_dir,
+        &HotExposeScopeKey {
+            project_root: "/repo".into(),
+            scope: ExposeScope::Global,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+    )
+    .expect("loaded snapshot");
+    assert_eq!(cached.scope, ExposeScope::Global);
+    assert_eq!(cached.items.len(), 1);
+    assert_eq!(cached.items[0]["target"]["windowId"], "@9");
+    assert_eq!(
+        cached.items[0]["previewSnapshot"]["output"],
+        "loaded preview line\n"
+    );
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_writes_zoomed_project_items_to_hot_snapshot_cache() {
+    let state_dir = temp_dir("runner-hot-write-zoom");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.current_path = Some("/repo/.aimux/worktrees/feature/src".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Worktree);
+    let mut client = FakeHttp::with_responses([
+        json!({
+            "ok": true,
+            "items": [hot_item("@1", "worktree preview line\n")]
+        }),
+        json!({
+            "ok": true,
+            "items": [hot_item("@2", "project preview line\n")]
+        }),
+    ]);
+    let mut capture = FakeCapture::with_responses([
+        Err("tmux unavailable".into()),
+        Err("tmux unavailable".into()),
+    ]);
+    let mut input: &[u8] = b"gq";
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_client_and_capture(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
+        0
+    );
+
+    let cached = read_hot_expose_scope_view(
+        &state_dir,
+        &HotExposeScopeKey {
+            project_root: "/repo".into(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+    )
+    .expect("project snapshot");
+    assert_eq!(cached.scope, ExposeScope::Project);
+    assert_eq!(cached.items.len(), 1);
+    assert_eq!(cached.items[0]["target"]["windowId"], "@2");
     cleanup(state_dir);
 }
 

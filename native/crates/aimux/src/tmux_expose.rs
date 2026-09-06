@@ -9,7 +9,9 @@ use crate::project_api_contract::routes;
 use crate::project_service::switchable_agents::agent_status_chip;
 use crate::project_service::usage::parse_recency_timestamp;
 use crate::tmux::{CapturePaneOptions, TmuxRuntimeManager, TmuxTarget};
-use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
+use crate::tmux_expose_hot_snapshot::{
+    HotExposeScopeKey, read_hot_expose_scope_view, write_hot_expose_scope_view,
+};
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use crate::tui_render::text::{truncate_ansi, wrap_text};
 use crate::tui_render::theme::{Tone, pill, style, visible_width};
@@ -732,7 +734,15 @@ pub fn run_tmux_expose_with_client_and_capture(
             &deps,
             client,
         ) {
-            Ok(view) => view,
+            Ok(view) => {
+                write_hot_expose_scope_view(
+                    &options.project_state_dir,
+                    hot_snapshot_key_for_scope(&options, scope),
+                    view.clone(),
+                    None,
+                );
+                view
+            }
             Err(error) => {
                 let _ = writeln!(output, "aimux expose: {error}");
                 return 1;
@@ -823,6 +833,12 @@ pub fn run_tmux_expose_with_client_and_capture(
                 ) {
                     view = next_view;
                     view_stale = false;
+                    write_hot_expose_scope_view(
+                        &options.project_state_dir,
+                        hot_snapshot_key_for_scope(&options, scope),
+                        view.clone(),
+                        None,
+                    );
                     items = order_items(&view, &options.project_root, sort_mode);
                     captures = seed_preview_snapshots(&items);
                     index = index.min(items.len().saturating_sub(1));
@@ -879,6 +895,12 @@ pub fn run_tmux_expose_with_client_and_capture(
                     ) {
                         view = next_view;
                         view_stale = false;
+                        write_hot_expose_scope_view(
+                            &options.project_state_dir,
+                            hot_snapshot_key_for_scope(&options, scope),
+                            view.clone(),
+                            None,
+                        );
                         items = order_items(&view, &options.project_root, sort_mode);
                         captures = seed_preview_snapshots(&items);
                         let _ = refresh_captures(&items, &mut captures, capture);
