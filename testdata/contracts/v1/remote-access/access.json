@@ -1,0 +1,2121 @@
+{
+  "version": 1,
+  "source": "src/full/remote-access.test.ts",
+  "generatedBy": "scripts/capture-remote-access-contract.mjs",
+  "description": "Hosted remote-access operator/guest route allowlists, session binding, header actor parsing, attachment route hardening, and operator stream gates captured by running TypeScript remote-access helpers.",
+  "cases": [
+    {
+      "id": "remote-access-001",
+      "name": "allows a granted session on each permitted route",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "",
+            "body": { "sessionId": "assistant", "text": "hi" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/prompt-context",
+            "query": "",
+            "body": { "sessionId": "assistant", "text": "page=/admin" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/interrupt",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [{ "ok": true }, { "ok": true }, { "ok": true }, { "ok": true }],
+      "inputSha256": "d2245dd7a8f467ac3041d555159714e2dbd560db2731837c138494eb2c719549"
+    },
+    {
+      "id": "remote-access-002",
+      "name": "refuses to let an operator set context on a session it was not granted",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/prompt-context",
+            "query": "",
+            "body": { "sessionId": "someone-elses-session", "text": "steer" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [{ "ok": false, "status": 403, "error": "operator is not granted this session" }],
+      "inputSha256": "357b1cd7681c9a4c1f9fc256d85c9a3f539ced9f6eb513a79689bcb2f525f721"
+    },
+    {
+      "id": "remote-access-003",
+      "name": "gives the context route no way to be read back",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/prompt-context",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [{ "ok": false, "status": 403, "error": "method not allowed for this route" }],
+      "inputSha256": "208b5c7512d9eb31c46cced37848ae386b0d228b67575cc60ffa8c77c370116a"
+    },
+    {
+      "id": "remote-access-004",
+      "name": "denies every route not on the allowlist",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/history",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/history",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/events",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/events",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/spawn",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/spawn",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/kill",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/kill",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/stop",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/stop",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/fork",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/fork",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/live-pane/input",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/live-pane/input",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/threads/send",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/threads/send",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/worktrees/create",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/worktrees/create",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/desktop-state",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/desktop-state",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" }
+      ],
+      "inputSha256": "3f982da6d46c776e1cd9c0fe9af8ecae44e03a1784161aa0c2c5cf86fe9cc117"
+    },
+    {
+      "id": "remote-access-005",
+      "name": "allows the attachment routes an operator needs",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_abc123/content",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/attachments",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [{ "ok": true }, { "ok": true }],
+      "inputSha256": "31c502c4932bb9a660f027083170ca2666f793b4a7ac17d09e6a3b36fb89e1e3"
+    },
+    {
+      "id": "remote-access-006",
+      "name": "binds attachment content to the granted session like every other route",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_abc123/content",
+            "query": "?sessionId=someone-else",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_abc123/content",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "operator is not granted this session" },
+        { "ok": false, "status": 403, "error": "operator route requires a session id" }
+      ],
+      "inputSha256": "ced413768fc6fdea34e504f2b672ba99aeaabbe0546ff73f63ab374c4a87915b"
+    },
+    {
+      "id": "remote-access-007",
+      "name": "refuses every attempt to smuggle another route through the attachment pattern",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_x/content/../../agents/spawn",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/..%2f..%2fagents%2fspawn/content",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/%2e%2e/%2e%2e/agents/spawn/content",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att%2fx/content",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_x;a=b/content",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments//content",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_x/content/extra",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_x/content/",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_x",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_x/contentious",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "operators cannot access daemon routes" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" }
+      ],
+      "inputSha256": "a599c6a6636019df358bee8d358b9e49024d24bd9189647237f466ce799c761d"
+    },
+    {
+      "id": "remote-access-008",
+      "name": "enforces the method on the pattern-matched route too",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_abc123/content",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "method not allowed for this route" },
+        { "ok": false, "status": 403, "error": "method not allowed for this route" }
+      ],
+      "inputSha256": "0d294f20d9d7a93121b9ef8d962666defeb80dbdcbde55f4ba5e3fb3fa593d92"
+    },
+    {
+      "id": "remote-access-009",
+      "name": "denies daemon routes outside the proxy form",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/health",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/agents/output",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/projects/stop",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "operators cannot access daemon routes" },
+        { "ok": false, "status": 403, "error": "operators cannot access daemon routes" },
+        { "ok": false, "status": 403, "error": "operators cannot access daemon routes" }
+      ],
+      "inputSha256": "c28717505b38a5a70828155f88db20154e8d1cf4a4becb1c70429dbe7cccaf12"
+    },
+    {
+      "id": "remote-access-010",
+      "name": "enforces the method each route accepts",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "DELETE",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "method not allowed for this route" },
+        { "ok": false, "status": 403, "error": "method not allowed for this route" },
+        { "ok": false, "status": 403, "error": "method not allowed for this route" }
+      ],
+      "inputSha256": "ad4043ca687ed4568ed471462e4a8164cda528847cda3dbf0e887e21d6d98e81"
+    },
+    {
+      "id": "remote-access-011",
+      "name": "operator session binding denies missing or mismatched session ids",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "",
+            "body": { "text": "hi" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=someone-else",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/other"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": null
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "operator route requires a session id" },
+        { "ok": false, "status": 403, "error": "operator route requires a session id" },
+        { "ok": false, "status": 403, "error": "operator is not granted this session" },
+        { "ok": false, "status": 403, "error": "operator is not granted this session" },
+        { "ok": false, "status": 403, "error": "operator request could not be bound to a project" }
+      ],
+      "inputSha256": "ba7e05712ff30cfc2e1c531c873b0f4f906734ed76426479d605a3f5971b2968"
+    },
+    {
+      "id": "remote-access-012",
+      "name": "reads and rejects session ids from the source the service will use",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "?sessionId=someone-else",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "body": { "sessionId": "someone-else" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "operator route requires a session id" },
+        { "ok": false, "status": 403, "error": "operator route requires a session id" },
+        { "ok": false, "status": 403, "error": "conflicting session ids in request body and query" },
+        { "ok": false, "status": 403, "error": "conflicting session ids in request body and query" }
+      ],
+      "inputSha256": "cbe71a51acd52f143de2dfce31368e70cce7fbe2a9e2f511ecefba8c00e65da7"
+    },
+    {
+      "id": "remote-access-013",
+      "name": "operator principal validity gates",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": { "role": "operator" },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": "2020-01-01T00:00:00Z",
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "operator actor is missing its principal" },
+        { "ok": false, "status": 403, "error": "operator is not granted this session" },
+        { "ok": false, "status": 403, "error": "operator is not granted this session" }
+      ],
+      "inputSha256": "96fd4347655b6c102117a54d81a9d847e210d0d60272af2ec4e16e3a238b0a55"
+    },
+    {
+      "id": "remote-access-014",
+      "name": "operator cannot be minted from headers",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          { "mode": "parseActor", "headers": { "x-aimux-actor-role": "operator" } },
+          { "mode": "parseActor", "headers": { "x-aimux-actor": "{\"role\":\"operator\",\"userId\":\"u\"}" } },
+          {
+            "mode": "parseActor",
+            "headers": {
+              "x-aimux-actor-role": "operator",
+              "x-aimux-principal": "{\"id\":\"prn_test\",\"label\":\"test\",\"tokenHash\":\"sha256:abcd\",\"role\":\"operator\",\"grants\":[{\"projectRoot\":\"/srv/grand\",\"sessionId\":\"assistant\"}],\"createdAt\":\"1970-01-01T00:00:00.000Z\",\"revokedAt\":null,\"lastSeenAt\":null}"
+            }
+          }
+        ]
+      },
+      "output": [{ "role": "guest" }, { "role": "guest" }, { "role": "guest" }],
+      "inputSha256": "1df97a20d6ab691f3c31eb9cddadd04bf6391d00111e2af0f093e537335c6d43"
+    },
+    {
+      "id": "remote-access-015",
+      "name": "existing owner/headerless/guest roles are unaffected",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": { "role": "owner" },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/spawn",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": null,
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/spawn",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=other",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": true },
+        { "ok": true },
+        { "ok": true },
+        { "ok": false, "status": 403, "error": "shared guest cannot access another session" },
+        { "ok": false, "status": 403, "error": "shared guests can only write to their shared session" }
+      ],
+      "inputSha256": "f2c51f1a006d8d388ce5ca4f45ee56f4b70cb30726fe94804dd9baa1dc1d19c0"
+    },
+    {
+      "id": "remote-access-016",
+      "name": "shared guest live-pane input and attachments",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/live-pane/input",
+            "query": "",
+            "body": { "sessionId": "assistant", "text": "hello" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/live-pane/input",
+            "query": "",
+            "body": { "sessionId": "assistant", "attachmentIds": ["att_1"] },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/live-pane/input",
+            "query": "",
+            "body": { "sessionId": "assistant", "text": "  \n\t " },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/attachments",
+            "query": "",
+            "body": { "sessionId": "assistant" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_abc123/content",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_abc123",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/attachments/att_abc123/content",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": true },
+        { "ok": true },
+        { "ok": false, "status": 403, "error": "shared guest input requires text or attachments" },
+        { "ok": true },
+        { "ok": true },
+        { "ok": false, "status": 403, "error": "shared guests can only read shared session output and attachments" },
+        { "ok": false, "status": 403, "error": "shared session route requires a session id" }
+      ],
+      "inputSha256": "81432813613045ca20c1326d012ee58023e8f676e50224f3864a5248e38e71d1"
+    },
+    {
+      "id": "remote-access-017",
+      "name": "shared guest rejects other sessions and owner write routes",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/live-pane/input",
+            "query": "",
+            "body": { "sessionId": "other", "text": "hello" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/live-pane/input",
+            "query": "?sessionId=other",
+            "body": { "sessionId": "assistant", "text": "hello" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/input",
+            "query": "",
+            "body": { "sessionId": "assistant", "text": "hello" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/interrupt",
+            "query": "",
+            "body": { "sessionId": "assistant", "text": "hello" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": {
+              "role": "guest",
+              "userId": "usr_guest",
+              "shareId": "share-1",
+              "shareSessionId": "assistant",
+              "displayName": "Ada Guest",
+              "email": "ada@example.com"
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/spawn",
+            "query": "",
+            "body": { "sessionId": "assistant", "text": "hello" },
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "allow",
+            "actor": { "role": "nonsense" },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/health",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": false, "status": 403, "error": "shared guest cannot access another session" },
+        { "ok": false, "status": 403, "error": "conflicting session ids in request body and query" },
+        { "ok": false, "status": 403, "error": "shared guests can only write to their shared session" },
+        { "ok": false, "status": 403, "error": "shared guests can only write to their shared session" },
+        { "ok": false, "status": 403, "error": "shared guests can only write to their shared session" },
+        { "ok": false, "status": 403, "error": "remote actor role is not allowed" }
+      ],
+      "inputSha256": "06ba388eed66e347653c0d0dec96795fe1f928a826c0e1ee227924549f9914c6"
+    },
+    {
+      "id": "remote-access-018",
+      "name": "operator stream allowlist",
+      "source": "src/full/remote-access.test.ts",
+      "api": "remote-access",
+      "input": {
+        "checks": [
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=someone-else",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/other", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": null
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/events",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/interaction/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "POST",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": { "role": "guest" },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": null,
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/events",
+            "query": "?sessionId=assistant",
+            "projectRoot": "/srv/grand"
+          },
+          {
+            "mode": "stream",
+            "actor": {
+              "role": "operator",
+              "principal": {
+                "id": "prn_test",
+                "label": "test",
+                "tokenHash": "sha256:abcd",
+                "role": "operator",
+                "grants": [{ "projectRoot": "/srv/grand", "sessionId": "assistant" }],
+                "createdAt": "1970-01-01T00:00:00.000Z",
+                "revokedAt": null,
+                "lastSeenAt": null
+              }
+            },
+            "method": "GET",
+            "path": "/proxy/127.0.0.1/43210/agents/output/stream",
+            "query": "",
+            "projectRoot": "/srv/grand"
+          }
+        ]
+      },
+      "output": [
+        { "ok": true },
+        { "ok": false, "status": 403, "error": "operator is not granted this session" },
+        { "ok": false, "status": 403, "error": "operator is not granted this session" },
+        { "ok": false, "status": 403, "error": "operator request could not be bound to a project" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "route is not available to operators" },
+        { "ok": false, "status": 403, "error": "streams are GET only" },
+        { "ok": false, "status": 403, "error": "streaming requires an operator" },
+        { "ok": false, "status": 403, "error": "streaming requires an operator" },
+        { "ok": false, "status": 403, "error": "operators cannot access daemon routes" },
+        { "ok": false, "status": 403, "error": "operator route requires a session id" }
+      ],
+      "inputSha256": "9cfb022d23cccc649d088556bb93ef53cc2dc298afbe823ec91625c368b19d37"
+    }
+  ]
+}
