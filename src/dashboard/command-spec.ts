@@ -58,7 +58,9 @@ function resolveStableShimArtifactPaths(stableShimPath: string): string[] | null
     if (basename(realShimPath) !== "aimux" || basename(dirname(realShimPath)) !== "bin") return null;
     const installRoot = dirname(dirname(realShimPath));
     const artifactPaths = [join(installRoot, "dist", "launcher-bin.js"), join(installRoot, "dist", "main.js")];
-    return artifactPaths.every((path) => existsSync(path)) ? artifactPaths : null;
+    if (!artifactPaths.every((path) => existsSync(path))) return null;
+    const nativeArtifactPath = join(installRoot, "native", `${process.platform}-${process.arch}`, "aimux");
+    return existsSync(nativeArtifactPath) ? [...artifactPaths, nativeArtifactPath] : artifactPaths;
   } catch {
     return null;
   }

@@ -165,12 +165,33 @@ describe("getDashboardCommandSpec", () => {
     expect(getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp).not.toBe(first);
   });
 
-  function createNativeInstall(label: string, mtimeMs: number): string {
-    const root = join(tempDir, "native", label);
+  it("changes stable-shim dashboard stamps when native binary contents change", () => {
+    const shim = join(tempDir, "bin", "aimux");
+    const mtimeMs = 1_700_000_000;
+    const firstInstall = createNativeInstall("first", mtimeMs, "native-one");
+    const secondInstall = createNativeInstall("first", mtimeMs, "native-two");
+    mkdirSync(dirname(shim), { recursive: true });
+    symlinkSync(join(firstInstall, "bin", "aimux"), shim);
+
+    const env = {
+      AIMUX_CLI_BIN: shim,
+      AIMUX_INSTALL_ROOT: join(process.cwd(), "src"),
+    } as NodeJS.ProcessEnv;
+    const first = getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp;
+    unlinkSync(shim);
+    symlinkSync(join(secondInstall, "bin", "aimux"), shim);
+
+    expect(getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp).not.toBe(first);
+  });
+
+  function createNativeInstall(label: string, mtimeMs: number, nativeContents = label): string {
+    const root = join(tempDir, "native", `${label}-${nativeContents}`);
     const bin = join(root, "bin");
     const dist = join(root, "dist");
+    const native = join(root, "native", `${process.platform}-${process.arch}`);
     mkdirSync(bin, { recursive: true });
     mkdirSync(dist, { recursive: true });
+    mkdirSync(native, { recursive: true });
     writeFileSync(join(bin, "aimux"), "#!/usr/bin/env sh\n");
     for (const file of ["launcher-bin.js", "main.js"]) {
       const path = join(dist, file);
@@ -178,6 +199,10 @@ describe("getDashboardCommandSpec", () => {
       const seconds = mtimeMs / 1000;
       utimesSync(path, seconds, seconds);
     }
+    const nativePath = join(native, "aimux");
+    writeFileSync(nativePath, nativeContents);
+    const seconds = mtimeMs / 1000;
+    utimesSync(nativePath, seconds, seconds);
     return root;
   }
 });
