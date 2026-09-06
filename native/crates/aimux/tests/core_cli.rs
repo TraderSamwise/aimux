@@ -620,6 +620,129 @@ fn task_and_review_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn thread_commands_plan_native_text_routes() {
+    let list = classify_core_cli_with_project_resolver(
+        &[
+            "thread",
+            "list",
+            "--session",
+            "claude 1",
+            "--json",
+            "--project",
+            "./child",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("thread list plan");
+    assert_eq!(list.operation, CoreCliOperation::ThreadList);
+    assert_eq!(
+        list.action,
+        CoreCliAction::TextRoute {
+            path:
+                "/core/thread/list-text?project=%2Fresolved%2F.%2Fchild&session=claude%201&json=1"
+                    .into(),
+            body: None,
+        }
+    );
+
+    let show = classify_core_cli(&["thread", "show", "thread 1"], &context(true, true))
+        .expect("thread show plan");
+    assert_eq!(show.operation, CoreCliOperation::ThreadShow);
+    assert_eq!(
+        show.action,
+        CoreCliAction::TextRoute {
+            path: "/core/thread/show-text?project=%2Frepo&threadId=thread%201".into(),
+            body: None,
+        }
+    );
+
+    let open = classify_core_cli(
+        &[
+            "thread",
+            "open",
+            "--title=Plan",
+            "--from=user",
+            "--participants=claude-1,codex-1",
+            "--kind=handoff",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("thread open plan");
+    assert_eq!(open.operation, CoreCliOperation::ThreadOpen);
+    assert_eq!(
+        open.action,
+        CoreCliAction::TextRoute {
+            path: "/core/thread/open-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "title": "Plan",
+                "from": "user",
+                "participants": "claude-1,codex-1",
+                "kind": "handoff",
+            })),
+        }
+    );
+
+    let send = classify_core_cli(
+        &[
+            "thread",
+            "send",
+            "thread-1",
+            "body",
+            "--from=user",
+            "--to=claude-1",
+            "--kind=reply",
+        ],
+        &context(true, true),
+    )
+    .expect("thread send plan");
+    assert_eq!(send.operation, CoreCliOperation::ThreadSend);
+    assert_eq!(
+        send.action,
+        CoreCliAction::TextRoute {
+            path: "/core/thread/send-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "threadId": "thread-1",
+                "from": "user",
+                "to": "claude-1",
+                "kind": "reply",
+                "body": "body",
+            })),
+        }
+    );
+
+    let status = classify_core_cli(
+        &[
+            "thread",
+            "status",
+            "thread-1",
+            "--status=waiting",
+            "--owner=user",
+            "--waiting-on=claude-1,codex-1",
+        ],
+        &context(true, true),
+    )
+    .expect("thread status plan");
+    assert_eq!(status.operation, CoreCliOperation::ThreadStatus);
+    assert_eq!(
+        status.action,
+        CoreCliAction::TextRoute {
+            path: "/core/thread/status-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "threadId": "thread-1",
+                "status": "waiting",
+                "owner": "user",
+                "waitingOn": "claude-1,codex-1",
+            })),
+        }
+    );
+}
+
+#[test]
 fn agent_ps_plans_native_text_route_with_project_resolution() {
     let plan = classify_core_cli_with_project_resolver(
         &["ps", "--project", "./child dir", "--json"],

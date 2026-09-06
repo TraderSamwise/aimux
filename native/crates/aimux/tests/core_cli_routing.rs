@@ -2,7 +2,7 @@ use aimux::core_cli_routing::{
     CoreAgentInputArgs, CoreAgentPsArgs, CoreCollaborationArgs, CoreDaemonRestartArgs,
     CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs,
     CoreLogsSubcommand, CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs, CoreTaskArgs,
-    core_command_args, has_core_global_logging_args, is_core_cli_command,
+    CoreThreadArgs, core_command_args, has_core_global_logging_args, is_core_cli_command,
     is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_collaboration_args, parse_core_daemon_restart_args,
@@ -13,6 +13,7 @@ use aimux::core_cli_routing::{
     parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
     parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
+    parse_core_thread_args,
 };
 
 #[test]
@@ -600,6 +601,85 @@ fn task_parser_matches_workflow_forms() {
 }
 
 #[test]
+fn thread_parser_matches_orchestration_forms() {
+    let list = parse_core_thread_args(&[
+        "thread",
+        "list",
+        "--session",
+        "claude-1",
+        "--project=/repo",
+        "--json",
+    ])
+    .expect("thread list args");
+    assert_eq!(list.subcommand, "list");
+    assert_eq!(list.session.as_deref(), Some("claude-1"));
+    assert_eq!(list.project.as_deref(), Some("/repo"));
+    assert!(list.json);
+
+    let open = parse_core_thread_args(&[
+        "thread",
+        "open",
+        "--title=Plan",
+        "--from",
+        "user",
+        "--participants",
+        "claude-1,codex-1",
+        "--kind=handoff",
+    ]);
+    assert_eq!(
+        open,
+        Some(CoreThreadArgs {
+            subcommand: "open".into(),
+            thread_id: None,
+            body: None,
+            project: None,
+            session: None,
+            title: Some("Plan".into()),
+            from: Some("user".into()),
+            participants: Some("claude-1,codex-1".into()),
+            kind: Some("handoff".into()),
+            to: None,
+            status: None,
+            owner: None,
+            waiting_on: None,
+            json: false,
+        })
+    );
+
+    let send = parse_core_thread_args(&[
+        "thread",
+        "send",
+        "thread-1",
+        "body",
+        "--from=user",
+        "--to=claude-1",
+        "--kind=reply",
+    ])
+    .expect("thread send args");
+    assert_eq!(send.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(send.body.as_deref(), Some("body"));
+    assert_eq!(send.kind.as_deref(), Some("reply"));
+
+    let status = parse_core_thread_args(&[
+        "thread",
+        "status",
+        "thread-1",
+        "--status=waiting",
+        "--owner=user",
+        "--waiting-on=claude-1,codex-1",
+    ])
+    .expect("thread status args");
+    assert_eq!(status.status.as_deref(), Some("waiting"));
+    assert_eq!(status.waiting_on.as_deref(), Some("claude-1,codex-1"));
+
+    assert!(parse_core_thread_args(&["thread", "show"]).is_none());
+    assert!(parse_core_thread_args(&["thread", "open", "--title", "Plan"]).is_none());
+    assert!(parse_core_thread_args(&["thread", "send", "thread-1", "--from=user"]).is_none());
+    assert!(parse_core_thread_args(&["thread", "mark-seen", "thread-1"]).is_none());
+    assert!(parse_core_thread_args(&["thread", "status", "thread-1"]).is_none());
+}
+
+#[test]
 fn logs_parser_preserves_values_that_start_with_hyphens() {
     assert_eq!(
         parse_core_logs_args(&["logs", "tail", "--project", "-foo", "-n", "-5", "--daemon",]),
@@ -853,6 +933,11 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["task", "block", "task-1", "--result=blocked"],
         vec!["review", "approve", "task-1", "--from", "--body=ok"],
         vec!["review", "request-changes", "task-1", "--body", "-h"],
+        vec!["thread", "list", "--json"],
+        vec!["thread", "show", "thread-1"],
+        vec!["thread", "send", "thread-1", "body", "--from", "user"],
+        vec!["thread", "mark-seen", "thread-1", "--session"],
+        vec!["thread", "status", "thread-1", "--status=waiting"],
         vec!["projects", "list", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],
@@ -884,6 +969,8 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["task", "assign", "--to", "codex-1"],
         vec!["task", "assign", "--help"],
         vec!["review", "approve"],
+        vec!["thread", "show"],
+        vec!["thread", "send", "thread-1", "--from", "user"],
         vec!["daemon", "project-ensure", "-h"],
         vec!["remote", "unlock"],
         vec![],

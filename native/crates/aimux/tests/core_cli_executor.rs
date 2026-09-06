@@ -169,6 +169,7 @@ impl CoreCliRuntime for FakeRuntime {
             || path.starts_with("/core/review/")
             || path.starts_with("/core/message/")
             || path.starts_with("/core/handoff/")
+            || path.starts_with("/core/thread/")
         {
             "task task-1\nthread thread-1\n".into()
         } else if path.ends_with("?json=1") {
@@ -1281,6 +1282,131 @@ fn task_and_review_commands_execute_native_text_routes_without_core_command_fall
                     "taskId": "task-1",
                     "from": "reviewer",
                     "body": "fix",
+                })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn thread_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let list = run_core_cli_with(
+        &args(&[
+            "thread",
+            "list",
+            "--session",
+            "claude-1",
+            "--project=/repo",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let show = run_core_cli_with(
+        &args(&["thread", "show", "thread-1", "--project", "/repo"]),
+        &mut runtime,
+    );
+    let open = run_core_cli_with(
+        &args(&[
+            "thread",
+            "open",
+            "--title=Plan",
+            "--from=user",
+            "--participants=claude-1,codex-1",
+            "--kind=handoff",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let send = run_core_cli_with(
+        &args(&[
+            "thread",
+            "send",
+            "thread-1",
+            "body",
+            "--from=user",
+            "--to=claude-1",
+            "--kind=reply",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let mark_seen = run_core_cli_with(
+        &args(&[
+            "thread",
+            "mark-seen",
+            "thread-1",
+            "--session=claude-1",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let status = run_core_cli_with(
+        &args(&[
+            "thread",
+            "status",
+            "thread-1",
+            "--status=waiting",
+            "--owner=user",
+            "--waiting-on=claude-1,codex-1",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+
+    for execution in [list, show, open, send, mark_seen, status] {
+        assert_eq!(execution.stdout, ["task task-1\nthread thread-1"]);
+    }
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/thread/list-text?project=%2Frepo&session=claude-1&json=1".into(),
+                None,
+            ),
+            (
+                "/core/thread/show-text?project=%2Frepo&threadId=thread-1".into(),
+                None,
+            ),
+            (
+                "/core/thread/open-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "title": "Plan",
+                    "from": "user",
+                    "participants": "claude-1,codex-1",
+                    "kind": "handoff",
+                })),
+            ),
+            (
+                "/core/thread/send-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "threadId": "thread-1",
+                    "from": "user",
+                    "to": "claude-1",
+                    "kind": "reply",
+                    "body": "body",
+                })),
+            ),
+            (
+                "/core/thread/mark-seen-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "threadId": "thread-1",
+                    "session": "claude-1",
+                })),
+            ),
+            (
+                "/core/thread/status-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "threadId": "thread-1",
+                    "status": "waiting",
+                    "owner": "user",
+                    "waitingOn": "claude-1,codex-1",
                 })),
             ),
         ]

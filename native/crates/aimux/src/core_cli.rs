@@ -10,6 +10,7 @@ use crate::core_cli_routing::{
     parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
     parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
+    parse_core_thread_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,12 @@ pub enum CoreCliOperation {
     TaskReopen,
     ReviewApprove,
     ReviewRequestChanges,
+    ThreadList,
+    ThreadShow,
+    ThreadOpen,
+    ThreadSend,
+    ThreadMarkSeen,
+    ThreadStatus,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -603,6 +610,35 @@ fn task_show_text_path(project: &str, task_id: &str, json: bool) -> String {
         CORE_API_ROUTES.task_show_text,
         encode_query_component(project),
         encode_query_component(task_id)
+    );
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
+fn thread_list_text_path(project: &str, session: Option<&str>, json: bool) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.thread_list_text,
+        encode_query_component(project)
+    );
+    if let Some(session) = session {
+        path.push_str("&session=");
+        path.push_str(&encode_query_component(session));
+    }
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
+fn thread_show_text_path(project: &str, thread_id: &str, json: bool) -> String {
+    let mut path = format!(
+        "{}?project={}&threadId={}",
+        CORE_API_ROUTES.thread_show_text,
+        encode_query_component(project),
+        encode_query_component(thread_id)
     );
     if json {
         path.push_str("&json=1");
@@ -1316,6 +1352,84 @@ where
                     ),
                     _ => unreachable!("validated workflow command"),
                 };
+            (
+                operation,
+                CoreCliAction::TextRoute { path, body },
+                CoreCliFallback::None,
+            )
+        }
+        ("thread", "list" | "show" | "open" | "send" | "mark-seen" | "status") => {
+            let parsed = parse_core_thread_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid thread arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, path, body) = match parsed.subcommand.as_str() {
+                "list" => (
+                    CoreCliOperation::ThreadList,
+                    thread_list_text_path(&project_root, parsed.session.as_deref(), parsed.json),
+                    None,
+                ),
+                "show" => (
+                    CoreCliOperation::ThreadShow,
+                    thread_show_text_path(
+                        &project_root,
+                        parsed.thread_id.as_deref().unwrap_or(""),
+                        parsed.json,
+                    ),
+                    None,
+                ),
+                "open" => (
+                    CoreCliOperation::ThreadOpen,
+                    text_route_path(CORE_API_ROUTES.thread_open_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "title": parsed.title,
+                        "from": parsed.from,
+                        "participants": parsed.participants,
+                        "kind": parsed.kind,
+                    })),
+                ),
+                "send" => (
+                    CoreCliOperation::ThreadSend,
+                    text_route_path(CORE_API_ROUTES.thread_send_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "threadId": parsed.thread_id,
+                        "from": parsed.from,
+                        "to": parsed.to,
+                        "kind": parsed.kind,
+                        "body": parsed.body,
+                    })),
+                ),
+                "mark-seen" => (
+                    CoreCliOperation::ThreadMarkSeen,
+                    text_route_path(CORE_API_ROUTES.thread_mark_seen_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "threadId": parsed.thread_id,
+                        "session": parsed.session,
+                    })),
+                ),
+                "status" => (
+                    CoreCliOperation::ThreadStatus,
+                    text_route_path(CORE_API_ROUTES.thread_status_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "threadId": parsed.thread_id,
+                        "status": parsed.status,
+                        "owner": parsed.owner,
+                        "waitingOn": parsed.waiting_on,
+                    })),
+                ),
+                _ => unreachable!("validated thread subcommand"),
+            };
             (
                 operation,
                 CoreCliAction::TextRoute { path, body },
