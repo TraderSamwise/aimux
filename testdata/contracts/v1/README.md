@@ -694,6 +694,10 @@ Priority fixture groups:
 - `runtime-state/runtime-sync.json`: runtime sync heartbeat and project-service
   refresh timer behavior captured by running TypeScript
   `MultiplexerRuntimeSync` with recorded dependencies.
+- `runtime-state/dashboard-lifecycle.json`: dashboard lifecycle token capture,
+  currentness checks, render gating, stale async suppression, and swallowed
+  handler exception behavior captured by running TypeScript
+  `multiplexer/dashboard-lifecycle`.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
