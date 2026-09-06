@@ -1,0 +1,743 @@
+{
+  "version": 1,
+  "source": "scripts/capture-agent-tracker-contract.mjs",
+  "generatedBy": "scripts/capture-agent-tracker-contract.mjs",
+  "description": "Agent tracker state-transition contracts captured by running the TypeScript AgentTracker against deterministic action sequences.",
+  "cases": [
+    {
+      "id": "agent-tracker-001",
+      "name": "prompt-to-task-done-increments-unseen-and-idle-time",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:00:00.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "prompt", "message": "do the work", "ts": "2026-05-09T12:00:00.000Z" }
+          },
+          {
+            "at": "2026-05-09T12:00:10.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "task_done", "message": "Done: auth", "ts": "2026-05-09T12:00:10.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:00:00.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "prompt", "message": "do the work", "ts": "2026-05-09T12:00:00.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:00:00.000Z",
+                  "derived": {
+                    "activity": "running",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastEvent": { "kind": "prompt", "message": "do the work", "ts": "2026-05-09T12:00:00.000Z" },
+                    "events": [{ "kind": "prompt", "message": "do the work", "ts": "2026-05-09T12:00:00.000Z" }]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:00:10.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "task_done", "message": "Done: auth", "ts": "2026-05-09T12:00:10.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:00:10.000Z",
+                  "derived": {
+                    "activity": "done",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "lastEvent": { "kind": "task_done", "message": "Done: auth", "ts": "2026-05-09T12:00:10.000Z" },
+                    "events": [
+                      { "kind": "prompt", "message": "do the work", "ts": "2026-05-09T12:00:00.000Z" },
+                      { "kind": "task_done", "message": "Done: auth", "ts": "2026-05-09T12:00:10.000Z" }
+                    ],
+                    "becameIdleAt": "2026-05-09T12:00:10.000Z",
+                    "lastOutputAt": "2026-05-09T12:00:10.000Z"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:00:10.000Z",
+              "derived": {
+                "activity": "done",
+                "attention": "normal",
+                "unseenCount": 1,
+                "lastEvent": { "kind": "task_done", "message": "Done: auth", "ts": "2026-05-09T12:00:10.000Z" },
+                "events": [
+                  { "kind": "prompt", "message": "do the work", "ts": "2026-05-09T12:00:00.000Z" },
+                  { "kind": "task_done", "message": "Done: auth", "ts": "2026-05-09T12:00:10.000Z" }
+                ],
+                "becameIdleAt": "2026-05-09T12:00:10.000Z",
+                "lastOutputAt": "2026-05-09T12:00:10.000Z"
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "35e7f36d025f46c42e552177b770b8f195f72bbdf015e9190f3763772dc9c795"
+    },
+    {
+      "id": "agent-tracker-002",
+      "name": "needs-input-mark-seen-preserves-attention-and-thread",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:01:00.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": {
+              "kind": "needs_input",
+              "message": "Need your approval",
+              "threadId": "t-1",
+              "threadName": "Approval"
+            }
+          },
+          { "at": "2026-05-09T12:01:05.000Z", "op": "markSeen", "session": "s1" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:01:00.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "needs_input",
+                "message": "Need your approval",
+                "threadId": "t-1",
+                "threadName": "Approval"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:01:00.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "needs_input",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:01:00.000Z",
+                    "threadId": "t-1",
+                    "threadName": "Approval",
+                    "lastEvent": {
+                      "kind": "needs_input",
+                      "message": "Need your approval",
+                      "threadId": "t-1",
+                      "threadName": "Approval",
+                      "ts": "2026-05-09T12:01:00.000Z"
+                    },
+                    "events": [
+                      {
+                        "kind": "needs_input",
+                        "message": "Need your approval",
+                        "threadId": "t-1",
+                        "threadName": "Approval",
+                        "ts": "2026-05-09T12:01:00.000Z"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:01:05.000Z", "op": "markSeen", "session": "s1" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:01:05.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "needs_input",
+                    "unseenCount": 0,
+                    "lastOutputAt": "2026-05-09T12:01:00.000Z",
+                    "threadId": "t-1",
+                    "threadName": "Approval",
+                    "lastEvent": {
+                      "kind": "needs_input",
+                      "message": "Need your approval",
+                      "threadId": "t-1",
+                      "threadName": "Approval",
+                      "ts": "2026-05-09T12:01:00.000Z"
+                    },
+                    "events": [
+                      {
+                        "kind": "needs_input",
+                        "message": "Need your approval",
+                        "threadId": "t-1",
+                        "threadName": "Approval",
+                        "ts": "2026-05-09T12:01:00.000Z"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:01:05.000Z",
+              "derived": {
+                "activity": "waiting",
+                "attention": "needs_input",
+                "unseenCount": 0,
+                "lastOutputAt": "2026-05-09T12:01:00.000Z",
+                "threadId": "t-1",
+                "threadName": "Approval",
+                "lastEvent": {
+                  "kind": "needs_input",
+                  "message": "Need your approval",
+                  "threadId": "t-1",
+                  "threadName": "Approval",
+                  "ts": "2026-05-09T12:01:00.000Z"
+                },
+                "events": [
+                  {
+                    "kind": "needs_input",
+                    "message": "Need your approval",
+                    "threadId": "t-1",
+                    "threadName": "Approval",
+                    "ts": "2026-05-09T12:01:00.000Z"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "3aa102c80420a5c5d31a2f53f3afae5ce6eecdb7b5848867d2fc495de5f4a20f"
+    },
+    {
+      "id": "agent-tracker-003",
+      "name": "status-and-notify-derived-attention-counts",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:02:00.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" }
+          },
+          {
+            "at": "2026-05-09T12:02:10.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "Need your input: press enter", "ts": "2026-05-09T12:02:10.000Z" }
+          },
+          {
+            "at": "2026-05-09T12:02:20.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "Blocked waiting on deploy", "ts": "2026-05-09T12:02:20.000Z" }
+          },
+          {
+            "at": "2026-05-09T12:02:30.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "notify", "message": "Build failed", "tone": "error", "ts": "2026-05-09T12:02:30.000Z" }
+          },
+          {
+            "at": "2026-05-09T12:02:40.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "response", "message": "Recovered.", "ts": "2026-05-09T12:02:40.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:02:00.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:02:00.000Z",
+                  "derived": {
+                    "activity": "running",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastOutputAt": "2026-05-09T12:02:00.000Z",
+                    "lastEvent": { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" },
+                    "events": [{ "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" }]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:02:10.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "Need your input: press enter", "ts": "2026-05-09T12:02:10.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:02:10.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "needs_input",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:02:10.000Z",
+                    "lastEvent": {
+                      "kind": "status",
+                      "message": "Need your input: press enter",
+                      "ts": "2026-05-09T12:02:10.000Z"
+                    },
+                    "events": [
+                      { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" },
+                      { "kind": "status", "message": "Need your input: press enter", "ts": "2026-05-09T12:02:10.000Z" }
+                    ],
+                    "becameIdleAt": "2026-05-09T12:02:10.000Z"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:02:20.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "Blocked waiting on deploy", "ts": "2026-05-09T12:02:20.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:02:20.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "blocked",
+                    "unseenCount": 2,
+                    "lastOutputAt": "2026-05-09T12:02:20.000Z",
+                    "lastEvent": {
+                      "kind": "status",
+                      "message": "Blocked waiting on deploy",
+                      "ts": "2026-05-09T12:02:20.000Z"
+                    },
+                    "events": [
+                      { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" },
+                      { "kind": "status", "message": "Need your input: press enter", "ts": "2026-05-09T12:02:10.000Z" },
+                      { "kind": "status", "message": "Blocked waiting on deploy", "ts": "2026-05-09T12:02:20.000Z" }
+                    ],
+                    "becameIdleAt": "2026-05-09T12:02:10.000Z"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:02:30.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "notify",
+                "message": "Build failed",
+                "tone": "error",
+                "ts": "2026-05-09T12:02:30.000Z"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:02:30.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "error",
+                    "unseenCount": 3,
+                    "lastOutputAt": "2026-05-09T12:02:30.000Z",
+                    "lastEvent": {
+                      "kind": "notify",
+                      "message": "Build failed",
+                      "tone": "error",
+                      "ts": "2026-05-09T12:02:30.000Z"
+                    },
+                    "events": [
+                      { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" },
+                      { "kind": "status", "message": "Need your input: press enter", "ts": "2026-05-09T12:02:10.000Z" },
+                      { "kind": "status", "message": "Blocked waiting on deploy", "ts": "2026-05-09T12:02:20.000Z" },
+                      { "kind": "notify", "message": "Build failed", "tone": "error", "ts": "2026-05-09T12:02:30.000Z" }
+                    ],
+                    "becameIdleAt": "2026-05-09T12:02:10.000Z"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:02:40.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "response", "message": "Recovered.", "ts": "2026-05-09T12:02:40.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:02:40.000Z",
+                  "derived": {
+                    "activity": "idle",
+                    "attention": "normal",
+                    "unseenCount": 4,
+                    "lastOutputAt": "2026-05-09T12:02:40.000Z",
+                    "lastEvent": { "kind": "response", "message": "Recovered.", "ts": "2026-05-09T12:02:40.000Z" },
+                    "events": [
+                      { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" },
+                      { "kind": "status", "message": "Need your input: press enter", "ts": "2026-05-09T12:02:10.000Z" },
+                      { "kind": "status", "message": "Blocked waiting on deploy", "ts": "2026-05-09T12:02:20.000Z" },
+                      {
+                        "kind": "notify",
+                        "message": "Build failed",
+                        "tone": "error",
+                        "ts": "2026-05-09T12:02:30.000Z"
+                      },
+                      { "kind": "response", "message": "Recovered.", "ts": "2026-05-09T12:02:40.000Z" }
+                    ],
+                    "becameIdleAt": "2026-05-09T12:02:10.000Z"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:02:40.000Z",
+              "derived": {
+                "activity": "idle",
+                "attention": "normal",
+                "unseenCount": 4,
+                "lastOutputAt": "2026-05-09T12:02:40.000Z",
+                "lastEvent": { "kind": "response", "message": "Recovered.", "ts": "2026-05-09T12:02:40.000Z" },
+                "events": [
+                  { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:02:00.000Z" },
+                  { "kind": "status", "message": "Need your input: press enter", "ts": "2026-05-09T12:02:10.000Z" },
+                  { "kind": "status", "message": "Blocked waiting on deploy", "ts": "2026-05-09T12:02:20.000Z" },
+                  { "kind": "notify", "message": "Build failed", "tone": "error", "ts": "2026-05-09T12:02:30.000Z" },
+                  { "kind": "response", "message": "Recovered.", "ts": "2026-05-09T12:02:40.000Z" }
+                ],
+                "becameIdleAt": "2026-05-09T12:02:10.000Z"
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "93b713a871903660fcf4c48db0f070a9282cf6dc333efa3cb8f30b2744aca745"
+    },
+    {
+      "id": "agent-tracker-004",
+      "name": "explicit-setters-and-mark-seen-state",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:03:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+          { "at": "2026-05-09T12:03:05.000Z", "op": "setAttention", "session": "s1", "attention": "needs_input" },
+          {
+            "at": "2026-05-09T12:03:10.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "response", "message": "Done." }
+          },
+          { "at": "2026-05-09T12:03:15.000Z", "op": "setActivity", "session": "s1", "activity": "idle" },
+          { "at": "2026-05-09T12:03:20.000Z", "op": "setAttention", "session": "s1", "attention": "normal" },
+          { "at": "2026-05-09T12:03:25.000Z", "op": "markSeen", "session": "s1" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:03:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:03:00.000Z", "derived": { "activity": "running" } } }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:03:05.000Z",
+              "op": "setAttention",
+              "session": "s1",
+              "attention": "needs_input"
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:03:05.000Z",
+                  "derived": { "activity": "running", "attention": "needs_input" }
+                }
+              }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:03:10.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "response", "message": "Done." }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:03:10.000Z",
+                  "derived": {
+                    "activity": "idle",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "becameIdleAt": "2026-05-09T12:03:10.000Z",
+                    "lastOutputAt": "2026-05-09T12:03:10.000Z",
+                    "lastEvent": { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" },
+                    "events": [{ "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" }]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:03:15.000Z", "op": "setActivity", "session": "s1", "activity": "idle" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:03:10.000Z",
+                  "derived": {
+                    "activity": "idle",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "becameIdleAt": "2026-05-09T12:03:10.000Z",
+                    "lastOutputAt": "2026-05-09T12:03:10.000Z",
+                    "lastEvent": { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" },
+                    "events": [{ "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" }]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:03:20.000Z", "op": "setAttention", "session": "s1", "attention": "normal" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:03:10.000Z",
+                  "derived": {
+                    "activity": "idle",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "becameIdleAt": "2026-05-09T12:03:10.000Z",
+                    "lastOutputAt": "2026-05-09T12:03:10.000Z",
+                    "lastEvent": { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" },
+                    "events": [{ "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" }]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:03:25.000Z", "op": "markSeen", "session": "s1" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:03:25.000Z",
+                  "derived": {
+                    "activity": "idle",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "becameIdleAt": "2026-05-09T12:03:10.000Z",
+                    "lastOutputAt": "2026-05-09T12:03:10.000Z",
+                    "lastEvent": { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" },
+                    "events": [{ "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:03:25.000Z",
+              "derived": {
+                "activity": "idle",
+                "attention": "normal",
+                "unseenCount": 0,
+                "becameIdleAt": "2026-05-09T12:03:10.000Z",
+                "lastOutputAt": "2026-05-09T12:03:10.000Z",
+                "lastEvent": { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" },
+                "events": [{ "kind": "response", "message": "Done.", "ts": "2026-05-09T12:03:10.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "568bd11f35ea601d835a1e5b8700d4f5e6c314e94b001472089e1f91e570a615"
+    },
+    {
+      "id": "agent-tracker-005",
+      "name": "focused-session-suppresses-unseen-counts",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:04:00.000Z",
+            "op": "focus",
+            "contextId": "tui",
+            "context": { "focused": true, "sessionId": "s1", "panelOpen": false }
+          },
+          {
+            "at": "2026-05-09T12:04:05.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "needs_input", "message": "Need your reply" }
+          },
+          {
+            "at": "2026-05-09T12:04:10.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "response", "message": "Done." }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:04:00.000Z",
+              "op": "focus",
+              "contextId": "tui",
+              "context": { "focused": true, "sessionId": "s1", "panelOpen": false }
+            },
+            "state": { "version": 1, "sessions": {} }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:04:05.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "needs_input", "message": "Need your reply" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:04:05.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "needs_input",
+                    "unseenCount": 0,
+                    "lastOutputAt": "2026-05-09T12:04:05.000Z",
+                    "lastEvent": {
+                      "kind": "needs_input",
+                      "message": "Need your reply",
+                      "ts": "2026-05-09T12:04:05.000Z"
+                    },
+                    "events": [
+                      { "kind": "needs_input", "message": "Need your reply", "ts": "2026-05-09T12:04:05.000Z" }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:04:10.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "response", "message": "Done." }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:04:10.000Z",
+                  "derived": {
+                    "activity": "idle",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastOutputAt": "2026-05-09T12:04:10.000Z",
+                    "lastEvent": { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:04:10.000Z" },
+                    "events": [
+                      { "kind": "needs_input", "message": "Need your reply", "ts": "2026-05-09T12:04:05.000Z" },
+                      { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:04:10.000Z" }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:04:10.000Z",
+              "derived": {
+                "activity": "idle",
+                "attention": "normal",
+                "unseenCount": 0,
+                "lastOutputAt": "2026-05-09T12:04:10.000Z",
+                "lastEvent": { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:04:10.000Z" },
+                "events": [
+                  { "kind": "needs_input", "message": "Need your reply", "ts": "2026-05-09T12:04:05.000Z" },
+                  { "kind": "response", "message": "Done.", "ts": "2026-05-09T12:04:10.000Z" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "db8cf93f8435fe26acd9472cac1386b376508c26a25c6a6118e224ba8cd3eb18"
+    }
+  ]
+}
