@@ -165,8 +165,12 @@ impl CoreCliRuntime for FakeRuntime {
             "team ok\n".into()
         } else if path.starts_with("/core/notifications/") {
             "notifications ok\n".into()
-        } else if path.starts_with("/core/message/") || path.starts_with("/core/handoff/") {
-            "thread thread-1\nmessage msg-1\n".into()
+        } else if path.starts_with("/core/task/")
+            || path.starts_with("/core/review/")
+            || path.starts_with("/core/message/")
+            || path.starts_with("/core/handoff/")
+        {
+            "task task-1\nthread thread-1\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -1020,10 +1024,10 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
         &mut runtime,
     );
 
-    assert_eq!(message.stdout, ["thread thread-1\nmessage msg-1"]);
-    assert_eq!(handoff.stdout, ["thread thread-1\nmessage msg-1"]);
-    assert_eq!(accept.stdout, ["thread thread-1\nmessage msg-1"]);
-    assert_eq!(complete.stdout, ["thread thread-1\nmessage msg-1"]);
+    assert_eq!(message.stdout, ["task task-1\nthread thread-1"]);
+    assert_eq!(handoff.stdout, ["task task-1\nthread thread-1"]);
+    assert_eq!(accept.stdout, ["task task-1\nthread thread-1"]);
+    assert_eq!(complete.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(
         runtime.text_routes,
         [
@@ -1071,6 +1075,212 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
                     "threadId": "thread-1",
                     "from": "claude-1",
                     "body": "done",
+                })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn task_and_review_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let list = run_core_cli_with(
+        &args(&[
+            "task",
+            "list",
+            "--session",
+            "claude-1",
+            "--status=todo",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let show = run_core_cli_with(
+        &args(&["task", "show", "task-1", "--project", "/repo", "--json"]),
+        &mut runtime,
+    );
+    let assign = run_core_cli_with(
+        &args(&[
+            "task",
+            "assign",
+            "Ship it",
+            "--from=user",
+            "--to=claude-1",
+            "--assignee=coder",
+            "--tool=claude",
+            "--prompt=Implement",
+            "--type=review",
+            "--diff",
+            "--- before\n+++ after",
+            "--worktree=feature",
+            "--project=/repo",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let accept = run_core_cli_with(
+        &args(&[
+            "task",
+            "accept",
+            "task-1",
+            "--from=claude-1",
+            "--body=ok",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let block = run_core_cli_with(
+        &args(&[
+            "task",
+            "block",
+            "task-1",
+            "--from=claude-1",
+            "--body",
+            "blocked",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let complete = run_core_cli_with(
+        &args(&[
+            "task",
+            "complete",
+            "task-1",
+            "--from=claude-1",
+            "--result=shipped",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let reopen = run_core_cli_with(
+        &args(&[
+            "task",
+            "reopen",
+            "task-1",
+            "--from=claude-1",
+            "--body=again",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let approve = run_core_cli_with(
+        &args(&[
+            "review",
+            "approve",
+            "task-1",
+            "--from=reviewer",
+            "--body=ok",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let request_changes = run_core_cli_with(
+        &args(&[
+            "review",
+            "request-changes",
+            "task-1",
+            "--from=reviewer",
+            "--body=fix",
+            "--project=/repo",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+
+    for execution in [
+        list,
+        show,
+        assign,
+        accept,
+        block,
+        complete,
+        reopen,
+        approve,
+        request_changes,
+    ] {
+        assert_eq!(execution.stdout, ["task task-1\nthread thread-1"]);
+    }
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/task/list-text?project=%2Frepo&session=claude-1&status=todo&json=1".into(),
+                None,
+            ),
+            (
+                "/core/task/show-text?project=%2Frepo&taskId=task-1&json=1".into(),
+                None,
+            ),
+            (
+                "/core/task/assign-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "from": "user",
+                    "to": "claude-1",
+                    "assignee": "coder",
+                    "tool": "claude",
+                    "description": "Ship it",
+                    "prompt": "Implement",
+                    "type": "review",
+                    "diff": "--- before\n+++ after",
+                    "worktree": "feature",
+                })),
+            ),
+            (
+                "/core/task/accept-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "taskId": "task-1",
+                    "from": "claude-1",
+                    "body": "ok",
+                })),
+            ),
+            (
+                "/core/task/block-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "taskId": "task-1",
+                    "from": "claude-1",
+                    "body": "blocked",
+                })),
+            ),
+            (
+                "/core/task/complete-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "taskId": "task-1",
+                    "from": "claude-1",
+                    "body": null,
+                    "result": "shipped",
+                })),
+            ),
+            (
+                "/core/task/reopen-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "taskId": "task-1",
+                    "from": "claude-1",
+                    "body": "again",
+                })),
+            ),
+            (
+                "/core/review/approve-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "taskId": "task-1",
+                    "from": "reviewer",
+                    "body": "ok",
+                })),
+            ),
+            (
+                "/core/review/request-changes-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "taskId": "task-1",
+                    "from": "reviewer",
+                    "body": "fix",
                 })),
             ),
         ]

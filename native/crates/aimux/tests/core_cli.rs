@@ -491,6 +491,135 @@ fn collaboration_commands_plan_native_text_routes_with_resolved_project() {
 }
 
 #[test]
+fn task_and_review_commands_plan_native_text_routes() {
+    let list = classify_core_cli_with_project_resolver(
+        &[
+            "task",
+            "list",
+            "--session",
+            "claude 1",
+            "--status=todo",
+            "--json",
+            "--project",
+            "./child",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("task list plan");
+    assert_eq!(list.operation, CoreCliOperation::TaskList);
+    assert_eq!(
+        list.action,
+        CoreCliAction::TextRoute {
+            path: "/core/task/list-text?project=%2Fresolved%2F.%2Fchild&session=claude%201&status=todo&json=1".into(),
+            body: None,
+        }
+    );
+
+    let show = classify_core_cli(&["task", "show", "task 1"], &context(true, true))
+        .expect("task show plan");
+    assert_eq!(show.operation, CoreCliOperation::TaskShow);
+    assert_eq!(
+        show.action,
+        CoreCliAction::TextRoute {
+            path: "/core/task/show-text?project=%2Frepo&taskId=task%201".into(),
+            body: None,
+        }
+    );
+
+    let assign = classify_core_cli(
+        &[
+            "task",
+            "assign",
+            "Ship it",
+            "--from=user",
+            "--to=claude-1",
+            "--assignee=coder",
+            "--tool=claude",
+            "--prompt=Implement",
+            "--type=review",
+            "--diff",
+            "--- before\n+++ after",
+            "--worktree=feature",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("task assign plan");
+    assert_eq!(assign.operation, CoreCliOperation::TaskAssign);
+    assert_eq!(
+        assign.action,
+        CoreCliAction::TextRoute {
+            path: "/core/task/assign-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "from": "user",
+                "to": "claude-1",
+                "assignee": "coder",
+                "tool": "claude",
+                "description": "Ship it",
+                "prompt": "Implement",
+                "type": "review",
+                "diff": "--- before\n+++ after",
+                "worktree": "feature",
+            })),
+        }
+    );
+
+    let complete = classify_core_cli(
+        &[
+            "task",
+            "complete",
+            "task-1",
+            "--from=claude-1",
+            "--result=shipped",
+        ],
+        &context(true, true),
+    )
+    .expect("task complete plan");
+    assert_eq!(complete.operation, CoreCliOperation::TaskComplete);
+    assert_eq!(
+        complete.action,
+        CoreCliAction::TextRoute {
+            path: "/core/task/complete-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "taskId": "task-1",
+                "from": "claude-1",
+                "body": null,
+                "result": "shipped",
+            })),
+        }
+    );
+
+    let review = classify_core_cli(
+        &[
+            "review",
+            "request-changes",
+            "task-1",
+            "--from=reviewer",
+            "--body=fix",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("review request changes plan");
+    assert_eq!(review.operation, CoreCliOperation::ReviewRequestChanges);
+    assert_eq!(
+        review.action,
+        CoreCliAction::TextRoute {
+            path: "/core/review/request-changes-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "taskId": "task-1",
+                "from": "reviewer",
+                "body": "fix",
+            })),
+        }
+    );
+}
+
+#[test]
 fn agent_ps_plans_native_text_route_with_project_resolution() {
     let plan = classify_core_cli_with_project_resolver(
         &["ps", "--project", "./child dir", "--json"],

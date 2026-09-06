@@ -1,7 +1,7 @@
 use aimux::core_cli_routing::{
     CoreAgentInputArgs, CoreAgentPsArgs, CoreCollaborationArgs, CoreDaemonRestartArgs,
     CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs,
-    CoreLogsSubcommand, CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs,
+    CoreLogsSubcommand, CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs, CoreTaskArgs,
     core_command_args, has_core_global_logging_args, is_core_cli_command,
     is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
@@ -12,7 +12,7 @@ use aimux::core_cli_routing::{
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
-    parse_core_runtime_restart_args, parse_core_team_args,
+    parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
 };
 
 #[test]
@@ -513,6 +513,93 @@ fn collaboration_parser_matches_message_and_handoff_forms() {
 }
 
 #[test]
+fn task_parser_matches_workflow_forms() {
+    let list = parse_core_task_args(&[
+        "task",
+        "list",
+        "--session",
+        "claude-1",
+        "--status=todo",
+        "--json",
+    ])
+    .expect("task list args");
+    assert_eq!(list.subcommand, "list");
+    assert_eq!(list.session.as_deref(), Some("claude-1"));
+    assert_eq!(list.status.as_deref(), Some("todo"));
+    assert!(list.json);
+
+    let assign = parse_core_task_args(&[
+        "task",
+        "assign",
+        "Ship it",
+        "--from=user",
+        "--to=claude-1",
+        "--assignee=coder",
+        "--tool=claude",
+        "--prompt=Implement",
+        "--type=review",
+        "--diff",
+        "--- before\n+++ after",
+        "--worktree=feature",
+        "--project=/repo",
+        "--json",
+    ]);
+    assert_eq!(
+        assign,
+        Some(CoreTaskArgs {
+            command: "task".into(),
+            subcommand: "assign".into(),
+            task_id: None,
+            description: Some("Ship it".into()),
+            project: Some("/repo".into()),
+            session: None,
+            status: None,
+            from: Some("user".into()),
+            to: Some("claude-1".into()),
+            assignee: Some("coder".into()),
+            tool: Some("claude".into()),
+            prompt: Some("Implement".into()),
+            task_type: Some("review".into()),
+            diff: Some("--- before\n+++ after".into()),
+            worktree: Some("feature".into()),
+            body: None,
+            result: None,
+            json: true,
+        })
+    );
+
+    let complete = parse_core_task_args(&[
+        "task",
+        "complete",
+        "task-1",
+        "--from=claude-1",
+        "--result=shipped",
+    ])
+    .expect("task complete args");
+    assert_eq!(complete.task_id.as_deref(), Some("task-1"));
+    assert_eq!(complete.result.as_deref(), Some("shipped"));
+
+    let review = parse_core_task_args(&[
+        "review",
+        "request-changes",
+        "task-1",
+        "--from=reviewer",
+        "--body",
+        "fix",
+    ])
+    .expect("review args");
+    assert_eq!(review.command, "review");
+    assert_eq!(review.body.as_deref(), Some("fix"));
+
+    assert!(parse_core_task_args(&["task", "assign", "--to", "codex-1"]).is_none());
+    assert!(parse_core_task_args(&["task", "assign", "Ship it", "--to="]).is_none());
+    assert!(parse_core_task_args(&["task", "block", "task-1", "--result=blocked"]).is_none());
+    assert!(
+        parse_core_task_args(&["review", "approve", "task-1", "--from", "--body=ok"]).is_none()
+    );
+}
+
+#[test]
 fn logs_parser_preserves_values_that_start_with_hyphens() {
     assert_eq!(
         parse_core_logs_args(&["logs", "tail", "--project", "-foo", "-n", "-5", "--daemon",]),
@@ -761,6 +848,11 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["handoff", "send", "please"],
         vec!["handoff", "accept", "thread-1", "--body"],
         vec!["handoff", "complete", "thread-1"],
+        vec!["task", "list", "--session", "claude-1"],
+        vec!["task", "assign", "Ship it", "--to="],
+        vec!["task", "block", "task-1", "--result=blocked"],
+        vec!["review", "approve", "task-1", "--from", "--body=ok"],
+        vec!["review", "request-changes", "task-1", "--body", "-h"],
         vec!["projects", "list", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],
@@ -789,6 +881,9 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["message", "send", "--help"],
         vec!["handoff", "send", "--help"],
         vec!["handoff", "accept"],
+        vec!["task", "assign", "--to", "codex-1"],
+        vec!["task", "assign", "--help"],
+        vec!["review", "approve"],
         vec!["daemon", "project-ensure", "-h"],
         vec!["remote", "unlock"],
         vec![],

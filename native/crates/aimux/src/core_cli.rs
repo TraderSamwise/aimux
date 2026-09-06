@@ -9,7 +9,7 @@ use crate::core_cli_routing::{
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
-    parse_core_runtime_restart_args, parse_core_team_args,
+    parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,15 @@ pub enum CoreCliOperation {
     HandoffSend,
     HandoffAccept,
     HandoffComplete,
+    TaskList,
+    TaskShow,
+    TaskAssign,
+    TaskAccept,
+    TaskBlock,
+    TaskComplete,
+    TaskReopen,
+    ReviewApprove,
+    ReviewRequestChanges,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -557,6 +566,44 @@ fn notification_list_text_path(
         path.push_str("&sessionId=");
         path.push_str(&encode_query_component(session_id));
     }
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
+fn task_list_text_path(
+    project: &str,
+    session: Option<&str>,
+    status: Option<&str>,
+    json: bool,
+) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.task_list_text,
+        encode_query_component(project)
+    );
+    if let Some(session) = session {
+        path.push_str("&session=");
+        path.push_str(&encode_query_component(session));
+    }
+    if let Some(status) = status {
+        path.push_str("&status=");
+        path.push_str(&encode_query_component(status));
+    }
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
+fn task_show_text_path(project: &str, task_id: &str, json: bool) -> String {
+    let mut path = format!(
+        "{}?project={}&taskId={}",
+        CORE_API_ROUTES.task_show_text,
+        encode_query_component(project),
+        encode_query_component(task_id)
+    );
     if json {
         path.push_str("&json=1");
     }
@@ -1154,6 +1201,124 @@ where
                     path: text_route_path(route, parsed.json),
                     body: Some(body),
                 },
+                CoreCliFallback::None,
+            )
+        }
+        ("task", "list" | "show" | "assign" | "accept" | "block" | "complete" | "reopen")
+        | ("review", "approve" | "request-changes") => {
+            let parsed =
+                parse_core_task_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid workflow arguments",
+                })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, path, body) =
+                match (parsed.command.as_str(), parsed.subcommand.as_str()) {
+                    ("task", "list") => (
+                        CoreCliOperation::TaskList,
+                        task_list_text_path(
+                            &project_root,
+                            parsed.session.as_deref(),
+                            parsed.status.as_deref(),
+                            parsed.json,
+                        ),
+                        None,
+                    ),
+                    ("task", "show") => (
+                        CoreCliOperation::TaskShow,
+                        task_show_text_path(
+                            &project_root,
+                            parsed.task_id.as_deref().unwrap_or(""),
+                            parsed.json,
+                        ),
+                        None,
+                    ),
+                    ("task", "assign") => (
+                        CoreCliOperation::TaskAssign,
+                        text_route_path(CORE_API_ROUTES.task_assign_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "from": parsed.from,
+                            "to": parsed.to,
+                            "assignee": parsed.assignee,
+                            "tool": parsed.tool,
+                            "description": parsed.description,
+                            "prompt": parsed.prompt,
+                            "type": parsed.task_type,
+                            "diff": parsed.diff,
+                            "worktree": parsed.worktree,
+                        })),
+                    ),
+                    ("task", "accept") => (
+                        CoreCliOperation::TaskAccept,
+                        text_route_path(CORE_API_ROUTES.task_accept_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "taskId": parsed.task_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        })),
+                    ),
+                    ("task", "block") => (
+                        CoreCliOperation::TaskBlock,
+                        text_route_path(CORE_API_ROUTES.task_block_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "taskId": parsed.task_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        })),
+                    ),
+                    ("task", "complete") => (
+                        CoreCliOperation::TaskComplete,
+                        text_route_path(CORE_API_ROUTES.task_complete_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "taskId": parsed.task_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                            "result": parsed.result,
+                        })),
+                    ),
+                    ("task", "reopen") => (
+                        CoreCliOperation::TaskReopen,
+                        text_route_path(CORE_API_ROUTES.task_reopen_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "taskId": parsed.task_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        })),
+                    ),
+                    ("review", "approve") => (
+                        CoreCliOperation::ReviewApprove,
+                        text_route_path(CORE_API_ROUTES.review_approve_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "taskId": parsed.task_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        })),
+                    ),
+                    ("review", "request-changes") => (
+                        CoreCliOperation::ReviewRequestChanges,
+                        text_route_path(CORE_API_ROUTES.review_request_changes_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "taskId": parsed.task_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        })),
+                    ),
+                    _ => unreachable!("validated workflow command"),
+                };
+            (
+                operation,
+                CoreCliAction::TextRoute { path, body },
                 CoreCliFallback::None,
             )
         }

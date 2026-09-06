@@ -194,6 +194,44 @@ pub struct CoreCollaborationArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreTaskArgs {
+    pub command: String,
+    pub subcommand: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoreLogsSubcommand {

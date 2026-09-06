@@ -1299,6 +1299,249 @@ pub fn parse_core_collaboration_args<S: AsRef<str>>(args: &[S]) -> Option<CoreCo
     Some(parsed)
 }
 
+pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
+    let command = args.first().map(AsRef::as_ref)?;
+    let subcommand = args.get(1).map(AsRef::as_ref)?;
+    let valid = (command == "task"
+        && matches!(
+            subcommand,
+            "list" | "show" | "assign" | "accept" | "block" | "complete" | "reopen"
+        ))
+        || (command == "review" && matches!(subcommand, "approve" | "request-changes"));
+    if !valid {
+        return None;
+    }
+    let mut parsed = CoreTaskArgs {
+        command: command.to_owned(),
+        subcommand: subcommand.to_owned(),
+        task_id: None,
+        description: None,
+        project: None,
+        session: None,
+        status: None,
+        from: None,
+        to: None,
+        assignee: None,
+        tool: None,
+        prompt: None,
+        task_type: None,
+        diff: None,
+        worktree: None,
+        body: None,
+        result: None,
+        json: false,
+    };
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            parsed.project = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            parsed.project = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "list" && arg == "--session" {
+            parsed.session = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "list"
+            && let Some(value) = arg.strip_prefix("--session=")
+        {
+            parsed.session = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "list" && arg == "--status" {
+            parsed.status = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "list"
+            && let Some(value) = arg.strip_prefix("--status=")
+        {
+            parsed.status = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(
+            subcommand,
+            "assign" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+        ) && arg == "--from"
+        {
+            parsed.from = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(
+            subcommand,
+            "assign" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+        ) && let Some(value) = arg.strip_prefix("--from=")
+        {
+            parsed.from = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "assign" && arg == "--to" {
+            parsed.to = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "assign"
+            && let Some(value) = arg.strip_prefix("--to=")
+        {
+            parsed.to = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "assign" && arg == "--assignee" {
+            parsed.assignee = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "assign"
+            && let Some(value) = arg.strip_prefix("--assignee=")
+        {
+            parsed.assignee = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "assign" && arg == "--tool" {
+            parsed.tool = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "assign"
+            && let Some(value) = arg.strip_prefix("--tool=")
+        {
+            parsed.tool = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "assign" && arg == "--prompt" {
+            parsed.prompt = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "assign"
+            && let Some(value) = arg.strip_prefix("--prompt=")
+        {
+            parsed.prompt = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "assign" && arg == "--type" {
+            parsed.task_type = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "assign"
+            && let Some(value) = arg.strip_prefix("--type=")
+        {
+            parsed.task_type = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "assign" && arg == "--diff" {
+            parsed.diff = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "assign"
+            && let Some(value) = arg.strip_prefix("--diff=")
+        {
+            parsed.diff = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "assign" && arg == "--worktree" {
+            parsed.worktree = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "assign"
+            && let Some(value) = arg.strip_prefix("--worktree=")
+        {
+            parsed.worktree = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(
+            subcommand,
+            "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+        ) && arg == "--body"
+        {
+            parsed.body = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(
+            subcommand,
+            "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+        ) && let Some(value) = arg.strip_prefix("--body=")
+        {
+            parsed.body = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "complete" && arg == "--result" {
+            parsed.result = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "complete"
+            && let Some(value) = arg.strip_prefix("--result=")
+        {
+            parsed.result = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            return None;
+        }
+        match subcommand {
+            "assign" => {
+                if parsed.description.is_some() {
+                    return None;
+                }
+                parsed.description = Some(arg.to_owned());
+            }
+            "show" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes" => {
+                if parsed.task_id.is_some() {
+                    return None;
+                }
+                parsed.task_id = Some(arg.to_owned());
+            }
+            "list" => return None,
+            _ => unreachable!("validated task subcommand"),
+        }
+        index += 1;
+    }
+    match subcommand {
+        "list" => {}
+        "assign" => {
+            parsed.description.as_ref()?;
+            if parsed.to.as_deref() == Some("") {
+                return None;
+            }
+        }
+        "show" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes" => {
+            parsed.task_id.as_ref()?;
+        }
+        _ => unreachable!("validated task subcommand"),
+    }
+    Some(parsed)
+}
+
 #[allow(clippy::collapsible_if)]
 pub fn parse_core_logs_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLogsArgs> {
     if args.first().map(AsRef::as_ref) != Some("logs") {
@@ -1747,6 +1990,69 @@ fn non_flag_inline_value(value: &str) -> Option<&str> {
     (!value.is_empty() && !value.starts_with('-')).then_some(value)
 }
 
+fn has_workflow_required_positional<S: AsRef<str>>(args: &[S]) -> bool {
+    let Some(command) = args.first().map(AsRef::as_ref) else {
+        return false;
+    };
+    let Some(subcommand) = args.get(1).map(AsRef::as_ref) else {
+        return false;
+    };
+    if command == "task" && subcommand == "list" {
+        return true;
+    }
+    let requires_positional = (command == "task"
+        && matches!(
+            subcommand,
+            "show" | "assign" | "accept" | "block" | "complete" | "reopen"
+        ))
+        || (command == "message" && subcommand == "send")
+        || (command == "handoff" && matches!(subcommand, "send" | "accept" | "complete"))
+        || (command == "review" && matches!(subcommand, "approve" | "request-changes"));
+    if !requires_positional {
+        return false;
+    }
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" || arg.starts_with("--") && arg.contains('=') {
+            index += 1;
+            continue;
+        }
+        if workflow_option_takes_value(arg) {
+            index += 2;
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+fn workflow_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--project"
+            | "--session"
+            | "--status"
+            | "--from"
+            | "--to"
+            | "--assignee"
+            | "--tool"
+            | "--prompt"
+            | "--type"
+            | "--diff"
+            | "--worktree"
+            | "--body"
+            | "--result"
+            | "--thread"
+            | "--title"
+            | "--kind"
+    )
+}
+
 fn parse_strict_safe_integer(value: &str) -> Option<i64> {
     const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
     let trimmed = value.trim();
@@ -1773,7 +2079,7 @@ pub fn is_core_project_ensure_command<S: AsRef<str>>(args: &[S]) -> bool {
 }
 
 pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
-    if has_help(args) {
+    if has_help(args) && !has_workflow_required_positional(args) {
         return false;
     }
     let command = args.first().map(AsRef::as_ref);
@@ -1791,8 +2097,17 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("loop"), Some("add" | "remove" | "done" | "block")) => true,
         (Some("overseer"), Some("start" | "clear")) => true,
         (Some("team"), Some("show" | "init" | "add" | "default" | "remove")) => true,
-        (Some("message"), Some("send")) => args.len() > 2,
-        (Some("handoff"), Some("send" | "accept" | "complete")) => args.len() > 2,
+        (Some("message"), Some("send")) => has_workflow_required_positional(args),
+        (Some("handoff"), Some("send" | "accept" | "complete")) => {
+            has_workflow_required_positional(args)
+        }
+        (Some("task"), Some("list")) => true,
+        (Some("task"), Some("show" | "assign" | "accept" | "block" | "complete" | "reopen")) => {
+            has_workflow_required_positional(args)
+        }
+        (Some("review"), Some("approve" | "request-changes")) => {
+            has_workflow_required_positional(args)
+        }
         (
             Some("notify" | "list-notifications" | "read-notifications" | "clear-notifications"),
             _,
