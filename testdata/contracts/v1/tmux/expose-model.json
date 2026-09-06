@@ -2,10 +2,12 @@
   "version": 1,
   "generatedAt": "2026-09-07T00:00:00.000Z",
   "generatedBy": "scripts/capture-tmux-expose-model-contract.mjs",
-  "source": "src/tmux/expose-model.ts",
+  "source": "src/tmux/expose-ui-state.test.ts",
   "sources": [
     "src/tmux/expose-model.test.ts",
-    "src/tmux/expose-model.ts"
+    "src/tmux/expose-ui-state.test.ts",
+    "src/tmux/expose-model.ts",
+    "src/tmux/expose-ui-state.ts"
   ],
   "subject": "src/tmux/expose-model.ts + src/tmux/expose-ui-state.ts",
   "description": "Expose scope, HTTP request, focus, overseer, and UI-state behavior captured by running TypeScript.",

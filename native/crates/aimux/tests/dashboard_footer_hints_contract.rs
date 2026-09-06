@@ -5,7 +5,7 @@ use aimux::dashboard_renderer::{
 use serde_json::{Value, json};
 
 const CONTRACT: &str =
-    include_str!("../../../../src/multiplexer/dashboard-footer-hints.contract.v1.json");
+    include_str!("../../../../testdata/contracts/v1/tui/dashboard-footer-hints.json");
 
 #[test]
 fn dashboard_footer_hints_match_typescript_contract() {

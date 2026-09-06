@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
-const FIXTURE_PATH = new URL("src/tmux/statusline-script.contract.v1.json", ROOT);
+const FIXTURE_PATH = new URL("testdata/contracts/v1/tmux/statusline-script.json", ROOT);
 const SCRIPT_PATH = new URL("scripts/tmux-statusline.sh", ROOT);
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -183,6 +183,7 @@ await writeContractJson(FIXTURE_PATH, {
   version: 1,
   generatedAt: "2026-09-07T00:00:00.000Z",
   source: "src/tmux/statusline-script.test.ts",
+  sources: ["src/tmux/statusline-script.test.ts", "scripts/tmux-statusline.sh"],
   subject: "scripts/tmux-statusline.sh",
   caseCount: cases.length,
   description: "tmux statusline cache-file lookup and silent-failure behavior captured by running the shipped shell script.",

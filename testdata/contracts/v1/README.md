@@ -870,6 +870,14 @@ Priority fixture groups:
 - `tmux/dashboard-tui-visibility.json`: dashboard TUI visibility tmux parsing,
   stale-pane process recovery, host cache, and wake-transition behavior
   captured by running TypeScript `multiplexer/tui-visibility`.
+- `tmux/expose-layout.json`: expose grid layout, client-size matching, and
+  preview row selection captured by running TypeScript `tmux/expose` helpers.
+- `tmux/expose-model.json`: expose scope, request, focus, overseer, and
+  UI-state behavior captured by running TypeScript expose helpers.
+- `tmux/expose-render.json`: expose tile header fitting and ANSI tile rendering
+  captured by running TypeScript `tmux/expose` helpers.
+- `tmux/statusline-script.json`: tmux statusline cache-file lookup and
+  silent-failure behavior captured by running the shipped shell script.
 
 ## Runtime Topology
 
@@ -957,6 +965,8 @@ Priority fixture groups:
 - `tui/render-theme.json`: TUI theme primitive, status, keycap, footer, tmux
   token, and card rendering behavior captured by running TypeScript
   `tui/render/theme` helpers.
+- `tui/dashboard-footer-hints.json`: dashboard footer hint ordering and labels
+  captured by running TypeScript `buildDashboardFooterHints`.
 
 ## Worktree
 

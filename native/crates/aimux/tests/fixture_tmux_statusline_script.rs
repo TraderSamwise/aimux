@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TMUX_STATUSLINE_SCRIPT: &str =
-    include_str!("../../../../src/tmux/statusline-script.contract.v1.json");
+    include_str!("../../../../testdata/contracts/v1/tmux/statusline-script.json");
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]

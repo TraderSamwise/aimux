@@ -4,7 +4,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
-const FIXTURE_PATH = new URL("src/multiplexer/dashboard-footer-hints.contract.v1.json", ROOT);
+const FIXTURE_PATH = new URL("testdata/contracts/v1/tui/dashboard-footer-hints.json", ROOT);
 const GOLDEN_PATH = new URL("src/multiplexer/desktop-state-golden.fixture.json", ROOT);
 const { buildDashboardFooterHints } = await import(new URL("dist/tui/screens/dashboard-renderers.js", ROOT));
 
@@ -145,7 +145,8 @@ await writeContractJson(FIXTURE_PATH, {
   version: 1,
   generatedAt: "2026-09-07T00:00:00.000Z",
   generatedBy: "scripts/capture-dashboard-footer-hints-contract.mjs",
-  source: "src/tui/screens/dashboard-renderers.ts",
+  source: "src/tui/screens/dashboard-renderers.test.ts",
+  sources: ["src/tui/screens/dashboard-renderers.test.ts", "src/tui/screens/dashboard-renderers.ts"],
   subject: "buildDashboardFooterHints",
   description: "Dashboard footer hint ordering and labels captured from TypeScript.",
   caseCount: cases.length,
