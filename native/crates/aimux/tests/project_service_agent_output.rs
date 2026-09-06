@@ -411,6 +411,16 @@ fn output_route_projects_parsed_status_and_activity_text_from_capture() {
         "Built the first slice."
     );
     assert_eq!(response.body["messages"][1]["latest"], true);
+    let diagnostics = route_project_service_request(&context, "GET", routes::DIAGNOSTICS, None);
+    assert_eq!(diagnostics.body["agentOutputReads"]["total"]["count"], 1);
+    assert_eq!(
+        diagnostics.body["agentOutputReads"]["bySource"]["agent-output"]["changed"],
+        1
+    );
+    assert_eq!(
+        diagnostics.body["agentOutputReads"]["recent"][0]["sessionId"],
+        "codex-1"
+    );
     cleanup(project);
 }
 

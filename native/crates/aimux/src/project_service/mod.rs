@@ -24,6 +24,7 @@ pub mod notifications;
 pub mod operation_failures;
 pub mod orchestration_routes;
 pub mod output_cache;
+pub mod output_metrics;
 pub mod plans;
 pub mod process;
 pub mod project_observability;

@@ -30,6 +30,7 @@ use super::agent_output::{
 use super::dispatcher::ProjectServiceStreamKind;
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::PreparedProjectServiceResponse;
+use super::output_metrics::AgentOutputReadRecord;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::server::{ProjectServiceHttpRequest, handle_project_service_http_request};
 
@@ -190,12 +191,35 @@ fn encode_agent_output_stream_frame(
         Ok(payload) => {
             let fingerprint = agent_output_stream_fingerprint(&payload);
             if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+                context.output_metrics.record(AgentOutputReadRecord {
+                    source: "output-stream".to_owned(),
+                    session_id: session_id.to_owned(),
+                    changed: Some(false),
+                    coalesced: false,
+                    error: false,
+                });
                 return encode_sse_keepalive();
             }
             *last_output_fingerprint = Some(fingerprint);
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "output-stream".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: Some(true),
+                coalesced: false,
+                error: false,
+            });
             encode_sse_event("output", &payload)
         }
-        Err(response) => encode_sse_event("error", &response.body),
+        Err(response) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "output-stream".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: None,
+                coalesced: false,
+                error: true,
+            });
+            encode_sse_event("error", &response.body)
+        }
     }
 }
 

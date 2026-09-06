@@ -23,6 +23,7 @@ use super::http::{
 };
 use super::metadata::update_session_metadata;
 use super::output_cache::AgentOutputCaptureCacheKey;
+use super::output_metrics::AgentOutputReadRecord;
 use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
 
@@ -336,8 +337,34 @@ fn read_agent_output_route(
         return json_error(400, error);
     }
     match read_agent_output_payload(context, &session_id, start_line, mode, runtime) {
-        Ok(payload) => ProjectServiceDispatchResponse::json(200, payload),
-        Err(response) => *response,
+        Ok(payload) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: output_read_source(path).to_owned(),
+                session_id,
+                changed: Some(true),
+                coalesced: false,
+                error: false,
+            });
+            ProjectServiceDispatchResponse::json(200, payload)
+        }
+        Err(response) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: output_read_source(path).to_owned(),
+                session_id,
+                changed: None,
+                coalesced: false,
+                error: true,
+            });
+            *response
+        }
+    }
+}
+
+fn output_read_source(path: &str) -> &'static str {
+    if project_service_pathname(path) == routes::live_pane::OUTPUT {
+        "live-pane-output"
+    } else {
+        "agent-output"
     }
 }
 

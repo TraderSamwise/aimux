@@ -54,11 +54,7 @@ pub fn route_read_request(
                 "recentSlowRequests": [],
                 "plugins": [],
                 "previews": {},
-                "agentOutputReads": {
-                    "total": { "count": 0 },
-                    "bySource": {},
-                    "recent": [],
-                },
+                "agentOutputReads": context.output_metrics.snapshot(),
                 "runtimeExchange": inspect_runtime_exchange_store(runtime_exchange_path(context.project_state_dir())),
             }),
         ));
