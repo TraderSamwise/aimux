@@ -544,6 +544,13 @@ Priority fixture groups:
   and next-action contracts captured by running TypeScript `workflow` helpers
   over runtime-exchange snapshots.
 
+## Runtime
+
+- `runtime/cli-launcher.json`: daemon, dashboard, project-service, native
+  dashboard, symlink-alias, source-checkout, and diagnostic CLI launch-command
+  selection captured by running TypeScript `cli-launcher` helpers with
+  machine-specific paths normalized.
+
 ## Runtime Coherence
 
 - `runtime-coherence/report.json`: daemon/project-service/tmux version
