@@ -626,6 +626,10 @@ Priority fixture groups:
 - `dashboard/quick-jump.json`: dashboard quick-jump worktree and entry
   numbering plus digit target resolution captured by running TypeScript
   `dashboard/quick-jump` helpers.
+- `dashboard/session-registry.json`: dashboard session dedupe,
+  hidden-worktree filtering, teammate inclusion, teammate metadata
+  preservation, and teammate ordering captured by running TypeScript
+  `dashboard/session-registry` helpers.
 - `dashboard/visibility.json`: dashboard offline-session classification and
   hide-offline model filtering captured by running TypeScript
   `dashboard/visibility` helpers.

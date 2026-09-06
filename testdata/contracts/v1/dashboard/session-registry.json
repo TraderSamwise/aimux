@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "source": "src/dashboard/session-registry.test.ts",
+  "sources": ["src/dashboard/session-registry.test.ts", "src/dashboard/session-registry.ts", "src/team.ts"],
+  "generatedBy": "scripts/capture-dashboard-session-registry-contract.mjs",
+  "description": "Dashboard session registry dedupe, hidden-worktree filtering, teammate inclusion, and teammate ordering captured by running TypeScript helpers.",
+  "cases": [
+    {
+      "id": "dashboard-session-registry-001",
+      "name": "dedupes duplicate local sessions by session id and backend session id",
+      "source": "src/dashboard/session-registry.test.ts",
+      "input": {
+        "name": "dedupes duplicate local sessions by session id and backend session id",
+        "api": "buildDashboardSessions",
+        "sessions": [
+          { "id": "claude-abc123", "command": "claude", "backendSessionId": "backend-1", "status": "running" },
+          { "id": "claude-abc123", "command": "claude", "backendSessionId": "backend-1", "status": "running" }
+        ],
+        "activeIndex": 0,
+        "offlineSessions": [],
+        "labels": { "claude-abc123": "claude" },
+        "roles": { "claude-abc123": "coder" }
+      },
+      "output": [
+        {
+          "index": 0,
+          "id": "claude-abc123",
+          "command": "claude",
+          "backendSessionId": "backend-1",
+          "status": "running",
+          "active": true,
+          "label": "claude",
+          "role": "coder"
+        }
+      ],
+      "inputSha256": "51b33bd6314fa4499dbcaba0cd395c78cec5a6746d7935066cf5a79fadc52a96"
+    },
+    {
+      "id": "dashboard-session-registry-002",
+      "name": "hides sessions attached to graveyarded worktrees",
+      "source": "src/dashboard/session-registry.test.ts",
+      "input": {
+        "name": "hides sessions attached to graveyarded worktrees",
+        "api": "buildDashboardSessions",
+        "sessions": [
+          {
+            "id": "claude-hidden",
+            "command": "claude",
+            "status": "running",
+            "worktreePath": "/repo/.aimux/worktrees/hidden"
+          },
+          {
+            "id": "claude-visible",
+            "command": "claude",
+            "status": "running",
+            "worktreePath": "/repo/.aimux/worktrees/visible"
+          }
+        ],
+        "activeIndex": 0,
+        "offlineSessions": [
+          {
+            "id": "codex-hidden",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "worktreePath": "/repo/.aimux/worktrees/hidden"
+          }
+        ],
+        "hiddenWorktreePaths": ["/repo/.aimux/worktrees/hidden"]
+      },
+      "output": [
+        {
+          "index": 0,
+          "id": "claude-visible",
+          "command": "claude",
+          "status": "running",
+          "active": false,
+          "worktreePath": "/repo/.aimux/worktrees/visible"
+        }
+      ],
+      "inputSha256": "a5dca6fa29d2ed6c1734c47c8ee0bbc0be275bb96ff50ac504d490a8cb24edb8"
+    },
+    {
+      "id": "dashboard-session-registry-003",
+      "name": "hides teammate sessions by default across local and offline sources",
+      "source": "src/dashboard/session-registry.test.ts",
+      "input": {
+        "name": "hides teammate sessions by default across local and offline sources",
+        "api": "buildDashboardSessions",
+        "sessions": [
+          { "id": "claude-parent", "command": "claude", "status": "running" },
+          {
+            "id": "claude-teammate-local",
+            "command": "claude",
+            "status": "running",
+            "team": { "teamId": "team-1", "parentSessionId": "claude-parent", "role": "reviewer" }
+          },
+          {
+            "id": "codex-teammate-pending",
+            "command": "codex",
+            "status": "waiting",
+            "pendingAction": "creating",
+            "optimistic": true,
+            "team": { "teamId": "team-1", "parentSessionId": "claude-parent", "role": "coder" }
+          }
+        ],
+        "activeIndex": 0,
+        "offlineSessions": [
+          {
+            "id": "codex-teammate-offline",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "team": { "teamId": "team-1", "parentSessionId": "claude-parent", "role": "coder" }
+          }
+        ]
+      },
+      "output": [{ "index": 0, "id": "claude-parent", "command": "claude", "status": "running", "active": true }],
+      "inputSha256": "0f7c20f61fe1cd59b8888aec406d18a31edb3d35cd01d767fd8176a9080a1917"
+    },
+    {
+      "id": "dashboard-session-registry-004",
+      "name": "can include teammate sessions and preserves teammate metadata",
+      "source": "src/dashboard/session-registry.test.ts",
+      "input": {
+        "name": "can include teammate sessions and preserves teammate metadata",
+        "api": "buildDashboardSessions",
+        "sessions": [
+          {
+            "id": "claude-teammate-local",
+            "command": "claude",
+            "status": "running",
+            "team": { "teamId": "team-1", "parentSessionId": "claude-parent", "role": "reviewer", "order": 2 }
+          }
+        ],
+        "activeIndex": 0,
+        "offlineSessions": [],
+        "includeTeammates": true
+      },
+      "output": [
+        {
+          "index": 0,
+          "id": "claude-teammate-local",
+          "command": "claude",
+          "team": { "teamId": "team-1", "parentSessionId": "claude-parent", "role": "reviewer", "order": 2 },
+          "status": "running",
+          "active": true
+        }
+      ],
+      "inputSha256": "54b96bb23282385186cfe1c8e86755372c60d8bc7741e9addfce4c73478ee525"
+    },
+    {
+      "id": "dashboard-session-registry-005",
+      "name": "returns only the selected parent teammates in stable team order",
+      "source": "src/dashboard/session-registry.test.ts",
+      "input": {
+        "name": "returns only the selected parent teammates in stable team order",
+        "api": "selectDashboardTeammates",
+        "sessions": [
+          { "index": 0, "id": "parent-a", "command": "claude", "status": "running", "active": true },
+          {
+            "index": 1,
+            "id": "child-late",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "createdAt": "2026-05-01T00:00:10.000Z",
+            "team": { "teamId": "team-a", "parentSessionId": "parent-a", "role": "reviewer" }
+          },
+          {
+            "index": 2,
+            "id": "child-first",
+            "command": "claude",
+            "status": "offline",
+            "active": false,
+            "createdAt": "2026-05-01T00:00:20.000Z",
+            "team": { "teamId": "team-a", "parentSessionId": "parent-a", "role": "coder", "order": 1 }
+          },
+          {
+            "index": 3,
+            "id": "child-early",
+            "command": "claude",
+            "status": "running",
+            "active": false,
+            "createdAt": "2026-05-01T00:00:01.000Z",
+            "team": { "teamId": "team-a", "parentSessionId": "parent-a", "role": "explorer" }
+          },
+          {
+            "index": 4,
+            "id": "other-child",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "team": { "teamId": "team-b", "parentSessionId": "parent-b", "role": "coder" }
+          }
+        ],
+        "parentSession": { "index": 0, "id": "parent-a", "command": "claude", "status": "running", "active": true }
+      },
+      "output": [
+        {
+          "index": 0,
+          "id": "child-first",
+          "command": "claude",
+          "status": "offline",
+          "active": false,
+          "createdAt": "2026-05-01T00:00:20.000Z",
+          "team": { "teamId": "team-a", "parentSessionId": "parent-a", "role": "coder", "order": 1 }
+        },
+        {
+          "index": 1,
+          "id": "child-early",
+          "command": "claude",
+          "status": "running",
+          "active": false,
+          "createdAt": "2026-05-01T00:00:01.000Z",
+          "team": { "teamId": "team-a", "parentSessionId": "parent-a", "role": "explorer" }
+        },
+        {
+          "index": 2,
+          "id": "child-late",
+          "command": "codex",
+          "status": "running",
+          "active": false,
+          "createdAt": "2026-05-01T00:00:10.000Z",
+          "team": { "teamId": "team-a", "parentSessionId": "parent-a", "role": "reviewer" }
+        }
+      ],
+      "inputSha256": "500fff76d9ac1087abcfe393ac7d4f555ea0731cb5d3cd9f2e3d8682eb511ca4"
+    },
+    {
+      "id": "dashboard-session-registry-006",
+      "name": "does not expose nested teammate teams",
+      "source": "src/dashboard/session-registry.test.ts",
+      "input": {
+        "name": "does not expose nested teammate teams",
+        "api": "selectDashboardTeammates",
+        "sessions": [
+          {
+            "index": 0,
+            "id": "teammate-parent",
+            "command": "claude",
+            "status": "running",
+            "active": true,
+            "team": { "teamId": "team-a", "parentSessionId": "root", "role": "coder" }
+          },
+          {
+            "index": 1,
+            "id": "nested-child",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "team": { "teamId": "team-b", "parentSessionId": "teammate-parent", "role": "reviewer" }
+          }
+        ],
+        "parentSession": {
+          "index": 0,
+          "id": "teammate-parent",
+          "command": "claude",
+          "status": "running",
+          "active": true,
+          "team": { "teamId": "team-a", "parentSessionId": "root", "role": "coder" }
+        }
+      },
+      "output": [],
+      "inputSha256": "c236258d788118ae7aeb44cf72ad12387152e9a5edda98dc6d096e13d156d796"
+    }
+  ]
+}
