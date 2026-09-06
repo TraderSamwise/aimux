@@ -61,6 +61,13 @@ Priority fixture groups:
   running TypeScript `recoverWrappedAttachments` against the attachment parser
   test scenarios and wrap-position matrices.
 
+## Backend Session Discovery
+
+- `backend-session-discovery/discovery.json`: Claude/Codex transcript
+  discovery, ambiguity handling, transcript relocation, and moved-session argv
+  cases captured by running the TypeScript backend discovery helpers against
+  temporary transcript stores.
+
 ## Coordination
 
 - `coordination/model.json`: coordination inbox, worklist, stale-notification,
