@@ -245,6 +245,12 @@ Priority fixture groups:
   byte accounting, and diagnostics captured by running TypeScript
   `runtime-core/exchange-store`.
 
+## Worktrees
+
+- `worktrees/colors.json`: worktree color key, hash, RGB, hex, ANSI, palette
+  spread, and known project color contracts captured by running TypeScript
+  `worktree-colors` helpers.
+
 ## Recordings
 
 - `recordings/cleanup.json`: recording cleanup retention, live-session guards,
