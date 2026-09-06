@@ -1,0 +1,370 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-managed-window-lifecycle-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "TmuxRuntimeManager managed window discovery and lifecycle behavior captured by running TypeScript.",
+  "caseCount": 9,
+  "cases": [
+    {
+      "id": "tmux-managed-window-lifecycle-001",
+      "name": "lists managed windows across host and client sessions without duplicates",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "listProjectManagedWindows",
+      "input": {
+        "name": "lists managed windows across host and client sessions without duplicates",
+        "sessionList": "aimux-mobile-078d0ecd20ec\naimux-mobile-078d0ecd20ec-client-deadbeef\nother",
+        "hostWindows": "@3\t3\tcodex\t1\t100\t0\t{\"kind\":\"agent\",\"sessionId\":\"codex-abc123\",\"command\":\"codex\",\"args\":[\"--full-auto\"],\"toolConfigKey\":\"codex\",\"worktreePath\":\"/repo/mobile\"}\n@9\t9\tshell\t0\t90\t0\t{\"kind\":\"service\",\"sessionId\":\"service-123\",\"command\":\"shell\",\"args\":[\"-lc\",\"npm run dev\"],\"toolConfigKey\":\"service\",\"worktreePath\":\"/repo/mobile\"}",
+        "clientWindows": "@3\t3\tcodex\t0\t100\t0\t{\"kind\":\"agent\",\"sessionId\":\"codex-abc123\",\"command\":\"codex\",\"args\":[\"--full-auto\"],\"toolConfigKey\":\"codex\",\"worktreePath\":\"/repo/mobile\"}\n@10\t10\tdashboard\t1\t110\t1\t{\"sessionId\":\"dashboard-123\",\"command\":\"dashboard\",\"args\":[],\"toolConfigKey\":\"dashboard\",\"worktreePath\":\"/repo/mobile\"}"
+      },
+      "output": {
+        "thrown": null,
+        "result": [
+          {
+            "target": {
+              "sessionName": "aimux-mobile-078d0ecd20ec",
+              "windowId": "@3",
+              "windowIndex": 3,
+              "windowName": "codex",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-abc123",
+              "command": "codex",
+              "args": ["--full-auto"],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo/mobile"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-mobile-078d0ecd20ec",
+              "windowId": "@9",
+              "windowIndex": 9,
+              "windowName": "shell",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "service",
+              "sessionId": "service-123",
+              "command": "shell",
+              "args": ["-lc", "npm run dev"],
+              "toolConfigKey": "service",
+              "worktreePath": "/repo/mobile"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-mobile-078d0ecd20ec-client-deadbeef",
+              "windowId": "@10",
+              "windowIndex": 10,
+              "windowName": "dashboard",
+              "paneDead": true
+            },
+            "metadata": {
+              "sessionId": "dashboard-123",
+              "command": "dashboard",
+              "args": [],
+              "toolConfigKey": "dashboard",
+              "worktreePath": "/repo/mobile"
+            }
+          }
+        ],
+        "execCalls": [
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          {
+            "args": [
+              "list-windows",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ]
+          },
+          {
+            "args": [
+              "list-windows",
+              "-t",
+              "aimux-mobile-078d0ecd20ec-client-deadbeef",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ]
+          }
+        ]
+      },
+      "inputSha256": "d75497b688cdd22b026ca25fabc1d400fd7d0014c46c49cfba2eade43b451056"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-002",
+      "name": "includes managed sessions whose stored root matches the requested project",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "listProjectManagedWindows",
+      "input": {
+        "name": "includes managed sessions whose stored root matches the requested project",
+        "sessionList": "aimux-mobile-078d0ecd20ec\naimux-other-session\nuser-shell",
+        "storedRoot": "/repo/mobile",
+        "hostWindows": "@3\t3\tcodex\t1\t100\t0\t{\"kind\":\"agent\",\"sessionId\":\"codex-abc123\",\"command\":\"codex\",\"args\":[\"--full-auto\"],\"toolConfigKey\":\"codex\",\"worktreePath\":\"/repo/mobile\"}",
+        "otherWindows": "@4\t4\tclaude\t0\t99\t0\t{\"kind\":\"agent\",\"sessionId\":\"claude-other\",\"command\":\"claude\",\"args\":[\"--full-auto\"],\"toolConfigKey\":\"claude\",\"worktreePath\":\"/repo/mobile\"}"
+      },
+      "output": {
+        "thrown": null,
+        "result": [
+          {
+            "target": {
+              "sessionName": "aimux-mobile-078d0ecd20ec",
+              "windowId": "@3",
+              "windowIndex": 3,
+              "windowName": "codex",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-abc123",
+              "command": "codex",
+              "args": ["--full-auto"],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo/mobile"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-other-session",
+              "windowId": "@4",
+              "windowIndex": 4,
+              "windowName": "claude",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-other",
+              "command": "claude",
+              "args": ["--full-auto"],
+              "toolConfigKey": "claude",
+              "worktreePath": "/repo/mobile"
+            }
+          }
+        ],
+        "execCalls": [
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["show-options", "-v", "-t", "aimux-other-session", "@aimux-project-root"] },
+          {
+            "args": [
+              "list-windows",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ]
+          },
+          {
+            "args": [
+              "list-windows",
+              "-t",
+              "aimux-other-session",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ]
+          }
+        ]
+      },
+      "inputSha256": "eefc7676913913073cdd11d19306ea0fbe8864dafa15be724aca7fd0f3d9c182"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-003",
+      "name": "finds managed windows by backend session id",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "findManagedWindow",
+      "input": {
+        "name": "finds managed windows by backend session id",
+        "abcWindows": "@3\t3\tcodex\t1\t100\t0\t{\"kind\":\"agent\",\"sessionId\":\"codex-new\",\"command\":\"codex\",\"args\":[\"--full-auto\"],\"toolConfigKey\":\"codex\",\"worktreePath\":\"/repo/mobile\",\"backendSessionId\":\"backend-existing\"}"
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "sessionName": "aimux-mobile-abc",
+          "windowId": "@3",
+          "windowIndex": 3,
+          "windowName": "codex",
+          "paneDead": false
+        },
+        "execCalls": [
+          {
+            "args": [
+              "list-windows",
+              "-t",
+              "aimux-mobile-abc",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ]
+          }
+        ]
+      },
+      "inputSha256": "fa6071c37ed063eeaf592722421a6d7d7a41f7c05f80ccb9c72474100f132a75"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-004",
+      "name": "creates agent windows",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "createWindow",
+      "input": { "name": "creates agent windows" },
+      "output": {
+        "thrown": null,
+        "result": { "sessionName": "aimux-mobile-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+        "execCalls": [
+          {
+            "args": [
+              "new-window",
+              "-P",
+              "-t",
+              "aimux-mobile-abc",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "codex",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}",
+              "codex",
+              "--full-auto"
+            ],
+            "cwd": "/repo/mobile"
+          }
+        ]
+      },
+      "inputSha256": "5980444f500adf1ab1ec0f766348f954309b647b1b6a8621cc8f335c2128ab72"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-005",
+      "name": "reports sanitized create window failures",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "createWindow",
+      "input": {
+        "name": "reports sanitized create window failures",
+        "errors": [
+          "new-window -P -t aimux-proj -c /repo -n claude -F #{window_id}\t#{window_index}\t#{window_name} env -i OPENAI_API_KEY=sk-real claude"
+        ],
+        "errorMessage": "Command failed: tmux new-window env -i OPENAI_API_KEY=sk-real SECRET_TOKEN=abc"
+      },
+      "output": {
+        "thrown": "tmux failed to create window \"claude\" in session aimux-proj (131-byte command)",
+        "result": null,
+        "execCalls": [
+          {
+            "args": [
+              "new-window",
+              "-P",
+              "-t",
+              "aimux-proj",
+              "-c",
+              "/repo",
+              "-n",
+              "claude",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}",
+              "env",
+              "-i",
+              "OPENAI_API_KEY=sk-real",
+              "claude"
+            ],
+            "cwd": "/repo"
+          }
+        ]
+      },
+      "inputSha256": "4b2548133c6d63698c55a6bdc895c60d6fa642b359b0f0a3fe9977cbf44edc6d"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-006",
+      "name": "runs basic window lifecycle commands",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "window lifecycle commands",
+      "input": { "name": "runs basic window lifecycle commands" },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "execCalls": [
+          { "args": ["kill-window", "-t", "@3"] },
+          { "args": ["unlink-window", "-t", "aimux-mobile-abc:@3"] },
+          { "args": ["rename-window", "-t", "@3", "renamed"] },
+          {
+            "args": ["respawn-window", "-k", "-t", "@3", "-c", "/repo/mobile", "codex", "--resume"],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["clear-history", "-t", "@3"] },
+          { "args": ["select-window", "-t", "@3"] }
+        ]
+      },
+      "inputSha256": "a0359091817f8518ccf1285b201bdc543274d4159fdb242da84db8fec06f5482"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-007",
+      "name": "checks window liveness and activity from tmux display-message",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "window state checks",
+      "input": { "name": "checks window liveness and activity from tmux display-message" },
+      "output": {
+        "thrown": null,
+        "result": { "alive": true, "active": true },
+        "execCalls": [
+          { "args": ["display-message", "-p", "-t", "@3", "#{pane_dead}"] },
+          { "args": ["display-message", "-p", "-t", "@3", "#{window_active}"] }
+        ]
+      },
+      "inputSha256": "5e88656213ba059dcb9767f74bf5051c3c62e9dfc799b122b5dc1a90753b3beb"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-008",
+      "name": "reads and writes aimux window metadata",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "window metadata",
+      "input": {
+        "name": "reads and writes aimux window metadata",
+        "windowMetadata": "{\"kind\":\"agent\",\"sessionId\":\"codex-abc123\",\"command\":\"codex\",\"args\":[\"--full-auto\"],\"toolConfigKey\":\"codex\",\"worktreePath\":\"/repo/mobile\"}"
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "kind": "agent",
+          "sessionId": "codex-abc123",
+          "command": "codex",
+          "args": ["--full-auto"],
+          "toolConfigKey": "codex",
+          "worktreePath": "/repo/mobile"
+        },
+        "execCalls": [
+          {
+            "args": [
+              "set-window-option",
+              "-q",
+              "-t",
+              "@3",
+              "@aimux-meta",
+              "{\"kind\":\"agent\",\"sessionId\":\"codex-abc123\",\"command\":\"codex\",\"args\":[\"--full-auto\"],\"toolConfigKey\":\"codex\",\"worktreePath\":\"/repo/mobile\"}"
+            ]
+          },
+          { "args": ["show-window-options", "-v", "-t", "@3", "@aimux-meta"] }
+        ]
+      },
+      "inputSha256": "243f8ab73c94c1d061d3720d87076159d79086ee56590bdf0630e31779267362"
+    },
+    {
+      "id": "tmux-managed-window-lifecycle-009",
+      "name": "applies managed agent window policy",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "applyManagedAgentWindowPolicy",
+      "input": { "name": "applies managed agent window policy" },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "execCalls": [
+          { "args": ["set-window-option", "-q", "-t", "@3", "@aimux-tool", "codex"] },
+          { "args": ["set-window-option", "-q", "-t", "@3", "allow-passthrough", "on"] },
+          { "args": ["set-window-option", "-q", "-t", "@3", "aggressive-resize", "on"] }
+        ]
+      },
+      "inputSha256": "8a01758c208140e6318668aa8620a2eb597c63e9be61efc327180b3e5a9e4096"
+    }
+  ]
+}

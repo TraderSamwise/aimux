@@ -408,12 +408,19 @@ impl TmuxRuntimeManager {
         detached: bool,
     ) -> Result<TmuxTarget, String> {
         let argv = new_window_argv(session_name, name, cwd, command, args, detached);
-        let raw = self.exec_owned(
-            argv,
-            Some(TmuxExecOptions {
-                cwd: Some(cwd.to_owned()),
-            }),
-        )?;
+        let argv_bytes = packed_argv_bytes(&argv);
+        let raw = self
+            .exec_owned(
+                argv,
+                Some(TmuxExecOptions {
+                    cwd: Some(cwd.to_owned()),
+                }),
+            )
+            .map_err(|_| {
+                format!(
+                    "tmux failed to create window \"{name}\" in session {session_name} ({argv_bytes}-byte command)"
+                )
+            })?;
         parse_window_target(session_name, &raw)
     }
 
