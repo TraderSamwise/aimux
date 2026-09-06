@@ -27,6 +27,7 @@ pub struct ProjectServiceStreamPlan {
     pub session_id: Option<String>,
     pub start_line: Option<i64>,
     pub interval_ms: i64,
+    pub keepalive_interval_ms: Option<i64>,
     pub mode: Option<String>,
     pub event_cursor: Option<u64>,
 }

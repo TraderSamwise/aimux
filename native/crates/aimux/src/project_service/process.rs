@@ -6,7 +6,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::listener::{
@@ -154,29 +154,60 @@ pub fn write_project_service_response_with_runtime(
         let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
         let mut last_output_fingerprint = None;
         let mut last_project_event_sequence = stream.event_cursor.unwrap_or_default();
+        let mut last_stream_write = Instant::now();
         loop {
             thread::sleep(Duration::from_millis(interval_ms));
             let frame = match stream.kind {
-                ProjectServiceStreamKind::ProjectEvents => encode_project_event_stream_frame(
-                    stream,
-                    context,
-                    runtime,
-                    &mut last_project_event_sequence,
-                    &mut last_output_fingerprint,
-                ),
+                ProjectServiceStreamKind::ProjectEvents => {
+                    let frame = encode_project_event_stream_frame(
+                        stream,
+                        context,
+                        runtime,
+                        &mut last_project_event_sequence,
+                        &mut last_output_fingerprint,
+                    );
+                    if frame.is_empty() && stream_keepalive_due(stream, last_stream_write) {
+                        encode_sse_keepalive()
+                    } else {
+                        frame
+                    }
+                }
                 ProjectServiceStreamKind::AgentOutput => encode_agent_output_stream_frame(
                     stream,
                     context,
                     runtime,
                     &mut last_output_fingerprint,
                 ),
-                ProjectServiceStreamKind::AgentInteraction => encode_sse_keepalive(),
+                ProjectServiceStreamKind::AgentInteraction => {
+                    if stream_keepalive_due(stream, last_stream_write) {
+                        encode_sse_keepalive()
+                    } else {
+                        Vec::new()
+                    }
+                }
             };
+            if frame.is_empty() {
+                continue;
+            }
             writer.write_all(&frame)?;
             writer.flush()?;
+            if stream.kind != ProjectServiceStreamKind::AgentOutput {
+                last_stream_write = Instant::now();
+            }
         }
     }
     Ok(())
+}
+
+fn stream_keepalive_due(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    last_write: Instant,
+) -> bool {
+    let Some(interval_ms) = stream.keepalive_interval_ms else {
+        return false;
+    };
+    let interval_ms = u64::try_from(interval_ms).unwrap_or(15_000).max(100);
+    last_write.elapsed() >= Duration::from_millis(interval_ms)
 }
 
 fn encode_project_event_stream_frame(
@@ -210,9 +241,6 @@ fn encode_project_event_stream_frame(
             session_id,
             last_output_fingerprint,
         ));
-    }
-    if bytes.is_empty() {
-        return encode_sse_keepalive();
     }
     bytes
 }
