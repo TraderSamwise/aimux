@@ -3,7 +3,7 @@ use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::text::auth::AuthFlowResult;
 use aimux::daemon::text::operations::RestartControlPlaneTextResult;
-use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
+use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,8 @@ struct FakeRuntime {
     text_routes: Vec<(String, Option<Value>)>,
     open_targets: Vec<Value>,
     restart_calls: Vec<Option<String>>,
+    stop_daemon_calls: Vec<String>,
+    stopped_daemon: Option<StoppedDaemonInfo>,
     login_calls: Cell<usize>,
     security_unlock_calls: Cell<usize>,
     credentials: Option<Value>,
@@ -42,6 +44,11 @@ impl Default for FakeRuntime {
             text_routes: Vec::new(),
             open_targets: Vec::new(),
             restart_calls: Vec::new(),
+            stop_daemon_calls: Vec::new(),
+            stopped_daemon: Some(StoppedDaemonInfo {
+                daemon: daemon_info(),
+                stopped_project_services: Vec::new(),
+            }),
             login_calls: Cell::new(0),
             security_unlock_calls: Cell::new(0),
             credentials: None,
@@ -259,6 +266,11 @@ impl CoreCliRuntime for FakeRuntime {
             }),
             text: format!("Aimux Restart\n  failures: {}", self.restart_failures),
         })
+    }
+
+    fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String> {
+        self.stop_daemon_calls.push(signal.to_owned());
+        Ok(self.stopped_daemon.clone())
     }
 
     fn debug_state_report(&self, target: &str) -> Result<String, String> {
@@ -2051,6 +2063,29 @@ fn restart_control_plane_json_outputs_restart_report_and_fails_on_failures() {
     assert_eq!(runtime.restart_calls, [None]);
     let report: Value = serde_json::from_str(&execution.stdout[0]).expect("restart json");
     assert_eq!(report["summary"]["failures"], json!(2));
+}
+
+#[test]
+fn daemon_stop_and_kill_execute_native_local_supervisor_action() {
+    let mut stop_runtime = FakeRuntime::default();
+    let stop = run_core_cli_with(&args(&["daemon", "stop"]), &mut stop_runtime);
+
+    assert_eq!(stop.code, 0);
+    assert_eq!(stop.stdout, ["Stopped aimux daemon pid 9001"]);
+    assert_eq!(stop_runtime.stop_daemon_calls, ["SIGTERM"]);
+    assert!(stop_runtime.commands.is_empty());
+    assert!(stop_runtime.text_routes.is_empty());
+
+    let mut kill_runtime = FakeRuntime {
+        stopped_daemon: None,
+        ..FakeRuntime::default()
+    };
+    let kill = run_core_cli_with(&args(&["daemon", "kill", "--json"]), &mut kill_runtime);
+
+    assert_eq!(kill.code, 0);
+    assert_eq!(kill_runtime.stop_daemon_calls, ["SIGKILL"]);
+    let payload: Value = serde_json::from_str(&kill.stdout[0]).expect("stop json");
+    assert_eq!(payload["stopped"], Value::Null);
 }
 
 #[test]

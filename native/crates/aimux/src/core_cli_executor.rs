@@ -18,8 +18,10 @@ use crate::core_text::{
 use crate::daemon::text::auth::AuthFlowResult;
 use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
-use crate::daemon_state::{AimuxDaemonInfo, DaemonState, load_daemon_info, load_daemon_state};
-use crate::daemon_supervisor::ensure_daemon_running;
+use crate::daemon_state::{
+    AimuxDaemonInfo, DaemonState, StoppedDaemonInfo, load_daemon_info, load_daemon_state,
+};
+use crate::daemon_supervisor::{ensure_daemon_running, stop_daemon};
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
 use crate::install_cleanup::{
     DEFAULT_INSTALL_KEEP_RECENT, DEFAULT_INSTALL_RETENTION_DAYS, PlanInstallCleanupOptions,
@@ -91,6 +93,7 @@ pub trait CoreCliRuntime {
         &mut self,
         project_root: Option<&str>,
     ) -> Result<RestartControlPlaneTextResult, String>;
+    fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String>;
     fn debug_state_report(&self, target: &str) -> Result<String, String>;
 }
 
@@ -282,6 +285,10 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         Ok(RestartControlPlaneTextResult { restart, text })
     }
 
+    fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String> {
+        stop_daemon(signal).map_err(|error| error.to_string())
+    }
+
     fn debug_state_report(&self, target: &str) -> Result<String, String> {
         let report = build_debug_state_report(self.cwd(), target);
         render_debug_state_report(&report).map_err(|error| error.to_string())
@@ -432,6 +439,7 @@ fn run_plan(
         CoreCliAction::RestartControlPlane { project_root } => {
             run_restart_control_plane(project_root.as_deref(), output_mode, runtime)
         }
+        CoreCliAction::StopDaemon { signal } => run_stop_daemon(output_mode, signal, runtime),
         CoreCliAction::DebugState { target } => {
             let text = runtime.debug_state_report(&target)?;
             Ok(CoreCliExecution::ok(vec![text]))
@@ -442,6 +450,39 @@ fn run_plan(
             keep_recent,
         } => run_install_cleanup_action(output_mode, fix, retention_days, keep_recent),
     }
+}
+
+fn run_stop_daemon(
+    output_mode: CoreCliOutputMode,
+    signal: &str,
+    runtime: &mut impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let stopped = runtime.stop_daemon(signal)?;
+    let payload = json!({ "stopped": stopped });
+    render_json_or_lines(
+        output_mode,
+        payload,
+        render_stop_daemon_lines(signal, stopped.as_ref()),
+    )
+}
+
+fn render_stop_daemon_lines(signal: &str, stopped: Option<&StoppedDaemonInfo>) -> Vec<String> {
+    let Some(stopped) = stopped else {
+        return vec!["Aimux daemon not running".to_owned()];
+    };
+    let verb = if signal == "SIGKILL" {
+        "Killed"
+    } else {
+        "Stopped"
+    };
+    let mut lines = vec![format!("{verb} aimux daemon pid {}", stopped.daemon.pid)];
+    if !stopped.stopped_project_services.is_empty() {
+        lines.push(format!(
+            "{verb} {} project services",
+            stopped.stopped_project_services.len()
+        ));
+    }
+    lines
 }
 
 fn run_install_cleanup_action(

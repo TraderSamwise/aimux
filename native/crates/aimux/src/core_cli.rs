@@ -113,6 +113,8 @@ pub enum CoreCliOperation {
     HostRestart,
     HostTopology,
     DaemonEnsure,
+    DaemonStop,
+    DaemonKill,
     DaemonRestart,
     DaemonStatus,
     DaemonProjects,
@@ -370,6 +372,9 @@ pub enum CoreCliAction {
     RestartControlPlane {
         project_root: Option<String>,
     },
+    StopDaemon {
+        signal: &'static str,
+    },
     Logs(CoreLogsArgs),
     InitProject,
     HostTopology {
@@ -451,6 +456,10 @@ fn output_mode(args: &[String]) -> CoreCliOutputMode {
     } else {
         CoreCliOutputMode::Text
     }
+}
+
+fn has_only_json_flag(args: &[String]) -> bool {
+    args.iter().all(|arg| arg == "--json")
 }
 
 fn call(
@@ -2076,6 +2085,21 @@ where
         ("daemon", "ensure") => (
             CoreCliOperation::DaemonEnsure,
             command_action(default_call(CORE_COMMAND_NAMES.status, None)),
+            CoreCliFallback::None,
+        ),
+        ("daemon", "stop" | "kill") if has_only_json_flag(&args[2..]) => (
+            if args[1] == "stop" {
+                CoreCliOperation::DaemonStop
+            } else {
+                CoreCliOperation::DaemonKill
+            },
+            CoreCliAction::StopDaemon {
+                signal: if args[1] == "stop" {
+                    "SIGTERM"
+                } else {
+                    "SIGKILL"
+                },
+            },
             CoreCliFallback::None,
         ),
         ("daemon", "restart") => {

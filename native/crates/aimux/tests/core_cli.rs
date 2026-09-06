@@ -1730,6 +1730,23 @@ fn local_diagnostics_and_restart_do_not_become_command_requests() {
         daemon_restart.action,
         CoreCliAction::RestartControlPlane { project_root: None }
     );
+
+    let daemon_stop =
+        classify_core_cli(&["daemon", "stop"], &context(true, true)).expect("daemon stop plan");
+    assert_eq!(daemon_stop.operation, CoreCliOperation::DaemonStop);
+    assert_eq!(
+        daemon_stop.action,
+        CoreCliAction::StopDaemon { signal: "SIGTERM" }
+    );
+
+    let daemon_kill = classify_core_cli(&["daemon", "kill", "--json"], &context(true, true))
+        .expect("daemon kill plan");
+    assert_eq!(daemon_kill.operation, CoreCliOperation::DaemonKill);
+    assert_eq!(daemon_kill.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        daemon_kill.action,
+        CoreCliAction::StopDaemon { signal: "SIGKILL" }
+    );
 }
 
 #[test]
