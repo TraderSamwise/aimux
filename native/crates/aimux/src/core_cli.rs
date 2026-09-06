@@ -2,9 +2,10 @@ use crate::core_cli_routing::{
     CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreHostRestartArgs, CoreLogsArgs,
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
-    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
-    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_collaboration_args, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_host_agent_read_args_result,
+    parse_core_host_agent_stream_args_result, parse_core_host_restart_args,
+    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
@@ -55,6 +56,10 @@ pub enum CoreCliOperation {
     NotificationList,
     NotificationRead,
     NotificationClear,
+    MessageSend,
+    HandoffSend,
+    HandoffAccept,
+    HandoffComplete,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -1074,6 +1079,81 @@ where
             (
                 operation,
                 CoreCliAction::TextRoute { path, body },
+                CoreCliFallback::None,
+            )
+        }
+        ("message", "send") | ("handoff", "send" | "accept" | "complete") => {
+            let parsed = parse_core_collaboration_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid collaboration arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, route, body) =
+                match (parsed.command.as_str(), parsed.subcommand.as_str()) {
+                    ("message", "send") => (
+                        CoreCliOperation::MessageSend,
+                        CORE_API_ROUTES.message_send_text,
+                        json!({
+                            "project": project_root,
+                            "thread": parsed.thread_id,
+                            "from": parsed.from,
+                            "to": parsed.to,
+                            "assignee": parsed.assignee,
+                            "tool": parsed.tool,
+                            "worktree": parsed.worktree,
+                            "kind": parsed.kind,
+                            "body": parsed.body,
+                            "title": parsed.title,
+                        }),
+                    ),
+                    ("handoff", "send") => (
+                        CoreCliOperation::HandoffSend,
+                        CORE_API_ROUTES.handoff_send_text,
+                        json!({
+                            "project": project_root,
+                            "from": parsed.from,
+                            "to": parsed.to,
+                            "assignee": parsed.assignee,
+                            "tool": parsed.tool,
+                            "body": parsed.body,
+                            "title": parsed.title,
+                            "worktree": parsed.worktree,
+                        }),
+                    ),
+                    ("handoff", "accept") => (
+                        CoreCliOperation::HandoffAccept,
+                        CORE_API_ROUTES.handoff_accept_text,
+                        json!({
+                            "project": project_root,
+                            "threadId": parsed.thread_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        }),
+                    ),
+                    ("handoff", "complete") => (
+                        CoreCliOperation::HandoffComplete,
+                        CORE_API_ROUTES.handoff_complete_text,
+                        json!({
+                            "project": project_root,
+                            "threadId": parsed.thread_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        }),
+                    ),
+                    _ => unreachable!("validated collaboration command"),
+                };
+            (
+                operation,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(route, parsed.json),
+                    body: Some(body),
+                },
                 CoreCliFallback::None,
             )
         }

@@ -372,6 +372,125 @@ fn notification_aliases_plan_native_text_routes_with_resolved_project() {
 }
 
 #[test]
+fn collaboration_commands_plan_native_text_routes_with_resolved_project() {
+    let message = classify_core_cli_with_project_resolver(
+        &[
+            "message",
+            "send",
+            "please",
+            "--project",
+            "./child",
+            "--thread=thread-1",
+            "--from=user",
+            "--to=claude-1,codex-1",
+            "--assignee=coder",
+            "--tool=claude",
+            "--worktree=feature",
+            "--kind=decision",
+            "--title=Ask",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("message send plan");
+    assert_eq!(message.operation, CoreCliOperation::MessageSend);
+    assert_eq!(
+        message.action,
+        CoreCliAction::TextRoute {
+            path: "/core/message/send-text".into(),
+            body: Some(json!({
+                "project": "/resolved/./child",
+                "thread": "thread-1",
+                "from": "user",
+                "to": "claude-1,codex-1",
+                "assignee": "coder",
+                "tool": "claude",
+                "worktree": "feature",
+                "kind": "decision",
+                "body": "please",
+                "title": "Ask",
+            })),
+        }
+    );
+
+    let handoff = classify_core_cli(
+        &[
+            "handoff",
+            "send",
+            "take over",
+            "--to",
+            "claude-1",
+            "--title",
+            "Takeover",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("handoff send plan");
+    assert_eq!(handoff.operation, CoreCliOperation::HandoffSend);
+    assert_eq!(
+        handoff.action,
+        CoreCliAction::TextRoute {
+            path: "/core/handoff/send-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "from": null,
+                "to": "claude-1",
+                "assignee": null,
+                "tool": null,
+                "body": "take over",
+                "title": "Takeover",
+                "worktree": null,
+            })),
+        }
+    );
+
+    let accept = classify_core_cli(
+        &[
+            "handoff",
+            "accept",
+            "thread-1",
+            "--from=claude-1",
+            "--body=ok",
+        ],
+        &context(true, true),
+    )
+    .expect("handoff accept plan");
+    assert_eq!(accept.operation, CoreCliOperation::HandoffAccept);
+    assert_eq!(
+        accept.action,
+        CoreCliAction::TextRoute {
+            path: "/core/handoff/accept-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "threadId": "thread-1",
+                "from": "claude-1",
+                "body": "ok",
+            })),
+        }
+    );
+
+    let complete = classify_core_cli(
+        &["handoff", "complete", "thread-1", "--json"],
+        &context(true, true),
+    )
+    .expect("handoff complete plan");
+    assert_eq!(complete.operation, CoreCliOperation::HandoffComplete);
+    assert_eq!(
+        complete.action,
+        CoreCliAction::TextRoute {
+            path: "/core/handoff/complete-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "threadId": "thread-1",
+                "from": null,
+                "body": null,
+            })),
+        }
+    );
+}
+
+#[test]
 fn agent_ps_plans_native_text_route_with_project_resolution() {
     let plan = classify_core_cli_with_project_resolver(
         &["ps", "--project", "./child dir", "--json"],

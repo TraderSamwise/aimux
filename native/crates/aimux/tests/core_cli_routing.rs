@@ -1,10 +1,11 @@
 use aimux::core_cli_routing::{
-    CoreAgentInputArgs, CoreAgentPsArgs, CoreDaemonRestartArgs, CoreHostAgentReadArgs,
-    CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
-    CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs, core_command_args,
-    has_core_global_logging_args, is_core_cli_command, is_core_project_ensure_command,
-    is_valid_core_project_ensure_args, parse_core_agent_input_args, parse_core_agent_migrate_args,
-    parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_daemon_restart_args,
+    CoreAgentInputArgs, CoreAgentPsArgs, CoreCollaborationArgs, CoreDaemonRestartArgs,
+    CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs,
+    CoreLogsSubcommand, CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs,
+    core_command_args, has_core_global_logging_args, is_core_cli_command,
+    is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_input_args,
+    parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
+    parse_core_collaboration_args, parse_core_daemon_restart_args,
     parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
     parse_core_host_agent_stream_args, parse_core_host_restart_args,
     parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
@@ -449,6 +450,69 @@ fn notification_parser_matches_cli_alias_forms() {
 }
 
 #[test]
+fn collaboration_parser_matches_message_and_handoff_forms() {
+    assert_eq!(
+        parse_core_collaboration_args(&[
+            "message",
+            "send",
+            "please",
+            "--to",
+            "claude-1,codex-1",
+            "--assignee=coder",
+            "--tool=claude",
+            "--worktree=feature",
+            "--project=/repo",
+            "--from=user",
+            "--title=Ask",
+            "--kind=decision",
+            "--thread=thread-1",
+        ]),
+        Some(CoreCollaborationArgs {
+            command: "message".into(),
+            subcommand: "send".into(),
+            body: Some("please".into()),
+            thread_id: Some("thread-1".into()),
+            project: Some("/repo".into()),
+            from: Some("user".into()),
+            to: Some("claude-1,codex-1".into()),
+            assignee: Some("coder".into()),
+            tool: Some("claude".into()),
+            worktree: Some("feature".into()),
+            title: Some("Ask".into()),
+            kind: Some("decision".into()),
+            json: false,
+        })
+    );
+
+    let handoff =
+        parse_core_collaboration_args(&["handoff", "send", "take over", "--to=claude-1", "--json"])
+            .expect("handoff send args");
+    assert_eq!(handoff.command, "handoff");
+    assert_eq!(handoff.body.as_deref(), Some("take over"));
+    assert_eq!(handoff.to.as_deref(), Some("claude-1"));
+    assert!(handoff.json);
+
+    let accept = parse_core_collaboration_args(&[
+        "handoff",
+        "accept",
+        "thread-1",
+        "--from=claude-1",
+        "--body=ok",
+    ])
+    .expect("handoff accept args");
+    assert_eq!(accept.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(accept.from.as_deref(), Some("claude-1"));
+    assert_eq!(accept.body.as_deref(), Some("ok"));
+
+    assert!(parse_core_collaboration_args(&["message", "send", "please"]).is_none());
+    assert!(parse_core_collaboration_args(&["handoff", "send", "please"]).is_none());
+    assert!(parse_core_collaboration_args(&["handoff", "accept", "thread-1", "--body"]).is_none());
+    assert!(
+        parse_core_collaboration_args(&["message", "send", "please", "--from", "--body"]).is_none()
+    );
+}
+
+#[test]
 fn logs_parser_preserves_values_that_start_with_hyphens() {
     assert_eq!(
         parse_core_logs_args(&["logs", "tail", "--project", "-foo", "-n", "-5", "--daemon",]),
@@ -691,6 +755,12 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["list-notifications", "--unread"],
         vec!["read-notifications", "--ids", "note-1,note-2"],
         vec!["clear-notifications", "--bad"],
+        vec!["message", "send", "please", "--to", "claude-1"],
+        vec!["message", "send", "please"],
+        vec!["handoff", "send", "please", "--to=claude-1"],
+        vec!["handoff", "send", "please"],
+        vec!["handoff", "accept", "thread-1", "--body"],
+        vec!["handoff", "complete", "thread-1"],
         vec!["projects", "list", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],
@@ -716,6 +786,9 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["remote", "enable", "--json"],
         vec!["remote", "disable", "extra"],
         vec!["remote", "enable", "--help"],
+        vec!["message", "send", "--help"],
+        vec!["handoff", "send", "--help"],
+        vec!["handoff", "accept"],
         vec!["daemon", "project-ensure", "-h"],
         vec!["remote", "unlock"],
         vec![],

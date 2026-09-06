@@ -165,6 +165,8 @@ impl CoreCliRuntime for FakeRuntime {
             "team ok\n".into()
         } else if path.starts_with("/core/notifications/") {
             "notifications ok\n".into()
+        } else if path.starts_with("/core/message/") || path.starts_with("/core/handoff/") {
+            "thread thread-1\nmessage msg-1\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -955,6 +957,120 @@ fn notification_commands_execute_native_text_routes_without_core_command_fallbac
                     "id": null,
                     "ids": ["note-4", "note-5"],
                     "sessionId": null,
+                })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn collaboration_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let message = run_core_cli_with(
+        &args(&[
+            "message",
+            "send",
+            "please",
+            "--to",
+            "claude-1,codex-1",
+            "--assignee=coder",
+            "--tool=claude",
+            "--worktree=feature",
+            "--project=/repo",
+            "--from=user",
+            "--title=Ask",
+            "--kind=decision",
+            "--thread=thread-1",
+        ]),
+        &mut runtime,
+    );
+    let handoff = run_core_cli_with(
+        &args(&[
+            "handoff",
+            "send",
+            "take over",
+            "--to=claude-1",
+            "--title=Takeover",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let accept = run_core_cli_with(
+        &args(&[
+            "handoff",
+            "accept",
+            "thread-1",
+            "--from=claude-1",
+            "--body=ok",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let complete = run_core_cli_with(
+        &args(&[
+            "handoff",
+            "complete",
+            "thread-1",
+            "--from=claude-1",
+            "--body=done",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(message.stdout, ["thread thread-1\nmessage msg-1"]);
+    assert_eq!(handoff.stdout, ["thread thread-1\nmessage msg-1"]);
+    assert_eq!(accept.stdout, ["thread thread-1\nmessage msg-1"]);
+    assert_eq!(complete.stdout, ["thread thread-1\nmessage msg-1"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/message/send-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "thread": "thread-1",
+                    "from": "user",
+                    "to": "claude-1,codex-1",
+                    "assignee": "coder",
+                    "tool": "claude",
+                    "worktree": "feature",
+                    "kind": "decision",
+                    "body": "please",
+                    "title": "Ask",
+                })),
+            ),
+            (
+                "/core/handoff/send-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "from": null,
+                    "to": "claude-1",
+                    "assignee": null,
+                    "tool": null,
+                    "body": "take over",
+                    "title": "Takeover",
+                    "worktree": null,
+                })),
+            ),
+            (
+                "/core/handoff/accept-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "threadId": "thread-1",
+                    "from": "claude-1",
+                    "body": "ok",
+                })),
+            ),
+            (
+                "/core/handoff/complete-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "threadId": "thread-1",
+                    "from": "claude-1",
+                    "body": "done",
                 })),
             ),
         ]
