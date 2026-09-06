@@ -63,6 +63,9 @@ Priority fixture groups:
   offset, terminal output hydration, visible-pane output mode, and active
   shared-session mapping/equality/merge/hydration behavior captured by running
   TypeScript app state helpers.
+- `app-state/settings.json`: durable app settings defaults, persisted-settings
+  normalization, monitor viewport clamping, share normalization, and desktop
+  zoom helpers captured by running TypeScript settings helpers.
 
 ## App Runtime
 
