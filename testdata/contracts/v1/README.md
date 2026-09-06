@@ -684,6 +684,12 @@ Priority fixture groups:
   tmux-session orphan classification, dashboard orphan reaping, pid-reread
   guards, and killed-process/session side effects captured by running
   TypeScript `lifecycle-orphans` helpers.
+- `runtime-state/runtime-guard.json`: runtime guard state classification,
+  equality, disconnected-probe stabilization, guarded key disposition, and
+  overlay copy captured by running TypeScript `multiplexer/runtime-guard`.
+- `runtime-state/runtime-sync.json`: runtime sync heartbeat and project-service
+  refresh timer behavior captured by running TypeScript
+  `MultiplexerRuntimeSync` with recorded dependencies.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
