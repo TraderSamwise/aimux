@@ -7,17 +7,15 @@ pub fn resolve_exchange_alert_routing(case: &Value) -> Value {
         "resolveExchangeMessageAlertRecipients" => {
             string_array(resolve_exchange_message_alert_recipients(&case["input"]))
         }
-        "resolveExchangeTaskAssignmentRecipient" => optional_string(
-            resolve_exchange_task_assignment_recipient(&case["input"])
-                .as_deref(),
-        ),
+        "resolveExchangeTaskAssignmentRecipient" => {
+            optional_string(resolve_exchange_task_assignment_recipient(&case["input"]).as_deref())
+        }
         "resolveExchangeTaskOutcomeRecipient" => {
             optional_string(resolve_exchange_task_outcome_recipient(&case["input"]).as_deref())
         }
-        "resolveExchangeReviewOutcomeRecipient" => optional_string(
-            resolve_exchange_review_outcome_recipient(&case["input"])
-                .as_deref(),
-        ),
+        "resolveExchangeReviewOutcomeRecipient" => {
+            optional_string(resolve_exchange_review_outcome_recipient(&case["input"]).as_deref())
+        }
         _ => Value::Null,
     }
 }
@@ -28,19 +26,31 @@ pub fn resolve_exchange_message_alert_recipients(input: &Value) -> Vec<String> {
         return recipients_excluding_sender(explicit, string_field(input, "from").as_deref());
     }
 
-    let delivered_to = unique_trimmed_array(input.get("message").and_then(|message| message.get("deliveredTo")));
+    let delivered_to = unique_trimmed_array(
+        input
+            .get("message")
+            .and_then(|message| message.get("deliveredTo")),
+    );
     if !delivered_to.is_empty() {
         return recipients_excluding_sender(delivered_to, string_field(input, "from").as_deref());
     }
 
-    let waiting_on = unique_trimmed_array(input.get("thread").and_then(|thread| thread.get("waitingOn")));
+    let waiting_on = unique_trimmed_array(
+        input
+            .get("thread")
+            .and_then(|thread| thread.get("waitingOn")),
+    );
     if !waiting_on.is_empty() {
         return recipients_excluding_sender(waiting_on, string_field(input, "from").as_deref());
     }
 
-    let message_recipients = unique_trimmed_array(input.get("message").and_then(|message| message.get("to")));
+    let message_recipients =
+        unique_trimmed_array(input.get("message").and_then(|message| message.get("to")));
     if !message_recipients.is_empty() {
-        return recipients_excluding_sender(message_recipients, string_field(input, "from").as_deref());
+        return recipients_excluding_sender(
+            message_recipients,
+            string_field(input, "from").as_deref(),
+        );
     }
 
     recipients_excluding_sender(
@@ -50,18 +60,29 @@ pub fn resolve_exchange_message_alert_recipients(input: &Value) -> Vec<String> {
 }
 
 pub fn resolve_exchange_task_assignment_recipient(task: &Value) -> Option<String> {
-    unique_trimmed([string_field(task, "assignedTo")].into_iter()).into_iter().next()
+    unique_trimmed([string_field(task, "assignedTo")].into_iter())
+        .into_iter()
+        .next()
 }
 
 pub fn resolve_exchange_task_outcome_recipient(input: &Value) -> Option<String> {
-    let waiting_on = unique_trimmed_array(input.get("thread").and_then(|thread| thread.get("waitingOn")));
+    let waiting_on = unique_trimmed_array(
+        input
+            .get("thread")
+            .and_then(|thread| thread.get("waitingOn")),
+    );
     if !waiting_on.is_empty() {
         return recipients_excluding_sender(waiting_on, string_field(input, "from").as_deref())
             .into_iter()
             .next();
     }
     recipients_excluding_sender(
-        unique_trimmed([input.get("task").and_then(|task| string_field(task, "assignedBy"))].into_iter()),
+        unique_trimmed(
+            [input
+                .get("task")
+                .and_then(|task| string_field(task, "assignedBy"))]
+            .into_iter(),
+        ),
         string_field(input, "from").as_deref(),
     )
     .into_iter()
@@ -69,7 +90,9 @@ pub fn resolve_exchange_task_outcome_recipient(input: &Value) -> Option<String> 
 }
 
 pub fn resolve_exchange_review_outcome_recipient(task: &Value) -> Option<String> {
-    unique_trimmed([string_field(task, "assignedBy")].into_iter()).into_iter().next()
+    unique_trimmed([string_field(task, "assignedBy")].into_iter())
+        .into_iter()
+        .next()
 }
 
 fn recipients_excluding_sender(values: Vec<String>, from: Option<&str>) -> Vec<String> {
@@ -110,7 +133,9 @@ fn string_array(values: Vec<String>) -> Value {
 }
 
 fn optional_string(value: Option<&str>) -> Value {
-    value.map(|value| Value::String(value.into())).unwrap_or(Value::Null)
+    value
+        .map(|value| Value::String(value.into()))
+        .unwrap_or(Value::Null)
 }
 
 fn string_field(value: &Value, key: &str) -> Option<String> {

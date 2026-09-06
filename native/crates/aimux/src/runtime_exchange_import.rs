@@ -8,7 +8,8 @@ pub fn runtime_exchange_import_contract(case: &Value) -> Value {
             build_runtime_exchange_from_legacy_snapshot(&case["input"])
         }
         "importRuntimeExchangeFromLegacyFiles" if case["input"].get("files").is_some() => {
-            let exchange = build_runtime_exchange_from_legacy_snapshot(&snapshot_from_files(&case["input"]));
+            let exchange =
+                build_runtime_exchange_from_legacy_snapshot(&snapshot_from_files(&case["input"]));
             json!({
                 "threadIds": ids(&exchange["threads"]),
                 "messageIds": ids(&exchange["messages"]),
@@ -200,7 +201,10 @@ fn build_thread_wait(thread: &Value) -> Option<Value> {
     if waiting_on.is_empty() {
         return None;
     }
-    let done = matches!(string_field(thread, "status").as_deref(), Some("done" | "abandoned"));
+    let done = matches!(
+        string_field(thread, "status").as_deref(),
+        Some("done" | "abandoned")
+    );
     let mut wait = json!({
         "id": format!("wait:thread:{}", string_field(thread, "id").unwrap_or_default()),
         "status": if done { "satisfied" } else { "waiting" },
@@ -292,7 +296,11 @@ fn attachment_ref_from_record(record: &Value) -> Value {
 }
 
 fn normalize_review_status(value: Option<&Value>) -> Option<String> {
-    let normalized = value?.as_str()?.trim().to_ascii_lowercase().replace('-', "_");
+    let normalized = value?
+        .as_str()?
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_");
     match normalized.as_str() {
         "approved" | "approve" => Some("approved".into()),
         "changes_requested" | "request_changes" => Some("changes_requested".into()),
@@ -315,10 +323,15 @@ fn continuity_kind_for_path(path: &str) -> &'static str {
 }
 
 fn continuity_paths(input: &Value) -> Vec<String> {
-    ["historyPaths", "contextPaths", "recordingPaths", "statusPaths"]
-        .into_iter()
-        .flat_map(|key| string_array_field(input, key))
-        .collect()
+    [
+        "historyPaths",
+        "contextPaths",
+        "recordingPaths",
+        "statusPaths",
+    ]
+    .into_iter()
+    .flat_map(|key| string_array_field(input, key))
+    .collect()
 }
 
 fn ids(value: &Value) -> Vec<String> {
@@ -365,7 +378,8 @@ fn unique(values: Vec<String>) -> Vec<String> {
 }
 
 fn string_array_field(value: &Value, key: &str) -> Vec<String> {
-    value.get(key)
+    value
+        .get(key)
         .and_then(Value::as_array)
         .into_iter()
         .flatten()

@@ -245,6 +245,12 @@ Priority fixture groups:
   focused-control-session, metadata projection, and semantic badge cases
   captured by running TypeScript `statusline-model` exports.
 
+## Transcript
+
+- `transcript/turn-state.json`: Claude/Codex transcript turn-state parsing,
+  file-tail reads, transcript probing, and Codex rollout path lookup captured
+  by running TypeScript `transcript-turn-state`.
+
 ## Worktree
 
 - `worktree/cache-cleanup.json`: generated-cache planning, active-runtime

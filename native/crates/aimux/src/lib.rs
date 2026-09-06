@@ -48,9 +48,9 @@ pub mod dashboard_terminal;
 pub mod dashboard_tool_picker;
 pub mod debug_state;
 pub mod desktop_notifier;
+pub mod exchange_alert_routing;
 pub mod expose_pane_output_tap;
 pub mod expose_socket;
-pub mod exchange_alert_routing;
 pub mod install_cleanup;
 pub mod launcher_env;
 pub mod local_ui_server;
@@ -84,6 +84,7 @@ pub mod tmux;
 pub mod tmux_expose;
 pub mod tool_hooks;
 pub mod tool_hooks_contract;
+pub mod transcript_turn_state;
 pub mod translation_plan;
 pub mod tui_render;
 
