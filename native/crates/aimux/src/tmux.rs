@@ -907,7 +907,7 @@ impl TmuxRuntimeManager {
         ] {
             self.unbind_key("root", key)?;
         }
-        self.apply_default_root_mouse_bindings(&config.project_state_dir)?;
+        self.apply_default_root_mouse_bindings(&config)?;
         self.bind_modified_enter(session_name, "C-j", "send-keys C-j")?;
         self.bind_modified_enter(session_name, "S-Enter", "send-keys S-Enter")?;
 
@@ -1924,7 +1924,10 @@ impl TmuxRuntimeManager {
         self.exec_owned(argv, None).map(|_| ())
     }
 
-    fn apply_default_root_mouse_bindings(&mut self, project_state_dir: &str) -> Result<(), String> {
+    fn apply_default_root_mouse_bindings(
+        &mut self,
+        config: &TmuxRuntimeConfig,
+    ) -> Result<(), String> {
         let dir = std::env::temp_dir().join(format!(
             "aimux-tmux-{}-{}",
             std::process::id(),
@@ -1932,12 +1935,22 @@ impl TmuxRuntimeManager {
         ));
         fs::create_dir_all(&dir).map_err(|error| format!("create tmux config dir: {error}"))?;
         let file = dir.join("mouse-bindings.conf");
-        let config = build_default_root_mouse_bindings_install_config(
-            project_state_dir,
-            &repo_script_path("tmux-open-hyperlink.sh"),
-        );
-        let write_result =
-            fs::write(&file, config).map_err(|error| format!("write tmux mouse bindings: {error}"));
+        let bindings = if config
+            .control_script_command
+            .contains("__tmux-control-internal")
+        {
+            build_default_root_mouse_bindings_install_config_for_command(
+                &config.project_state_dir,
+                &default_open_hyperlink_command(),
+            )
+        } else {
+            build_default_root_mouse_bindings_install_config(
+                &config.project_state_dir,
+                &repo_script_path("tmux-open-hyperlink.sh"),
+            )
+        };
+        let write_result = fs::write(&file, bindings)
+            .map_err(|error| format!("write tmux mouse bindings: {error}"));
         let exec_result = write_result.and_then(|_| {
             self.exec_owned(
                 vec![
@@ -2090,6 +2103,20 @@ pub fn build_default_root_mouse_bindings_install_config(
     );
     let open_status_pr_command = format!(
         "AIMUX_STATUS_LINE=#{{q:mouse_status_line}} AIMUX_PROJECT_STATE_DIR={} AIMUX_CURRENT_WINDOW_ID=#{{q:window_id}} sh {open_hyperlink_script} >/dev/null 2>&1",
+        shell_quote(project_state_dir)
+    );
+    build_default_root_mouse_bindings_config(&open_pane_link_command, &open_status_pr_command)
+}
+
+pub fn build_default_root_mouse_bindings_install_config_for_command(
+    project_state_dir: &str,
+    open_hyperlink_command: &str,
+) -> String {
+    let open_pane_link_command = format!(
+        "AIMUX_HYPERLINK=#{{q:mouse_hyperlink}} AIMUX_MOUSE_WORD=#{{q:mouse_word}} AIMUX_MOUSE_LINE=#{{q:mouse_line}} {open_hyperlink_command} >/dev/null 2>&1"
+    );
+    let open_status_pr_command = format!(
+        "AIMUX_STATUS_LINE=#{{q:mouse_status_line}} AIMUX_PROJECT_STATE_DIR={} AIMUX_CURRENT_WINDOW_ID=#{{q:window_id}} {open_hyperlink_command} >/dev/null 2>&1",
         shell_quote(project_state_dir)
     );
     build_default_root_mouse_bindings_config(&open_pane_link_command, &open_status_pr_command)
@@ -2656,6 +2683,18 @@ fn repo_script_path(name: &str) -> String {
         .join(name)
         .to_string_lossy()
         .into_owned()
+}
+
+fn default_open_hyperlink_command() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|path| {
+            format!(
+                "{} __tmux-open-hyperlink-internal",
+                shell_quote(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_else(|| "aimux __tmux-open-hyperlink-internal".to_owned())
 }
 
 fn runtime_owner_id(resolver: &mut PathResolver) -> String {
