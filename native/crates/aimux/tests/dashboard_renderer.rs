@@ -1,4 +1,4 @@
-use aimux::dashboard_model::DesktopStateGoldenFixture;
+use aimux::dashboard_model::{DesktopStateGoldenFixture, SessionStatus};
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::tui_render::text::strip_ansi;
 use aimux::tui_render::theme::visible_width;
@@ -78,4 +78,101 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     for line in result.frame.split("\r\n") {
         assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
     }
+}
+
+#[test]
+fn renders_state_aware_footer_hints_for_session_actions() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_light;
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("Enter/→/l focus"));
+    assert!(plain.contains("x stop"));
+    assert!(result.frame.contains("\x1b[1;38;5;203mx\x1b[0m"));
+}
+
+#[test]
+fn renders_unavailable_footer_hint_for_blocked_offline_session() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.sessions[0].status = SessionStatus::Offline;
+    snapshot.sessions[0].extra.insert(
+        "restoreState".into(),
+        serde_json::Value::String("blocked".into()),
+    );
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("Enter/→/l unavailable"));
+    assert!(plain.contains("x kill"));
+}
+
+#[test]
+fn renders_service_and_failure_footer_hints() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    snapshot.operation_failures.push(serde_json::json!({
+        "id": "failure-1",
+        "message": "could not stop service"
+    }));
+    let service_id = snapshot.services[0].id.clone();
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: Some(&service_id),
+        focused_worktree_path: Some("<WORKTREE>"),
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: true,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("1-9 entry"));
+    assert!(plain.contains("Enter/→/l open"));
+    assert!(plain.contains("X clear failures"));
+    assert!(plain.contains("x stop"));
 }

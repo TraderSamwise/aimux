@@ -1,12 +1,14 @@
+mod footer;
 mod rows;
 
 use crate::dashboard_model::DesktopStateSnapshot;
+use crate::dashboard_renderer::footer::render_dashboard_footer;
 use crate::dashboard_renderer::rows::{render_service_row, render_session_row, worktree_summary};
 use crate::tui_render::screen_frame::{
     ScreenFrameInput, ScreenFrameResult, compose_screen_frame, screen_content_width,
 };
 use crate::tui_render::text::{center, truncate_ansi};
-use crate::tui_render::theme::{Tone, footer_hints, pad_visible, style, visible_width};
+use crate::tui_render::theme::{Tone, pad_visible, style, visible_width};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardNavLevel {
@@ -78,7 +80,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         String::new(),
     ];
     let content = render_dashboard_content(input);
-    let footer_lines = vec![footer_hints(&footer_hint_text(input))];
+    let footer_lines = render_dashboard_footer(input);
     let focus_line = find_focus_line(&content);
 
     compose_screen_frame(&ScreenFrameInput {
@@ -177,22 +179,6 @@ fn render_worktree_groups(input: &DashboardRenderInput<'_>) -> Vec<String> {
         lines.push(String::new());
     }
     lines
-}
-
-fn footer_hint_text(input: &DashboardRenderInput<'_>) -> String {
-    if let Some(message) = input.footer_message {
-        return format!("[!] {message}");
-    }
-    if !input.snapshot.worktree_groups.is_empty() && input.nav_level == DashboardNavLevel::Worktrees
-    {
-        return "↑↓/jk worktrees  [1-9] worktree  [Enter/→/l] step in  [Tab] details  [n] agent  [v] service  [q] quit"
-            .to_owned();
-    }
-    if !input.snapshot.sessions.is_empty() || !input.snapshot.worktree_groups.is_empty() {
-        return "↑↓/jk items  [1-9] entry  [Enter/→/l] open  [Esc/h] back  [n] agent  [v] service  [x] stop  [q] quit"
-            .to_owned();
-    }
-    "[n] agent  [v] service  [?] help  [q] quit".to_owned()
 }
 
 fn find_focus_line(lines: &[String]) -> isize {
