@@ -1,26 +1,209 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-25T00:00:00.000Z",
-  "projects": {
-    "git": {
-      "projectId": "git",
-      "projectRoot": "/fixtures/git-project",
-      "pid": 123,
-      "startedAt": "2026-08-25T00:00:00.000Z",
-      "updatedAt": "2026-08-25T00:00:00.000Z",
-      "status": "running",
-      "futureSupervisorField": true
+  "source": "src/daemon-state.test.ts",
+  "generatedBy": "scripts/capture-daemon-state-contract.mjs",
+  "description": "Daemon state loading, malformed-record filtering, missing/corrupt fallback, and daemon host/port environment contracts captured by running TypeScript daemon-state helpers.",
+  "cases": [
+    {
+      "id": "daemon-state-001",
+      "name": "ignores non-git project service records",
+      "source": "src/daemon-state.test.ts",
+      "api": "loadDaemonState",
+      "input": {
+        "rawState": {
+          "version": 1,
+          "updatedAt": "2026-08-25T00:00:00.000Z",
+          "projects": {
+            "git": {
+              "projectId": "git",
+              "projectRoot": "<gitProject>",
+              "pid": 123,
+              "startedAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:00.000Z",
+              "status": "running",
+              "futureSupervisorField": true
+            },
+            "stale": {
+              "projectId": "stale",
+              "projectRoot": "<nonGitProject>",
+              "pid": 456,
+              "startedAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      "output": {
+        "version": 1,
+        "updatedAt": "2026-08-25T00:00:00.000Z",
+        "projects": {
+          "git": {
+            "projectId": "git",
+            "projectRoot": "<gitProject>",
+            "pid": 123,
+            "startedAt": "2026-08-25T00:00:00.000Z",
+            "updatedAt": "2026-08-25T00:00:00.000Z",
+            "status": "running",
+            "futureSupervisorField": true
+          }
+        }
+      },
+      "inputSha256": "eff0051cb8060282f6f10c65a8265841f3a8a1fc73143554d7124d5dc08cfb79"
     },
-    "stale": {
-      "projectId": "stale",
-      "projectRoot": "/fixtures/non-git-project",
-      "pid": 456,
-      "startedAt": "2026-08-25T00:00:00.000Z",
-      "updatedAt": "2026-08-25T00:00:00.000Z"
+    {
+      "id": "daemon-state-002",
+      "name": "ignores malformed project service records",
+      "source": "src/daemon-state.test.ts",
+      "api": "loadDaemonState",
+      "input": {
+        "rawState": {
+          "version": 1,
+          "updatedAt": "2026-08-25T00:00:00.000Z",
+          "projects": {
+            "missingRoot": {
+              "projectId": "missingRoot",
+              "pid": 456,
+              "startedAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:00.000Z"
+            },
+            "numericRoot": {
+              "projectId": "numericRoot",
+              "projectRoot": 123,
+              "pid": 789,
+              "startedAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      "output": { "version": 1, "updatedAt": "2026-08-25T00:00:00.000Z", "projects": {} },
+      "inputSha256": "500fc2b5f6e44a952d2f0a92eeb9df90df2f90abaf8a9deeef2dc5b2a0bd4bba"
     },
-    "malformed": {
-      "projectId": "malformed",
-      "pid": 789
+    {
+      "id": "daemon-state-003",
+      "name": "returns epoch state for missing daemon state file",
+      "source": "src/daemon-state.test.ts",
+      "api": "loadDaemonState",
+      "input": {},
+      "output": { "version": 1, "updatedAt": "1970-01-01T00:00:00.000Z", "projects": {} },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "daemon-state-004",
+      "name": "returns epoch state for malformed daemon state JSON",
+      "source": "src/daemon-state.test.ts",
+      "api": "loadDaemonState",
+      "input": { "rawState": "{not-json" },
+      "output": { "version": 1, "updatedAt": "1970-01-01T00:00:00.000Z", "projects": {} },
+      "inputSha256": "cf72a6d36231668531420002e91786735e9c4e92c542ca40c1907a1614155b89"
+    },
+    {
+      "id": "daemon-state-005",
+      "name": "resolves daemon host environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonHost",
+      "input": { "env": null },
+      "output": { "ok": true, "value": "127.0.0.1" },
+      "inputSha256": "7cd5a6a653ba5b1b64ea39200058238092fb4acbb4cccaa874642b55cb8d2d3d"
+    },
+    {
+      "id": "daemon-state-006",
+      "name": "resolves daemon host environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonHost",
+      "input": { "env": "" },
+      "output": { "ok": true, "value": "127.0.0.1" },
+      "inputSha256": "023fd68c09b5f14d9c3cc6d19a652ff80b4d144a3bc32f207008570354fbd974"
+    },
+    {
+      "id": "daemon-state-007",
+      "name": "resolves daemon host environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonHost",
+      "input": { "env": " localhost " },
+      "output": { "ok": true, "value": "localhost" },
+      "inputSha256": "8e2d1281c9b2ed350b5a82ae3ee4988c31a231c224426332adafde92cf652541"
+    },
+    {
+      "id": "daemon-state-008",
+      "name": "resolves daemon host environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonHost",
+      "input": { "env": "0.0.0.0" },
+      "output": { "ok": false, "error": "AIMUX_DAEMON_HOST must be loopback (127.0.0.1 or localhost), got 0.0.0.0" },
+      "inputSha256": "88cff040844692dfd919b0785f64036063692d843de74867d33a7ef7ffe7eae1"
+    },
+    {
+      "id": "daemon-state-009",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": null },
+      "output": { "ok": true, "value": 43190 },
+      "inputSha256": "7cd5a6a653ba5b1b64ea39200058238092fb4acbb4cccaa874642b55cb8d2d3d"
+    },
+    {
+      "id": "daemon-state-010",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": "" },
+      "output": { "ok": true, "value": 43190 },
+      "inputSha256": "023fd68c09b5f14d9c3cc6d19a652ff80b4d144a3bc32f207008570354fbd974"
+    },
+    {
+      "id": "daemon-state-011",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": " 44191 " },
+      "output": { "ok": true, "value": 44191 },
+      "inputSha256": "d4b6b99846a0514b034147ac8b5878d8fd68d0545670bef850565abd8f538294"
+    },
+    {
+      "id": "daemon-state-012",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": "0x10" },
+      "output": { "ok": true, "value": 16 },
+      "inputSha256": "cd720d9d188638502f07d845ff91f5000fe43ac3eaf020829f9d58f18d8d852f"
+    },
+    {
+      "id": "daemon-state-013",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": "1e2" },
+      "output": { "ok": true, "value": 100 },
+      "inputSha256": "366695b43a8c3f8cfb417539c02e36cd50112a4621064a51c0e18c58d0cd6ef5"
+    },
+    {
+      "id": "daemon-state-014",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": "1.5" },
+      "output": { "ok": false, "error": "AIMUX_DAEMON_PORT must be an integer between 1 and 65535, got 1.5" },
+      "inputSha256": "5f09f76bfcd2421b9733413a987ad6118ef96456d34066306c720a683c0b7940"
+    },
+    {
+      "id": "daemon-state-015",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": "65536" },
+      "output": { "ok": false, "error": "AIMUX_DAEMON_PORT must be an integer between 1 and 65535, got 65536" },
+      "inputSha256": "1f0857ba188d82574917db177acaa8910ebdc7e967aac2bcd45cf171dda8f212"
+    },
+    {
+      "id": "daemon-state-016",
+      "name": "resolves daemon port environment",
+      "source": "src/daemon-state.test.ts",
+      "api": "getDaemonPort",
+      "input": { "env": "-0x10" },
+      "output": { "ok": false, "error": "AIMUX_DAEMON_PORT must be an integer between 1 and 65535, got -0x10" },
+      "inputSha256": "44cc58ef956403c7f892c11e5ad7a0a4836b6a81394191f2188ac6fd4c3438e7"
     }
-  }
+  ]
 }

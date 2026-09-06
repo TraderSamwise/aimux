@@ -122,6 +122,12 @@ Priority fixture groups:
   reachability, sorting, and view composition cases captured by running the
   TypeScript coordination model functions.
 
+## Daemon State
+
+- `daemon-state/state.json`: daemon state filtering, fallback, and daemon
+  host/port environment contracts captured by running TypeScript `daemon-state`
+  helpers.
+
 ## Notifications
 
 - `notifications/osc.json`: OSC 9, OSC 99, OSC 777, chunk buffering, ST
