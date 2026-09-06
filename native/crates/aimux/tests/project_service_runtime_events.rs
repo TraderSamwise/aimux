@@ -209,6 +209,50 @@ fn runtime_event_dispatcher_publishes_alert_and_project_update_events() {
 }
 
 #[test]
+fn runtime_set_attention_dispatcher_publishes_alert_and_project_update_events() {
+    let project = temp_project("attention-dispatcher-publish");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::SET_ATTENTION,
+        Some(&json!({
+            "session": "codex-1",
+            "attention": "needs_input"
+        })),
+    )
+    .expect("set attention route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, json!({ "ok": true }));
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].event["type"], "alert");
+    assert_eq!(events[0].event["kind"], "needs_input");
+    assert_eq!(events[0].event["sessionId"], "codex-1");
+    assert_eq!(events[0].event["message"], "Agent is waiting for input.");
+    assert!(
+        events[0].event["notificationId"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert_eq!(events[1].event["type"], "project_update");
+    assert_eq!(events[1].event["reason"], "alert");
+    assert_eq!(events[1].event["sessionId"], "codex-1");
+    assert_eq!(
+        events[1].event["views"],
+        json!([
+            "coordination-worklist",
+            "notifications",
+            "project-observability"
+        ])
+    );
+    cleanup(project);
+}
+
+#[test]
 fn runtime_event_task_done_updates_metadata_without_alert_event() {
     let project = temp_project("task-done-no-alert");
     let state_dir = project.join("state");

@@ -69,17 +69,53 @@ pub fn route_runtime_set_attention(
     session_id: &str,
     attention: String,
 ) -> Option<ProjectServiceDispatchResponse> {
-    let project_state_dir = project_state_dir.as_ref();
+    route_runtime_set_attention_inner(
+        None,
+        project_state_dir.as_ref(),
+        project_state_dir.as_ref(),
+        session_id,
+        attention,
+    )
+}
+
+pub fn route_runtime_set_attention_with_bus(
+    project_root: impl AsRef<Path>,
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    attention: String,
+    event_bus: &ProjectEventBus,
+) -> Option<ProjectServiceDispatchResponse> {
+    route_runtime_set_attention_inner(
+        Some(event_bus),
+        project_root.as_ref(),
+        project_state_dir.as_ref(),
+        session_id,
+        attention,
+    )
+}
+
+fn route_runtime_set_attention_inner(
+    event_bus: Option<&ProjectEventBus>,
+    project_root: &Path,
+    project_state_dir: &Path,
+    session_id: &str,
+    attention: String,
+) -> Option<ProjectServiceDispatchResponse> {
     if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
         set_derived_attention(current, attention.clone())
     }) {
         return Some(json_response(500, json!({ "ok": false, "error": error })));
     }
     let focused = is_session_notification_focused(project_state_dir, session_id);
-    if let Some(notification) = notification_for_attention(session_id, &attention, focused)
-        && let Err(error) = add_notification(project_state_dir, notification)
-    {
-        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    if let Some(notification) = notification_for_attention(session_id, &attention, focused) {
+        match add_notification(project_state_dir, notification.clone()) {
+            Ok(record) => {
+                if let Some(event_bus) = event_bus {
+                    event_bus.publish_alert_from_notification(project_root, &notification, &record);
+                }
+            }
+            Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+        }
     }
     Some(ok())
 }

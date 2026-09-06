@@ -8,7 +8,7 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::notification_context::is_session_notification_focused;
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_events::{route_runtime_event_with_bus, route_runtime_set_attention};
+use super::runtime_events::{route_runtime_event_with_bus, route_runtime_set_attention_with_bus};
 use super::runtime_exchange::{
     compact_runtime_exchange_file, inspect_runtime_exchange_store, runtime_exchange_path,
 };
@@ -144,7 +144,13 @@ pub fn route_runtime_metadata_request(
         routes::runtime::SET_ATTENTION => {
             let session = string_field(body, "session");
             let attention = string_field(body, "attention");
-            route_runtime_set_attention(&project_state_dir, &session, attention)
+            route_runtime_set_attention_with_bus(
+                context.project_root(),
+                &project_state_dir,
+                &session,
+                attention,
+                &context.project_events,
+            )
         }
         routes::runtime::MARK_SEEN => {
             let session = string_field(body, "session");
