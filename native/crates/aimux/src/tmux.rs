@@ -1925,14 +1925,9 @@ impl TmuxRuntimeManager {
         ));
         fs::create_dir_all(&dir).map_err(|error| format!("create tmux config dir: {error}"))?;
         let file = dir.join("mouse-bindings.conf");
-        let open_pane_link_command = "AIMUX_HYPERLINK=#{q:mouse_hyperlink} AIMUX_MOUSE_WORD=#{q:mouse_word} AIMUX_MOUSE_LINE=#{q:mouse_line} sh 'scripts/tmux-open-hyperlink.sh' >/dev/null 2>&1";
-        let open_status_pr_command = format!(
-            "AIMUX_STATUS_LINE=#{{q:mouse_status_line}} AIMUX_PROJECT_STATE_DIR={} AIMUX_CURRENT_WINDOW_ID=#{{q:window_id}} sh 'scripts/tmux-open-hyperlink.sh' >/dev/null 2>&1",
-            shell_quote(project_state_dir)
-        );
-        let config = build_default_root_mouse_bindings_config(
-            open_pane_link_command,
-            &open_status_pr_command,
+        let config = build_default_root_mouse_bindings_install_config(
+            project_state_dir,
+            &repo_script_path("tmux-open-hyperlink.sh"),
         );
         let write_result =
             fs::write(&file, config).map_err(|error| format!("write tmux mouse bindings: {error}"));
@@ -2076,6 +2071,21 @@ pub fn build_default_root_mouse_bindings_config(
         String::new(),
     ]
     .join("\n")
+}
+
+pub fn build_default_root_mouse_bindings_install_config(
+    project_state_dir: &str,
+    open_hyperlink_script: &str,
+) -> String {
+    let open_hyperlink_script = shell_quote(open_hyperlink_script);
+    let open_pane_link_command = format!(
+        "AIMUX_HYPERLINK=#{{q:mouse_hyperlink}} AIMUX_MOUSE_WORD=#{{q:mouse_word}} AIMUX_MOUSE_LINE=#{{q:mouse_line}} sh {open_hyperlink_script} >/dev/null 2>&1"
+    );
+    let open_status_pr_command = format!(
+        "AIMUX_STATUS_LINE=#{{q:mouse_status_line}} AIMUX_PROJECT_STATE_DIR={} AIMUX_CURRENT_WINDOW_ID=#{{q:window_id}} sh {open_hyperlink_script} >/dev/null 2>&1",
+        shell_quote(project_state_dir)
+    );
+    build_default_root_mouse_bindings_config(&open_pane_link_command, &open_status_pr_command)
 }
 
 pub fn new_session_argv(
@@ -2607,11 +2617,6 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
         .project_state_dir_for(project_root)
         .to_string_lossy()
         .into_owned();
-    let script_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("scripts");
     TmuxRuntimeConfig {
         project_state_dir,
         control_script_command: std::env::current_exe()
@@ -2626,15 +2631,21 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
         statusline_command: TmuxCommandSpec {
             cwd: project_root_text.to_owned(),
             command: "sh".to_owned(),
-            args: vec![
-                script_root
-                    .join("tmux-statusline.sh")
-                    .to_string_lossy()
-                    .into_owned(),
-            ],
+            args: vec![repo_script_path("tmux-statusline.sh")],
         },
         runtime_owner_id: runtime_owner_id(&mut resolver),
     }
+}
+
+fn repo_script_path(name: &str) -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+        .join("scripts")
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn runtime_owner_id(resolver: &mut PathResolver) -> String {
@@ -2653,14 +2664,7 @@ fn managed_runtime_build_stamp() -> String {
     if let Ok(exe) = std::env::current_exe() {
         paths.push(exe);
     }
-    paths.push(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("scripts")
-            .join("tmux-statusline.sh"),
-    );
+    paths.push(Path::new(&repo_script_path("tmux-statusline.sh")).to_path_buf());
     paths
         .into_iter()
         .map(|path| {
