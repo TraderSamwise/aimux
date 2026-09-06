@@ -77,6 +77,91 @@ pub fn compose_tool_args(
         .collect()
 }
 
+pub fn strip_tool_action_args(tool_cfg: Option<&Value>, args: &[String]) -> Vec<String> {
+    let patterns = tool_action_arg_patterns(tool_cfg);
+    if patterns.is_empty() {
+        return args.to_vec();
+    }
+
+    let mut kept = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let consumed = patterns
+            .iter()
+            .map(|pattern| matched_action_arg_length(pattern, args, index))
+            .max()
+            .unwrap_or(0);
+        if consumed > 0 {
+            index += consumed;
+            continue;
+        }
+        kept.push(args[index].clone());
+        index += 1;
+    }
+    kept
+}
+
+pub fn compose_tool_launch(
+    tool_cfg: &Value,
+    action_args: &[String],
+    saved_args: &[String],
+) -> Value {
+    let base_args = string_array_field(tool_cfg, "args");
+    let configured = strip_tool_action_args(Some(tool_cfg), saved_args);
+    serde_json::json!({
+        "launch": compose_tool_args(&base_args, action_args, &configured),
+        "persist": compose_tool_args(&base_args, &[], &configured),
+    })
+}
+
+fn tool_action_arg_patterns(tool_cfg: Option<&Value>) -> Vec<Vec<String>> {
+    ["resumeArgs", "forkArgs"]
+        .into_iter()
+        .filter_map(|key| {
+            tool_cfg
+                .and_then(|tool_cfg| tool_cfg.get(key))
+                .and_then(Value::as_array)
+                .filter(|pattern| !pattern.is_empty())
+                .map(|pattern| {
+                    pattern
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+        })
+        .filter(|pattern| !pattern.is_empty())
+        .collect()
+}
+
+fn matched_action_arg_length(pattern: &[String], args: &[String], index: usize) -> usize {
+    let mut matched = 0;
+    while matched < pattern.len() && index + matched < args.len() {
+        let expected = &pattern[matched];
+        let actual = &args[index + matched];
+        if expected == "{sessionId}" {
+            if actual.starts_with('-') {
+                break;
+            }
+        } else if actual != expected {
+            break;
+        }
+        matched += 1;
+    }
+    matched
+}
+
+fn string_array_field(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
 pub fn build_session_preamble(
     project_root: &Path,
     session_id: &str,

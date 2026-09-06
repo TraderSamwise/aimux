@@ -1,0 +1,520 @@
+{
+  "version": 1,
+  "source": "src/session-bootstrap-action-args.test.ts",
+  "generatedBy": "scripts/capture-session-bootstrap-action-args-contract.mjs",
+  "description": "Session bootstrap launch action argument stripping and launch/persist composition captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "session-bootstrap-action-args-001",
+      "name": "repairs the shapes actually found on disk",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "stripToolActionArgsBatch",
+      "input": {
+        "items": [
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "args": ["resume"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "args": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "args": ["--dangerously-bypass-approvals-and-sandbox", "resume"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "args": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-skip-permissions"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeFallback": ["--continue"],
+              "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+            },
+            "args": ["--dangerously-skip-permissions", "--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          }
+        ]
+      },
+      "output": [
+        {
+          "toolCfg": {
+            "args": ["--dangerously-bypass-approvals-and-sandbox"],
+            "resumeArgs": ["resume", "{sessionId}"],
+            "resumeFallback": ["resume", "--last"],
+            "forkArgs": ["fork", "{sessionId}"]
+          },
+          "args": ["resume"],
+          "stripped": []
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-bypass-approvals-and-sandbox"],
+            "resumeArgs": ["resume", "{sessionId}"],
+            "resumeFallback": ["resume", "--last"],
+            "forkArgs": ["fork", "{sessionId}"]
+          },
+          "args": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "stripped": []
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-bypass-approvals-and-sandbox"],
+            "resumeArgs": ["resume", "{sessionId}"],
+            "resumeFallback": ["resume", "--last"],
+            "forkArgs": ["fork", "{sessionId}"]
+          },
+          "args": ["--dangerously-bypass-approvals-and-sandbox", "resume"],
+          "stripped": ["--dangerously-bypass-approvals-and-sandbox"]
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-bypass-approvals-and-sandbox"],
+            "resumeArgs": ["resume", "{sessionId}"],
+            "resumeFallback": ["resume", "--last"],
+            "forkArgs": ["fork", "{sessionId}"]
+          },
+          "args": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "stripped": ["--dangerously-bypass-approvals-and-sandbox"]
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-skip-permissions"],
+            "resumeArgs": ["--resume", "{sessionId}"],
+            "resumeFallback": ["--continue"],
+            "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+          },
+          "args": ["--dangerously-skip-permissions", "--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "stripped": ["--dangerously-skip-permissions"]
+        }
+      ],
+      "inputSha256": "e2d5811d1e6be963931a5b86cfa08ef33d917e9d621b0e5c6117828a75de8c44"
+    },
+    {
+      "id": "session-bootstrap-action-args-002",
+      "name": "takes the verb without the id, leaving fallback-shaped user args alone",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "stripToolActionArgsBatch",
+      "input": {
+        "items": [
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "args": ["resume"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-skip-permissions"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeFallback": ["--continue"],
+              "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+            },
+            "args": ["--resume"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "args": ["resume", "--last"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-skip-permissions"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeFallback": ["--continue"],
+              "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+            },
+            "args": ["--continue"]
+          },
+          {
+            "toolCfg": { "args": ["--dangerously-skip-permissions"], "resumeFallback": ["--continue"] },
+            "args": ["--continue"]
+          }
+        ]
+      },
+      "output": [
+        {
+          "toolCfg": {
+            "args": ["--dangerously-bypass-approvals-and-sandbox"],
+            "resumeArgs": ["resume", "{sessionId}"],
+            "resumeFallback": ["resume", "--last"],
+            "forkArgs": ["fork", "{sessionId}"]
+          },
+          "args": ["resume"],
+          "stripped": []
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-skip-permissions"],
+            "resumeArgs": ["--resume", "{sessionId}"],
+            "resumeFallback": ["--continue"],
+            "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+          },
+          "args": ["--resume"],
+          "stripped": []
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-bypass-approvals-and-sandbox"],
+            "resumeArgs": ["resume", "{sessionId}"],
+            "resumeFallback": ["resume", "--last"],
+            "forkArgs": ["fork", "{sessionId}"]
+          },
+          "args": ["resume", "--last"],
+          "stripped": ["--last"]
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-skip-permissions"],
+            "resumeArgs": ["--resume", "{sessionId}"],
+            "resumeFallback": ["--continue"],
+            "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+          },
+          "args": ["--continue"],
+          "stripped": ["--continue"]
+        },
+        {
+          "toolCfg": { "args": ["--dangerously-skip-permissions"], "resumeFallback": ["--continue"] },
+          "args": ["--continue"],
+          "stripped": ["--continue"]
+        }
+      ],
+      "inputSha256": "50bf5e60108b4cf08051e8af0f44b8e5f2182c0c015eae96146f26aa4658493b"
+    },
+    {
+      "id": "session-bootstrap-action-args-003",
+      "name": "leaves everything that is not one of this tool's own verbs",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "stripToolActionArgsBatch",
+      "input": {
+        "items": [
+          {
+            "toolCfg": {
+              "args": ["--dangerously-skip-permissions"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeFallback": ["--continue"],
+              "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+            },
+            "args": ["--model", "opus", "--verbose"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-skip-permissions"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeFallback": ["--continue"],
+              "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+            },
+            "args": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "args": ["--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          },
+          { "args": ["--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"] }
+        ]
+      },
+      "output": [
+        {
+          "toolCfg": {
+            "args": ["--dangerously-skip-permissions"],
+            "resumeArgs": ["--resume", "{sessionId}"],
+            "resumeFallback": ["--continue"],
+            "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+          },
+          "args": ["--model", "opus", "--verbose"],
+          "stripped": ["--model", "opus", "--verbose"]
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-skip-permissions"],
+            "resumeArgs": ["--resume", "{sessionId}"],
+            "resumeFallback": ["--continue"],
+            "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+          },
+          "args": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "stripped": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+        },
+        {
+          "toolCfg": {
+            "args": ["--dangerously-bypass-approvals-and-sandbox"],
+            "resumeArgs": ["resume", "{sessionId}"],
+            "resumeFallback": ["resume", "--last"],
+            "forkArgs": ["fork", "{sessionId}"]
+          },
+          "args": ["--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "stripped": ["--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+        },
+        {
+          "args": ["--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "stripped": ["--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+        }
+      ],
+      "inputSha256": "867b2920161eda00f1cd568469b72f8557cde8ff8ecccfb297652f1b44e081a5"
+    },
+    {
+      "id": "session-bootstrap-action-args-004",
+      "name": "keeps a real argument that merely follows a verb",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "stripToolActionArgsBatch",
+      "input": {
+        "items": [
+          {
+            "toolCfg": {
+              "args": ["--dangerously-skip-permissions"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeFallback": ["--continue"],
+              "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+            },
+            "args": ["--resume", "--model", "opus"]
+          }
+        ]
+      },
+      "output": [
+        {
+          "toolCfg": {
+            "args": ["--dangerously-skip-permissions"],
+            "resumeArgs": ["--resume", "{sessionId}"],
+            "resumeFallback": ["--continue"],
+            "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+          },
+          "args": ["--resume", "--model", "opus"],
+          "stripped": ["--model", "opus"]
+        }
+      ],
+      "inputSha256": "45325e805c2f06fc9dffdc3c738379b498db8cf304a558858ddf02c59a045817"
+    },
+    {
+      "id": "session-bootstrap-action-args-005",
+      "name": "does not let an embedded placeholder swallow the next argument",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "stripToolActionArgsBatch",
+      "input": {
+        "items": [{ "toolCfg": { "args": [], "resumeArgs": ["--resume={sessionId}"] }, "args": ["--model", "opus"] }]
+      },
+      "output": [
+        {
+          "toolCfg": { "args": [], "resumeArgs": ["--resume={sessionId}"] },
+          "args": ["--model", "opus"],
+          "stripped": ["--model", "opus"]
+        }
+      ],
+      "inputSha256": "b56cd26db82e1a0efcb00654c114876180509541b1b9fa22ebe220de1a4f3bb8"
+    },
+    {
+      "id": "session-bootstrap-action-args-006",
+      "name": "launches with the verb and remembers without it",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "composeToolLaunch",
+      "input": {
+        "toolCfg": {
+          "args": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeArgs": ["resume", "{sessionId}"],
+          "resumeFallback": ["resume", "--last"],
+          "forkArgs": ["fork", "{sessionId}"]
+        },
+        "action": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+        "saved": ["--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5.5"]
+      },
+      "output": {
+        "launch": [
+          "--dangerously-bypass-approvals-and-sandbox",
+          "resume",
+          "019ec656-fbab-7cb2-b842-b7831add8c80",
+          "--model",
+          "gpt-5.5"
+        ],
+        "persist": ["--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5.5"]
+      },
+      "inputSha256": "6a3c89070721cfc5f17053e320f5436d1d2458fc6f653a8bdda3350d5a1b30ce"
+    },
+    {
+      "id": "session-bootstrap-action-args-007",
+      "name": "stays put when the same session is launched again and again",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "composeRepeatedLaunch",
+      "input": {
+        "toolCfg": {
+          "args": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeArgs": ["resume", "{sessionId}"],
+          "resumeFallback": ["resume", "--last"],
+          "forkArgs": ["fork", "{sessionId}"]
+        },
+        "action": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+        "saved": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+        "iterations": 3
+      },
+      "output": [
+        {
+          "launchCount": 0,
+          "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "persist": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeVerbCount": 1
+        },
+        {
+          "launchCount": 1,
+          "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "persist": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeVerbCount": 1
+        },
+        {
+          "launchCount": 2,
+          "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "persist": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeVerbCount": 1
+        }
+      ],
+      "inputSha256": "3207bcc7b4656c179392d5236432ba4bc387d04b1c4fb2c015fe387a68e46a2f"
+    },
+    {
+      "id": "session-bootstrap-action-args-008",
+      "name": "each on-disk row launches with one verb and is remembered with none",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "composeOnDiskRows",
+      "input": {
+        "rows": [
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "saved": ["resume"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "saved": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "saved": ["--dangerously-bypass-approvals-and-sandbox", "resume"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeFallback": ["resume", "--last"],
+              "forkArgs": ["fork", "{sessionId}"]
+            },
+            "saved": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          },
+          {
+            "toolCfg": {
+              "args": ["--dangerously-skip-permissions"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeFallback": ["--continue"],
+              "forkArgs": ["--resume", "{sessionId}", "--fork-session"]
+            },
+            "saved": ["--dangerously-skip-permissions", "--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+          }
+        ],
+        "newId": "NEW-ID"
+      },
+      "output": [
+        {
+          "saved": ["resume"],
+          "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "NEW-ID"],
+          "persist": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeVerbCount": 1,
+          "containsNewId": true
+        },
+        {
+          "saved": ["resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "NEW-ID"],
+          "persist": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeVerbCount": 1,
+          "containsNewId": true
+        },
+        {
+          "saved": ["--dangerously-bypass-approvals-and-sandbox", "resume"],
+          "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "NEW-ID"],
+          "persist": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeVerbCount": 1,
+          "containsNewId": true
+        },
+        {
+          "saved": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "NEW-ID"],
+          "persist": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeVerbCount": 1,
+          "containsNewId": true
+        },
+        {
+          "saved": ["--dangerously-skip-permissions", "--resume", "019ec656-fbab-7cb2-b842-b7831add8c80"],
+          "launch": ["--dangerously-skip-permissions", "--resume", "NEW-ID"],
+          "persist": ["--dangerously-skip-permissions"],
+          "resumeVerbCount": 1,
+          "containsNewId": true
+        }
+      ],
+      "inputSha256": "fe3f99af54cae7b8923bd6e5fb15e4fb5715aa8f6ec32326f93cf8e2da0a77db"
+    },
+    {
+      "id": "session-bootstrap-action-args-009",
+      "name": "would have caught the persisted-launch relaunch bug",
+      "source": "src/session-bootstrap-action-args.test.ts",
+      "api": "composePersistedLaunchRegression",
+      "input": {
+        "toolCfg": {
+          "args": ["--dangerously-bypass-approvals-and-sandbox"],
+          "resumeArgs": ["resume", "{sessionId}"],
+          "resumeFallback": ["resume", "--last"],
+          "forkArgs": ["fork", "{sessionId}"]
+        },
+        "action": ["resume", "NEW-ID"],
+        "saved": ["--dangerously-bypass-approvals-and-sandbox", "resume", "019ec656-fbab-7cb2-b842-b7831add8c80"]
+      },
+      "output": {
+        "launch": ["--dangerously-bypass-approvals-and-sandbox", "resume", "NEW-ID"],
+        "launchResumeCount": 1,
+        "relaunched": ["--dangerously-bypass-approvals-and-sandbox", "resume", "NEW-ID"],
+        "relaunchedResumeCount": 1
+      },
+      "inputSha256": "787f8b3bdf10aa44dc57fd753f154b567dacff33a612b5ea2b837171d3a8bf69"
+    }
+  ]
+}
