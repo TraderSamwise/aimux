@@ -2145,6 +2145,17 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
     if args.first().map(AsRef::as_ref) != Some("worktree") {
         return None;
     }
+    if args.len() == 1 {
+        return Some(CoreWorktreeArgs {
+            subcommand: "list".to_owned(),
+            project: None,
+            name: None,
+            path: None,
+            yes: false,
+            include_active: false,
+            json: false,
+        });
+    }
     let subcommand = args.get(1).map(AsRef::as_ref)?;
     if !matches!(
         subcommand,
@@ -3081,7 +3092,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         }
         (Some("thread"), Some("send")) => thread_positional_count(args) >= 2,
         (Some("thread"), Some("open")) => parse_core_thread_args(args).is_some(),
-        (Some("worktree"), Some("list" | "cleanup-caches")) => true,
+        (Some("worktree"), None) | (Some("worktree"), Some("list" | "cleanup-caches")) => true,
         (
             Some("worktree"),
             Some("create" | "remove" | "graveyard" | "resurrect" | "delete-graveyard"),

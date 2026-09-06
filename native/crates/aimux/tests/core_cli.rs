@@ -906,6 +906,16 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
         }
     );
 
+    let bare = classify_core_cli(&["worktree"], &context(true, true)).expect("bare worktree plan");
+    assert_eq!(bare.operation, CoreCliOperation::WorktreeList);
+    assert_eq!(
+        bare.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/list-text?project=%2Frepo".into(),
+            body: None,
+        }
+    );
+
     let create = classify_core_cli(&["worktree", "create", "feature"], &context(true, true))
         .expect("worktree create plan");
     assert_eq!(create.operation, CoreCliOperation::WorktreeCreate);

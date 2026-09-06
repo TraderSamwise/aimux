@@ -1783,7 +1783,7 @@ where
         }
         (
             "worktree",
-            "list" | "create" | "cleanup-caches" | "remove" | "graveyard" | "resurrect"
+            "" | "list" | "create" | "cleanup-caches" | "remove" | "graveyard" | "resurrect"
             | "delete-graveyard",
         ) => {
             let parsed = parse_core_worktree_args(&args).ok_or_else(|| {
