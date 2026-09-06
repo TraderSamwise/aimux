@@ -91,7 +91,12 @@ function TopLevelExperienceNav() {
             key={option.id}
             accessibilityLabel={option.label}
             onPress={() => {
-              if (!selected) router.navigate(option.href);
+              if (selected) return;
+              if (option.id === "inbox") {
+                router.push(option.href);
+                return;
+              }
+              router.navigate(option.href);
             }}
             className={cn(
               "h-9 flex-row items-center justify-center active:bg-accent",

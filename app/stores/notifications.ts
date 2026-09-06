@@ -1,6 +1,7 @@
 import { atom } from "jotai";
-import { atomFamily } from "jotai/utils";
+import { atomFamily, atomWithStorage, unwrap } from "jotai/utils";
 import type { NotificationRecord } from "@/lib/api";
+import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
 
 export interface ProjectNotificationFeed {
   notifications: NotificationRecord[];
@@ -34,6 +35,110 @@ const emptyNotificationFeedResource = (): NotificationFeedResource => ({
   stale: false,
   updatedAt: null,
 });
+
+export const NOTIFICATION_LOCAL_UNREAD_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+export interface NotificationLocalReadState {
+  readAtByKey: Record<string, string>;
+}
+
+const defaultNotificationLocalReadState: NotificationLocalReadState = { readAtByKey: {} };
+
+const asyncNotificationLocalReadStateAtom = atomWithStorage<NotificationLocalReadState>(
+  "aimux-notification-read-state",
+  defaultNotificationLocalReadState,
+  createSsrSafeJsonStorage<NotificationLocalReadState>(),
+  { getOnInit: true },
+);
+
+export const notificationLocalReadStateAtom = unwrap(
+  asyncNotificationLocalReadStateAtom,
+  (previous) => previous ?? defaultNotificationLocalReadState,
+);
+
+export function notificationLocalReadKey(
+  projectPath: string | null | undefined,
+  notificationId: string | null | undefined,
+): string | null {
+  const normalizedProjectPath = projectPath?.trim();
+  const normalizedNotificationId = notificationId?.trim();
+  if (!normalizedProjectPath || !normalizedNotificationId) return null;
+  return `${normalizedProjectPath}\u0000${normalizedNotificationId}`;
+}
+
+function notificationIsInsideUnreadWindow(
+  notification: NotificationRecord,
+  nowMs: number,
+): boolean {
+  const createdAtMs = Date.parse(notification.createdAt);
+  if (!Number.isFinite(createdAtMs)) return true;
+  return nowMs - createdAtMs <= NOTIFICATION_LOCAL_UNREAD_WINDOW_MS;
+}
+
+export function notificationEffectiveUnread(input: {
+  projectPath: string | null | undefined;
+  notification: NotificationRecord;
+  readState: NotificationLocalReadState;
+  nowMs?: number;
+}): boolean {
+  const { projectPath, notification, readState, nowMs = Date.now() } = input;
+  if (!notification.unread) return false;
+  if (!notificationIsInsideUnreadWindow(notification, nowMs)) return false;
+  const key = notificationLocalReadKey(projectPath, notification.id);
+  return key ? !readState.readAtByKey[key] : true;
+}
+
+export function applyNotificationLocalReadState(
+  projectPath: string | null | undefined,
+  notifications: NotificationRecord[],
+  readState: NotificationLocalReadState,
+  nowMs = Date.now(),
+): NotificationRecord[] {
+  return notifications.map((notification) => {
+    const unread = notificationEffectiveUnread({ projectPath, notification, readState, nowMs });
+    return unread === notification.unread ? notification : { ...notification, unread };
+  });
+}
+
+function pruneReadAtByKey(
+  readAtByKey: Record<string, string>,
+  nowMs: number,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [key, readAt] of Object.entries(readAtByKey)) {
+    const readAtMs = Date.parse(readAt);
+    if (!Number.isFinite(readAtMs) || nowMs - readAtMs <= NOTIFICATION_LOCAL_UNREAD_WINDOW_MS) {
+      next[key] = readAt;
+    }
+  }
+  return next;
+}
+
+export const markNotificationRecordsReadLocalAtom = atom(
+  null,
+  (
+    get,
+    set,
+    input: {
+      projectPath: string | null | undefined;
+      ids: Iterable<string | null | undefined>;
+      readAt?: string;
+    },
+  ) => {
+    const nowMs = Date.now();
+    const readAt = input.readAt ?? new Date(nowMs).toISOString();
+    const previous = get(notificationLocalReadStateAtom);
+    const readAtByKey = pruneReadAtByKey(previous.readAtByKey, nowMs);
+    let changed = false;
+    for (const id of input.ids) {
+      const key = notificationLocalReadKey(input.projectPath, id);
+      if (!key || readAtByKey[key] === readAt) continue;
+      readAtByKey[key] = readAt;
+      changed = true;
+    }
+    if (changed) set(asyncNotificationLocalReadStateAtom, { readAtByKey });
+  },
+);
 
 export const notificationFeedResourceFamily = atomFamily((_projectPath: string) =>
   atom<NotificationFeedResource>(emptyNotificationFeedResource()),

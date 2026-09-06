@@ -31,12 +31,15 @@ import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-l
 import { useRouteProject } from "@/lib/use-route-project";
 import { desktopStateFamily } from "@/stores/desktopState";
 import {
+  applyNotificationLocalReadState,
   applyNotificationFeedFailureAtom,
   applyNotificationFeedSuccessAtom,
   beginNotificationFeedRefreshAtom,
   kickNotificationFeedRefreshAtom,
+  markNotificationRecordsReadLocalAtom,
   notificationFeedErrorFamily,
   notificationFeedFamily,
+  notificationLocalReadStateAtom,
 } from "@/stores/notifications";
 import { selectedSessionIdAtom } from "@/stores/projects";
 import {
@@ -274,6 +277,8 @@ export default function NotificationsScreen() {
   const beginNotificationFeedRefresh = useSetAtom(beginNotificationFeedRefreshAtom);
   const applyNotificationFeedSuccess = useSetAtom(applyNotificationFeedSuccessAtom);
   const applyNotificationFeedFailure = useSetAtom(applyNotificationFeedFailureAtom);
+  const readState = useAtomValue(notificationLocalReadStateAtom);
+  const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const kickRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
   const securityEvents = useAtomValue(securityEventsAtom);
@@ -285,7 +290,10 @@ export default function NotificationsScreen() {
   const searchParams = useGlobalSearchParams<{ lens?: string | string[] }>();
   const lens = resolveLens(cleanSearchValue(searchParams.lens));
 
-  const notificationRecords = useMemo(() => feed?.notifications ?? [], [feed?.notifications]);
+  const notificationRecords = useMemo(
+    () => applyNotificationLocalReadState(projectPath, feed?.notifications ?? [], readState),
+    [feed?.notifications, projectPath, readState],
+  );
   const forYou = useMemo(
     () =>
       buildForYouFeed({
@@ -297,7 +305,7 @@ export default function NotificationsScreen() {
   );
   const visibleCards =
     lens === "all" ? forYou.cards : forYou.cards.filter((card) => card.kind === lens);
-  const unreadCount = feed?.unreadCount ?? 0;
+  const unreadCount = notificationRecords.filter((record) => record.unread).length;
   const lastUpdated = feed?.fetchedAt ? relativeTime(feed.fetchedAt) : "";
   const hasNotifications = notificationRecords.length > 0;
   const hasSecurityEvents = securityEvents.length > 0;
@@ -376,9 +384,12 @@ export default function NotificationsScreen() {
     ],
   );
 
-  async function openCard(card: ForYouCard) {
-    if (card.notificationId && card.unread) {
-      await mutate(`open:${card.notificationId}`, "read", { id: card.notificationId });
+  function openCard(card: ForYouCard) {
+    if (card.notificationId) {
+      markNotificationsReadLocal({ projectPath, ids: [card.notificationId] });
+      if (card.unread) {
+        void mutate(`open:${card.notificationId}`, "read", { id: card.notificationId });
+      }
     }
     if (card.sessionId) {
       selectSession(card.sessionId);
@@ -450,7 +461,13 @@ export default function NotificationsScreen() {
           variant="outline"
           size="sm"
           disabled={!endpoint || unreadCount === 0 || busy !== null}
-          onPress={() => void mutate("read-all", "read")}
+          onPress={() => {
+            markNotificationsReadLocal({
+              projectPath,
+              ids: notificationRecords.filter((record) => record.unread).map((record) => record.id),
+            });
+            void mutate("read-all", "read");
+          }}
           className="gap-1.5"
         >
           <Check size={14} color={foregroundIconColor} />
@@ -519,11 +536,11 @@ export default function NotificationsScreen() {
             card={card}
             busy={busy !== null}
             onOpen={(item) => void openCard(item)}
-            onRead={(item) =>
-              item.notificationId
-                ? void mutate(`read:${item.notificationId}`, "read", { id: item.notificationId })
-                : undefined
-            }
+            onRead={(item) => {
+              if (!item.notificationId) return;
+              markNotificationsReadLocal({ projectPath, ids: [item.notificationId] });
+              void mutate(`read:${item.notificationId}`, "read", { id: item.notificationId });
+            }}
             onClear={(item) =>
               item.notificationId
                 ? void mutate(`clear:${item.notificationId}`, "clear", {

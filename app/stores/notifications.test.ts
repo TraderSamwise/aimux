@@ -3,14 +3,20 @@ import { describe, expect, it } from "vitest";
 
 import type { NotificationRecord } from "@/lib/api";
 import {
+  applyNotificationLocalReadState,
   applyNotificationFeedFailureAtom,
   applyNotificationFeedSuccessAtom,
   beginNotificationFeedRefreshAtom,
   clearNotificationFeedResourceAtom,
+  markNotificationRecordsReadLocalAtom,
+  notificationEffectiveUnread,
   notificationFeedErrorFamily,
   notificationFeedFamily,
   notificationFeedResourceFamily,
+  notificationLocalReadKey,
+  notificationLocalReadStateAtom,
   notificationUnreadCountFamily,
+  NOTIFICATION_LOCAL_UNREAD_WINDOW_MS,
   type ProjectNotificationFeed,
 } from "./notifications";
 
@@ -172,5 +178,80 @@ describe("notification feed resource lifecycle", () => {
     });
 
     expect(store.get(notificationUnreadCountFamily(projectPath))).toBe(3);
+  });
+});
+
+describe("local notification read state", () => {
+  it("keys reads by project path and notification id", () => {
+    expect(notificationLocalReadKey("/repo", "notice-1")).toBe("/repo\u0000notice-1");
+    expect(notificationLocalReadKey(" ", "notice-1")).toBeNull();
+    expect(notificationLocalReadKey("/repo", "")).toBeNull();
+  });
+
+  it("treats locally read notifications as read on the same device", () => {
+    const readState = {
+      readAtByKey: {
+        [notificationLocalReadKey("/repo", "notice-1")!]: "2026-01-01T00:05:00.000Z",
+      },
+    };
+
+    expect(
+      notificationEffectiveUnread({
+        projectPath: "/repo",
+        notification: notification("notice-1"),
+        readState,
+        nowMs: Date.parse("2026-01-01T00:10:00.000Z"),
+      }),
+    ).toBe(false);
+    expect(
+      notificationEffectiveUnread({
+        projectPath: "/other",
+        notification: notification("notice-1"),
+        readState,
+        nowMs: Date.parse("2026-01-01T00:10:00.000Z"),
+      }),
+    ).toBe(true);
+  });
+
+  it("expires unread status after the local unread window", () => {
+    const record = notification("notice-1");
+    const nowMs = Date.parse(record.createdAt) + NOTIFICATION_LOCAL_UNREAD_WINDOW_MS + 1;
+
+    expect(
+      notificationEffectiveUnread({
+        projectPath: "/repo",
+        notification: record,
+        readState: { readAtByKey: {} },
+        nowMs,
+      }),
+    ).toBe(false);
+  });
+
+  it("applies local read state without mutating notification records", () => {
+    const record = notification("notice-1");
+    const readState = {
+      readAtByKey: {
+        [notificationLocalReadKey("/repo", "notice-1")!]: "2026-01-01T00:05:00.000Z",
+      },
+    };
+
+    const [updated] = applyNotificationLocalReadState("/repo", [record], readState);
+
+    expect(record.unread).toBe(true);
+    expect(updated).toMatchObject({ id: "notice-1", unread: false });
+  });
+
+  it("persists local reads through the write atom", () => {
+    const store = createStore();
+
+    store.set(markNotificationRecordsReadLocalAtom, {
+      projectPath: "/repo",
+      ids: ["notice-1", undefined],
+      readAt: "2026-01-01T00:05:00.000Z",
+    });
+
+    expect(store.get(notificationLocalReadStateAtom).readAtByKey).toMatchObject({
+      [notificationLocalReadKey("/repo", "notice-1")!]: "2026-01-01T00:05:00.000Z",
+    });
   });
 });

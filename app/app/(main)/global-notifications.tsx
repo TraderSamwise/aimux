@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
-import { listNotifications } from "@/lib/api";
+import { listNotifications, markNotificationsRead } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   buildViewHref,
@@ -26,6 +26,11 @@ import {
   settleGlobalNotificationRefreshAtom,
   type GlobalNotificationRow,
 } from "@/stores/globalInbox";
+import {
+  notificationEffectiveUnread,
+  notificationLocalReadStateAtom,
+  markNotificationRecordsReadLocalAtom,
+} from "@/stores/notifications";
 import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 function relativeTime(value: string): string {
@@ -60,6 +65,8 @@ export default function GlobalNotificationsScreen() {
   const applySuccess = useSetAtom(applyGlobalNotificationSuccessAtom);
   const applyFailure = useSetAtom(applyGlobalNotificationFailureAtom);
   const settleRefresh = useSetAtom(settleGlobalNotificationRefreshAtom);
+  const readState = useAtomValue(notificationLocalReadStateAtom);
+  const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const getTokenRef = useRef(getToken);
 
   const onlineProjects = useMemo(
@@ -79,7 +86,23 @@ export default function GlobalNotificationsScreen() {
   const onlineProjectsRef = useRef(onlineProjects);
   const onlineProjectKeyRef = useRef(onlineProjectKey);
   const resourceRef = useRef(resource);
-  const rows = resource.value?.rows ?? [];
+  const rows = useMemo(
+    () =>
+      (resource.value?.rows ?? [])
+        .map((row) => ({
+          ...row,
+          notification: {
+            ...row.notification,
+            unread: notificationEffectiveUnread({
+              projectPath: row.projectPath,
+              notification: row.notification,
+              readState,
+            }),
+          },
+        }))
+        .sort(sortNotificationRows),
+    [readState, resource.value?.rows],
+  );
   const errors = [...(resource.value?.errors ?? []), ...(resource.error ? [resource.error] : [])];
   const loading = resource.pending;
   const unreadCount = rows.filter((row) => row.notification.unread).length;
@@ -161,6 +184,18 @@ export default function GlobalNotificationsScreen() {
   }, [onlineProjectKey, refresh]);
 
   function openRow(row: GlobalNotificationRow) {
+    markNotificationsReadLocal({ projectPath: row.projectPath, ids: [row.notification.id] });
+    void (async () => {
+      const project = onlineProjectsRef.current.find((item) => item.path === row.projectPath);
+      const endpoint = project ? getProjectServiceEndpoint(project) : null;
+      if (!endpoint) return;
+      try {
+        const token = await getTokenRef.current();
+        await markNotificationsRead(endpoint, { id: row.notification.id }, { token });
+      } catch {
+        // Local read state keeps the row settled even if the project host drops mid-tap.
+      }
+    })();
     selectProject(row.projectPath);
     const sessionId = row.notification.sessionId;
     if (sessionId) {
@@ -170,7 +205,7 @@ export default function GlobalNotificationsScreen() {
         window.location.assign(String(webHref));
         return;
       }
-      router.navigate(detailHrefForPath("/project", "agent", sessionId, row.projectPath));
+      router.push(detailHrefForPath("/project", "agent", sessionId, row.projectPath));
       return;
     }
     const inboxHref = buildViewPath("/notifications", { project: row.projectPath });
@@ -178,7 +213,7 @@ export default function GlobalNotificationsScreen() {
       window.location.assign(String(inboxHref));
       return;
     }
-    router.navigate(buildViewHref("/notifications", { project: row.projectPath }));
+    router.push(buildViewHref("/notifications", { project: row.projectPath }));
   }
 
   return (
