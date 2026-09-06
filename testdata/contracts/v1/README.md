@@ -258,6 +258,13 @@ Priority fixture groups:
   null-endpoint, and nonsensical-port candidates captured by running TypeScript
   `proxy-project-binding`.
 
+## Plugin
+
+- `plugin/runtime.json`: plugin alert derivation, bundled default wrapper
+  seeding/deletion behavior, failed-start cleanup status, and invalid module
+  shape reporting captured by running TypeScript `plugin-runtime`; wrapper and
+  startup cases are ignored checklists until the Rust plugin runtime exists.
+
 ## Graveyard
 
 - `graveyard/cleanup.json`: graveyard cleanup plan cutoffs, retention

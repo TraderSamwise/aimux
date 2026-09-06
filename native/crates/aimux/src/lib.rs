@@ -59,6 +59,7 @@ pub mod local_ui_server;
 pub mod logs;
 pub mod managed_launch_env;
 pub mod paths;
+pub mod plugin_runtime_contract;
 pub mod process_inspector;
 pub mod project_api_contract;
 pub mod project_catalog;
