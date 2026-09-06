@@ -64,6 +64,12 @@ Priority fixture groups:
   shared-session mapping/equality/merge/hydration behavior captured by running
   TypeScript app state helpers.
 
+## App Runtime
+
+- `app-runtime/projection.json`: app runtime brand selection and OpenRig-style
+  project/worktree/agent/service topology projection captured by running
+  TypeScript `runtime-brand` and `openrig-topology` helpers.
+
 ## Agent Output
 
 - `agent-display/labels.json`: app generated-label detection, tool-name
