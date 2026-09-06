@@ -796,6 +796,9 @@ Priority fixture groups:
 - `terminal/host.json`: raw-mode and terminal-state restore escape-sequence
   writes, including focus-reporting disable/enable behavior, captured by
   running TypeScript `TerminalHost`.
+- `terminal/key-parser.json`: carriage-return/line-feed Enter normalization,
+  Alt+Enter normalization, and focus-report/key splitting captured by running
+  TypeScript `parseKeys`.
 
 ## Transcript
 
