@@ -6,8 +6,9 @@
 - Cloudflare account with Workers + Durable Objects enabled
 - Domain: aimux.app with DNS managed by Cloudflare
 - Vercel account (for the web app) or EAS (for native builds)
-- Node.js 24+ on machines running the local aimux daemon; remote relay mode
-  uses the runtime `WebSocket` implementation shipped with Node 24+
+- Node.js 24+ and Yarn for source builds, app/relay development, and release
+  jobs. Installed local CLI/daemon/project-service assets run from the packaged
+  native binary.
 
 ## 1. Clerk Setup
 
@@ -196,8 +197,8 @@ a broken release.
    to the GitHub Release, which is created with generated notes.
 2. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
    publishing (OIDC, no stored token). It fails fast if `package.json`'s version
-   does not match the tag, and stages the macOS notifier helpers from the
-   release assets so the npm package carries them.
+   does not match the tag, and stages the native CLI binaries plus macOS
+   notifier helpers from the release assets so the npm package carries them.
 3. **Homebrew tap** — rewrites `Formula/aimux.rb` in
    `TraderSamwise/homebrew-aimux` with the new version, URLs, and SHA256 values,
    using the `HOMEBREW_TAP_TOKEN` secret.
