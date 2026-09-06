@@ -96,6 +96,7 @@ pub mod tmux_exec_metrics;
 pub mod tmux_expose;
 pub mod tmux_expose_hot_snapshot;
 pub mod tmux_expose_hot_snapshot_worker;
+pub mod tmux_expose_preview_sanitize;
 pub mod tmux_query_memo;
 pub mod tmux_runtime_stop;
 pub mod tmux_session_transport;
