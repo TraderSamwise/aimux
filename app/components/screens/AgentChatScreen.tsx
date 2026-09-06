@@ -93,7 +93,6 @@ import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
   chatCommandForNavigationFocus,
-  chatDistanceFromEnd,
   chatPolicyAfterNavigationFocus,
   chatPolicyAfterUserScroll,
   createChatScrollPolicy,
@@ -147,7 +146,6 @@ import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_HORIZONTAL_PADDING = 32;
-const CHAT_SCROLL_DEBUG_UPDATE_INTERVAL_MS = 250;
 const CHAT_ASSISTANT_BUBBLE_MAX_RATIO = 0.9;
 const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 12.4;
 const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
@@ -156,17 +154,6 @@ const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 type ChatScrollHandle = Pick<ScrollView, "scrollToEnd">;
 type ChatSessionViewportHandle = {
   showNewest: () => void;
-};
-type ChatScrollDebugSnapshot = {
-  contentHeight: number;
-  distanceFromEnd: number;
-  event: string;
-  intent: ChatScrollPolicy["intent"];
-  lastCommandReason: string | null;
-  liveMessageCount: number;
-  offsetY: number;
-  visibleMessageCount: number;
-  viewportHeight: number;
 };
 const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
@@ -2168,8 +2155,6 @@ const AgentChatSessionViewport = React.forwardRef<
   const [visibleChatTranscript, setVisibleChatTranscript] = useState<
     ChatVisibleTranscript<ChatMessage>
   >(() => liveChatTranscript);
-  const [chatScrollDebugSnapshot, setChatScrollDebugSnapshot] =
-    useState<ChatScrollDebugSnapshot | null>(null);
   const chatScrollRef = useRef<ChatScrollHandle | null>(null);
   const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
     contentHeight: 0,
@@ -2177,8 +2162,6 @@ const AgentChatSessionViewport = React.forwardRef<
     viewportHeight: 0,
   });
   const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
-  const chatScrollDebugLastPublishAtRef = useRef(0);
-  const chatScrollDebugSnapshotRef = useRef<ChatScrollDebugSnapshot | null>(null);
   const chatScrollFrameRef = useRef<number | null>(null);
   const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
   const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
@@ -2203,57 +2186,21 @@ const AgentChatSessionViewport = React.forwardRef<
     applyVisibleChatTranscript(live);
   }, [applyVisibleChatTranscript, sessionKey]);
 
-  const publishChatScrollDebugSnapshot = useCallback(
-    (event: string, metrics = chatScrollMetricsRef.current, force = false) => {
-      if (!__DEV__) return;
-      const previousSnapshot = chatScrollDebugSnapshotRef.current;
-      const snapshot: ChatScrollDebugSnapshot = {
-        contentHeight: metrics.contentHeight,
-        distanceFromEnd: chatDistanceFromEnd(metrics),
-        event,
-        intent: chatScrollPolicyRef.current.intent,
-        lastCommandReason: previousSnapshot?.lastCommandReason ?? null,
-        liveMessageCount: liveChatTranscriptRef.current.messages.length,
-        offsetY: metrics.offsetY,
-        visibleMessageCount: visibleChatTranscriptRef.current.messages.length,
-        viewportHeight: metrics.viewportHeight,
-      };
-      const commandPrefix = "scrollToEnd:";
-      if (event.startsWith(commandPrefix)) {
-        snapshot.lastCommandReason = event.slice(commandPrefix.length);
-      }
-      chatScrollDebugSnapshotRef.current = snapshot;
-      const now = Date.now();
-      if (
-        !force &&
-        now - chatScrollDebugLastPublishAtRef.current < CHAT_SCROLL_DEBUG_UPDATE_INTERVAL_MS
-      ) {
-        return;
-      }
-      chatScrollDebugLastPublishAtRef.current = now;
-      setChatScrollDebugSnapshot(snapshot);
-    },
-    [],
-  );
-
   const cancelPendingChatScroll = useCallback(() => {
     if (chatScrollFrameRef.current === null) return;
-    const reason = chatScrollPendingCommandReasonRef.current ?? "unknown";
     cancelAnimationFrame(chatScrollFrameRef.current);
     chatScrollFrameRef.current = null;
     chatScrollPendingCommandReasonRef.current = null;
-    publishChatScrollDebugSnapshot(`scrollToEnd:canceled:${reason}`);
-  }, [publishChatScrollDebugSnapshot]);
+  }, []);
 
   const executeChatScrollCommand = useCallback(
     (command: ChatScrollCommand, noneReason = "unknown") => {
       if (command.kind === "none") {
-        publishChatScrollDebugSnapshot(`scrollToEnd:none:${noneReason}`);
+        void noneReason;
         return;
       }
       cancelPendingChatScroll();
       chatScrollPendingCommandReasonRef.current = command.reason;
-      publishChatScrollDebugSnapshot(`scrollToEnd:scheduled:${command.reason}`);
       chatScrollFrameRef.current = requestAnimationFrame(() => {
         chatScrollFrameRef.current = null;
         chatScrollPendingCommandReasonRef.current = null;
@@ -2262,14 +2209,12 @@ const AgentChatSessionViewport = React.forwardRef<
           command.reason !== "navigation" &&
           chatScrollPolicyRef.current.intent !== "pinned"
         ) {
-          publishChatScrollDebugSnapshot(`scrollToEnd:skipped:${command.reason}`);
           return;
         }
         chatScrollRef.current?.scrollToEnd({ animated: command.animated });
-        publishChatScrollDebugSnapshot(`scrollToEnd:executed:${command.reason}`);
       });
     },
-    [cancelPendingChatScroll, publishChatScrollDebugSnapshot],
+    [cancelPendingChatScroll],
   );
 
   const showNewest = useCallback(() => {
@@ -2308,7 +2253,6 @@ const AgentChatSessionViewport = React.forwardRef<
         ...chatScrollMetricsRef.current,
         viewportHeight: event.nativeEvent.layout.height,
       };
-      publishChatScrollDebugSnapshot("layout");
       const layoutKey = sessionKey || "unscoped";
       if (chatInitialLayoutKeyRef.current !== layoutKey) {
         chatInitialLayoutKeyRef.current = layoutKey;
@@ -2317,7 +2261,7 @@ const AgentChatSessionViewport = React.forwardRef<
       }
       executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
     },
-    [executeChatScrollCommand, publishChatScrollDebugSnapshot, sessionKey],
+    [executeChatScrollCommand, sessionKey],
   );
 
   const handleChatContentSizeChange = useCallback(
@@ -2326,10 +2270,9 @@ const AgentChatSessionViewport = React.forwardRef<
         ...chatScrollMetricsRef.current,
         contentHeight,
       };
-      publishChatScrollDebugSnapshot("content-size");
       executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
     },
-    [executeChatScrollCommand, publishChatScrollDebugSnapshot],
+    [executeChatScrollCommand],
   );
 
   const handleChatScroll = useCallback(
@@ -2349,17 +2292,8 @@ const AgentChatSessionViewport = React.forwardRef<
       if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
         showLiveChatTranscript();
       }
-      const transitionEvent =
-        previousIntent === nextPolicy.intent
-          ? "scroll"
-          : `policy:${previousIntent}->${nextPolicy.intent}`;
-      publishChatScrollDebugSnapshot(
-        transitionEvent,
-        metrics,
-        previousIntent !== nextPolicy.intent,
-      );
     },
-    [cancelPendingChatScroll, publishChatScrollDebugSnapshot, showLiveChatTranscript],
+    [cancelPendingChatScroll, showLiveChatTranscript],
   );
 
   useEffect(() => {
@@ -2383,41 +2317,9 @@ const AgentChatSessionViewport = React.forwardRef<
         serviceEndpoint={serviceEndpoint}
         dividerWidth={dividerWidth}
       />
-      {__DEV__ && chatScrollDebugSnapshot ? (
-        <ChatScrollDebugOverlay snapshot={chatScrollDebugSnapshot} />
-      ) : null}
     </View>
   );
 });
-
-function ChatScrollDebugOverlay({ snapshot }: { snapshot: ChatScrollDebugSnapshot }) {
-  if (!__DEV__) return null;
-  return (
-    <View
-      pointerEvents="none"
-      className="absolute right-2 top-2 z-50 rounded-md border border-border bg-background/90 px-2 py-1"
-      style={{ maxWidth: 240 }}
-    >
-      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
-        {`intent ${snapshot.intent} · end ${Math.round(snapshot.distanceFromEnd)}`}
-      </Text>
-      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
-        {`y ${Math.round(snapshot.offsetY)} · vh ${Math.round(snapshot.viewportHeight)} · ch ${Math.round(
-          snapshot.contentHeight,
-        )}`}
-      </Text>
-      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
-        {`event ${snapshot.event}`}
-      </Text>
-      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
-        {`cmd ${snapshot.lastCommandReason ?? "none"}`}
-      </Text>
-      <Text className="font-mono text-[10px] leading-3 text-muted-foreground">
-        {`msgs ${snapshot.visibleMessageCount}/${snapshot.liveMessageCount}`}
-      </Text>
-    </View>
-  );
-}
 
 type AgentChatTranscriptProps = {
   dividerWidth: number;
