@@ -5,6 +5,7 @@ use aimux::core_command_client::request_core_command;
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::runtime::run_daemon_internal;
 use aimux::daemon_state::get_daemon_base_url;
+use aimux::dashboard_internal::{NativeDashboardOptions, run_native_dashboard_internal};
 use aimux::launcher_env::{CliEntry, cli_entry_for};
 use aimux::local_ui_server::{
     DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
@@ -64,6 +65,19 @@ enum Command {
         project_id: Option<String>,
         #[arg(long = "project-root")]
         project_root: Option<PathBuf>,
+    },
+    #[command(name = "__dashboard-internal-native", hide = true)]
+    DashboardInternalNative {
+        #[arg(long = "project-root")]
+        project_root: Option<PathBuf>,
+        #[arg(long = "desktop-state-file")]
+        desktop_state_file: Option<PathBuf>,
+        #[arg(long, default_value_t = 120)]
+        cols: usize,
+        #[arg(long, default_value_t = 40)]
+        rows: usize,
+        #[arg(long)]
+        once: bool,
     },
 }
 
@@ -154,6 +168,22 @@ fn main() -> Result<ExitCode> {
             })?;
             Ok(())
         }
+        Command::DashboardInternalNative {
+            project_root,
+            desktop_state_file,
+            cols,
+            rows,
+            once,
+        } => {
+            run_native_dashboard_internal(NativeDashboardOptions {
+                project_root: project_root.unwrap_or(std::env::current_dir()?),
+                desktop_state_file,
+                cols,
+                rows,
+                once,
+            })?;
+            Ok(())
+        }
     }?;
     Ok(ExitCode::SUCCESS)
 }
@@ -166,6 +196,7 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, subcommand, ..] if command == "rewrite" && subcommand == "status" => true,
         [command, ..] if command == "ui" => true,
         [command, ..] if command == "__project-service-internal" => true,
+        [command, ..] if command == "__dashboard-internal-native" => true,
         _ => false,
     }
 }

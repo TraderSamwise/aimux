@@ -55,6 +55,50 @@ fn ui_command_stays_native_even_when_node_fallback_is_configured() {
     cleanup(root);
 }
 
+#[test]
+fn native_dashboard_internal_once_renders_snapshot_without_node_fallback() {
+    let root = temp_root("native-dashboard-internal");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+    let desktop_state_file = root.join("desktop-state.json");
+    fs::write(
+        &desktop_state_file,
+        include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json"),
+    )
+    .expect("write desktop-state fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .args([
+            "__dashboard-internal-native",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--desktop-state-file",
+            desktop_state_file.to_str().unwrap(),
+            "--cols",
+            "120",
+            "--rows",
+            "32",
+            "--once",
+        ])
+        .output()
+        .expect("run native aimux");
+
+    assert!(output.status.success());
+    assert!(
+        !log.exists(),
+        "native dashboard should not invoke node fallback"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("aimux"));
+    assert!(stdout.contains("agent multiplexer"));
+    assert!(stdout.contains("Main Checkout"));
+    assert!(stdout.contains("feature-a"));
+    assert!(stdout.contains("native"));
+    cleanup(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
