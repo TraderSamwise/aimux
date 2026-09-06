@@ -25,11 +25,34 @@ describe("chat new message badge", () => {
     ).toBe(2);
   });
 
+  it("counts new messages when a rolling live window keeps the same length", () => {
+    expect(
+      chatFrozenNewMessageCount({
+        frozenMessages: [message("assistant:1"), message("assistant:2"), message("assistant:3")],
+        liveMessages: [message("assistant:2"), message("assistant:3"), message("assistant:4")],
+      }),
+    ).toBe(1);
+  });
+
+  it("counts new messages when the live window is not a strict frozen prefix", () => {
+    expect(
+      chatFrozenNewMessageCount({
+        frozenMessages: [message("assistant:1"), message("assistant:2"), message("assistant:3")],
+        liveMessages: [
+          message("assistant:2"),
+          message("assistant:3"),
+          message("assistant:4"),
+          message("assistant:5"),
+        ],
+      }),
+    ).toBe(2);
+  });
+
   it("ignores parser churn that rewrites older message identity", () => {
     expect(
       chatFrozenNewMessageCount({
         frozenMessages: [message("assistant:old")],
-        liveMessages: [message("assistant:rewritten"), message("assistant:new")],
+        liveMessages: [message("assistant:rewritten")],
       }),
     ).toBe(0);
   });
