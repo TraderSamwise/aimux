@@ -11,13 +11,14 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_worktree_states, read_runtime_topology,
     runtime_topology_path,
 };
-use crate::tmux::CapturePaneOptions;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::topology_desktop_session_list;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::query_params;
-use super::output_cache::AgentOutputCaptureCacheKey;
+use super::preview_snapshots::{
+    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot,
+};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 use super::usage::parse_recency_timestamp;
@@ -29,8 +30,6 @@ const DASHBOARD_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "of
 const DASHBOARD_SERVICE_STATUSES: &[&str] = &[
     "planned", "starting", "running", "stopped", "offline", "error",
 ];
-const DESKTOP_STATE_PREVIEW_CAPTURE_LINES: i64 = 40;
-const DESKTOP_STATE_PREVIEW_MAX_CHARS: usize = 8_192;
 
 pub fn route_desktop_state_request(
     context: &ProjectServiceRequestContext,
@@ -189,41 +188,20 @@ pub fn attach_desktop_state_previews(
         let Some(window_id) = string_field(session, "tmuxWindowId").map(str::to_owned) else {
             continue;
         };
-        let options = CapturePaneOptions {
-            start_line: Some(-DESKTOP_STATE_PREVIEW_CAPTURE_LINES),
-            end_line: None,
-            include_escapes: true,
-        };
-        let Ok((output, _coalesced)) = context.output_cache.capture_or_reuse(
-            AgentOutputCaptureCacheKey {
-                window_id: window_id.clone(),
-                options,
-            },
-            || runtime.capture_pane(&window_id, options),
+        let Some(preview) = capture_preview_snapshot(
+            context,
+            &window_id,
+            runtime,
+            DEFAULT_PREVIEW_CAPTURE_LINES,
+            DEFAULT_PREVIEW_MAX_CHARS,
         ) else {
             continue;
         };
-        let preview = json!({
-            "output": trailing_chars(&output, DESKTOP_STATE_PREVIEW_MAX_CHARS),
-            "capturedAt": now_iso(),
-            "source": "capture",
-            "windowId": window_id,
-            "startLine": -DESKTOP_STATE_PREVIEW_CAPTURE_LINES,
-            "lineCount": DESKTOP_STATE_PREVIEW_CAPTURE_LINES,
-        });
         if let Some(object) = session.as_object_mut() {
             object.insert("previewSnapshot".into(), preview);
         }
     }
     state
-}
-
-fn trailing_chars(value: &str, max_chars: usize) -> String {
-    let char_count = value.chars().count();
-    if char_count <= max_chars {
-        return value.to_owned();
-    }
-    value.chars().skip(char_count - max_chars).collect()
 }
 
 fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
@@ -710,18 +688,4 @@ fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
     {
         map.insert(key.into(), value);
     }
-}
-
-fn now_iso() -> String {
-    let now = time::OffsetDateTime::now_utc();
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        now.year(),
-        u8::from(now.month()),
-        now.day(),
-        now.hour(),
-        now.minute(),
-        now.second(),
-        now.millisecond()
-    )
 }

@@ -26,6 +26,7 @@ pub mod orchestration_routes;
 pub mod output_cache;
 pub mod output_metrics;
 pub mod plans;
+pub mod preview_snapshots;
 pub mod process;
 pub mod project_events;
 pub mod project_observability;
