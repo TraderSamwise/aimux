@@ -2,6 +2,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::atomic_write::write_text_atomic_fast;
 use crate::daemon_state::load_metadata_state;
@@ -13,6 +14,8 @@ use super::desktop_state::{DesktopStateInput, build_desktop_state};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+
+const STATUSLINE_STALE_MS: u128 = 8_000;
 
 pub fn route_statusline_refresh_request(
     context: &ProjectServiceRequestContext,
@@ -328,7 +331,7 @@ fn render_top_line(snapshot: &Value, project_root: &str, options: RenderOptions<
         "top",
         options,
     ));
-    segments.join("  |  ")
+    segments.join("  \u{00b7}  ")
 }
 
 fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptions<'_>) -> String {
@@ -336,7 +339,8 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
         .current_window
         .is_some_and(|window| window.starts_with("dashboard"))
     {
-        return render_dashboard_screens(string_field(snapshot, "dashboardScreen"));
+        return render_dashboard_screens(string_field(snapshot, "dashboardScreen"))
+            .join("  \u{00b7}  ");
     }
     let current_session_id = resolve_current_session_id(snapshot, project_root, options);
     let scoped_path = resolve_scoped_worktree_path(snapshot, project_root, options.current_path);
@@ -363,48 +367,50 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
         "bottom",
         options,
     ));
-    chips.join("  |  ")
+    chips.join("  \u{00b7}  ")
 }
 
 fn render_control_plane(snapshot: &Value) -> String {
+    if is_statusline_stale(snapshot) {
+        return "ctl stale".to_owned();
+    }
     let control = snapshot.get("controlPlane").and_then(Value::as_object);
     if control
         .and_then(|control| control.get("projectServiceAlive"))
         .and_then(Value::as_bool)
         == Some(false)
     {
-        "ctl svc down".to_owned()
+        "ctl svc\u{2193}".to_owned()
     } else if control
         .and_then(|control| control.get("daemonAlive"))
         .and_then(Value::as_bool)
         == Some(false)
     {
-        "ctl daemon down".to_owned()
+        "ctl daemon\u{2193}".to_owned()
     } else {
         "ctl ok".to_owned()
     }
 }
 
-fn render_dashboard_screens(active_screen: Option<&str>) -> String {
+fn render_dashboard_screens(active_screen: Option<&str>) -> Vec<String> {
     let active = active_screen.unwrap_or("dashboard");
     [
-        ("dashboard", "Dashboard"),
-        ("coordination", "Coordination"),
-        ("project", "Project"),
-        ("library", "Library"),
-        ("topology", "Topology"),
-        ("graveyard", "Graveyard"),
+        ("dashboard", "Dashboard", "d"),
+        ("coordination", "Coordination", "c"),
+        ("project", "Project", "p"),
+        ("library", "Library", "l"),
+        ("topology", "Topology", "t"),
+        ("graveyard", "Graveyard", "g"),
     ]
     .into_iter()
-    .map(|(key, label)| {
+    .map(|(key, label, hotkey)| {
         if key == active {
-            format!("[{label}]")
+            format!("#[fg=black,bg=yellow] {label} #[default]")
         } else {
-            label.to_owned()
+            render_dashboard_screen_hotkey(label, hotkey)
         }
     })
-    .collect::<Vec<_>>()
-    .join("  |  ")
+    .collect()
 }
 
 fn render_tasks(snapshot: &Value) -> Option<String> {
@@ -427,21 +433,37 @@ fn render_active_context(
     }
     let session_id = resolve_exact_current_session_id(snapshot, project_root, options)?;
     let metadata = snapshot.get("metadata")?.get(session_id)?;
-    let context = metadata.get("context").and_then(Value::as_object)?;
-    let worktree = string_field_value(context.get("worktreeName"))
-        .or_else(|| options.current_path.map(basename_like_node_posix))
+    let context = metadata.get("context").and_then(Value::as_object);
+    let worktree = options
+        .current_path
+        .map(basename_like_node_posix)
+        .or_else(|| context.and_then(|context| string_field_value(context.get("worktreeName"))))
         .map(|value| trim_text(value, 16));
-    let branch = string_field_value(context.get("branch")).map(|value| trim_text(value, 18));
+    let branch = context.and_then(|context| {
+        string_field_value(context.get("branch")).map(|value| trim_text(value, 18))
+    });
     let pr = context
-        .get("pr")
+        .and_then(|context| context.get("pr"))
         .and_then(|pr| pr.get("number"))
         .and_then(Value::as_i64)
         .map(|number| format!("PR #{number}"));
-    let parts = [worktree, branch, pr]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-    (!parts.is_empty()).then(|| parts.join(" @ "))
+    let service = metadata
+        .get("derived")
+        .and_then(|derived| derived.get("services"))
+        .and_then(Value::as_array)
+        .and_then(|services| services.first())
+        .and_then(render_service_context);
+    let parts = if let (Some(worktree), Some(branch)) = (worktree.clone(), branch.clone()) {
+        let mut parts = vec![format!("{worktree}@{branch}")];
+        parts.extend([pr, service].into_iter().flatten());
+        parts
+    } else {
+        [worktree, branch, pr, service]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+    };
+    (!parts.is_empty()).then(|| parts.join("  \u{00b7}  "))
 }
 
 fn render_active_metadata(
@@ -493,14 +515,51 @@ fn render_plugin_segments(
         .and_then(|metadata| metadata.get("statusline"))
         .and_then(|statusline| statusline.get(line))
         .and_then(Value::as_array)
-        .map(|segments| {
-            segments
-                .iter()
-                .filter_map(|segment| string_field(segment, "text"))
-                .map(|text| trim_text(text, 18))
-                .collect()
-        })
+        .map(|segments| segments.iter().filter_map(render_plugin_segment).collect())
         .unwrap_or_default()
+}
+
+fn render_plugin_segment(segment: &Value) -> Option<String> {
+    let text = trim_text(string_field(segment, "text")?, 18);
+    Some(
+        match string_field(segment, "tone").and_then(segment_tone_color) {
+            Some(color) => tmux_style(&text, color),
+            None => text,
+        },
+    )
+}
+
+fn segment_tone_color(tone: &str) -> Option<&'static str> {
+    match tone {
+        "info" => Some("cyan"),
+        "success" => Some("green"),
+        "warn" => Some("yellow"),
+        "error" => Some("red"),
+        _ => None,
+    }
+}
+
+fn render_dashboard_screen_hotkey(label: &str, hotkey: &str) -> String {
+    let lower = label.to_ascii_lowercase();
+    let Some(index) = lower.find(&hotkey.to_ascii_lowercase()) else {
+        return label.to_owned();
+    };
+    let end = index + hotkey.len();
+    format!(
+        "{}#[fg=yellow,bold]{}#[default]{}",
+        &label[..index],
+        &label[index..end],
+        &label[end..]
+    )
+}
+
+fn render_service_context(service: &Value) -> Option<String> {
+    if let Some(port) = number_field(service, "port") {
+        return Some(format!(":{port}"));
+    }
+    string_field(service, "url")
+        .map(strip_http_scheme)
+        .map(|url| trim_text(url, 18))
 }
 
 fn resolve_current_session_id(
@@ -514,10 +573,27 @@ fn resolve_current_session_id(
             .find(|session| string_field(session, "tmuxWindowId") == Some(window_id))
             .and_then(|session| string_field(session, "id").map(str::to_owned));
     }
-    if let Some(exact) = resolve_exact_current_session_id(snapshot, project_root, options) {
-        return Some(exact.to_owned());
+    if let Some(current_window) = options.current_window {
+        let scoped_path =
+            resolve_scoped_worktree_path(snapshot, project_root, options.current_path);
+        if let Some(session) = statusline_session_group(snapshot, "sessions")
+            .into_iter()
+            .find(|session| {
+                session_matches_scoped_window(session, &scoped_path, current_window, project_root)
+            })
+        {
+            return string_field(session, "id").map(str::to_owned);
+        }
+        if let Some(teammate) = statusline_session_group(snapshot, "teammates")
+            .into_iter()
+            .find(|session| {
+                session_matches_scoped_window(session, &scoped_path, current_window, project_root)
+            })
+        {
+            return string_field(teammate, "id").map(str::to_owned);
+        }
     }
-    all_statusline_sessions(snapshot)
+    statusline_session_group(snapshot, "sessions")
         .into_iter()
         .find(|session| session.get("active").and_then(Value::as_bool) == Some(true))
         .and_then(|session| string_field(session, "id").map(str::to_owned))
@@ -536,19 +612,28 @@ fn resolve_exact_current_session_id<'a>(
     }
     let current_window = options.current_window?;
     let scoped_path = resolve_scoped_worktree_path(snapshot, project_root, options.current_path);
-    let mut matches = all_statusline_sessions(snapshot)
+    let mut visible_matches = statusline_session_group(snapshot, "sessions")
         .into_iter()
         .filter(|session| {
-            normalize_path(string_field(session, "worktreePath"), project_root) == scoped_path
-        })
-        .filter(|session| {
-            string_field(session, "windowName") == Some(current_window)
-                || string_field(session, "label") == Some(current_window)
-                || string_field(session, "tool") == Some(current_window)
+            session_matches_scoped_window(session, &scoped_path, current_window, project_root)
         })
         .collect::<Vec<_>>();
-    (matches.len() == 1)
-        .then(|| matches.remove(0))
+    if visible_matches.len() == 1 {
+        return visible_matches
+            .pop()
+            .and_then(|session| string_field(session, "id"));
+    }
+    if visible_matches.len() > 1 {
+        return None;
+    }
+    let mut teammate_matches = statusline_session_group(snapshot, "teammates")
+        .into_iter()
+        .filter(|session| {
+            session_matches_scoped_window(session, &scoped_path, current_window, project_root)
+        })
+        .collect::<Vec<_>>();
+    (teammate_matches.len() == 1)
+        .then(|| teammate_matches.remove(0))
         .and_then(|session| string_field(session, "id"))
 }
 
@@ -577,6 +662,26 @@ fn all_statusline_sessions(snapshot: &Value) -> Vec<&Value> {
         sessions.extend(entries);
     }
     sessions
+}
+
+fn statusline_session_group<'a>(snapshot: &'a Value, key: &str) -> Vec<&'a Value> {
+    snapshot
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|entries| entries.iter().collect())
+        .unwrap_or_default()
+}
+
+fn session_matches_scoped_window(
+    session: &Value,
+    scoped_path: &str,
+    current_window: &str,
+    project_root: &str,
+) -> bool {
+    normalize_path(string_field(session, "worktreePath"), project_root) == scoped_path
+        && (string_field(session, "windowName") == Some(current_window)
+            || string_field(session, "label") == Some(current_window)
+            || string_field(session, "tool") == Some(current_window))
 }
 
 fn compact_session_title(session: &Value) -> String {
@@ -622,7 +727,10 @@ fn trim_text(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }
-    text.chars().take(max.saturating_sub(1)).collect::<String>() + "."
+    if max <= 1 {
+        return text.chars().take(max).collect();
+    }
+    text.chars().take(max.saturating_sub(1)).collect::<String>() + "\u{2026}"
 }
 
 fn array_field(value: &Value, key: &str) -> Vec<Value> {
@@ -651,6 +759,130 @@ fn trimmed_string(value: Option<&Value>) -> Option<String> {
 
 fn number_field(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(Value::as_i64)
+}
+
+fn strip_http_scheme(value: &str) -> &str {
+    value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+        .unwrap_or(value)
+}
+
+fn tmux_style(text: &str, color: &str) -> String {
+    format!("#[fg={color}]{text}#[default]")
+}
+
+fn is_statusline_stale(snapshot: &Value) -> bool {
+    let Some(updated_at) = string_field(snapshot, "updatedAt").and_then(parse_iso_millis) else {
+        return true;
+    };
+    now_epoch_millis().saturating_sub(updated_at) > STATUSLINE_STALE_MS
+}
+
+fn now_epoch_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
+fn parse_iso_millis(value: &str) -> Option<u128> {
+    let (date, time) = value.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i64>().ok()?;
+    let month = date_parts.next()?.parse::<i64>().ok()?;
+    let day = date_parts.next()?.parse::<i64>().ok()?;
+    if date_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let time = time.strip_suffix('Z')?;
+    let (hms, millis_text) = time.split_once('.').unwrap_or((time, "0"));
+    let mut time_parts = hms.split(':');
+    let hour = time_parts.next()?.parse::<i64>().ok()?;
+    let minute = time_parts.next()?.parse::<i64>().ok()?;
+    let second = time_parts.next()?.parse::<i64>().ok()?;
+    if time_parts.next().is_some()
+        || hour > 23
+        || minute > 59
+        || second > 59
+        || millis_text.len() > 3
+    {
+        return None;
+    }
+    let mut millis = millis_text.parse::<u128>().ok()?;
+    for _ in 0..(3 - millis_text.len()) {
+        millis *= 10;
+    }
+    let days = days_from_civil(year, month, day)?;
+    Some(
+        (((days as u128 * 24 + hour as u128) * 60 + minute as u128) * 60 + second as u128) * 1000
+            + millis,
+    )
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    (days >= 0).then_some(days)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn control_plane_marks_old_or_invalid_snapshots_stale() {
+        assert_eq!(
+            render_control_plane(&json!({ "updatedAt": "2026-01-01T00:00:00.000Z" })),
+            "ctl stale"
+        );
+        assert_eq!(
+            render_control_plane(&json!({ "updatedAt": "bad-date" })),
+            "ctl stale"
+        );
+    }
+
+    #[test]
+    fn name_only_exact_resolution_prefers_visible_sessions_before_teammates() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "id": "parent",
+                    "tool": "claude",
+                    "windowName": "claude",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                }
+            ],
+            "teammates": [
+                {
+                    "id": "reviewer",
+                    "tool": "claude",
+                    "windowName": "claude",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                }
+            ]
+        });
+        assert_eq!(
+            resolve_exact_current_session_id(
+                &snapshot,
+                "/repo",
+                RenderOptions {
+                    current_window: Some("claude"),
+                    current_path: Some("/repo"),
+                    ..RenderOptions::default()
+                }
+            ),
+            Some("parent")
+        );
+    }
 }
 
 fn insert_string(map: &mut Map<String, Value>, key: &str, value: &str) {

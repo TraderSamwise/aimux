@@ -33,9 +33,14 @@ fn statusline_refresh_writes_snapshot_and_tmux_artifacts() {
                     "codex-1".to_owned(),
                     json!({
                         "status": { "text": "ready" },
-                        "statusline": { "bottom": [{ "id": "plugin", "text": "plugin ok" }] },
-                        "context": { "worktreeName": "main", "branch": "master" },
-                        "derived": { "activity": "running", "attention": "normal", "unseenCount": 0 }
+                        "statusline": { "bottom": [{ "id": "plugin", "text": "plugin ok", "tone": "success" }] },
+                        "context": { "worktreeName": "main", "branch": "master", "pr": { "number": 7 } },
+                        "derived": {
+                            "activity": "running",
+                            "attention": "normal",
+                            "unseenCount": 0,
+                            "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+                        }
                     }),
                 ),
                 ("dead-only".to_owned(), json!({ "status": { "text": "drop" } })),
@@ -80,10 +85,24 @@ fn statusline_refresh_writes_snapshot_and_tmux_artifacts() {
         read_to_string(state_dir.join("tmux-statusline").join("top-dashboard.txt")).expect("top");
     assert!(top.contains("aimux "));
     assert!(top.contains("ctl ok"));
+    let agent_top =
+        read_to_string(state_dir.join("tmux-statusline").join("top-@1.txt")).expect("agent top");
+    assert!(agent_top.contains("  \u{00b7}  "));
+    assert!(agent_top.contains("@master"));
+    assert!(agent_top.contains("PR #7"));
+    assert!(agent_top.contains(":3000"));
     let bottom =
         read_to_string(state_dir.join("tmux-statusline").join("bottom-@1.txt")).expect("bottom");
     assert!(bottom.contains("[codex]"));
-    assert!(bottom.contains("plugin ok"));
+    assert!(bottom.contains("#[fg=green]plugin ok#[default]"));
+    let dashboard_bottom = read_to_string(
+        state_dir
+            .join("tmux-statusline")
+            .join("bottom-dashboard.txt"),
+    )
+    .expect("dashboard bottom");
+    assert!(dashboard_bottom.contains("#[fg=yellow,bold]P#[default]roject"));
+    assert!(dashboard_bottom.contains("#[fg=black,bg=yellow] Dashboard #[default]"));
     assert!(
         state_dir
             .join("tmux-statusline")
