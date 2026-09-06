@@ -1,0 +1,1765 @@
+{
+  "version": 1,
+  "source": "src/attachment-text.ts",
+  "generatedBy": "scripts/capture-model-contracts.mjs",
+  "description": "Attachment text recovery contracts captured by running recoverWrappedAttachments.",
+  "cases": [
+    {
+      "id": "attachment-text-001",
+      "name": "recovers mime type from wrap inside attachments path",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attach ments/att_one.png" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": ""
+      },
+      "inputSha256": "ee7b3db9f30362244a7cb301a64d26c7e9feb93eb688e1cd2346804980d42846"
+    },
+    {
+      "id": "attachment-text-002",
+      "name": "recovers attachment when wrap falls at column 30",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 b ytes): /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "97a696d151f2800ddac912e5dd686f48dff6a948a12b0106939b125cc8e64aca"
+    },
+    {
+      "id": "attachment-text-003",
+      "name": "recovers attachment when wrap falls at column 31",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 by tes): /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "fdd1840e7abdd78cb73d6c6691882696e62c68d7415f83cc4a461b4947736fbd"
+    },
+    {
+      "id": "attachment-text-004",
+      "name": "recovers attachment when wrap falls at column 32",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 byt es): /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "2c08e71cec81aedc628524da3fafd93feaac052b720170b999cfd9a53c1a7f23"
+    },
+    {
+      "id": "attachment-text-005",
+      "name": "recovers attachment when wrap falls at column 33",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 byte s): /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "ca2ab43cd70b7074bf440fbaf722c3dd31c9fb41847437e1252250bd0d40ded8"
+    },
+    {
+      "id": "attachment-text-006",
+      "name": "recovers attachment when wrap falls at column 34",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes ): /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "9bc232e60b9f88e681e862471b36f40f3235363d64d92e321e21303d0431577e"
+    },
+    {
+      "id": "attachment-text-007",
+      "name": "recovers attachment when wrap falls at column 35",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes) : /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "d3e5b936b21861492d6a43944d264289d45c317195d294f90b4cd5c0bdc11961"
+    },
+    {
+      "id": "attachment-text-008",
+      "name": "recovers attachment when wrap falls at column 36",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes):  /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "409e8f00ad394cf017fcafff3fd1f7ae699b1a4ad25505ac29c1e2a18d2eaa7f"
+    },
+    {
+      "id": "attachment-text-009",
+      "name": "recovers attachment when wrap falls at column 37",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes):  /srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "409e8f00ad394cf017fcafff3fd1f7ae699b1a4ad25505ac29c1e2a18d2eaa7f"
+    },
+    {
+      "id": "attachment-text-010",
+      "name": "recovers attachment when wrap falls at column 38",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): / srv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "b21fbb3fbe4099dc6329f6a793d26346a332184829533b93b26c289fe2c8bdd8"
+    },
+    {
+      "id": "attachment-text-011",
+      "name": "recovers attachment when wrap falls at column 39",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /s rv/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "8a1a851442bc3002621015ac79770eaf13a0017b396285fed4ea33e126c961dd"
+    },
+    {
+      "id": "attachment-text-012",
+      "name": "recovers attachment when wrap falls at column 40",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /sr v/grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "af7cb19c03708c80ca41d85f1c409b34440e34a1a69d23783662c9a8ed222951"
+    },
+    {
+      "id": "attachment-text-013",
+      "name": "recovers attachment when wrap falls at column 41",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv /grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "d217c3f201e9f1336aa8befb02fa7c3d10dddb4e232ef4e74fd3be92baaa4edd"
+    },
+    {
+      "id": "attachment-text-014",
+      "name": "recovers attachment when wrap falls at column 42",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/ grand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "b5e3acf657629bedeea103854a28c71c2e98bc98c870c6dbd622cea9fad41971"
+    },
+    {
+      "id": "attachment-text-015",
+      "name": "recovers attachment when wrap falls at column 43",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/g rand-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "fc5e35f1dde9dfc45554233382ced4faaf4410c216ad642e5cd30c360a7a2f2a"
+    },
+    {
+      "id": "attachment-text-016",
+      "name": "recovers attachment when wrap falls at column 44",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/gr and-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "febd96da93446913a9d2166ef169a82463b4c99dd4a10c6b91fc352423aa0d26"
+    },
+    {
+      "id": "attachment-text-017",
+      "name": "recovers attachment when wrap falls at column 45",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/gra nd-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "9e3af9703c6aa7df598241a0530a62ad5d899cfe105e31bb3461b18c3aa4831e"
+    },
+    {
+      "id": "attachment-text-018",
+      "name": "recovers attachment when wrap falls at column 46",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/gran d-console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "05c603b30e494bc46206e103794a974567a44e169ae912b7e295058c1456798b"
+    },
+    {
+      "id": "attachment-text-019",
+      "name": "recovers attachment when wrap falls at column 47",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand -console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "38c65b002328cbc6ae1e750758c7a98e29b10f645bbd69c3f62e979319f3d211"
+    },
+    {
+      "id": "attachment-text-020",
+      "name": "recovers attachment when wrap falls at column 48",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand- console/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "c1732b4860a32f330ed5d911dd4e0a0df63f20c1dae0633a15b6d5bafd9b8362"
+    },
+    {
+      "id": "attachment-text-021",
+      "name": "recovers attachment when wrap falls at column 49",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-c onsole/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "73a626ac025505c1a61feb2cec214598a5b62f03139f765d509ddf1268dc7fb5"
+    },
+    {
+      "id": "attachment-text-022",
+      "name": "recovers attachment when wrap falls at column 50",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-co nsole/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "c59f40fdab0f52454ad75b79c6190b869e04b0355af350b829f90b556c214edd"
+    },
+    {
+      "id": "attachment-text-023",
+      "name": "recovers attachment when wrap falls at column 51",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-con sole/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "d27871b79e324c08096bb090b83bb5e46cc7cbd0b21ab7734e29114f03e8c217"
+    },
+    {
+      "id": "attachment-text-024",
+      "name": "recovers attachment when wrap falls at column 52",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-cons ole/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "45c1fca9bf985b02487f0877879fd9862a96c283d0f856d7faa7c91b3beebb54"
+    },
+    {
+      "id": "attachment-text-025",
+      "name": "recovers attachment when wrap falls at column 53",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-conso le/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "e46eab2c19f78167b9b20854f0daeb5ea5ee5c45ff719584b99df972be2e22a4"
+    },
+    {
+      "id": "attachment-text-026",
+      "name": "recovers attachment when wrap falls at column 54",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-consol e/.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "fc263115bb4295a518d6c9e65877552e2c0fd02b461bbe9a32cda0962bd5e407"
+    },
+    {
+      "id": "attachment-text-027",
+      "name": "recovers attachment when wrap falls at column 55",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console /.aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "db7a6c7d93fa755366e5f221c84f7fa3e53613fbd30e299bb4300cea0b6960ca"
+    },
+    {
+      "id": "attachment-text-028",
+      "name": "recovers attachment when wrap falls at column 56",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/ .aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "4fd4585e7e0042a318fd6cd7ff130fc850fb0d7850dcdf8b0931712e778a8c8b"
+    },
+    {
+      "id": "attachment-text-029",
+      "name": "recovers attachment when wrap falls at column 57",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/. aimux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "aa4a3ba25bd01517407ae6521933d1c35b0c912c82788c08814be5a8d8b112e4"
+    },
+    {
+      "id": "attachment-text-030",
+      "name": "recovers attachment when wrap falls at column 58",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.a imux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "a06ad96d42fdd2298de49ca594627016aff920f08c8a59de2f9637867e41f892"
+    },
+    {
+      "id": "attachment-text-031",
+      "name": "recovers attachment when wrap falls at column 59",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.ai mux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "0963b1707a2ede486ea57e24d9ddff09a72cbb6cf3a267af501342c6c9f8c168"
+    },
+    {
+      "id": "attachment-text-032",
+      "name": "recovers attachment when wrap falls at column 60",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aim ux/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "3f610168ac266f87718a4f87064969a05508f37a7c1cb2e19005170d4ae9951a"
+    },
+    {
+      "id": "attachment-text-033",
+      "name": "recovers attachment when wrap falls at column 61",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimu x/attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "2d9c045087d44c11d66aff13d78fbf66147ba7067fce6abc58df1f549c4dd2af"
+    },
+    {
+      "id": "attachment-text-034",
+      "name": "recovers attachment when wrap falls at column 62",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux /attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "d2e0e9b4abfdbcac933fa189f02069ef8af5a779b96a5eba25be941f326a05f4"
+    },
+    {
+      "id": "attachment-text-035",
+      "name": "recovers attachment when wrap falls at column 63",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/ attachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "30a29b98bc13927da884b027883f155168556bab16b2d714b8e9349032a2f388"
+    },
+    {
+      "id": "attachment-text-036",
+      "name": "recovers attachment when wrap falls at column 64",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/a ttachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "d8de956a77bce58d96cdee94b3036a7fdd71cb3e2eea17947cf0aa460f89a83a"
+    },
+    {
+      "id": "attachment-text-037",
+      "name": "recovers attachment when wrap falls at column 65",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/at tachments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "cb342b05b9d5fde5a80a2e83c0f196a8adc1adb8273df8d739edbcb4021093c9"
+    },
+    {
+      "id": "attachment-text-038",
+      "name": "recovers attachment when wrap falls at column 66",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/att achments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "5bbf97db0c0ef3aa3f6c1b15d01862d64a70d6fa5096b9426703927b7136c648"
+    },
+    {
+      "id": "attachment-text-039",
+      "name": "recovers attachment when wrap falls at column 67",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/atta chments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "740b9768a998e867004bbcd603b95960ad34fe1e8d3e0065e15850b81a3d398d"
+    },
+    {
+      "id": "attachment-text-040",
+      "name": "recovers attachment when wrap falls at column 68",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attac hments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "483466dae19a09c8a728648b90e64691679a12f8489ba64514d47027b796241e"
+    },
+    {
+      "id": "attachment-text-041",
+      "name": "recovers attachment when wrap falls at column 69",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attach ments/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "8c0e1ea69d91a01e390001bb1dbdff0d47246b721180de9bd033469f7d827012"
+    },
+    {
+      "id": "attachment-text-042",
+      "name": "recovers attachment when wrap falls at column 70",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachm ents/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "a400197a8b1ed841ace25ad25c5917ba206eaec55430458ae899f2960e798308"
+    },
+    {
+      "id": "attachment-text-043",
+      "name": "recovers attachment when wrap falls at column 71",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachme nts/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "307fcc84f1cefd5b4c6718f0f9ebc5840bdeb4afbe176f8492a16a0976eeb99b"
+    },
+    {
+      "id": "attachment-text-044",
+      "name": "recovers attachment when wrap falls at column 72",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachmen ts/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "6f2edd89e3466fd9b2e1d587518f6b5b7e2e7d54e8eec633401727f274c31446"
+    },
+    {
+      "id": "attachment-text-045",
+      "name": "recovers attachment when wrap falls at column 73",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachment s/att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "6893308dfd9b6b939cbc5368783a4ab36a09df34738f8814a655a5ba54e9afdc"
+    },
+    {
+      "id": "attachment-text-046",
+      "name": "recovers attachment when wrap falls at column 74",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments /att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "c81be5dcd67ed17a2c81ef64127f1d6ca1af9ab7d4751a5f9b8dc2196e83ae35"
+    },
+    {
+      "id": "attachment-text-047",
+      "name": "recovers attachment when wrap falls at column 75",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/ att_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "5192a45554b397c17e81fb7bd004d4dc9aeec745143a91d3aa5376e5ea311c57"
+    },
+    {
+      "id": "attachment-text-048",
+      "name": "recovers attachment when wrap falls at column 76",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/a tt_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "b6a3b163b6b0bebcf6ef4fb6c4787f512aeb6cc3afb6fd43ad16328fcbbf0ee7"
+    },
+    {
+      "id": "attachment-text-049",
+      "name": "recovers attachment when wrap falls at column 77",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/at t_one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "6cdcdf00f8d478290b4204f39f5804b2d3bc7d8a87a42878672069106bf386f4"
+    },
+    {
+      "id": "attachment-text-050",
+      "name": "recovers attachment when wrap falls at column 78",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att _one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "a47554315066589e758bd2eabbbb06e03b50c005658b2640de88d566eeeaf972"
+    },
+    {
+      "id": "attachment-text-051",
+      "name": "recovers attachment when wrap falls at column 79",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att_ one.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "b584a381a498bcca09c166c68bc295b80b6fece468b1e604593a4a51853435fe"
+    },
+    {
+      "id": "attachment-text-052",
+      "name": "recovers attachment when wrap falls at column 80",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att_o ne.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "3d858c065c0c8d2eaa473a3a9ea0515ba107a57592e24fcb73e4af091d50c9db"
+    },
+    {
+      "id": "attachment-text-053",
+      "name": "recovers attachment when wrap falls at column 81",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att_on e.png and tell me what you see"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me what you see"
+      },
+      "inputSha256": "1d1a12369cbdc85c43d49d1ad55774c43b354829260211da69896ac96eb51308"
+    },
+    {
+      "id": "attachment-text-054",
+      "name": "keeps two attachments metadata apart",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - a.png (image/png, 12 bytes): /srv/x/.aimux/ attachments/att_a.png - notes.pdf (application/pdf, 34 bytes): /srv/x/.aimux/attach ments/att_b.pdf"
+      },
+      "output": {
+        "attachments": [
+          { "attachmentId": "att_a", "mimeType": "image/png", "filename": "a.png" },
+          { "attachmentId": "att_b", "mimeType": "application/pdf", "filename": "notes.pdf" }
+        ],
+        "prose": ""
+      },
+      "inputSha256": "f6e06bab6d4bd2964d6b1f51594ecfe82609b8992b3eaa43f19e65c90ccabe7c"
+    },
+    {
+      "id": "attachment-text-055",
+      "name": "keeps hyphen inside filename",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - after-css.png (image/png, 9 bytes): /srv/x/.aimux/attach ments/att_h.png" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_h", "mimeType": "image/png", "filename": "after-css.png" }],
+        "prose": ""
+      },
+      "inputSha256": "bb483c02b682c9f99a9448594961a6448ff746de5d69475081da4f9ae2919182"
+    },
+    {
+      "id": "attachment-text-056",
+      "name": "returns id only when metadata did not survive",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": "look: /srv/x/.aimux/attach ments/att_bare.png" },
+      "output": { "attachments": [{ "attachmentId": "att_bare" }], "prose": "look:" },
+      "inputSha256": "a5011c17012f3e1a874351d36f082c385aa5d743470bbb95ac20496a940b23e9"
+    },
+    {
+      "id": "attachment-text-057",
+      "name": "recovers attachment in directory /srv/grand-console at column 0",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": "  - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "515a39c65f70a80fd78f6b19be18367c04036beabfa231758f4b611130171860"
+    },
+    {
+      "id": "attachment-text-058",
+      "name": "recovers attachment in directory /srv/grand-console at column 7",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot. png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "8a69acec3f2cd28f2607a023fe63719814ac2e16a208e507b285c9a90334d1e6"
+    },
+    {
+      "id": "attachment-text-059",
+      "name": "recovers attachment in directory /srv/grand-console at column 14",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (im age/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "c69f26f186059da78a0984f2413cce4d938c7ed254eff471cc1f61097e54bc60"
+    },
+    {
+      "id": "attachment-text-060",
+      "name": "recovers attachment in directory /srv/grand-console at column 21",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png , 46624 bytes): /srv/grand-console/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "8be35f6370aba0599d4125e7c3210c5a3ec415137ab471d93307ce9c9bfd1889"
+    },
+    {
+      "id": "attachment-text-061",
+      "name": "recovers attachment in directory /srv/grand-console at column 28",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624  bytes): /srv/grand-console/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "bab3762e0cb3f8e49595a57f6fa3d7b58791194e4b7662a5e81ea28b232d4d9f"
+    },
+    {
+      "id": "attachment-text-062",
+      "name": "recovers attachment in directory /srv/grand-console at column 35",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes) : /srv/grand-console/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "60ff98082f4892fdb4876bcd0a94ba2869dbc81b9ab281c2a06a2a286c3e2a4a"
+    },
+    {
+      "id": "attachment-text-063",
+      "name": "recovers attachment in directory /srv/grand-console at column 42",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/ grand-console/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "d58aa271c9cbb057631deb265923c405f2dc0023e6d09a56190088712197b9af"
+    },
+    {
+      "id": "attachment-text-064",
+      "name": "recovers attachment in directory /srv/grand-console at column 49",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-c onsole/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "9834a28cf07d1c6a7f19f2dea90bfb82e1c3b108a282abfc33f53c0c3bb1a881"
+    },
+    {
+      "id": "attachment-text-065",
+      "name": "recovers attachment in directory /srv/grand-console at column 56",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/ .aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "8a40dfde095f7e00a3db8267eb574058808c22614aae1e22c2d0634e7a6b0f8c"
+    },
+    {
+      "id": "attachment-text-066",
+      "name": "recovers attachment in directory /srv/grand-console at column 63",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/ attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "ba677e5654468e023a61e925b27ad3f33d1f0a21cc5f6586f6fc0e89db85bcd3"
+    },
+    {
+      "id": "attachment-text-067",
+      "name": "recovers attachment in directory /srv/grand-console at column 70",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachm ents/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a925867d93cf665ca7d571e351cc6b2a5d4dd72442288ee719a535a8037a7961"
+    },
+    {
+      "id": "attachment-text-068",
+      "name": "recovers attachment in directory /srv/grand-console at column 77",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/at t_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "018e3d26b63552e3fb1f068d0c91e82b763f32b875555fc0b681c47fd386454a"
+    },
+    {
+      "id": "attachment-text-069",
+      "name": "recovers attachment in directory /srv/grand-console at column 84",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attachments/att_one.p ng and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "ng and tell me"
+      },
+      "inputSha256": "459d4fe8b9a2122a4dfb4f03f933fda5951760a8ba8d8caf00ca1455ee8f7746"
+    },
+    {
+      "id": "attachment-text-070",
+      "name": "recovers attachment in directory /srv/my+proj at column 0",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": "  - shot.png (image/png, 46624 bytes): /srv/my+proj/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "4bd2de23172954290724e09a72c47563111261fdca3a908684bbee147024dd00"
+    },
+    {
+      "id": "attachment-text-071",
+      "name": "recovers attachment in directory /srv/my+proj at column 7",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot. png (image/png, 46624 bytes): /srv/my+proj/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "1f3b609c8b6827b6df151704849912da46a22ace18b462736684526141c26a21"
+    },
+    {
+      "id": "attachment-text-072",
+      "name": "recovers attachment in directory /srv/my+proj at column 14",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (im age/png, 46624 bytes): /srv/my+proj/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "7036e34ba51936b0e5bfcf2dbeac9cddbbdb3bc640ed187cfce6347ee53146c4"
+    },
+    {
+      "id": "attachment-text-073",
+      "name": "recovers attachment in directory /srv/my+proj at column 21",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png , 46624 bytes): /srv/my+proj/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "1901b3c9fd7b9dbddd2cf14552f612158a9f185d416fe454a23ad3bc8b4a41bb"
+    },
+    {
+      "id": "attachment-text-074",
+      "name": "recovers attachment in directory /srv/my+proj at column 28",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624  bytes): /srv/my+proj/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "b39ba9061a4c53e6077dda7a57e3cf877cfb0356e353b44181aee3b996d4dad5"
+    },
+    {
+      "id": "attachment-text-075",
+      "name": "recovers attachment in directory /srv/my+proj at column 35",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes) : /srv/my+proj/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "60ddc72bfebb99218f510ba831ae5151dd1d992e55e10e6f0fc02150825b7451"
+    },
+    {
+      "id": "attachment-text-076",
+      "name": "recovers attachment in directory /srv/my+proj at column 42",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/ my+proj/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "c7ca767a5bf037e40642ad940b73779f993617f494e307b6494234b63576a854"
+    },
+    {
+      "id": "attachment-text-077",
+      "name": "recovers attachment in directory /srv/my+proj at column 49",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/my+proj /.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a13f844ebc35901972fa19e33b34a208bf645b631830f3efda0eb66080965112"
+    },
+    {
+      "id": "attachment-text-078",
+      "name": "recovers attachment in directory /srv/my+proj at column 56",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/my+proj/.aimux /attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "9f46c70be18c1014e380c3080fdd6d8ee9f5155682d232f7537eb91809e4d13e"
+    },
+    {
+      "id": "attachment-text-079",
+      "name": "recovers attachment in directory /srv/my+proj at column 63",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/my+proj/.aimux/attach ments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a9f3efd9873793f5862420adadb3a194de2c692581fbeb91ff4ac62314f8fc51"
+    },
+    {
+      "id": "attachment-text-080",
+      "name": "recovers attachment in directory /srv/my+proj at column 70",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/my+proj/.aimux/attachments/a tt_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "14742f67c10fd604e34b17b13954e60938cc5d13dbe1abdcd8871c074a7ef992"
+    },
+    {
+      "id": "attachment-text-081",
+      "name": "recovers attachment in directory /srv/my+proj at column 77",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/my+proj/.aimux/attachments/att_one. png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "png and tell me"
+      },
+      "inputSha256": "0445a09d1c8748816b55de192a05a0285a0e3ed8a9c4a5323455b94d5f2c5f9f"
+    },
+    {
+      "id": "attachment-text-082",
+      "name": "recovers attachment in directory /srv/jose at column 0",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": "  - shot.png (image/png, 46624 bytes): /srv/jose/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "fc80d39a9d2d96c6b52d0c280aaaf404adbf41a654ec611d35bb556be2b0a976"
+    },
+    {
+      "id": "attachment-text-083",
+      "name": "recovers attachment in directory /srv/jose at column 7",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot. png (image/png, 46624 bytes): /srv/jose/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "d83c380d6baef56cf0dbfa6d8e2774c251dcd369b8ef6efe85f80cfe662a2907"
+    },
+    {
+      "id": "attachment-text-084",
+      "name": "recovers attachment in directory /srv/jose at column 14",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (im age/png, 46624 bytes): /srv/jose/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "79b4466c4f8ef53c0143a7cc6637e14a858a0505c20cb1bae95308480469e791"
+    },
+    {
+      "id": "attachment-text-085",
+      "name": "recovers attachment in directory /srv/jose at column 21",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png , 46624 bytes): /srv/jose/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "19c8c12976d0b3e79e090b1e0600ecc5eec93fef8afd0f6b16e59d3ded71d059"
+    },
+    {
+      "id": "attachment-text-086",
+      "name": "recovers attachment in directory /srv/jose at column 28",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624  bytes): /srv/jose/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a7719d01b425d861fd3e4c1399f0c05fcca3373ea8c5d70b77addac51267f70e"
+    },
+    {
+      "id": "attachment-text-087",
+      "name": "recovers attachment in directory /srv/jose at column 35",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes) : /srv/jose/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "0efdb85731762fa72687c3aa99c14c2e2561254617e5b49b0d5100cf4fc87044"
+    },
+    {
+      "id": "attachment-text-088",
+      "name": "recovers attachment in directory /srv/jose at column 42",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/ jose/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "e309eac8ec076ca3a6d701650e1790178a9f189648beaed02d7e686d5d1c63ca"
+    },
+    {
+      "id": "attachment-text-089",
+      "name": "recovers attachment in directory /srv/jose at column 49",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/jose/.a imux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "414c2b7f29931fcf8391ae0dc0ee0c06cc2d4cccf9f00198a72cf18b13ab1409"
+    },
+    {
+      "id": "attachment-text-090",
+      "name": "recovers attachment in directory /srv/jose at column 56",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/jose/.aimux/at tachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a3848069cad5257920af73eaf5697bf6affac4dc92d13e59c9fbdff089129b9d"
+    },
+    {
+      "id": "attachment-text-091",
+      "name": "recovers attachment in directory /srv/jose at column 63",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/jose/.aimux/attachmen ts/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "c636a669cbddb05c9df9dc91b57867b3113c2101b1a9fef472e254924e345880"
+    },
+    {
+      "id": "attachment-text-092",
+      "name": "recovers attachment in directory /srv/jose at column 70",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/jose/.aimux/attachments/att_ one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "2cd8eb8a4d30eb080f854d48d3392b3abb5d559b269f749995ecb86be531a1d2"
+    },
+    {
+      "id": "attachment-text-093",
+      "name": "recovers attachment in directory /srv/c++ at column 0",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": "  - shot.png (image/png, 46624 bytes): /srv/c++/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "b8a3df7c3931548de5b416f878b24e3b45af02acbdb37be1a116216b3856c5ca"
+    },
+    {
+      "id": "attachment-text-094",
+      "name": "recovers attachment in directory /srv/c++ at column 7",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot. png (image/png, 46624 bytes): /srv/c++/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "2b99e26369cd1ab74c637096398fae1b23ef3070be6d21c87d847b4d0be0f020"
+    },
+    {
+      "id": "attachment-text-095",
+      "name": "recovers attachment in directory /srv/c++ at column 14",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (im age/png, 46624 bytes): /srv/c++/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "649490d3cf95df669becd35250f711604c650b95f2c6994192604e0c528114d0"
+    },
+    {
+      "id": "attachment-text-096",
+      "name": "recovers attachment in directory /srv/c++ at column 21",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png , 46624 bytes): /srv/c++/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "2fb3f45bf0c13ba2a8935b832cb7ae4e1488bd3b890d78f730bf8cfa75a73344"
+    },
+    {
+      "id": "attachment-text-097",
+      "name": "recovers attachment in directory /srv/c++ at column 28",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624  bytes): /srv/c++/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "74ddc616d96231b250f6c40d04578e49b619527f3a302a531f8ac78cfac86dc9"
+    },
+    {
+      "id": "attachment-text-098",
+      "name": "recovers attachment in directory /srv/c++ at column 35",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes) : /srv/c++/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "02dd2d3c47ebb8a2218edf2b9f7ddb55052a2290ebf0123f34c9621985d000f3"
+    },
+    {
+      "id": "attachment-text-099",
+      "name": "recovers attachment in directory /srv/c++ at column 42",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/ c++/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "5406aeef19d3acffdb07fecb8576a261345ff2ee00b816eca9634e9bc8a74f7a"
+    },
+    {
+      "id": "attachment-text-100",
+      "name": "recovers attachment in directory /srv/c++ at column 49",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/c++/.ai mux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "37eeb763e7b853bf44462b0a990c7f5f431ab1bdcf79325a6681e4e861b20f88"
+    },
+    {
+      "id": "attachment-text-101",
+      "name": "recovers attachment in directory /srv/c++ at column 56",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/c++/.aimux/att achments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "852441b18f9c0f6196eaf425f64109d1a19b535cf314c4d865711a4f2e9cfb29"
+    },
+    {
+      "id": "attachment-text-102",
+      "name": "recovers attachment in directory /srv/c++ at column 63",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/c++/.aimux/attachment s/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "20b974307e3ea66034218442625e22bc87a4200d42cecbbfe68c7c224bdb57ab"
+    },
+    {
+      "id": "attachment-text-103",
+      "name": "recovers attachment in directory /srv/c++ at column 70",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/c++/.aimux/attachments/att_o ne.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "abd26b664ac584d4fb84949acf6208f517e16fb91ad46abaabec44729051d54f"
+    },
+    {
+      "id": "attachment-text-104",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 0",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": "  - shot.png (image/png, 46624 bytes): /srv/proj(v2)/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a274dfd1287856a2c70f58a35509dff5f37af5caf6e3680a5b3ce10c0f233261"
+    },
+    {
+      "id": "attachment-text-105",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 7",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot. png (image/png, 46624 bytes): /srv/proj(v2)/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "452159880288c3dbec00ddbc27710bfb3a2e331b9ce1fa951f371f38d89b059d"
+    },
+    {
+      "id": "attachment-text-106",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 14",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (im age/png, 46624 bytes): /srv/proj(v2)/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "2474f13511f67667c3609f60d154cb2ca95dfb9340c8271f4659c82573365b09"
+    },
+    {
+      "id": "attachment-text-107",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 21",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png , 46624 bytes): /srv/proj(v2)/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "45f108a3b4103f92835ecd567fb8610202eb6a515307f66c8b2a8779e5984d6b"
+    },
+    {
+      "id": "attachment-text-108",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 28",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624  bytes): /srv/proj(v2)/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "7b327f1b6ea2be4d3790fe8aa0860e7b224888105273f4e98b92f9f784c6a613"
+    },
+    {
+      "id": "attachment-text-109",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 35",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes) : /srv/proj(v2)/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a3307c92fc511b7cf894cd62fea352ec81655920e481d050ac15e9e0921f9565"
+    },
+    {
+      "id": "attachment-text-110",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 42",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/ proj(v2)/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "073b6f52ccabd76f9e146f4429377a1392f85b6d3be8bba6f7297a7fdd199b9b"
+    },
+    {
+      "id": "attachment-text-111",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 49",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/proj(v2 )/.aimux/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "6de798205d6fd322c36869a40859f8d8e3b8f47040f08dbf8b64ccaaeb5d499b"
+    },
+    {
+      "id": "attachment-text-112",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 56",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/proj(v2)/.aimu x/attachments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "06cc57c02e3ea5da4f993aeaa328e8044c394c6916e663af960daabddc883fb6"
+    },
+    {
+      "id": "attachment-text-113",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 63",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/proj(v2)/.aimux/attac hments/att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "ac47095b0b5ebe61cc332a6952c722a71043dff3298723e06f4c49590a285c55"
+    },
+    {
+      "id": "attachment-text-114",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 70",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/proj(v2)/.aimux/attachments/ att_one.png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "ce1fbdd5261f6f127e0368728e204fe625981b6d351253abdb9a220dd2c49ef2"
+    },
+    {
+      "id": "attachment-text-115",
+      "name": "recovers attachment in directory /srv/proj(v2) at column 77",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - shot.png (image/png, 46624 bytes): /srv/proj(v2)/.aimux/attachments/att_one .png and tell me"
+      },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": ".png and tell me"
+      },
+      "inputSha256": "aaf03f037a25d7374ba81d3eae538c68c18c61da3ad3380b588cbd0a4b4b5eff"
+    },
+    {
+      "id": "attachment-text-116",
+      "name": "recovers attachment in directory /srv/a&b at column 0",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": "  - shot.png (image/png, 46624 bytes): /srv/a&b/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "6ea225b306523aa0fb87b75a6e8e600ee4820f850347afe4c7896c2b2c8bda38"
+    },
+    {
+      "id": "attachment-text-117",
+      "name": "recovers attachment in directory /srv/a&b at column 7",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot. png (image/png, 46624 bytes): /srv/a&b/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "9c2bb78b2a8ba297925e05fc6ef9ef1d08f9eb247b753dbee94b6ab5e36daa63"
+    },
+    {
+      "id": "attachment-text-118",
+      "name": "recovers attachment in directory /srv/a&b at column 14",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (im age/png, 46624 bytes): /srv/a&b/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "dcdf5f9092770023b3e724f1175784ddd5eee5ef5b20ab7f5f1699bc5e3dcfa8"
+    },
+    {
+      "id": "attachment-text-119",
+      "name": "recovers attachment in directory /srv/a&b at column 21",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png , 46624 bytes): /srv/a&b/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "ac2e2a811056e88286d39411c1967d611005b161b64ec7ff414432ea4032c4d4"
+    },
+    {
+      "id": "attachment-text-120",
+      "name": "recovers attachment in directory /srv/a&b at column 28",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624  bytes): /srv/a&b/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "8ac0d2e1bd567748677b7373c49467e369b84589575a06c8fadbc0a8840b45e2"
+    },
+    {
+      "id": "attachment-text-121",
+      "name": "recovers attachment in directory /srv/a&b at column 35",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes) : /srv/a&b/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "3c42a8bb392d3ddae028fd7cd7ee116c504e96cd027adac16283850dc782ef80"
+    },
+    {
+      "id": "attachment-text-122",
+      "name": "recovers attachment in directory /srv/a&b at column 42",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/ a&b/.aimux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "b88bb8f9726338195b2219f572534a6175af5beb0f2fa1fcbee6f4957beda1cc"
+    },
+    {
+      "id": "attachment-text-123",
+      "name": "recovers attachment in directory /srv/a&b at column 49",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/a&b/.ai mux/attachments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "f8ba1a54587c48bdb598190b379820c87397ca7d3322915513e8c702931abac8"
+    },
+    {
+      "id": "attachment-text-124",
+      "name": "recovers attachment in directory /srv/a&b at column 56",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/a&b/.aimux/att achments/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "a834662e68546e4e507d18af0e3911f3e8d1db3de354f48a2b8c31cb4ff285e1"
+    },
+    {
+      "id": "attachment-text-125",
+      "name": "recovers attachment in directory /srv/a&b at column 63",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/a&b/.aimux/attachment s/att_one.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "30f3f7e2f567602d2cabc71bf81799d0bb953b5b8555c3f4c6c9ff2eed2e607e"
+    },
+    {
+      "id": "attachment-text-126",
+      "name": "recovers attachment in directory /srv/a&b at column 70",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": " - shot.png (image/png, 46624 bytes): /srv/a&b/.aimux/attachments/att_o ne.png and tell me" },
+      "output": {
+        "attachments": [{ "attachmentId": "att_one", "mimeType": "image/png", "filename": "shot.png" }],
+        "prose": "and tell me"
+      },
+      "inputSha256": "9efb716083f890c6fecb9de73a6d8b781d5e632b962f9bd31a9c7f36df1f4e12"
+    },
+    {
+      "id": "attachment-text-127",
+      "name": "does not lend metadata to bare path mentioned in sentence",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - a.png (image/png, 12 bytes): /srv/x/.aimux/ attachments/att_a.png compare /srv/x/.aimux/attach ments/att_b.png"
+      },
+      "output": {
+        "attachments": [
+          { "attachmentId": "att_a", "mimeType": "image/png", "filename": "a.png" },
+          { "attachmentId": "att_b" }
+        ],
+        "prose": ""
+      },
+      "inputSha256": "24c50530a1311ede0d9aba0de4befb4838448c16b078e34399e5586e8f81364c"
+    },
+    {
+      "id": "attachment-text-128",
+      "name": "returns null when there is no attachment",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": { "tail": "just some words about attachments" },
+      "output": null,
+      "inputSha256": "7ac46ed5f124ab507aea0e127e66246eae8d2a74c72202e3e5e271ca7e20124f"
+    },
+    {
+      "id": "attachment-text-129",
+      "name": "does not read one item mime onto next bare path",
+      "source": "src/attachment-text.ts",
+      "api": "recoverWrappedAttachments",
+      "input": {
+        "tail": " - a.png (image/png, 12 bytes): /srv/x/.aimux/ attachments/att_a.png - /srv/x/.aimux/attach ments/att_b.bin"
+      },
+      "output": {
+        "attachments": [
+          { "attachmentId": "att_a", "mimeType": "image/png", "filename": "a.png" },
+          { "attachmentId": "att_b" }
+        ],
+        "prose": ""
+      },
+      "inputSha256": "ed53460ef226b792664d3b8e95a5f4c9e2757b08333840b3bdb1c6152568a310"
+    }
+  ]
+}

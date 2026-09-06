@@ -15,6 +15,12 @@ Priority fixture groups:
 5. `tmux`: command argv, inventory rows, pane captures, statusline artifacts.
 6. `project-catalog`: registry, topology, desktop-state project summaries.
 
+## Alerts
+
+- `alerts/display.json`: notification title/body/category/reason
+  contextualization cases captured by running TypeScript `alert-display`
+  helpers against `src/alert-display.test.ts` scenarios.
+
 ## ANSI
 
 - `ansi/sgr-spans.json`: ANSI SGR span cases, including adversarial color,
@@ -48,3 +54,21 @@ Priority fixture groups:
   resync, and error contracts captured from the TypeScript stream handler.
 - `agent-output/read-metrics.json`: output-read metric aggregation and recent
   ring-buffer behavior captured from the TypeScript metric accumulator.
+
+## Attachments
+
+- `attachments/text.json`: wrapped attachment text recovery cases captured by
+  running TypeScript `recoverWrappedAttachments` against the attachment parser
+  test scenarios and wrap-position matrices.
+
+## Coordination
+
+- `coordination/model.json`: coordination inbox, worklist, stale-notification,
+  reachability, sorting, and view composition cases captured by running the
+  TypeScript coordination model functions.
+
+## Statusline
+
+- `statusline/model.json`: statusline helper, scoped-session, teammate,
+  focused-control-session, metadata projection, and semantic badge cases
+  captured by running TypeScript `statusline-model` exports.

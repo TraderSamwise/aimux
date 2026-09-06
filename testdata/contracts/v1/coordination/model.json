@@ -1,0 +1,3470 @@
+{
+  "version": 1,
+  "source": "src/coordination-model.ts",
+  "generatedBy": "scripts/capture-model-contracts.mjs",
+  "description": "Coordination model/worklist contracts captured by running the TypeScript model functions.",
+  "cases": [
+    {
+      "id": "coordination-model-001",
+      "name": "puts live needs-input agent at top",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "a",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "ce453732ab64daf24234a650c33c745fc0963bd4dd23261727e75c3bcc68c63e"
+    },
+    {
+      "id": "coordination-model-002",
+      "name": "orders offline actionable below live actionable",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          },
+          {
+            "id": "c",
+            "status": "offline",
+            "command": "claude",
+            "semantic": { "user": { "label": "offline" }, "presentation": { "attentionScore": 0 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "a",
+            "kind": "needs_input"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "c",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          },
+          {
+            "key": "c",
+            "sessionId": "c",
+            "title": "title",
+            "reachability": "offline",
+            "liveLabel": "offline",
+            "attentionScore": 0,
+            "urgency": 9000010,
+            "notifications": [
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "c",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "c",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          },
+          {
+            "key": "c",
+            "sessionId": "c",
+            "title": "title",
+            "reachability": "offline",
+            "liveLabel": "offline",
+            "attentionScore": 0,
+            "urgency": 9000010,
+            "notifications": [
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "c",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "c",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "5c939e8f2ab18c346b761c6ecafcc407b9d25e85ba8f9acaae39a75e3db23482"
+    },
+    {
+      "id": "coordination-model-003",
+      "name": "treats exited target as offline restorable",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [
+          {
+            "id": "c",
+            "status": "exited",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 0 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "c",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "c",
+            "sessionId": "c",
+            "title": "title",
+            "reachability": "offline",
+            "liveLabel": "needs_input",
+            "attentionScore": 0,
+            "urgency": 9000010,
+            "notifications": [
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "c",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "c",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "c",
+            "sessionId": "c",
+            "title": "title",
+            "reachability": "offline",
+            "liveLabel": "needs_input",
+            "attentionScore": 0,
+            "urgency": 9000010,
+            "notifications": [
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "c",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "c",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "9590f4c62635fc8275e8f5e133ab5ddf7c09f7dea35806b1583017e693906cd1"
+    },
+    {
+      "id": "coordination-model-004",
+      "name": "classifies vanished target as missing",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "ghost",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "ghost",
+            "sessionId": "ghost",
+            "title": "title",
+            "reachability": "missing",
+            "attentionScore": 0,
+            "urgency": 5000010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "ghost",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "ghost",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": false,
+            "stale": false
+          }
+        ],
+        "actionable": [],
+        "unreachable": [
+          {
+            "key": "ghost",
+            "sessionId": "ghost",
+            "title": "title",
+            "reachability": "missing",
+            "attentionScore": 0,
+            "urgency": 5000010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "ghost",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "ghost",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": false,
+            "stale": false
+          }
+        ]
+      },
+      "inputSha256": "8091b8a2a32d1b3502d1a06700deb014643350c8f1793568dec347164b5fa4c8"
+    },
+    {
+      "id": "coordination-model-005",
+      "name": "marks live agent that moved on as stale",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [
+          {
+            "id": "b",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "working" }, "presentation": { "attentionScore": 0 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "b",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "b",
+            "sessionId": "b",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "working",
+            "attentionScore": 0,
+            "urgency": 7000010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "b",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "b",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": false,
+            "stale": true
+          }
+        ],
+        "actionable": [],
+        "unreachable": []
+      },
+      "inputSha256": "ae5e8e6ac4c95021be2e4faeb2064a4b339273ef8f3b8631f12543f5301c1ef2"
+    },
+    {
+      "id": "coordination-model-006",
+      "name": "rolls multiple notifications for one agent",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "a",
+            "kind": "needs_input"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-02T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "a",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004020,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              },
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-02T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 2,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-02T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004020,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              },
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-02T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 2,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-02T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "3c547d1999552aae728f01f85fcf2ad5400a4dfcab9a19cf1b8933d82feb2ec7"
+    },
+    {
+      "id": "coordination-model-007",
+      "name": "resolves teammate target as live",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "tm",
+            "kind": "needs_input"
+          }
+        ],
+        "teammates": [
+          {
+            "id": "tm",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "tm",
+            "sessionId": "tm",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "tm",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "tm",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "tm",
+            "sessionId": "tm",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "tm",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "tm",
+              "kind": "needs_input"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "e51ab78362ea27f5a66b0f122b240d6462de3e6a60013e7be5f9911776285c82"
+    },
+    {
+      "id": "coordination-model-008",
+      "name": "sessionless notification keyed by dedupe key",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "dedupeKey": "dk",
+            "kind": "info"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "dk",
+            "title": "title",
+            "reachability": "none",
+            "attentionScore": 0,
+            "urgency": 8000010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "dk",
+                "kind": "info"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "dedupeKey": "dk",
+              "kind": "info"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "dk",
+            "title": "title",
+            "reachability": "none",
+            "attentionScore": 0,
+            "urgency": 8000010,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "dk",
+                "kind": "info"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "dedupeKey": "dk",
+              "kind": "info"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "7977f48a2d5959ec9be7441fcef8a5824f0b51cf14d36749d149935f631d2e46"
+    },
+    {
+      "id": "coordination-model-009",
+      "name": "collapses sessionless notifications sharing dedupe key",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "dedupeKey": "proj-alert",
+            "kind": "info"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-02T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "dedupeKey": "proj-alert",
+            "kind": "info"
+          },
+          {
+            "id": "3",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "dedupeKey": "other",
+            "kind": "info"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "proj-alert",
+            "title": "title",
+            "reachability": "none",
+            "attentionScore": 0,
+            "urgency": 8000020,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "proj-alert",
+                "kind": "info"
+              },
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-02T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "proj-alert",
+                "kind": "info"
+              }
+            ],
+            "unreadCount": 2,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-02T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "dedupeKey": "proj-alert",
+              "kind": "info"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          },
+          {
+            "key": "other",
+            "title": "title",
+            "reachability": "none",
+            "attentionScore": 0,
+            "urgency": 8000010,
+            "notifications": [
+              {
+                "id": "3",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "other",
+                "kind": "info"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "3",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "dedupeKey": "other",
+              "kind": "info"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "proj-alert",
+            "title": "title",
+            "reachability": "none",
+            "attentionScore": 0,
+            "urgency": 8000020,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "proj-alert",
+                "kind": "info"
+              },
+              {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-02T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "proj-alert",
+                "kind": "info"
+              }
+            ],
+            "unreadCount": 2,
+            "latestUnread": {
+              "id": "2",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-02T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "dedupeKey": "proj-alert",
+              "kind": "info"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          },
+          {
+            "key": "other",
+            "title": "title",
+            "reachability": "none",
+            "attentionScore": 0,
+            "urgency": 8000010,
+            "notifications": [
+              {
+                "id": "3",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "other",
+                "kind": "info"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "3",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "dedupeKey": "other",
+              "kind": "info"
+            },
+            "pendingDeliveries": 0,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "d2ddb2a2ef40710b8c3bd392930e48e71e85e262c121ff9afa2c9b6fa8439e57"
+    },
+    {
+      "id": "coordination-model-010",
+      "name": "annotates agent item with genuine thread and pending deliveries",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationModel",
+      "input": {
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "a",
+            "kind": "needs_input"
+          }
+        ],
+        "threads": [
+          {
+            "thread": {
+              "id": "t",
+              "kind": "task",
+              "participants": ["aimux", "a"],
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "displayTitle": "thread",
+            "urgency": 5,
+            "pendingDeliveries": 1
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004015,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "thread": {
+              "thread": {
+                "id": "t",
+                "kind": "task",
+                "participants": ["aimux", "a"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "thread",
+              "urgency": 5,
+              "pendingDeliveries": 1
+            },
+            "pendingDeliveries": 1,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "actionable": [
+          {
+            "key": "a",
+            "sessionId": "a",
+            "title": "title",
+            "reachability": "live",
+            "liveLabel": "needs_input",
+            "attentionScore": 4,
+            "urgency": 10004015,
+            "notifications": [
+              {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "a",
+                "kind": "needs_input"
+              }
+            ],
+            "unreadCount": 1,
+            "latestUnread": {
+              "id": "1",
+              "title": "title",
+              "body": "body",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sessionId": "a",
+              "kind": "needs_input"
+            },
+            "thread": {
+              "thread": {
+                "id": "t",
+                "kind": "task",
+                "participants": ["aimux", "a"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "thread",
+              "urgency": 5,
+              "pendingDeliveries": 1
+            },
+            "pendingDeliveries": 1,
+            "actionable": true,
+            "stale": false
+          }
+        ],
+        "unreachable": []
+      },
+      "inputSha256": "71867dbbeba8977316a6ff3a50012a7231bb465aee74ec2ff6b8e119ea58c206"
+    },
+    {
+      "id": "coordination-model-011",
+      "name": "stale heuristic working true",
+      "source": "src/coordination-model.ts",
+      "api": "isNotificationStale",
+      "input": { "liveLabel": "working", "hasUnreadNeedsInput": true },
+      "output": true,
+      "inputSha256": "6adb7f3070f3deb87cabe46eaf02d9d2d3b88d863e49269f5aa0f905c81aef37"
+    },
+    {
+      "id": "coordination-model-012",
+      "name": "stale heuristic ready true",
+      "source": "src/coordination-model.ts",
+      "api": "isNotificationStale",
+      "input": { "liveLabel": "ready", "hasUnreadNeedsInput": true },
+      "output": true,
+      "inputSha256": "d138d7bba9a44ed148d2a230de60ab776f647568a9b914fa54e7ae25121d30ae"
+    },
+    {
+      "id": "coordination-model-013",
+      "name": "stale heuristic needs_input true",
+      "source": "src/coordination-model.ts",
+      "api": "isNotificationStale",
+      "input": { "liveLabel": "needs_input", "hasUnreadNeedsInput": true },
+      "output": false,
+      "inputSha256": "625f8b4525fd4549ee3daef6c2bfa29c03ef91cc79d2d8fa8e25e0e1623df85e"
+    },
+    {
+      "id": "coordination-model-014",
+      "name": "stale heuristic blocked true",
+      "source": "src/coordination-model.ts",
+      "api": "isNotificationStale",
+      "input": { "liveLabel": "blocked", "hasUnreadNeedsInput": true },
+      "output": false,
+      "inputSha256": "c2a7aa04c69fdfb39754772e35bc9d391b0680c550ec4c57f664533152269493"
+    },
+    {
+      "id": "coordination-model-015",
+      "name": "stale heuristic undefined true",
+      "source": "src/coordination-model.ts",
+      "api": "isNotificationStale",
+      "input": { "hasUnreadNeedsInput": true },
+      "output": false,
+      "inputSha256": "ea8fae9ecf411d8ce540cd4269356aeff9e0666bd91b877d524c9f6f673f98c4"
+    },
+    {
+      "id": "coordination-model-016",
+      "name": "stale heuristic working false",
+      "source": "src/coordination-model.ts",
+      "api": "isNotificationStale",
+      "input": { "liveLabel": "working", "hasUnreadNeedsInput": false },
+      "output": false,
+      "inputSha256": "98014fb9e39d2fc18cf9a721b98727fa04e2868129a6b67b2cb6f6bde9aa5ab4"
+    },
+    {
+      "id": "coordination-model-017",
+      "name": "interleaves notifications and threads on one urgency scale",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationWorklist",
+      "input": {
+        "sessions": [
+          {
+            "id": "live",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          },
+          {
+            "id": "off",
+            "status": "offline",
+            "command": "claude",
+            "semantic": { "user": { "label": "offline" }, "presentation": { "attentionScore": 0 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "live",
+            "kind": "needs_input"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "off",
+            "kind": "needs_input"
+          },
+          {
+            "id": "3",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "ghost",
+            "kind": "needs_input"
+          }
+        ],
+        "threads": [
+          {
+            "thread": {
+              "id": "task1",
+              "kind": "task",
+              "participants": [],
+              "waitingOn": ["user"],
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "displayTitle": "ship release",
+            "urgency": 0,
+            "pendingDeliveries": 0
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "t:task1",
+            "kind": "thread",
+            "type": "task",
+            "bucket": "awake",
+            "title": "ship release",
+            "urgency": 4000300,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "thread": {
+              "thread": {
+                "id": "task1",
+                "kind": "task",
+                "participants": [],
+                "waitingOn": ["user"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "ship release",
+              "urgency": 0,
+              "pendingDeliveries": 0
+            }
+          },
+          {
+            "key": "n:off",
+            "kind": "notification",
+            "sessionId": "off",
+            "type": "msg",
+            "bucket": "asleep",
+            "title": "title",
+            "urgency": 3000010,
+            "reachability": "offline",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "off",
+              "sessionId": "off",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "offline",
+              "attentionScore": 0,
+              "urgency": 9000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "off",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "n:ghost",
+            "kind": "notification",
+            "sessionId": "ghost",
+            "type": "msg",
+            "bucket": "unreachable",
+            "title": "title",
+            "urgency": 1000010,
+            "reachability": "missing",
+            "actionable": false,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "ghost",
+              "sessionId": "ghost",
+              "title": "title",
+              "reachability": "missing",
+              "attentionScore": 0,
+              "urgency": 5000010,
+              "notifications": [
+                {
+                  "id": "3",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "ghost",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "3",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "ghost",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": false,
+              "stale": false
+            }
+          }
+        ],
+        "needsYou": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "t:task1",
+            "kind": "thread",
+            "type": "task",
+            "bucket": "awake",
+            "title": "ship release",
+            "urgency": 4000300,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "thread": {
+              "thread": {
+                "id": "task1",
+                "kind": "task",
+                "participants": [],
+                "waitingOn": ["user"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "ship release",
+              "urgency": 0,
+              "pendingDeliveries": 0
+            }
+          },
+          {
+            "key": "n:off",
+            "kind": "notification",
+            "sessionId": "off",
+            "type": "msg",
+            "bucket": "asleep",
+            "title": "title",
+            "urgency": 3000010,
+            "reachability": "offline",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "off",
+              "sessionId": "off",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "offline",
+              "attentionScore": 0,
+              "urgency": 9000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "off",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          }
+        ],
+        "tail": [
+          {
+            "key": "n:ghost",
+            "kind": "notification",
+            "sessionId": "ghost",
+            "type": "msg",
+            "bucket": "unreachable",
+            "title": "title",
+            "urgency": 1000010,
+            "reachability": "missing",
+            "actionable": false,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "ghost",
+              "sessionId": "ghost",
+              "title": "title",
+              "reachability": "missing",
+              "attentionScore": 0,
+              "urgency": 5000010,
+              "notifications": [
+                {
+                  "id": "3",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "ghost",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "3",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "ghost",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": false,
+              "stale": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "63bad1ecb5863d33db5d60406e4c0dd79ab7627bba6e32cc76e71be64d42954c"
+    },
+    {
+      "id": "coordination-model-018",
+      "name": "tags row types and buckets",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationWorklist",
+      "input": {
+        "sessions": [
+          {
+            "id": "live",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "live",
+            "kind": "needs_input"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "dedupeKey": "proj",
+            "kind": "info"
+          },
+          {
+            "id": "3",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "ghost",
+            "kind": "needs_input"
+          }
+        ],
+        "threads": [
+          {
+            "thread": {
+              "id": "h1",
+              "kind": "handoff",
+              "participants": [],
+              "waitingOn": ["user"],
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "displayTitle": "thread",
+            "urgency": 0,
+            "pendingDeliveries": 0
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "t:h1",
+            "kind": "thread",
+            "type": "handoff",
+            "bucket": "awake",
+            "title": "thread",
+            "urgency": 4000300,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "thread": {
+              "thread": {
+                "id": "h1",
+                "kind": "handoff",
+                "participants": [],
+                "waitingOn": ["user"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "thread",
+              "urgency": 0,
+              "pendingDeliveries": 0
+            }
+          },
+          {
+            "key": "n:proj",
+            "kind": "notification",
+            "type": "note",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000010,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "proj",
+              "title": "title",
+              "reachability": "none",
+              "attentionScore": 0,
+              "urgency": 8000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "dedupeKey": "proj",
+                  "kind": "info"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "proj",
+                "kind": "info"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "n:ghost",
+            "kind": "notification",
+            "sessionId": "ghost",
+            "type": "msg",
+            "bucket": "unreachable",
+            "title": "title",
+            "urgency": 1000010,
+            "reachability": "missing",
+            "actionable": false,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "ghost",
+              "sessionId": "ghost",
+              "title": "title",
+              "reachability": "missing",
+              "attentionScore": 0,
+              "urgency": 5000010,
+              "notifications": [
+                {
+                  "id": "3",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "ghost",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "3",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "ghost",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": false,
+              "stale": false
+            }
+          }
+        ],
+        "needsYou": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "t:h1",
+            "kind": "thread",
+            "type": "handoff",
+            "bucket": "awake",
+            "title": "thread",
+            "urgency": 4000300,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "thread": {
+              "thread": {
+                "id": "h1",
+                "kind": "handoff",
+                "participants": [],
+                "waitingOn": ["user"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "thread",
+              "urgency": 0,
+              "pendingDeliveries": 0
+            }
+          },
+          {
+            "key": "n:proj",
+            "kind": "notification",
+            "type": "note",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000010,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "proj",
+              "title": "title",
+              "reachability": "none",
+              "attentionScore": 0,
+              "urgency": 8000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "dedupeKey": "proj",
+                  "kind": "info"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "dedupeKey": "proj",
+                "kind": "info"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          }
+        ],
+        "tail": [
+          {
+            "key": "n:ghost",
+            "kind": "notification",
+            "sessionId": "ghost",
+            "type": "msg",
+            "bucket": "unreachable",
+            "title": "title",
+            "urgency": 1000010,
+            "reachability": "missing",
+            "actionable": false,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "ghost",
+              "sessionId": "ghost",
+              "title": "title",
+              "reachability": "missing",
+              "attentionScore": 0,
+              "urgency": 5000010,
+              "notifications": [
+                {
+                  "id": "3",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "ghost",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "3",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "ghost",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": false,
+              "stale": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "5b04d5f6fb304c4ef7963ec3ffe0eb5684257b99e27e50b7e379f824d7d5670e"
+    },
+    {
+      "id": "coordination-model-019",
+      "name": "splits actionable agents into awake and asleep buckets",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationWorklist",
+      "input": {
+        "sessions": [
+          {
+            "id": "live",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          },
+          {
+            "id": "off",
+            "status": "offline",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 0 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "live",
+            "kind": "needs_input"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "off",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "n:off",
+            "kind": "notification",
+            "sessionId": "off",
+            "type": "msg",
+            "bucket": "asleep",
+            "title": "title",
+            "urgency": 3000010,
+            "reachability": "offline",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "off",
+              "sessionId": "off",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "needs_input",
+              "attentionScore": 0,
+              "urgency": 9000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "off",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          }
+        ],
+        "needsYou": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "n:off",
+            "kind": "notification",
+            "sessionId": "off",
+            "type": "msg",
+            "bucket": "asleep",
+            "title": "title",
+            "urgency": 3000010,
+            "reachability": "offline",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "off",
+              "sessionId": "off",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "needs_input",
+              "attentionScore": 0,
+              "urgency": 9000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "off",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          }
+        ],
+        "tail": []
+      },
+      "inputSha256": "7d0b7e670cdebbee10b6e12ebb32a6f64010f53e7300f6d21d79aabe7e253c84"
+    },
+    {
+      "id": "coordination-model-020",
+      "name": "clamps secondary urgency below bucket stride",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationWorklist",
+      "input": {
+        "sessions": [
+          {
+            "id": "awake",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 0 } }
+          },
+          {
+            "id": "busy-asleep",
+            "status": "offline",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 100000 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "awake",
+            "kind": "needs_input"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "busy-asleep",
+            "kind": "needs_input"
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "n:awake",
+            "kind": "notification",
+            "sessionId": "awake",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000010,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "awake",
+              "sessionId": "awake",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 0,
+              "urgency": 10000010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "awake",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "awake",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "n:busy-asleep",
+            "kind": "notification",
+            "sessionId": "busy-asleep",
+            "type": "msg",
+            "bucket": "asleep",
+            "title": "title",
+            "urgency": 3999999,
+            "reachability": "offline",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "busy-asleep",
+              "sessionId": "busy-asleep",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "needs_input",
+              "attentionScore": 100000,
+              "urgency": 109000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "busy-asleep",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "busy-asleep",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          }
+        ],
+        "needsYou": [
+          {
+            "key": "n:awake",
+            "kind": "notification",
+            "sessionId": "awake",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000010,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "awake",
+              "sessionId": "awake",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 0,
+              "urgency": 10000010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "awake",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "awake",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "n:busy-asleep",
+            "kind": "notification",
+            "sessionId": "busy-asleep",
+            "type": "msg",
+            "bucket": "asleep",
+            "title": "title",
+            "urgency": 3999999,
+            "reachability": "offline",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "busy-asleep",
+              "sessionId": "busy-asleep",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "needs_input",
+              "attentionScore": 100000,
+              "urgency": 109000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "busy-asleep",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "busy-asleep",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          }
+        ],
+        "tail": []
+      },
+      "inputSha256": "bf20ac8f2a3672ec2d7dab61610ee5b3a1988cc2bc6898be99d50a0053592590"
+    },
+    {
+      "id": "coordination-model-021",
+      "name": "lists genuine thread once beside notification",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationWorklist",
+      "input": {
+        "sessions": [
+          {
+            "id": "live",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "live",
+            "kind": "needs_input"
+          }
+        ],
+        "threads": [
+          {
+            "thread": {
+              "id": "task1",
+              "kind": "task",
+              "participants": ["aimux", "live"],
+              "waitingOn": ["user"],
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "displayTitle": "thread",
+            "urgency": 0,
+            "pendingDeliveries": 0
+          }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "thread": {
+                "thread": {
+                  "id": "task1",
+                  "kind": "task",
+                  "participants": ["aimux", "live"],
+                  "waitingOn": ["user"],
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                },
+                "displayTitle": "thread",
+                "urgency": 0,
+                "pendingDeliveries": 0
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "t:task1",
+            "kind": "thread",
+            "type": "task",
+            "bucket": "awake",
+            "title": "thread",
+            "urgency": 4000300,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "thread": {
+              "thread": {
+                "id": "task1",
+                "kind": "task",
+                "participants": ["aimux", "live"],
+                "waitingOn": ["user"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "thread",
+              "urgency": 0,
+              "pendingDeliveries": 0
+            }
+          }
+        ],
+        "needsYou": [
+          {
+            "key": "n:live",
+            "kind": "notification",
+            "sessionId": "live",
+            "type": "msg",
+            "bucket": "awake",
+            "title": "title",
+            "urgency": 4000410,
+            "reachability": "live",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "notification": {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "thread": {
+                "thread": {
+                  "id": "task1",
+                  "kind": "task",
+                  "participants": ["aimux", "live"],
+                  "waitingOn": ["user"],
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                },
+                "displayTitle": "thread",
+                "urgency": 0,
+                "pendingDeliveries": 0
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          },
+          {
+            "key": "t:task1",
+            "kind": "thread",
+            "type": "task",
+            "bucket": "awake",
+            "title": "thread",
+            "urgency": 4000300,
+            "reachability": "none",
+            "actionable": true,
+            "stale": false,
+            "when": "2026-01-01T00:00:00.000Z",
+            "thread": {
+              "thread": {
+                "id": "task1",
+                "kind": "task",
+                "participants": ["aimux", "live"],
+                "waitingOn": ["user"],
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              },
+              "displayTitle": "thread",
+              "urgency": 0,
+              "pendingDeliveries": 0
+            }
+          }
+        ],
+        "tail": []
+      },
+      "inputSha256": "456614e86daa842c54f3bc117843f31848c6208494470f452823487d6f8669cd"
+    },
+    {
+      "id": "coordination-model-022",
+      "name": "builds model and worklist view in one pass",
+      "source": "src/coordination-model.ts",
+      "api": "buildCoordinationView",
+      "input": {
+        "sessions": [
+          {
+            "id": "live",
+            "status": "running",
+            "command": "claude",
+            "semantic": { "user": { "label": "needs_input" }, "presentation": { "attentionScore": 4 } }
+          },
+          {
+            "id": "off",
+            "status": "offline",
+            "command": "claude",
+            "semantic": { "user": { "label": "offline" }, "presentation": { "attentionScore": 0 } }
+          }
+        ],
+        "notifications": [
+          {
+            "id": "1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "live",
+            "kind": "needs_input"
+          },
+          {
+            "id": "2",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "sessionId": "off",
+            "kind": "needs_input"
+          }
+        ],
+        "threads": [
+          {
+            "thread": {
+              "id": "t1",
+              "kind": "task",
+              "participants": ["aimux", "live"],
+              "waitingOn": ["user"],
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "displayTitle": "thread",
+            "urgency": 0,
+            "pendingDeliveries": 0
+          }
+        ],
+        "currentParticipant": "user"
+      },
+      "output": {
+        "model": {
+          "items": [
+            {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "thread": {
+                "thread": {
+                  "id": "t1",
+                  "kind": "task",
+                  "participants": ["aimux", "live"],
+                  "waitingOn": ["user"],
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                },
+                "displayTitle": "thread",
+                "urgency": 0,
+                "pendingDeliveries": 0
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            },
+            {
+              "key": "off",
+              "sessionId": "off",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "offline",
+              "attentionScore": 0,
+              "urgency": 9000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "off",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          ],
+          "actionable": [
+            {
+              "key": "live",
+              "sessionId": "live",
+              "title": "title",
+              "reachability": "live",
+              "liveLabel": "needs_input",
+              "attentionScore": 4,
+              "urgency": 10004010,
+              "notifications": [
+                {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "1",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "live",
+                "kind": "needs_input"
+              },
+              "thread": {
+                "thread": {
+                  "id": "t1",
+                  "kind": "task",
+                  "participants": ["aimux", "live"],
+                  "waitingOn": ["user"],
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                },
+                "displayTitle": "thread",
+                "urgency": 0,
+                "pendingDeliveries": 0
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            },
+            {
+              "key": "off",
+              "sessionId": "off",
+              "title": "title",
+              "reachability": "offline",
+              "liveLabel": "offline",
+              "attentionScore": 0,
+              "urgency": 9000010,
+              "notifications": [
+                {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                }
+              ],
+              "unreadCount": 1,
+              "latestUnread": {
+                "id": "2",
+                "title": "title",
+                "body": "body",
+                "unread": true,
+                "cleared": false,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "sessionId": "off",
+                "kind": "needs_input"
+              },
+              "pendingDeliveries": 0,
+              "actionable": true,
+              "stale": false
+            }
+          ],
+          "unreachable": []
+        },
+        "worklist": {
+          "items": [
+            {
+              "key": "n:live",
+              "kind": "notification",
+              "sessionId": "live",
+              "type": "msg",
+              "bucket": "awake",
+              "title": "title",
+              "urgency": 4000410,
+              "reachability": "live",
+              "actionable": true,
+              "stale": false,
+              "when": "2026-01-01T00:00:00.000Z",
+              "notification": {
+                "key": "live",
+                "sessionId": "live",
+                "title": "title",
+                "reachability": "live",
+                "liveLabel": "needs_input",
+                "attentionScore": 4,
+                "urgency": 10004010,
+                "notifications": [
+                  {
+                    "id": "1",
+                    "title": "title",
+                    "body": "body",
+                    "unread": true,
+                    "cleared": false,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                    "sessionId": "live",
+                    "kind": "needs_input"
+                  }
+                ],
+                "unreadCount": 1,
+                "latestUnread": {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                },
+                "thread": {
+                  "thread": {
+                    "id": "t1",
+                    "kind": "task",
+                    "participants": ["aimux", "live"],
+                    "waitingOn": ["user"],
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  },
+                  "displayTitle": "thread",
+                  "urgency": 0,
+                  "pendingDeliveries": 0
+                },
+                "pendingDeliveries": 0,
+                "actionable": true,
+                "stale": false
+              }
+            },
+            {
+              "key": "t:t1",
+              "kind": "thread",
+              "type": "task",
+              "bucket": "awake",
+              "title": "thread",
+              "urgency": 4000300,
+              "reachability": "none",
+              "actionable": true,
+              "stale": false,
+              "when": "2026-01-01T00:00:00.000Z",
+              "thread": {
+                "thread": {
+                  "id": "t1",
+                  "kind": "task",
+                  "participants": ["aimux", "live"],
+                  "waitingOn": ["user"],
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                },
+                "displayTitle": "thread",
+                "urgency": 0,
+                "pendingDeliveries": 0
+              }
+            },
+            {
+              "key": "n:off",
+              "kind": "notification",
+              "sessionId": "off",
+              "type": "msg",
+              "bucket": "asleep",
+              "title": "title",
+              "urgency": 3000010,
+              "reachability": "offline",
+              "actionable": true,
+              "stale": false,
+              "when": "2026-01-01T00:00:00.000Z",
+              "notification": {
+                "key": "off",
+                "sessionId": "off",
+                "title": "title",
+                "reachability": "offline",
+                "liveLabel": "offline",
+                "attentionScore": 0,
+                "urgency": 9000010,
+                "notifications": [
+                  {
+                    "id": "2",
+                    "title": "title",
+                    "body": "body",
+                    "unread": true,
+                    "cleared": false,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                    "sessionId": "off",
+                    "kind": "needs_input"
+                  }
+                ],
+                "unreadCount": 1,
+                "latestUnread": {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                },
+                "pendingDeliveries": 0,
+                "actionable": true,
+                "stale": false
+              }
+            }
+          ],
+          "needsYou": [
+            {
+              "key": "n:live",
+              "kind": "notification",
+              "sessionId": "live",
+              "type": "msg",
+              "bucket": "awake",
+              "title": "title",
+              "urgency": 4000410,
+              "reachability": "live",
+              "actionable": true,
+              "stale": false,
+              "when": "2026-01-01T00:00:00.000Z",
+              "notification": {
+                "key": "live",
+                "sessionId": "live",
+                "title": "title",
+                "reachability": "live",
+                "liveLabel": "needs_input",
+                "attentionScore": 4,
+                "urgency": 10004010,
+                "notifications": [
+                  {
+                    "id": "1",
+                    "title": "title",
+                    "body": "body",
+                    "unread": true,
+                    "cleared": false,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                    "sessionId": "live",
+                    "kind": "needs_input"
+                  }
+                ],
+                "unreadCount": 1,
+                "latestUnread": {
+                  "id": "1",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "live",
+                  "kind": "needs_input"
+                },
+                "thread": {
+                  "thread": {
+                    "id": "t1",
+                    "kind": "task",
+                    "participants": ["aimux", "live"],
+                    "waitingOn": ["user"],
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  },
+                  "displayTitle": "thread",
+                  "urgency": 0,
+                  "pendingDeliveries": 0
+                },
+                "pendingDeliveries": 0,
+                "actionable": true,
+                "stale": false
+              }
+            },
+            {
+              "key": "t:t1",
+              "kind": "thread",
+              "type": "task",
+              "bucket": "awake",
+              "title": "thread",
+              "urgency": 4000300,
+              "reachability": "none",
+              "actionable": true,
+              "stale": false,
+              "when": "2026-01-01T00:00:00.000Z",
+              "thread": {
+                "thread": {
+                  "id": "t1",
+                  "kind": "task",
+                  "participants": ["aimux", "live"],
+                  "waitingOn": ["user"],
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                },
+                "displayTitle": "thread",
+                "urgency": 0,
+                "pendingDeliveries": 0
+              }
+            },
+            {
+              "key": "n:off",
+              "kind": "notification",
+              "sessionId": "off",
+              "type": "msg",
+              "bucket": "asleep",
+              "title": "title",
+              "urgency": 3000010,
+              "reachability": "offline",
+              "actionable": true,
+              "stale": false,
+              "when": "2026-01-01T00:00:00.000Z",
+              "notification": {
+                "key": "off",
+                "sessionId": "off",
+                "title": "title",
+                "reachability": "offline",
+                "liveLabel": "offline",
+                "attentionScore": 0,
+                "urgency": 9000010,
+                "notifications": [
+                  {
+                    "id": "2",
+                    "title": "title",
+                    "body": "body",
+                    "unread": true,
+                    "cleared": false,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                    "sessionId": "off",
+                    "kind": "needs_input"
+                  }
+                ],
+                "unreadCount": 1,
+                "latestUnread": {
+                  "id": "2",
+                  "title": "title",
+                  "body": "body",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "sessionId": "off",
+                  "kind": "needs_input"
+                },
+                "pendingDeliveries": 0,
+                "actionable": true,
+                "stale": false
+              }
+            }
+          ],
+          "tail": []
+        }
+      },
+      "inputSha256": "567875e47e600e26b45a40ff3d3287af8a8b9531cfc2294975b826fc0051eac2"
+    }
+  ]
+}
