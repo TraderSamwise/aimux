@@ -3,6 +3,7 @@ use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
 
@@ -102,6 +103,27 @@ pub struct TmuxManagedWindow {
 pub struct TmuxPersistedCommandText {
     pub text: Vec<String>,
     pub complete: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenTargetOptions {
+    pub inside_tmux: bool,
+    pub already_resolved: bool,
+    pub client_tty: Option<String>,
+    pub client_suffix: Option<String>,
+    pub return_session_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanePipeFileOwnership {
+    pub token: String,
+    pub token_file_path: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PanePipeFileOptions {
+    pub only_if_not_piped: bool,
+    pub ownership: Option<PanePipeFileOwnership>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -210,6 +232,38 @@ impl TmuxRuntimeManager {
             );
         }
         session
+    }
+
+    pub fn get_project_client_session_name(
+        &self,
+        host_session_name: &str,
+        client_suffix: &str,
+    ) -> String {
+        project_client_session_name(host_session_name, client_suffix)
+    }
+
+    pub fn is_client_session_name(&self, session_name: &str) -> bool {
+        is_tmux_client_session_name(session_name)
+    }
+
+    pub fn is_inside_tmux(&self) -> bool {
+        std::env::var_os("TMUX").is_some()
+    }
+
+    pub fn get_open_session_name(&mut self, session_name: &str, inside_tmux: bool) -> String {
+        self.resolve_open_session_name(session_name, inside_tmux, None, None)
+            .unwrap_or_else(|_| session_name.to_owned())
+    }
+
+    pub fn peek_open_session_name(&mut self, session_name: &str, inside_tmux: bool) -> String {
+        if !self.is_managed_session_name(session_name) || self.is_client_session_name(session_name)
+        {
+            return session_name.to_owned();
+        }
+        let Some(client_suffix) = self.resolve_client_suffix(inside_tmux, None) else {
+            return session_name.to_owned();
+        };
+        self.get_project_client_session_name(session_name, &client_suffix)
     }
 
     pub fn has_session(&mut self, session_name: &str) -> bool {
@@ -366,6 +420,53 @@ impl TmuxRuntimeManager {
             .map(|_| ())
     }
 
+    pub fn ensure_dashboard_window(
+        &mut self,
+        session_name: &str,
+        project_root: &str,
+        dashboard_command: Option<&TmuxCommandSpec>,
+    ) -> Result<TmuxTarget, String> {
+        let dashboard_name = "dashboard";
+        if let Some(existing) = self
+            .list_windows(session_name)
+            .into_iter()
+            .find(|window| is_dashboard_window_name(&window.name))
+        {
+            self.rename_window(&existing.id, dashboard_name)?;
+            return Ok(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: existing.id,
+                window_index: existing.index,
+                window_name: dashboard_name.to_owned(),
+                pane_dead: existing.pane_dead,
+            });
+        }
+        self.exec_owned(
+            new_dashboard_window_argv(
+                session_name,
+                project_root,
+                dashboard_name,
+                dashboard_command,
+            ),
+            Some(TmuxExecOptions {
+                cwd: Some(project_root.to_owned()),
+            }),
+        )?;
+        self.list_windows(session_name)
+            .into_iter()
+            .find(|window| window.name == dashboard_name)
+            .map(|created| TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: created.id,
+                window_index: created.index,
+                window_name: created.name,
+                pane_dead: created.pane_dead,
+            })
+            .ok_or_else(|| {
+                format!("Failed to create dashboard window in tmux session {session_name}")
+            })
+    }
+
     pub fn respawn_window(
         &mut self,
         target: &TmuxTarget,
@@ -385,9 +486,125 @@ impl TmuxRuntimeManager {
             .map(|_| ())
     }
 
+    pub fn replace_window_when_ready(
+        &mut self,
+        target: &TmuxTarget,
+        spec: &TmuxCommandSpec,
+        readiness_option: &str,
+        readiness_value: &str,
+        timeout_ms: u64,
+    ) -> Result<TmuxTarget, String> {
+        let was_active = self.is_window_active(target);
+        let replacement_name = format!(
+            "aimux-reload-{}-{}",
+            target
+                .window_id
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+                .collect::<String>(),
+            now_millis_base36()
+        );
+        let replacement = self.create_window(
+            &target.session_name,
+            &replacement_name,
+            &spec.cwd,
+            &spec.command,
+            &spec.args,
+            true,
+        )?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        while std::time::Instant::now() < deadline {
+            if self
+                .get_window_option(&replacement.window_id, readiness_option)
+                .as_deref()
+                == Some(readiness_value)
+            {
+                let old_name = format!("{}-old", target.window_name);
+                let mut original_renamed = false;
+                let mut replacement_renamed = false;
+                let swap_result = (|| {
+                    self.rename_window(&target.window_id, &old_name)?;
+                    original_renamed = true;
+                    self.rename_window(&replacement.window_id, &target.window_name)?;
+                    replacement_renamed = true;
+                    self.exec_owned(
+                        vec![
+                            "swap-window".to_owned(),
+                            "-d".to_owned(),
+                            "-s".to_owned(),
+                            replacement.window_id.clone(),
+                            "-t".to_owned(),
+                            target.window_id.clone(),
+                        ],
+                        None,
+                    )
+                    .map(|_| ())
+                })();
+                if let Err(error) = swap_result {
+                    if replacement_renamed {
+                        let _ = self.rename_window(&replacement.window_id, &replacement_name);
+                    }
+                    if original_renamed {
+                        let _ = self.rename_window(&target.window_id, &target.window_name);
+                    }
+                    let _ = self.kill_window(&replacement);
+                    return Err(error);
+                }
+                let swapped = self
+                    .get_target_by_window_id(&target.session_name, &replacement.window_id)
+                    .unwrap_or(replacement);
+                let _ = self.kill_window(target);
+                if was_active {
+                    self.select_window(&swapped)?;
+                }
+                return Ok(swapped);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = self.kill_window(&replacement);
+        Err(format!(
+            "Timed out waiting for replacement tmux window {} to become ready",
+            replacement.window_id
+        ))
+    }
+
     pub fn select_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
         self.exec_owned(select_window_argv(&target.window_id), None)
             .map(|_| ())
+    }
+
+    pub fn cancel_copy_mode(&mut self, target: impl AsRef<str>) -> Result<(), String> {
+        let target = target.as_ref();
+        if self
+            .display_message("#{pane_in_mode}", Some(target))
+            .as_deref()
+            != Some("1")
+        {
+            return Ok(());
+        }
+        self.exec_owned(
+            vec![
+                "send-keys".to_owned(),
+                "-t".to_owned(),
+                target.to_owned(),
+                "-X".to_owned(),
+                "cancel".to_owned(),
+            ],
+            None,
+        )
+        .map(|_| ())
+    }
+
+    pub fn switch_client_to_target(
+        &mut self,
+        client_tty: &str,
+        target: &TmuxTarget,
+    ) -> Result<(), String> {
+        self.exec_owned(
+            switch_client_to_target_argv(client_tty, &target.window_id),
+            None,
+        )
+        .map(|_| ())
     }
 
     pub fn capture_target(
@@ -414,6 +631,37 @@ impl TmuxRuntimeManager {
     pub fn stop_pane_pipe(&mut self, target: &TmuxTarget) -> Result<(), String> {
         self.exec_owned(stop_pane_pipe_argv(&target.window_id), None)
             .map(|_| ())
+    }
+
+    pub fn pipe_target_to_file(
+        &mut self,
+        target: &TmuxTarget,
+        file_path: &str,
+        options: PanePipeFileOptions,
+    ) -> Result<(), String> {
+        let command = options.ownership.as_ref().map_or_else(
+            || format!("cat >> {}", shell_quote(file_path)),
+            |ownership| {
+                let script = "token_file=$2; printf '%s\\t%s\\n' \"$$\" \"$1\" > \"$token_file\"; trap 'rm -f \"$token_file\"' EXIT; cat >> \"$3\"";
+                [
+                    "sh".to_owned(),
+                    "-c".to_owned(),
+                    shell_quote(script),
+                    "aimux-pane-tap".to_owned(),
+                    shell_quote(&ownership.token),
+                    shell_quote(&ownership.token_file_path),
+                    shell_quote(file_path),
+                ]
+                .join(" ")
+            },
+        );
+        self.start_pane_pipe(target, &command, options.only_if_not_piped)
+    }
+
+    pub fn is_pane_piped(&mut self, target: &TmuxTarget) -> bool {
+        self.display_message("#{pane_pipe}", Some(&target.window_id))
+            .as_deref()
+            == Some("1")
     }
 
     pub fn resize_target(
@@ -999,6 +1247,484 @@ impl TmuxRuntimeManager {
                         metadata_string(&entry.metadata, "backendSessionId") == Some(id)
                     })
             })
+    }
+
+    pub fn attach_session(
+        &mut self,
+        session_name: &str,
+        window_index: Option<i64>,
+    ) -> Result<(), String> {
+        let target = window_index.map_or_else(
+            || session_name.to_owned(),
+            |index| session_window_target(session_name, index),
+        );
+        if !has_interactive_terminal() {
+            return Err(format!(
+                "cannot attach to tmux session {target} without a terminal; run \"tmux attach -t {target}\" yourself"
+            ));
+        }
+        self.exec_owned(attach_session_argv(session_name, window_index), None)
+            .map(|_| ())
+    }
+
+    pub fn detach_client(&mut self) -> Result<(), String> {
+        self.exec_owned(vec!["detach-client".to_owned()], None)
+            .map(|_| ())
+    }
+
+    pub fn switch_to_last_client_session(&mut self) -> Result<(), String> {
+        self.exec_owned(vec!["switch-client".to_owned(), "-l".to_owned()], None)
+            .map(|_| ())
+    }
+
+    pub fn leave_managed_session(
+        &mut self,
+        inside_tmux: bool,
+        session_name: Option<&str>,
+    ) -> Result<(), String> {
+        let active_session = if inside_tmux {
+            self.current_client_session()
+                .or_else(|| session_name.map(str::to_owned))
+        } else {
+            session_name.map(str::to_owned)
+        };
+        if inside_tmux && let Some(active_session) = active_session.as_deref() {
+            let return_session = self.get_return_session(active_session);
+            let managed_prefix = format!("{}-", self.session_prefix);
+            let is_external_return = return_session.as_deref().is_some_and(|return_session| {
+                return_session != active_session && !return_session.starts_with(&managed_prefix)
+            });
+            if is_external_return
+                && self
+                    .exec_owned(
+                        vec![
+                            "switch-client".to_owned(),
+                            "-t".to_owned(),
+                            return_session.unwrap_or_default(),
+                        ],
+                        None,
+                    )
+                    .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        self.detach_client()
+    }
+
+    pub fn switch_client(
+        &mut self,
+        session_name: &str,
+        window_index: i64,
+        client_tty: Option<&str>,
+    ) -> Result<(), String> {
+        self.exec_owned(
+            switch_client_argv(session_name, window_index, client_tty),
+            None,
+        )
+        .map(|_| ())
+    }
+
+    pub fn link_window_to_session(
+        &mut self,
+        client_session_name: &str,
+        target: &TmuxTarget,
+        window_index: Option<i64>,
+    ) -> Result<TmuxTarget, String> {
+        self.ensure_linked_window(client_session_name, target, window_index)
+    }
+
+    pub fn open_target(
+        &mut self,
+        target: &TmuxTarget,
+        options: OpenTargetOptions,
+    ) -> Result<TmuxTarget, String> {
+        let target_host_session =
+            if options.inside_tmux && self.is_client_session_name(&target.session_name) {
+                self.get_session_option(&target.session_name, "@aimux-host-session")
+            } else {
+                None
+            };
+        let open_session_name = target_host_session
+            .as_deref()
+            .unwrap_or(&target.session_name)
+            .to_owned();
+        let open_project_root =
+            if options.inside_tmux && !self.is_client_session_name(&open_session_name) {
+                self.get_session_option(&open_session_name, "@aimux-project-root")
+            } else {
+                None
+            };
+        let should_resolve_managed_client = options.inside_tmux
+            && !self.is_client_session_name(&open_session_name)
+            && (self.is_managed_session_name(&open_session_name) || open_project_root.is_some());
+        let session_name = if should_resolve_managed_client {
+            self.resolve_open_session_name(
+                &open_session_name,
+                true,
+                options.client_suffix.as_deref(),
+                options.client_tty.as_deref(),
+            )?
+        } else if options.already_resolved {
+            open_session_name
+        } else {
+            self.resolve_open_session_name(
+                &open_session_name,
+                options.inside_tmux,
+                options.client_suffix.as_deref(),
+                options.client_tty.as_deref(),
+            )?
+        };
+        let effective_target = if session_name != target.session_name {
+            self.ensure_linked_window(
+                &session_name,
+                target,
+                if is_dashboard_window_name(&target.window_name) {
+                    Some(0)
+                } else {
+                    None
+                },
+            )?
+        } else {
+            let mut target = target.clone();
+            target.session_name = session_name.clone();
+            target
+        };
+        if is_dashboard_window_name(&effective_target.window_name) {
+            self.cancel_copy_mode(&effective_target.window_id)?;
+        }
+        if options.inside_tmux {
+            let current = options
+                .return_session_name
+                .or_else(|| self.current_client_session());
+            if current
+                .as_deref()
+                .is_some_and(|current| current != session_name)
+            {
+                self.set_return_session(&session_name, current.as_deref().unwrap_or_default())?;
+            }
+            self.switch_client(
+                &session_name,
+                effective_target.window_index,
+                options.client_tty.as_deref(),
+            )?;
+        } else {
+            self.attach_session(&session_name, Some(effective_target.window_index))?;
+        }
+        Ok(effective_target)
+    }
+
+    fn resolve_open_session_name(
+        &mut self,
+        session_name: &str,
+        inside_tmux: bool,
+        suffix_override: Option<&str>,
+        client_tty: Option<&str>,
+    ) -> Result<String, String> {
+        if self.is_client_session_name(session_name) {
+            return Ok(session_name.to_owned());
+        }
+        let managed = self.is_managed_session_name(session_name);
+        let project_root = if managed || inside_tmux {
+            self.get_session_option(session_name, "@aimux-project-root")
+        } else {
+            None
+        };
+        if !managed && project_root.is_none() {
+            return Ok(session_name.to_owned());
+        }
+        let client_suffix = suffix_override
+            .map(|value| self.normalize_client_suffix(value))
+            .or_else(|| self.resolve_client_suffix(inside_tmux, client_tty));
+        let Some(client_suffix) = client_suffix else {
+            return Ok(session_name.to_owned());
+        };
+        let client_session_name =
+            self.get_project_client_session_name(session_name, &client_suffix);
+        if let Some(project_root) = project_root {
+            self.ensure_client_session(session_name, &client_session_name, &project_root)?;
+        }
+        Ok(client_session_name)
+    }
+
+    fn ensure_client_session(
+        &mut self,
+        host_session_name: &str,
+        client_session_name: &str,
+        project_root: &str,
+    ) -> Result<(), String> {
+        let dashboard_name = "dashboard";
+        let client_session_exists = self.has_session(client_session_name);
+        let runtime_build_stamp = managed_runtime_build_stamp();
+        let client_windows = if client_session_exists {
+            self.list_windows(client_session_name)
+        } else {
+            Vec::new()
+        };
+        let existing_dashboard = client_windows
+            .iter()
+            .find(|window| is_dashboard_window_name(&window.name))
+            .cloned();
+        let current_host_session = if client_session_exists {
+            self.get_session_option(client_session_name, "@aimux-host-session")
+        } else {
+            None
+        };
+        let current_project_root = if client_session_exists {
+            self.get_session_option(client_session_name, "@aimux-project-root")
+        } else {
+            None
+        };
+        let current_runtime_build = if client_session_exists {
+            self.get_session_option(client_session_name, "@aimux-runtime-build")
+        } else {
+            None
+        };
+        let dashboard_at_zero = client_windows
+            .iter()
+            .find(|window| window.index == 0)
+            .cloned();
+        let needs_repair = client_session_exists
+            && (existing_dashboard.is_none()
+                || existing_dashboard
+                    .as_ref()
+                    .is_some_and(|window| window.index != 0)
+                || dashboard_at_zero
+                    .as_ref()
+                    .zip(existing_dashboard.as_ref())
+                    .is_none_or(|(zero, dashboard)| zero.id != dashboard.id)
+                || current_host_session.as_deref() != Some(host_session_name)
+                || current_project_root.as_deref() != Some(project_root)
+                || current_runtime_build.as_deref() != Some(runtime_build_stamp.as_str()));
+        if !client_session_exists {
+            self.exec_owned(
+                new_session_argv(client_session_name, project_root, None),
+                Some(TmuxExecOptions {
+                    cwd: Some(project_root.to_owned()),
+                }),
+            )?;
+            self.set_current_runtime_contract(client_session_name)?;
+            self.configure_managed_session(
+                client_session_name,
+                project_root,
+                default_runtime_config(Path::new(project_root), project_root),
+            )?;
+            self.set_current_runtime_contract(client_session_name)?;
+            self.set_session_option(
+                client_session_name,
+                "@aimux-host-session",
+                host_session_name,
+            )?;
+            self.set_session_option(
+                client_session_name,
+                "@aimux-runtime-build",
+                &runtime_build_stamp,
+            )?;
+            return Ok(());
+        }
+        if needs_repair {
+            if let Some(existing) = existing_dashboard
+                .as_ref()
+                .filter(|window| window.index != 0 && dashboard_at_zero.is_none())
+            {
+                self.exec_owned(
+                    vec![
+                        "move-window".to_owned(),
+                        "-s".to_owned(),
+                        existing.id.clone(),
+                        "-t".to_owned(),
+                        format!("{client_session_name}:0"),
+                    ],
+                    None,
+                )?;
+            } else if existing_dashboard.is_none() {
+                let target = if dashboard_at_zero.is_some() {
+                    client_session_name.to_owned()
+                } else {
+                    format!("{client_session_name}:0")
+                };
+                self.exec_owned(
+                    vec![
+                        "new-window".to_owned(),
+                        "-d".to_owned(),
+                        "-t".to_owned(),
+                        target,
+                        "-c".to_owned(),
+                        project_root.to_owned(),
+                        "-n".to_owned(),
+                        dashboard_name.to_owned(),
+                        "sh".to_owned(),
+                        "-lc".to_owned(),
+                        "tail -f /dev/null".to_owned(),
+                    ],
+                    Some(TmuxExecOptions {
+                        cwd: Some(project_root.to_owned()),
+                    }),
+                )?;
+            }
+        }
+        self.configure_managed_session(
+            client_session_name,
+            project_root,
+            default_runtime_config(Path::new(project_root), project_root),
+        )?;
+        self.set_current_runtime_contract(client_session_name)?;
+        self.set_session_option(
+            client_session_name,
+            "@aimux-host-session",
+            host_session_name,
+        )?;
+        self.set_session_option(
+            client_session_name,
+            "@aimux-runtime-build",
+            &runtime_build_stamp,
+        )
+    }
+
+    fn ensure_linked_window(
+        &mut self,
+        client_session_name: &str,
+        target: &TmuxTarget,
+        window_index: Option<i64>,
+    ) -> Result<TmuxTarget, String> {
+        let existing = self.get_target_by_window_id(client_session_name, &target.window_id);
+        if let Some(existing) = existing.as_ref()
+            && window_index.is_none_or(|index| existing.window_index == index)
+        {
+            return Ok(existing.clone());
+        }
+        let mut occupying_dashboard = None;
+        let mut original_renumber_windows = None;
+        if let Some(window_index) = window_index {
+            let windows = self.list_windows(client_session_name);
+            let occupying = windows
+                .into_iter()
+                .find(|window| window.index == window_index);
+            if let Some(occupying) = occupying.filter(|window| window.id != target.window_id) {
+                if !is_dashboard_window_name(&occupying.name) {
+                    return Err(format!(
+                        "Cannot replace non-dashboard tmux window {} at {}:{}",
+                        occupying.id, client_session_name, window_index
+                    ));
+                }
+                occupying_dashboard = Some(occupying);
+                original_renumber_windows = Some(
+                    self.get_session_option(client_session_name, "renumber-windows")
+                        .unwrap_or_else(|| "off".to_owned()),
+                );
+            }
+        }
+        let destination = if occupying_dashboard.is_some() || window_index.is_none() {
+            client_session_name.to_owned()
+        } else {
+            format!(
+                "{}:{}",
+                client_session_name,
+                window_index.unwrap_or_default()
+            )
+        };
+        let result = (|| {
+            if original_renumber_windows.is_some() {
+                self.set_session_option(client_session_name, "renumber-windows", "off")?;
+            }
+            let linked_in_this_call = existing.is_none();
+            if existing.is_none() {
+                self.exec_owned(link_window_argv(&target.window_id, &destination), None)?;
+            }
+            let linked = self
+                .get_target_by_window_id(client_session_name, &target.window_id)
+                .ok_or_else(|| {
+                    format!(
+                        "Failed to link window {} into tmux session {}",
+                        target.window_id, client_session_name
+                    )
+                })?;
+            if let Some(window_index) = window_index
+                && linked.window_index != window_index
+            {
+                let move_result = if occupying_dashboard.is_some() {
+                    self.exec_owned(
+                        swap_window_argv(client_session_name, &linked.window_id, window_index),
+                        None,
+                    )
+                } else {
+                    self.exec_owned(
+                        move_window_argv(client_session_name, &linked.window_id, window_index),
+                        None,
+                    )
+                };
+                if let Err(error) = move_result {
+                    if linked_in_this_call {
+                        let _ = self.unlink_window(&linked);
+                    }
+                    return Err(error);
+                }
+                let replaced = self
+                    .get_target_by_window_id(client_session_name, &target.window_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "Failed to replace dashboard slot {client_session_name}:{window_index}"
+                        )
+                    })?;
+                if replaced.window_index != window_index {
+                    if linked_in_this_call
+                        && let Some(linked_after_failure) =
+                            self.get_target_by_window_id(client_session_name, &target.window_id)
+                    {
+                        let _ = self.unlink_window(&linked_after_failure);
+                    }
+                    return Err(format!(
+                        "Failed to replace dashboard slot {client_session_name}:{window_index}"
+                    ));
+                }
+                if let Some(stale) = occupying_dashboard.as_ref().and_then(|dashboard| {
+                    self.get_target_by_window_id(client_session_name, &dashboard.id)
+                }) {
+                    let _ = self.unlink_window(&stale);
+                }
+                return Ok(replaced);
+            }
+            Ok(linked)
+        })();
+        if let Some(original) = original_renumber_windows {
+            let _ = self.set_session_option(client_session_name, "renumber-windows", &original);
+        }
+        result
+    }
+
+    fn normalize_client_suffix(&self, value: &str) -> String {
+        if is_lower_hex_8(value) {
+            return value.to_owned();
+        }
+        let mut hasher = Sha1::new();
+        hasher.update(value.as_bytes());
+        format!("{:x}", hasher.finalize())[..8].to_owned()
+    }
+
+    fn resolve_client_suffix(
+        &mut self,
+        inside_tmux: bool,
+        client_tty_override: Option<&str>,
+    ) -> Option<String> {
+        if let Ok(value) = std::env::var("AIMUX_CLIENT_KEY") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(self.normalize_client_suffix(value));
+            }
+        }
+        if inside_tmux {
+            if let Some(client_tty) = client_tty_override.filter(|value| !value.is_empty()) {
+                return Some(self.normalize_client_suffix(client_tty));
+            }
+            if let Some(current_session) = self.current_client_session() {
+                return Some(self.normalize_client_suffix(&current_session));
+            }
+            return None;
+        }
+        command_output("tty", &[])
+            .ok()
+            .map(|tty| self.normalize_client_suffix(tty.trim()))
+            .filter(|suffix| !suffix.is_empty())
     }
 
     fn display_message_raw(
@@ -1873,6 +2599,42 @@ fn runtime_owner_id(resolver: &mut PathResolver) -> String {
     }))
 }
 
+fn managed_runtime_build_stamp() -> String {
+    let mut paths = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        paths.push(exe);
+    }
+    paths.push(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("scripts")
+            .join("tmux-statusline.sh"),
+    );
+    paths
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default();
+            format!("{name}:{}", file_mtime_millis(&path).unwrap_or(0))
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn file_mtime_millis(path: &Path) -> Option<u128> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
+}
+
 fn json_compact(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_owned())
 }
@@ -1915,6 +2677,43 @@ fn now_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+fn now_millis_base36() -> String {
+    let mut value = now_millis();
+    if value == 0 {
+        return "0".to_owned();
+    }
+    let mut digits = Vec::new();
+    while value > 0 {
+        let digit = (value % 36) as u8;
+        digits.push(match digit {
+            0..=9 => (b'0' + digit) as char,
+            _ => (b'a' + digit - 10) as char,
+        });
+        value /= 36;
+    }
+    digits.into_iter().rev().collect()
+}
+
+fn has_interactive_terminal() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| format!("failed to run {program}: {error}"))?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(if stderr.is_empty() {
+        format!("{program} exited with {}", output.status)
+    } else {
+        stderr
+    })
 }
 
 fn slugify_project_name(name: &str) -> String {
