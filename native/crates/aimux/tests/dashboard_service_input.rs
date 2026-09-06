@@ -2,7 +2,7 @@ use aimux::dashboard_create::DashboardCreatePlan;
 use aimux::dashboard_model::WorktreeGroup;
 use aimux::dashboard_service_input::{
     DashboardServiceInputEffect, DashboardServiceInputState, render_service_input_overlay,
-    render_worktree_list_overlay,
+    render_worktree_cache_cleanup_confirm_overlay, render_worktree_list_overlay,
 };
 use aimux::project_api_contract::routes;
 use aimux::tui_render::text::strip_ansi;
@@ -100,6 +100,49 @@ fn render_worktree_list_overlay_includes_main_and_worktree_rows() {
     assert!(output.contains("(main)"));
     assert!(output.contains("feature-a"));
     assert!(plain.contains("Esc"));
+}
+
+#[test]
+fn render_worktree_cache_cleanup_overlay_shows_preview_and_confirmation() {
+    let result = json!({
+        "dryRun": true,
+        "plan": {
+            "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1536 }],
+            "reclaimableBytes": 1536,
+            "skipped": []
+        },
+        "results": [],
+        "reclaimedBytes": 0
+    });
+
+    let output = render_worktree_cache_cleanup_confirm_overlay(&result, 120, 30);
+    let plain = strip_ansi(&output);
+
+    assert!(output.contains("WORKTREE CACHE CLEANUP"));
+    assert!(plain.contains("would remove 1 item(s), 1.5KB"));
+    assert!(plain.contains("/repo/.aimux/worktrees/old/node_modules"));
+    assert!(plain.contains("Enter/y"));
+}
+
+#[test]
+fn render_empty_worktree_cache_cleanup_overlay_is_dismiss_only() {
+    let result = json!({
+        "dryRun": true,
+        "plan": {
+            "targets": [],
+            "reclaimableBytes": 0,
+            "skipped": []
+        },
+        "results": [],
+        "reclaimedBytes": 0
+    });
+
+    let output = render_worktree_cache_cleanup_confirm_overlay(&result, 100, 24);
+    let plain = strip_ansi(&output);
+
+    assert!(plain.contains("No inactive generated worktree caches found."));
+    assert!(plain.contains("Enter"));
+    assert!(!plain.contains("remove  [n"));
 }
 
 fn worktree_group(value: serde_json::Value) -> WorktreeGroup {

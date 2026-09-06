@@ -14,7 +14,7 @@ use crate::dashboard_tool_picker::{
     DashboardToolPickerState,
 };
 use crate::project_api_contract::routes;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardController {
@@ -33,12 +33,15 @@ pub struct DashboardController {
     pub worktree_input: Option<String>,
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
+    pub worktree_cache_cleanup_confirm: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardControllerEffect {
     Render,
     Request(DashboardActionRequest),
+    WorktreeCacheCleanupPreview(DashboardActionRequest),
+    WorktreeCacheCleanupApply(DashboardActionRequest),
     OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
     Ignored,
@@ -62,6 +65,7 @@ impl DashboardController {
             worktree_input: None,
             worktree_remove_confirm: None,
             worktree_list_open: false,
+            worktree_cache_cleanup_confirm: None,
         }
     }
 
@@ -91,6 +95,9 @@ impl DashboardController {
         }
         if self.worktree_list_open {
             return self.handle_worktree_list_key(key);
+        }
+        if self.worktree_cache_cleanup_confirm.is_some() {
+            return self.handle_worktree_cache_cleanup_confirm_key(key);
         }
         if self.service_input.is_some() {
             return self.handle_service_input_key(snapshot, key);
@@ -145,6 +152,14 @@ impl DashboardController {
             DashboardKey::Printable('W') => {
                 self.worktree_list_open = true;
                 DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable('D') => {
+                self.worktree_cache_cleanup_confirm = None;
+                DashboardControllerEffect::WorktreeCacheCleanupPreview(DashboardActionRequest {
+                    method: "POST",
+                    path: routes::worktree_actions::CACHE_CLEANUP,
+                    body: json!({ "dryRun": true, "includeActive": false }),
+                })
             }
             DashboardKey::Digit(digit) => match self.navigation.handle_digit(snapshot, digit) {
                 DashboardNavigationOutcome::EntrySelected(entry) => {
@@ -311,6 +326,7 @@ impl DashboardController {
         self.worktree_input = None;
         self.worktree_remove_confirm = None;
         self.worktree_list_open = false;
+        self.worktree_cache_cleanup_confirm = None;
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
     }
@@ -843,6 +859,37 @@ impl DashboardController {
             }
             _ => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn handle_worktree_cache_cleanup_confirm_key(
+        &mut self,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        let target_count = self
+            .worktree_cache_cleanup_confirm
+            .as_ref()
+            .and_then(|preview| preview.get("plan"))
+            .and_then(|plan| plan.get("targets"))
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        if target_count == 0 && matches!(key, DashboardKey::Enter | DashboardKey::Back) {
+            self.worktree_cache_cleanup_confirm = None;
+            return DashboardControllerEffect::Render;
+        }
+        if target_count > 0 && matches!(key, DashboardKey::Enter | DashboardKey::Printable('y')) {
+            self.worktree_cache_cleanup_confirm = None;
+            return DashboardControllerEffect::WorktreeCacheCleanupApply(DashboardActionRequest {
+                method: "POST",
+                path: routes::worktree_actions::CACHE_CLEANUP,
+                body: json!({ "dryRun": false, "includeActive": false }),
+            });
+        }
+        if matches!(key, DashboardKey::Back | DashboardKey::Printable('n')) {
+            self.worktree_cache_cleanup_confirm = None;
+            return DashboardControllerEffect::Render;
+        }
+        DashboardControllerEffect::Ignored
     }
 
     fn handle_launch_options_key(

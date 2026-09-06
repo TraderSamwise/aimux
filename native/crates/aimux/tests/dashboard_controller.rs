@@ -731,6 +731,70 @@ fn shifted_w_opens_worktree_list_until_escape() {
 }
 
 #[test]
+fn shifted_d_requests_worktree_cache_cleanup_preview_and_confirm_apply() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    let DashboardControllerEffect::WorktreeCacheCleanupPreview(preview_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('D'))
+    else {
+        panic!("expected cache cleanup preview request");
+    };
+    assert_eq!(
+        preview_request.path,
+        routes::worktree_actions::CACHE_CLEANUP
+    );
+    assert_eq!(
+        preview_request.body,
+        json!({ "dryRun": true, "includeActive": false })
+    );
+
+    controller.worktree_cache_cleanup_confirm = Some(json!({
+        "dryRun": true,
+        "plan": {
+            "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1024 }],
+            "reclaimableBytes": 1024,
+            "skipped": []
+        },
+        "results": [],
+        "reclaimedBytes": 0
+    }));
+    let DashboardControllerEffect::WorktreeCacheCleanupApply(apply_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('y'))
+    else {
+        panic!("expected cache cleanup apply request");
+    };
+    assert_eq!(apply_request.path, routes::worktree_actions::CACHE_CLEANUP);
+    assert_eq!(
+        apply_request.body,
+        json!({ "dryRun": false, "includeActive": false })
+    );
+    assert!(controller.worktree_cache_cleanup_confirm.is_none());
+}
+
+#[test]
+fn empty_worktree_cache_cleanup_preview_dismisses_without_apply() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.worktree_cache_cleanup_confirm = Some(json!({
+        "dryRun": true,
+        "plan": {
+            "targets": [],
+            "reclaimableBytes": 0,
+            "skipped": []
+        },
+        "results": [],
+        "reclaimedBytes": 0
+    }));
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.worktree_cache_cleanup_confirm.is_none());
+}
+
+#[test]
 fn worktree_stop_key_confirms_then_dispatches_graveyard_request() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

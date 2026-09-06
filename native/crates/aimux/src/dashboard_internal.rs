@@ -24,7 +24,8 @@ use crate::dashboard_renderer::{
     render_dashboard_subscreen_frame,
 };
 use crate::dashboard_service_input::{
-    render_service_input_overlay, render_worktree_input_overlay, render_worktree_list_overlay,
+    render_service_input_overlay, render_worktree_cache_cleanup_confirm_overlay,
+    render_worktree_input_overlay, render_worktree_list_overlay,
     render_worktree_remove_confirm_overlay,
 };
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
@@ -221,6 +222,43 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         if let Some(endpoint) = latest_endpoint.as_ref() {
                             if let Err(error) = execute_dashboard_action(endpoint, &request) {
                                 controller.footer_message = Some(error.to_string());
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::WorktreeCacheCleanupPreview(request) => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            match execute_dashboard_action(endpoint, &request)
+                                .and_then(cache_cleanup_result_from_response)
+                            {
+                                Ok(result) => {
+                                    controller.worktree_cache_cleanup_confirm = Some(result);
+                                }
+                                Err(error) => {
+                                    controller.footer_message = Some(error.to_string());
+                                }
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::WorktreeCacheCleanupApply(request) => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            match execute_dashboard_action(endpoint, &request)
+                                .and_then(cache_cleanup_result_from_response)
+                            {
+                                Ok(result) => {
+                                    controller.footer_message =
+                                        Some(worktree_cache_cleanup_summary(&result));
+                                }
+                                Err(error) => {
+                                    controller.footer_message = Some(error.to_string());
+                                }
                             }
                         } else {
                             controller.footer_message =
@@ -472,6 +510,18 @@ fn render_dashboard_snapshot(
             scroll_offset: frame.scroll_offset,
         };
     }
+    if let Some(preview) = controller.worktree_cache_cleanup_confirm.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_worktree_cache_cleanup_confirm_overlay(
+            preview,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
     frame
 }
 
@@ -634,6 +684,42 @@ fn load_dashboard_snapshot(options: &NativeDashboardOptions) -> Result<Dashboard
         snapshot,
         endpoint: Some(endpoint),
     })
+}
+
+fn cache_cleanup_result_from_response(response: serde_json::Value) -> Result<serde_json::Value> {
+    if let Some(result) = response.get("result").filter(|value| value.is_object()) {
+        return Ok(result.clone());
+    }
+    if response.is_object() {
+        return Ok(response);
+    }
+    Err(anyhow::anyhow!(
+        "project service returned invalid worktree cache cleanup response"
+    ))
+}
+
+fn worktree_cache_cleanup_summary(result: &serde_json::Value) -> String {
+    let target_count = result
+        .get("plan")
+        .and_then(|plan| plan.get("targets"))
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let reclaimed_bytes = result
+        .get("reclaimedBytes")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.0);
+    let failed = result
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("status").and_then(serde_json::Value::as_str) == Some("failed"))
+        .count();
+    format!(
+        "Removed {} from {target_count} cache item(s); {failed} failed.",
+        crate::dashboard_service_input::format_worktree_cache_bytes(reclaimed_bytes)
+    )
 }
 
 fn parse_desktop_state_snapshot(contents: &str) -> Result<DesktopStateSnapshot> {
