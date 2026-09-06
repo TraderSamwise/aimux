@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::atomic_write::write_text_atomic_fast;
 use crate::daemon_state::load_metadata_state;
+use crate::dashboard_ui_state::DashboardUiStatePersistence;
 use crate::paths::basename_like_node_posix;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
@@ -169,7 +170,7 @@ fn write_precomputed_tmux_statusline_files(
     snapshot: &Value,
     client_session: Option<&str>,
 ) -> Result<(), String> {
-    let status_dir = tmux_statusline_dir(project_state_dir);
+    let status_dir = tmux_statusline_dir(project_state_dir.as_ref());
     fs::create_dir_all(&status_dir).map_err(|error| error.to_string())?;
     write_statusline_text(
         &status_dir,
@@ -197,10 +198,27 @@ fn write_precomputed_tmux_statusline_files(
     );
     write_statusline_text(&status_dir, "bottom-dashboard.txt", &dashboard_bottom)?;
     if let Some(client_session) = client_session.filter(|value| !value.trim().is_empty()) {
+        let client_snapshot = client_dashboard_screen(project_state_dir.as_ref(), client_session)
+            .map(|screen| {
+                let mut snapshot = snapshot.clone();
+                snapshot["dashboardScreen"] = Value::String(screen.to_owned());
+                snapshot
+            })
+            .unwrap_or_else(|| snapshot.clone());
+        let client_dashboard_bottom = render_tmux_statusline(
+            &client_snapshot,
+            project_root,
+            "bottom",
+            RenderOptions {
+                current_window: Some("dashboard"),
+                current_path: Some(project_root),
+                ..RenderOptions::default()
+            },
+        );
         write_statusline_text(
             &status_dir,
             &format!("bottom-dashboard-{client_session}.txt"),
-            &dashboard_bottom,
+            &client_dashboard_bottom,
         )?;
     }
     for entry in array_field(snapshot, "sessions")
@@ -251,6 +269,13 @@ fn invalidate_tmux_statusline_artifacts(project_state_dir: impl AsRef<Path>) {
 
 fn tmux_statusline_dir(project_state_dir: impl AsRef<Path>) -> PathBuf {
     project_state_dir.as_ref().join("tmux-statusline")
+}
+
+fn client_dashboard_screen(project_state_dir: &Path, client_session: &str) -> Option<&'static str> {
+    DashboardUiStatePersistence::new(project_state_dir, client_session)
+        .ok()
+        .and_then(|state| state.load_screen())
+        .map(|screen| screen.as_str())
 }
 
 fn statusline_sessions(sessions: Vec<Value>, kind: &str) -> Vec<Value> {

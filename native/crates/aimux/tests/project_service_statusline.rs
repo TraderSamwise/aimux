@@ -152,6 +152,50 @@ fn statusline_refresh_requests_tmux_refresh_after_writing_artifacts() {
     cleanup(project);
 }
 
+#[test]
+fn statusline_refresh_uses_client_dashboard_screen_for_client_bottom_artifact() {
+    let project = temp_project("refresh-client-screen");
+    let state_dir = project.join("state");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_fixture(&project),
+    )
+    .expect("topology");
+    create_dir_all(&state_dir).expect("state dir");
+    write(
+        state_dir.join("dashboard-ui-client-aimux-repo-client-abcd1234.json"),
+        r#"{"screen":"coordination"}"#,
+    )
+    .expect("client ui state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    refresh_project_statusline_with_tmux_refresh(
+        &context,
+        StatuslineRefreshInput {
+            session_id: Some("aimux-repo-client-abcd1234".into()),
+            force: false,
+        },
+        |_| {},
+    )
+    .expect("refresh statusline");
+
+    let generic = read_to_string(
+        state_dir
+            .join("tmux-statusline")
+            .join("bottom-dashboard.txt"),
+    )
+    .expect("generic dashboard bottom");
+    let client = read_to_string(
+        state_dir
+            .join("tmux-statusline")
+            .join("bottom-dashboard-aimux-repo-client-abcd1234.txt"),
+    )
+    .expect("client dashboard bottom");
+    assert!(generic.contains("#[fg=black,bg=yellow] Dashboard #[default]"));
+    assert!(client.contains("#[fg=black,bg=yellow] Coordination #[default]"));
+    cleanup(project);
+}
+
 fn topology_fixture(project: &std::path::Path) -> Value {
     let root = project.to_string_lossy();
     json!({
