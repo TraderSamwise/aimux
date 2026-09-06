@@ -214,6 +214,7 @@ fn write_precomputed_tmux_statusline_files(
             current_window: string_field(&entry, "windowName"),
             current_window_id: Some(window_id),
             current_path: string_field(&entry, "worktreePath").or(Some(project_root)),
+            ..RenderOptions::default()
         };
         write_statusline_text(
             &status_dir,
@@ -312,6 +313,24 @@ struct RenderOptions<'a> {
     current_window: Option<&'a str>,
     current_window_id: Option<&'a str>,
     current_path: Option<&'a str>,
+    width: Option<i64>,
+}
+
+pub fn render_tmux_statusline_contract(input: &Value) -> Value {
+    let options = input.get("options").unwrap_or(&Value::Null);
+    json!({
+        "text": render_tmux_statusline(
+            input.get("data").unwrap_or(&Value::Null),
+            string_field(input, "projectRoot").unwrap_or_default(),
+            string_field(input, "line").unwrap_or("top"),
+            RenderOptions {
+                current_window: string_field(options, "currentWindow"),
+                current_window_id: string_field(options, "currentWindowId"),
+                current_path: string_field(options, "currentPath"),
+                width: number_field(options, "width"),
+            },
+        )
+    })
 }
 
 fn render_tmux_statusline(
@@ -347,16 +366,28 @@ fn render_top_line(snapshot: &Value, project_root: &str, options: RenderOptions<
         "top",
         options,
     ));
-    segments.join("  \u{00b7}  ")
+    let joined = segments.join("  \u{00b7}  ");
+    match options.width {
+        Some(width) => trim_text(&joined, width.saturating_sub(2).max(24) as usize),
+        None => joined,
+    }
 }
 
 fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptions<'_>) -> String {
+    let max_width = options
+        .width
+        .map(|width| width.saturating_sub(2).max(24))
+        .unwrap_or(i64::MAX);
     if options
         .current_window
         .is_some_and(|window| window.starts_with("dashboard"))
     {
-        return render_dashboard_screens(string_field(snapshot, "dashboardScreen"))
-            .join("  \u{00b7}  ");
+        return choose_statusline_segments(
+            render_dashboard_screens(string_field(snapshot, "dashboardScreen")),
+            "  \u{00b7}  ",
+            max_width,
+        )
+        .join("  \u{00b7}  ");
     }
     let focused_teammate = resolve_focused_teammate(snapshot, project_root, options);
     let focused_overseer = focused_teammate
@@ -404,15 +435,66 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
         "bottom",
         options,
     ));
-    let chip_text = chips.join("  \u{00b7}  ");
+    let chosen_chips = choose_statusline_segments(chips, "  \u{00b7}  ", max_width);
+    let chip_text = chosen_chips.join("  \u{00b7}  ");
     let detail = detail_parts.join("  \u{00b7}  ");
     if detail.is_empty() {
         chip_text
     } else if chip_text.is_empty() {
         detail
-    } else {
+    } else if visible_segment_length(&chip_text)
+        + visible_segment_length("  |  ")
+        + visible_segment_length(&detail)
+        <= max_width
+    {
         format!("{chip_text}  |  {detail}")
+    } else {
+        chip_text
     }
+}
+
+fn choose_statusline_segments(
+    segments: Vec<String>,
+    separator: &str,
+    max_width: i64,
+) -> Vec<String> {
+    if max_width == i64::MAX {
+        return segments;
+    }
+    let mut chosen = Vec::new();
+    let mut used = 0_i64;
+    for segment in segments {
+        let next = visible_segment_length(&segment)
+            + if chosen.is_empty() {
+                0
+            } else {
+                visible_segment_length(separator)
+            };
+        if used + next > max_width {
+            break;
+        }
+        used += next;
+        chosen.push(segment);
+    }
+    chosen
+}
+
+fn visible_segment_length(segment: &str) -> i64 {
+    let mut output = 0_i64;
+    let mut chars = segment.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '#' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for inner in chars.by_ref() {
+                if inner == ']' {
+                    break;
+                }
+            }
+            continue;
+        }
+        output += 1;
+    }
+    output
 }
 
 fn render_control_plane(snapshot: &Value) -> String {
@@ -489,9 +571,7 @@ fn render_active_context(
     });
     let pr = context
         .and_then(|context| context.get("pr"))
-        .and_then(|pr| pr.get("number"))
-        .and_then(Value::as_i64)
-        .map(|number| format!("PR #{number}"));
+        .and_then(render_pr_context);
     let service = metadata
         .get("derived")
         .and_then(|derived| derived.get("services"))
@@ -629,6 +709,24 @@ fn render_service_context(service: &Value) -> Option<String> {
     string_field(service, "url")
         .map(strip_http_scheme)
         .map(|url| trim_text(url, 18))
+}
+
+fn render_pr_context(pr: &Value) -> Option<String> {
+    let number = pr.get("number").and_then(Value::as_i64)?;
+    let label = format!("PR #{number}");
+    if pr
+        .get("url")
+        .and_then(Value::as_str)
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        Some(render_status_range("pr", &label))
+    } else {
+        Some(label)
+    }
+}
+
+fn render_status_range(range: &str, label: &str) -> String {
+    format!("#[range=user|{range}]{label}#[norange]")
 }
 
 fn resolve_scoped_sessions<'a>(
