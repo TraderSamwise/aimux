@@ -1,7 +1,6 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::atomic_write::write_json_atomic;
 use crate::config::load_config_for_project;
@@ -37,9 +36,13 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
 use super::worktree_cache_cleanup::run_worktree_cache_cleanup;
 
+mod ids;
+mod json_helpers;
 mod restore_offer;
 mod runtime_adapter;
 
+use ids::*;
+use json_helpers::*;
 use restore_offer::{
     acknowledge_agent_restore_offer, read_displayable_agent_restore_offer,
     reconcile_agent_restore_offer, write_agent_restore_retry_offer,
@@ -48,8 +51,6 @@ pub use runtime_adapter::ProjectLifecycleRuntime;
 use runtime_adapter::{
     SystemProjectLifecycleRuntime, prune_git_worktrees, remove_git_worktree_checkout,
 };
-
-static LIFECYCLE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const LIVE_STATUSES: &[&str] = &["starting", "running", "idle"];
 
@@ -2065,33 +2066,6 @@ const CODEX_OPTIONS_WITH_VALUE: &[&str] = &[
     "-s",
     "--sandbox",
 ];
-
-fn pseudo_uuid_v4() -> String {
-    let digest = sha256_hex(&format!(
-        "{}:{}:{}",
-        time::OffsetDateTime::now_utc().unix_timestamp_nanos(),
-        std::process::id(),
-        LIFECYCLE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    format!(
-        "{}-{}-4{}-a{}-{}",
-        &digest[0..8],
-        &digest[8..12],
-        &digest[13..16],
-        &digest[17..20],
-        &digest[20..32]
-    )
-}
-
-fn sha256_hex(value: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    hasher
-        .finalize()
-        .into_iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
 
 fn clear_session_transcript_path(project_state_dir: &Path, session_id: &str) {
     let mut state = load_metadata_state(project_state_dir);
@@ -4204,112 +4178,6 @@ fn suppress_next_shell_reports(
     if std::fs::create_dir_all(&dir).is_ok() {
         let _ = std::fs::write(dir.join(session_id), count.max(1).to_string());
     }
-}
-
-fn find_by_id(value: &Value, key: &str, id: &str) -> Option<Value> {
-    array_field(value, key)
-        .into_iter()
-        .find(|item| string_field(item, "id") == id)
-}
-
-fn array_field(value: &Value, key: &str) -> Vec<Value> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-fn string_array_field(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn string_field_value(value: Option<&Value>) -> Option<&str> {
-    value.and_then(Value::as_str)
-}
-
-fn object_insert_mut(value: &mut Value, key: &str, inserted: Value) {
-    if !value.is_object() {
-        *value = Value::Object(Map::new());
-    }
-    if let Some(map) = value.as_object_mut() {
-        if inserted.is_null() {
-            map.remove(key);
-        } else {
-            map.insert(key.into(), inserted);
-        }
-    }
-}
-
-fn string_field(value: &Value, field: &str) -> String {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
-
-fn trimmed_string(value: Option<&Value>) -> Option<String> {
-    value.and_then(Value::as_str).and_then(trimmed_owned)
-}
-
-fn trimmed_owned(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
-}
-
-fn short_id() -> String {
-    base36_sequence().chars().rev().take(8).collect()
-}
-
-fn random_id(prefix: &str) -> String {
-    format!("{prefix}-{}", base36_sequence())
-}
-
-fn base36_sequence() -> String {
-    let value = (time::OffsetDateTime::now_utc().unix_timestamp_nanos() as u128)
-        ^ (u128::from(std::process::id()) << 32)
-        ^ u128::from(LIFECYCLE_SEQUENCE.fetch_add(1, Ordering::Relaxed));
-    base36(value)
-}
-
-fn base36(mut value: u128) -> String {
-    if value == 0 {
-        return "0".into();
-    }
-    let mut digits = Vec::new();
-    while value > 0 {
-        let digit = (value % 36) as u8;
-        digits.push(match digit {
-            0..=9 => (b'0' + digit) as char,
-            _ => (b'a' + digit - 10) as char,
-        });
-        value /= 36;
-    }
-    digits.into_iter().rev().collect()
-}
-
-fn now_iso() -> String {
-    let now = time::OffsetDateTime::now_utc();
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        now.year(),
-        u8::from(now.month()),
-        now.day(),
-        now.hour(),
-        now.minute(),
-        now.second(),
-        now.millisecond()
-    )
 }
 
 fn json_error(status: u16, error: impl Into<String>) -> ProjectServiceDispatchResponse {
