@@ -694,6 +694,10 @@ Priority fixture groups:
 - `runtime-state/runtime-sync.json`: runtime sync heartbeat and project-service
   refresh timer behavior captured by running TypeScript
   `MultiplexerRuntimeSync` with recorded dependencies.
+- `runtime-state/dashboard-api-client.json`: dashboard API client resource
+  refresh, model refresh, mutation blocking, connection-state, and stale
+  lifecycle behavior captured by running TypeScript
+  `multiplexer/dashboard-api-client`.
 - `runtime-state/dashboard-lifecycle.json`: dashboard lifecycle token capture,
   currentness checks, render gating, stale async suppression, and swallowed
   handler exception behavior captured by running TypeScript
