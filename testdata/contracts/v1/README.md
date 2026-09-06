@@ -226,6 +226,9 @@ Priority fixture groups:
   attempt persistence, project-key normalization, window pruning, clearing, and
   corrupt-history recovery captured by running TypeScript
   `runtime-guard-repair-history`.
+- `runtime-state/last-used.json`: last-used recency ordering, monotonic
+  timestamp updates, per-client isolation, pruning, and legacy seeding captured
+  by running TypeScript `last-used`.
 - `runtime-state/drift.json`: local-build drift error classification captured
   by running TypeScript `runtime-drift`.
 - `runtime-state/repair-events.json`: durable repair event JSONL logging
