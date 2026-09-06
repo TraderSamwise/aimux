@@ -157,17 +157,60 @@ fn router_publishes_runtime_event_route_update_after_handler_side_effects() {
     assert_eq!(events[1].event["sessionId"], "codex-1");
     assert_eq!(events[2].event["type"], "project_update");
     assert_eq!(events[2].event["reason"], "POST /event");
-    assert!(events[2].event.get("sessionId").is_none());
+    assert_eq!(events[2].event["sessionId"], "codex-1");
     assert_eq!(
         events[2].event["views"],
-        json!([
-            "agents",
-            "coordination-worklist",
-            "desktop-state",
-            "project-observability",
-            "topology",
-            "worktrees"
-        ])
+        json!(["agents", "desktop-state", "project-observability"])
+    );
+    cleanup(project);
+}
+
+#[test]
+fn router_publishes_session_scoped_runtime_event_update_without_alert() {
+    let project = temp_project("runtime-event-session-update");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "response",
+                "message": "Done",
+                "worktreePath": "/repo/wt",
+                "ts": "2026-01-01T00:00:00.000Z"
+            }
+        })),
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, json!({ "ok": true }));
+
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event["type"], "project_update");
+    assert_eq!(events[0].event["reason"], "POST /event");
+    assert_eq!(events[0].event["sessionId"], "codex-1");
+    assert_eq!(events[0].event["worktreePath"], "/repo/wt");
+    assert_eq!(
+        events[0].event["views"],
+        json!(["agents", "desktop-state", "project-observability"])
+    );
+    assert_eq!(
+        context
+            .project_events
+            .events_since(0, Some("codex-1"))
+            .len(),
+        1
+    );
+    assert_eq!(
+        context
+            .project_events
+            .events_since(0, Some("codex-2"))
+            .len(),
+        0
     );
     cleanup(project);
 }

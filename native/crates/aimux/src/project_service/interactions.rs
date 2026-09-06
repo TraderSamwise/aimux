@@ -11,6 +11,9 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::http::{query_params, trimmed_query};
 use super::metadata::update_session_metadata;
 use super::notification_context::is_session_notification_focused;
+use super::notification_display_context::{
+    NotificationDisplayContext, project_display_name, resolve_session_display_context,
+};
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::router::ProjectServiceRequestContext;
 
@@ -596,16 +599,9 @@ struct InteractionAlertInput {
     interaction_type: String,
     telemetry: bool,
     dedupe_key: String,
-    display_context: InteractionDisplayContext,
+    display_context: NotificationDisplayContext,
     interaction: Value,
     unread: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct InteractionDisplayContext {
-    worktree_path: Option<String>,
-    worktree_name: Option<String>,
-    branch: Option<String>,
 }
 
 fn contextualized_interaction_notification(
@@ -613,12 +609,7 @@ fn contextualized_interaction_notification(
     input: InteractionAlertInput,
 ) -> NotificationWriteInput {
     let project_root = context.project_root().to_string_lossy().into_owned();
-    let project_name = context
-        .project_root()
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("aimux")
-        .to_owned();
+    let project_name = project_display_name(context.project_root());
     let category = interaction_category(&input.interaction_type);
     let reason = if input.telemetry {
         "Tool prompt observed"
@@ -643,112 +634,6 @@ fn contextualized_interaction_notification(
         interaction: Some(input.interaction),
         ..NotificationWriteInput::default()
     }
-}
-
-fn resolve_session_display_context(
-    context: &ProjectServiceRequestContext,
-    session_id: &str,
-    worktree_path: Option<&str>,
-) -> InteractionDisplayContext {
-    let mut resolved = metadata_session_display_context(context, session_id);
-    if let Some(worktree_path) = worktree_path.and_then(trimmed_str) {
-        let worktree = worktree_display_context(context, worktree_path);
-        resolved = merge_display_context(resolved, worktree);
-    }
-    resolved
-}
-
-fn metadata_session_display_context(
-    context: &ProjectServiceRequestContext,
-    session_id: &str,
-) -> InteractionDisplayContext {
-    let Some(desktop) = context.desktop_state.as_ref() else {
-        return InteractionDisplayContext::default();
-    };
-    let session = ["sessions", "teammates"]
-        .into_iter()
-        .filter_map(|key| desktop.get(key).and_then(Value::as_array))
-        .flat_map(|items| items.iter())
-        .find(|item| item.get("id").and_then(Value::as_str) == Some(session_id));
-    let Some(session) = session else {
-        return InteractionDisplayContext::default();
-    };
-    let worktree_path = session.get("worktreePath").and_then(Value::as_str);
-    let mut display = worktree_path
-        .map(|path| worktree_display_context(context, path))
-        .unwrap_or_default();
-    if let Some(path) = worktree_path.and_then(trimmed_str) {
-        display.worktree_path.get_or_insert_with(|| path.to_owned());
-    }
-    display
-}
-
-fn worktree_display_context(
-    context: &ProjectServiceRequestContext,
-    worktree_path: &str,
-) -> InteractionDisplayContext {
-    let path = trimmed_str(worktree_path).unwrap_or("");
-    let Some(desktop) = context.desktop_state.as_ref() else {
-        return InteractionDisplayContext {
-            worktree_path: (!path.is_empty()).then(|| path.to_owned()),
-            worktree_name: path_basename(path),
-            branch: None,
-        };
-    };
-    let worktree = desktop
-        .get("worktrees")
-        .and_then(Value::as_array)
-        .and_then(|worktrees| {
-            worktrees.iter().find(|worktree| {
-                worktree.get("path").and_then(Value::as_str) == Some(path)
-                    || worktree.get("resolvedPath").and_then(Value::as_str) == Some(path)
-            })
-        });
-    if let Some(worktree) = worktree {
-        return InteractionDisplayContext {
-            worktree_path: worktree
-                .get("path")
-                .and_then(Value::as_str)
-                .and_then(trimmed_str)
-                .map(str::to_owned)
-                .or_else(|| (!path.is_empty()).then(|| path.to_owned())),
-            worktree_name: worktree
-                .get("name")
-                .and_then(Value::as_str)
-                .and_then(trimmed_str)
-                .map(str::to_owned)
-                .or_else(|| path_basename(path)),
-            branch: worktree
-                .get("branch")
-                .and_then(Value::as_str)
-                .and_then(trimmed_str)
-                .map(str::to_owned),
-        };
-    }
-    InteractionDisplayContext {
-        worktree_path: (!path.is_empty()).then(|| path.to_owned()),
-        worktree_name: path_basename(path),
-        branch: None,
-    }
-}
-
-fn merge_display_context(
-    base: InteractionDisplayContext,
-    override_context: InteractionDisplayContext,
-) -> InteractionDisplayContext {
-    InteractionDisplayContext {
-        worktree_path: override_context.worktree_path.or(base.worktree_path),
-        worktree_name: override_context.worktree_name.or(base.worktree_name),
-        branch: override_context.branch.or(base.branch),
-    }
-}
-
-fn path_basename(path: &str) -> Option<String> {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(trimmed_str)
-        .map(str::to_owned)
 }
 
 fn session_alert_title(session_id: &str, fallback: &str) -> String {

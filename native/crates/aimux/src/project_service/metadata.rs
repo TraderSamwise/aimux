@@ -6,9 +6,12 @@ use crate::project_api_contract::routes;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::notification_context::is_session_notification_focused;
+use super::notification_display_context::{project_display_name, resolve_session_display_context};
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_events::{route_runtime_event_with_bus, route_runtime_set_attention_with_bus};
+use super::runtime_events::{
+    route_runtime_event_with_context, route_runtime_set_attention_with_context,
+};
 use super::runtime_exchange::{
     compact_runtime_exchange_file, inspect_runtime_exchange_store, runtime_exchange_path,
 };
@@ -144,12 +147,11 @@ pub fn route_runtime_metadata_request(
         routes::runtime::SET_ATTENTION => {
             let session = string_field(body, "session");
             let attention = string_field(body, "attention");
-            route_runtime_set_attention_with_bus(
-                context.project_root(),
+            route_runtime_set_attention_with_context(
+                context,
                 &project_state_dir,
                 &session,
                 attention,
-                &context.project_events,
             )
         }
         routes::runtime::MARK_SEEN => {
@@ -166,13 +168,7 @@ pub fn route_runtime_metadata_request(
                 .get("event")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new()));
-            route_runtime_event_with_bus(
-                context.project_root(),
-                &project_state_dir,
-                &session,
-                event,
-                &context.project_events,
-            )
+            route_runtime_event_with_context(context, &project_state_dir, &session, event)
         }
         routes::runtime::NOTIFY => Some(route_runtime_notify(context, &project_state_dir, body)),
         routes::runtime::COMPACT_EXCHANGE => {
@@ -209,6 +205,13 @@ fn route_runtime_notify(
         .to_owned();
     let message = notify_message(body);
     let force = body.get("force") == Some(&Value::Bool(true));
+    let body_worktree_path = trimmed_event_string(body, "worktreePath");
+    let display_context = session_id
+        .as_deref()
+        .map(|session_id| {
+            resolve_session_display_context(context, session_id, body_worktree_path.as_deref())
+        })
+        .unwrap_or_default();
     let focused = session_id
         .as_deref()
         .is_some_and(|session_id| is_session_notification_focused(project_state_dir, session_id));
@@ -217,9 +220,13 @@ fn route_runtime_notify(
         session_id: session_id.clone(),
         title: title.clone(),
         body: message,
-        worktree_path: trimmed_event_string(body, "worktreePath"),
-        worktree_name: trimmed_event_string(body, "worktreeName"),
-        branch: trimmed_event_string(body, "branch"),
+        project_name: Some(project_display_name(context.project_root())),
+        project_root: Some(context.project_root().to_string_lossy().into_owned()),
+        worktree_path: body_worktree_path.or(display_context.worktree_path),
+        worktree_name: trimmed_event_string(body, "worktreeName").or(display_context.worktree_name),
+        branch: trimmed_event_string(body, "branch").or(display_context.branch),
+        category_label: Some(notify_category_label(&kind).to_owned()),
+        reason_label: Some(notify_reason_label(&kind).to_owned()),
         dedupe_key: notify_dedupe_key(&kind, session_id.as_deref(), &title, body),
         unread: force || !focused,
         force_notify: force,
@@ -356,6 +363,36 @@ fn normalize_notify_kind(kind: Option<&str>) -> String {
         _ => "needs_input",
     }
     .to_owned()
+}
+
+fn notify_category_label(kind: &str) -> &'static str {
+    match kind {
+        "task_done" => "Done",
+        "next_step" => "Next Step",
+        "task_failed" => "Error",
+        "blocked" => "Blocked",
+        "message_waiting" => "Message",
+        "handoff_waiting" => "Handoff",
+        "task_assigned" => "Task",
+        "review_waiting" => "Review",
+        "notification" => "Notification",
+        _ => "Needs Input",
+    }
+}
+
+fn notify_reason_label(kind: &str) -> &'static str {
+    match kind {
+        "task_done" => "Task complete",
+        "next_step" => "Next step",
+        "task_failed" => "Task failed",
+        "blocked" => "Agent blocked",
+        "message_waiting" => "Message waiting",
+        "handoff_waiting" => "Handoff waiting",
+        "task_assigned" => "Task assigned",
+        "review_waiting" => "Review waiting",
+        "notification" => "Notification",
+        _ => "Agent needs input",
+    }
 }
 
 fn notify_message(body: &Value) -> String {

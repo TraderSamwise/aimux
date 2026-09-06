@@ -20,6 +20,7 @@ pub mod library;
 pub mod lifecycle;
 pub mod metadata;
 pub mod notification_context;
+pub mod notification_display_context;
 pub mod notifications;
 pub mod operation_failures;
 pub mod orchestration_routes;

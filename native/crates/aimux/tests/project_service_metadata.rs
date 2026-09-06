@@ -904,9 +904,22 @@ fn runtime_notify_maps_legacy_body_to_notification_record() {
     assert_eq!(record["body"], "Done — Finished parser audit.");
     assert_eq!(record["kind"], "task_done");
     assert_eq!(record["dedupeKey"], "notify:complete:claude-1 finished");
+    assert_eq!(
+        record["projectName"],
+        project.file_name().unwrap().to_str().unwrap()
+    );
+    assert_eq!(record["projectRoot"], project.to_str().unwrap());
     assert_eq!(record["worktreePath"], "/repo/wt");
     assert_eq!(record["worktreeName"], "wt");
     assert_eq!(record["branch"], "feature");
+    assert_eq!(record["categoryLabel"], "Done");
+    assert_eq!(record["reasonLabel"], "Task complete");
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events[0].event["type"], "alert");
+    assert_eq!(events[0].event["projectName"], record["projectName"]);
+    assert_eq!(events[0].event["projectRoot"], record["projectRoot"]);
+    assert_eq!(events[0].event["categoryLabel"], "Done");
+    assert_eq!(events[0].event["reasonLabel"], "Task complete");
     cleanup(project);
 }
 

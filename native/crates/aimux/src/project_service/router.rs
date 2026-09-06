@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
-use crate::project_api_contract::{project_api_views_for_mutation_route, routes};
+use crate::project_api_contract::{invalidations, project_api_views_for_mutation_route, routes};
 
 use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
@@ -207,7 +207,7 @@ pub fn route_project_service_request(
     } else {
         route_unimplemented_project_service_request(method, path)
     };
-    publish_project_update_for_response(context, method, path, &response);
+    publish_project_update_for_response(context, method, path, body, &response);
     response
 }
 
@@ -215,6 +215,7 @@ fn publish_project_update_for_response(
     context: &ProjectServiceRequestContext,
     method: &str,
     path: &str,
+    body: Option<&Value>,
     response: &ProjectServiceDispatchResponse,
 ) {
     if !(200..300).contains(&response.status) {
@@ -222,6 +223,21 @@ fn publish_project_update_for_response(
     }
     let pathname = super::dispatcher::project_service_pathname(path);
     if method == "POST" && pathname == routes::runtime::NOTIFY {
+        return;
+    }
+    if method == "POST" && pathname == routes::runtime::EVENT {
+        context.project_events.publish_project_update(
+            context.project_root(),
+            invalidations::RUNTIME_SESSION.to_vec(),
+            "POST /event".to_owned(),
+            body.and_then(|body| body.get("session"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            body.and_then(|body| body.get("event"))
+                .and_then(|event| event.get("worktreePath"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        );
         return;
     }
     if project_api_views_for_mutation_route(method, pathname).is_none() {

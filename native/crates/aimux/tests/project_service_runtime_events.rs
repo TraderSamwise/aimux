@@ -621,6 +621,75 @@ fn runtime_event_dispatcher_updates_history_alerts_and_focused_unread_state() {
 }
 
 #[test]
+fn runtime_event_alerts_include_project_and_worktree_display_context() {
+    let project = temp_project("alert-display-context");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_desktop_state(json!({
+            "sessions": [
+                { "id": "codex-1", "worktreePath": "/repo/.aimux/worktrees/feature-a" }
+            ],
+            "worktrees": [
+                {
+                    "path": "/repo/.aimux/worktrees/feature-a",
+                    "name": "feature-a",
+                    "branch": "feat/a"
+                }
+            ]
+        }));
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "needs_input",
+                "message": "Approve the command",
+                "ts": "2026-01-01T00:00:30.000Z"
+            }
+        })),
+    )
+    .expect("runtime event route");
+
+    assert_eq!(response.status, 200);
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    let notification = &snapshot.notifications[0];
+    assert_eq!(
+        notification["projectName"],
+        project.file_name().unwrap().to_str().unwrap()
+    );
+    assert_eq!(notification["projectRoot"], project.to_str().unwrap());
+    assert_eq!(
+        notification["worktreePath"],
+        "/repo/.aimux/worktrees/feature-a"
+    );
+    assert_eq!(notification["worktreeName"], "feature-a");
+    assert_eq!(notification["branch"], "feat/a");
+    assert_eq!(notification["categoryLabel"], "Needs Input");
+    assert_eq!(notification["reasonLabel"], "Agent needs input");
+
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events[0].event["type"], "alert");
+    assert_eq!(events[0].event["projectName"], notification["projectName"]);
+    assert_eq!(events[0].event["projectRoot"], notification["projectRoot"]);
+    assert_eq!(events[0].event["worktreeName"], "feature-a");
+    assert_eq!(events[0].event["categoryLabel"], "Needs Input");
+    assert_eq!(events[0].event["reasonLabel"], "Agent needs input");
+    cleanup(project);
+}
+
+#[test]
 fn runtime_event_notify_records_custom_alert_without_derived_state_change() {
     let project = temp_project("notify-alert");
     let state_dir = project.join("state");

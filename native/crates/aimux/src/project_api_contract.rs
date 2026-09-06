@@ -257,6 +257,7 @@ pub mod invalidations {
         "topology",
         "worktrees",
     ];
+    pub const RUNTIME_SESSION: &[&str] = &["agents", "desktop-state", "project-observability"];
     pub const OPERATION_FAILURES: &[&str] = &["desktop-state", "project-observability"];
     pub const REPAIR: &[&str] = PROJECT_API_VIEWS;
 }
