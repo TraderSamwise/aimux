@@ -1,4 +1,4 @@
-use aimux::project_service::agent_output_projection::project_agent_output;
+use aimux::project_service::agent_output_projection::project_agent_output_with_ansi;
 use serde_json::{Value, json};
 
 const TRANSCRIPT: &str =
@@ -23,9 +23,10 @@ fn fixture_agent_transcript_messages_from_agent_output_matches_typescript() {
     for case in implemented_cases {
         let input = &case["input"];
         let raw = input["output"].as_str().expect("case output text");
+        let ansi = input["outputAnsi"].as_str();
         let tool = input["tool"].as_str();
         let expected = case["output"].clone();
-        let actual = Value::Array(project_agent_output(raw, tool).messages);
+        let actual = Value::Array(project_agent_output_with_ansi(raw, ansi, tool).messages);
         if actual != expected {
             failures.push(json!({
                 "id": case["id"],

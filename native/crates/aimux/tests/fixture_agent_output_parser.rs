@@ -1,4 +1,6 @@
-use aimux::project_service::agent_output_projection::project_agent_output;
+use aimux::project_service::agent_output_projection::{
+    project_agent_output, project_agent_output_with_source,
+};
 use serde_json::{Value, json};
 
 const PARSER_ADVERSARIAL: &str =
@@ -75,8 +77,11 @@ fn assert_parser_contract(label: &str, fixture: &str) {
         let id = case["id"].as_str().unwrap_or("<missing id>");
         let raw = case["input"]["raw"].as_str().expect("case input raw");
         let tool = case["input"]["options"]["tool"].as_str();
+        let include_source = case["input"]["options"]["includeSource"]
+            .as_bool()
+            .unwrap_or(false);
         let expected = case["output"].clone();
-        let actual = project_agent_output(raw, tool).parsed;
+        let actual = project_agent_output_with_source(raw, tool, include_source).parsed;
         if actual != expected {
             failures.push(json!({
                 "id": id,
