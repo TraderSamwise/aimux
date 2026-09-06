@@ -614,6 +614,9 @@ Priority fixture groups:
 
 ## Dashboard
 
+- `dashboard/index.json`: dashboard derived status label precedence for
+  semantic labels, pending-action overrides, and raw waiting fallback captured
+  by running TypeScript `Dashboard` index helpers.
 - `dashboard/orphans.json`: stale dashboard build detection, dashboard
   entrypoint recognition, orphan parent-chain detection, current-process
   exclusion, and live-pane ancestry captured by running TypeScript
