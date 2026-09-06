@@ -90,6 +90,7 @@ pub mod shell_hooks;
 pub mod statusline_model_contract;
 pub mod tmux;
 pub mod tmux_control;
+pub mod tmux_exec_metrics;
 pub mod tmux_expose;
 pub mod tmux_expose_hot_snapshot;
 pub mod tmux_expose_hot_snapshot_worker;

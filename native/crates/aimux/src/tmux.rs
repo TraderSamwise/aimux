@@ -1,4 +1,5 @@
 use crate::paths::{PathResolver, basename_like_node_posix, compute_project_id};
+use crate::tmux_exec_metrics::{TmuxExecMode, record_tmux_exec};
 use crate::tmux_query_memo::{
     is_non_caching_tmux_read, is_read_only_tmux_verb, memoized_tmux_query, reset_tmux_query_memo,
     tmux_query_key,
@@ -10,6 +11,7 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
 
 pub const TMUX_SEND_TEXT_CHUNK_BYTES: usize = 4_000;
 pub const WINDOW_TARGET_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}";
@@ -153,20 +155,23 @@ pub struct TmuxRuntimeConfig {
 impl TmuxRuntimeManager {
     pub fn new() -> Self {
         Self::with_exec(|args, options| {
+            let started_at = Instant::now();
             let mut command = Command::new("tmux");
             command.args(args);
             if let Some(cwd) = options.and_then(|options| options.cwd.as_deref()) {
                 command.current_dir(cwd);
             }
-            let output = command
+            let result = command
                 .output()
                 .map_err(|error| format!("failed to run tmux: {error}"))?;
-            if output.status.success() {
-                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+            record_tmux_exec(args, elapsed_ms, TmuxExecMode::Sync);
+            if result.status.success() {
+                return Ok(String::from_utf8_lossy(&result.stdout).trim().to_owned());
             }
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let stderr = String::from_utf8_lossy(&result.stderr).trim().to_owned();
             Err(if stderr.is_empty() {
-                format!("tmux exited with {}", output.status)
+                format!("tmux exited with {}", result.status)
             } else {
                 stderr
             })
