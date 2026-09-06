@@ -21,12 +21,18 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const EXPOSE_HTTP_TIMEOUT_MS: u64 = 4_000;
 pub const EXPOSE_CLIENT_TTL_MS: &str = "10000";
+pub const RELAUNCH_ON_RESIZE_EXIT: i32 = 75;
+pub const OPEN_DASHBOARD_FROM_EXPOSE_EXIT: i32 = 76;
 const CAPTURE_LINES: i64 = 40;
 const ITEM_RELOAD_EVERY_TICKS: u64 = 5;
+const INPUT_QUIET_BEFORE_REFRESH_MS: u64 = 120;
+const RESIZE_CHECK_DURING_INPUT_MS: u64 = 1000;
+const CLIENT_SIZE_QUERY_TIMEOUT_MS: u64 = 500;
 const GAP: i64 = 1;
 const MIN_TILE_WIDTH: i64 = 30;
 const MIN_TILE_HEIGHT: i64 = 5;
@@ -181,6 +187,10 @@ pub trait ExposeTmuxCapture {
     fn capture_target(&mut self, item: &Value) -> Result<String, String>;
 }
 
+pub trait ExposeClientSizeProbe {
+    fn query_client_size(&mut self, client_tty: Option<&str>) -> String;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExposeInputEvent {
     Data(usize),
@@ -191,6 +201,21 @@ pub enum ExposeInputEvent {
 
 pub trait ExposeInputSource {
     fn read_timeout(&mut self, buffer: &mut [u8], timeout: Duration) -> ExposeInputEvent;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemExposeClientSizeProbe;
+
+impl ExposeClientSizeProbe for SystemExposeClientSizeProbe {
+    fn query_client_size(&mut self, client_tty: Option<&str>) -> String {
+        let Some(client_tty) = client_tty.filter(|value| !value.trim().is_empty()) else {
+            return String::new();
+        };
+        let Some(listing) = tmux_list_clients_with_timeout() else {
+            return String::new();
+        };
+        match_client_size(&listing, client_tty)
+    }
 }
 
 struct BlockingExposeInput<'a, R: Read> {
@@ -778,9 +803,17 @@ pub fn tmux_expose_options_from_socket_header(
 pub fn run_tmux_expose(options: TmuxExposeOptions) -> i32 {
     let mut client = SystemExposeHttpClient;
     let mut capture = SystemExposeTmuxCapture::default();
+    let mut size_probe = SystemExposeClientSizeProbe;
     let mut input = StdinPollingInput::default();
     let mut output = std::io::stdout();
-    run_tmux_expose_with_input_source(options, &mut input, &mut output, &mut client, &mut capture)
+    run_tmux_expose_with_drivers(
+        options,
+        &mut input,
+        &mut output,
+        &mut client,
+        &mut capture,
+        &mut size_probe,
+    )
 }
 
 pub fn run_tmux_expose_with_client(
@@ -810,6 +843,18 @@ pub fn run_tmux_expose_with_input_source(
     output: &mut impl Write,
     client: &mut impl ExposeHttpClient,
     capture: &mut impl ExposeTmuxCapture,
+) -> i32 {
+    let mut size_probe = SystemExposeClientSizeProbe;
+    run_tmux_expose_with_drivers(options, input, output, client, capture, &mut size_probe)
+}
+
+pub fn run_tmux_expose_with_drivers(
+    options: TmuxExposeOptions,
+    input: &mut impl ExposeInputSource,
+    output: &mut impl Write,
+    client: &mut impl ExposeHttpClient,
+    capture: &mut impl ExposeTmuxCapture,
+    size_probe: &mut impl ExposeClientSizeProbe,
 ) -> i32 {
     let context = FastControlContext {
         project_root: options.project_root.to_string_lossy().into_owned(),
@@ -859,6 +904,12 @@ pub fn run_tmux_expose_with_input_source(
     let mut leader_pending = false;
     let mut captures = seed_preview_snapshots(&items);
     let mut refresh_tick = 0_u64;
+    let client_baseline = match (options.columns, options.rows) {
+        (Some(columns), Some(rows)) => format!("{columns}x{rows}"),
+        _ => size_probe.query_client_size(options.client_tty.as_deref()),
+    };
+    let mut last_input_at: Option<Instant> = None;
+    let mut last_resize_check_at = Some(Instant::now());
     let mut layout =
         render_grid_expose(output, &view, &items, &captures, index, &options, sort_mode)
             .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
@@ -875,6 +926,38 @@ pub fn run_tmux_expose_with_input_source(
             ExposeInputEvent::End => return finish_plain_expose(output, 0),
             ExposeInputEvent::Error => return finish_plain_expose(output, 1),
             ExposeInputEvent::Timeout => {
+                let now = Instant::now();
+                let input_quiet = last_input_at.is_some_and(|last_input_at| {
+                    now.duration_since(last_input_at).as_millis()
+                        < u128::from(INPUT_QUIET_BEFORE_REFRESH_MS)
+                });
+                if input_quiet {
+                    if last_resize_check_at.is_none() {
+                        last_resize_check_at = Some(now);
+                    }
+                    if last_resize_check_at.is_some_and(|last_check| {
+                        now.duration_since(last_check).as_millis()
+                            >= u128::from(RESIZE_CHECK_DURING_INPUT_MS)
+                    }) {
+                        last_resize_check_at = Some(now);
+                        if should_relaunch_for_resize(
+                            size_probe,
+                            options.client_tty.as_deref(),
+                            &client_baseline,
+                        ) {
+                            return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
+                        }
+                    }
+                    continue;
+                }
+                last_resize_check_at = Some(now);
+                if should_relaunch_for_resize(
+                    size_probe,
+                    options.client_tty.as_deref(),
+                    &client_baseline,
+                ) {
+                    return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
+                }
                 refresh_tick += 1;
                 let reloaded = refresh_tick >= ITEM_RELOAD_EVERY_TICKS;
                 let mut changed = false;
@@ -914,7 +997,27 @@ pub fn run_tmux_expose_with_input_source(
             }
             ExposeInputEvent::Data(count) => count,
         };
-        for key in parse_key_events(&buffer[..count]) {
+        let keys = parse_key_events(&buffer[..count]);
+        if !keys.is_empty() {
+            let now = Instant::now();
+            last_input_at = Some(now);
+            if !client_baseline.is_empty()
+                && last_resize_check_at.is_some_and(|last_check| {
+                    now.duration_since(last_check).as_millis()
+                        >= u128::from(RESIZE_CHECK_DURING_INPUT_MS)
+                })
+            {
+                last_resize_check_at = Some(now);
+                if should_relaunch_for_resize(
+                    size_probe,
+                    options.client_tty.as_deref(),
+                    &client_baseline,
+                ) {
+                    return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
+                }
+            }
+        }
+        for key in keys {
             if matches!(
                 key,
                 ExposeKey::Char('q') | ExposeKey::Escape | ExposeKey::Ctrl('c')
@@ -924,7 +1027,7 @@ pub fn run_tmux_expose_with_input_source(
             if leader_pending {
                 leader_pending = false;
                 if key == ExposeKey::Char('d') {
-                    return finish_plain_expose(output, 76);
+                    return finish_plain_expose(output, OPEN_DASHBOARD_FROM_EXPOSE_EXIT);
                 }
             }
             if key == ExposeKey::Ctrl('a') {
@@ -1425,6 +1528,47 @@ fn find_window_index(items: &[Value], window_id: &str) -> Option<usize> {
     items
         .iter()
         .position(|item| item_window_id(Some(item)) == Some(window_id))
+}
+
+fn should_relaunch_for_resize(
+    size_probe: &mut impl ExposeClientSizeProbe,
+    client_tty: Option<&str>,
+    client_baseline: &str,
+) -> bool {
+    if client_baseline.is_empty() {
+        return false;
+    }
+    let current_size = size_probe.query_client_size(client_tty);
+    !current_size.is_empty() && current_size != client_baseline
+}
+
+fn tmux_list_clients_with_timeout() -> Option<String> {
+    let mut child = Command::new("tmux")
+        .args([
+            "list-clients",
+            "-F",
+            "#{client_tty} #{client_width}x#{client_height}",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started_at = Instant::now();
+    loop {
+        if child.try_wait().ok()?.is_some() {
+            let output = child.wait_with_output().ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            return Some(String::from_utf8_lossy(&output.stdout).into_owned());
+        }
+        if started_at.elapsed() >= Duration::from_millis(CLIENT_SIZE_QUERY_TIMEOUT_MS) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn hot_snapshot_key_for_scope(

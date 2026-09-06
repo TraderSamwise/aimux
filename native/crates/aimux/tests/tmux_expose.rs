@@ -2,12 +2,13 @@ use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::core_command_transport::DaemonHttpMethod;
 use aimux::project_api_contract::routes;
 use aimux::tmux_expose::{
-    EXPOSE_HTTP_TIMEOUT_MS, ExposeConfig, ExposeHttpClient, ExposeHttpRequest, ExposeInputEvent,
-    ExposeInputSource, ExposeScope, ExposeScopeView, ExposeSortMode, ExposeSublabel,
-    ExposeTmuxCapture, ExposeUiState, FastControlContext, LoadExposeScopeDeps,
-    focus_expose_item_with, initial_expose_scope, load_expose_scope_items_with,
-    load_overseer_expose_item_with, next_expose_scope, parse_expose_args, read_expose_ui_state,
-    run_tmux_expose_with_client_and_capture, run_tmux_expose_with_input_source,
+    EXPOSE_HTTP_TIMEOUT_MS, ExposeClientSizeProbe, ExposeConfig, ExposeHttpClient,
+    ExposeHttpRequest, ExposeInputEvent, ExposeInputSource, ExposeScope, ExposeScopeView,
+    ExposeSortMode, ExposeSublabel, ExposeTmuxCapture, ExposeUiState, FastControlContext,
+    LoadExposeScopeDeps, RELAUNCH_ON_RESIZE_EXIT, focus_expose_item_with, initial_expose_scope,
+    load_expose_scope_items_with, load_overseer_expose_item_with, next_expose_scope,
+    parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client_and_capture,
+    run_tmux_expose_with_drivers, run_tmux_expose_with_input_source,
     tmux_expose_options_from_socket_header, write_expose_ui_state, write_selected_window,
 };
 use aimux::tmux_expose_hot_snapshot::{
@@ -36,6 +37,12 @@ struct FakeCapture {
 #[derive(Debug)]
 struct ScriptedInput {
     events: VecDeque<ScriptedInputEvent>,
+}
+
+#[derive(Debug, Default)]
+struct FakeSizeProbe {
+    responses: VecDeque<String>,
+    calls: Vec<Option<String>>,
 }
 
 #[derive(Debug)]
@@ -70,6 +77,15 @@ impl ScriptedInput {
     }
 }
 
+impl FakeSizeProbe {
+    fn with_responses(values: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            responses: values.into_iter().map(Into::into).collect(),
+            calls: Vec::new(),
+        }
+    }
+}
+
 impl ExposeInputSource for ScriptedInput {
     fn read_timeout(
         &mut self,
@@ -85,6 +101,13 @@ impl ExposeInputSource for ScriptedInput {
                 ExposeInputEvent::Data(count)
             }
         }
+    }
+}
+
+impl ExposeClientSizeProbe for FakeSizeProbe {
+    fn query_client_size(&mut self, client_tty: Option<&str>) -> String {
+        self.calls.push(client_tty.map(str::to_owned));
+        self.responses.pop_front().unwrap_or_default()
     }
 }
 
@@ -899,6 +922,42 @@ fn runner_reloads_items_every_fifth_timeout_tick() {
     )
     .expect("reloaded snapshot");
     assert_eq!(cached.items[0]["target"]["windowId"], "@2");
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_returns_relaunch_code_when_client_size_changes() {
+    let state_dir = temp_dir("runner-resize");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.client_tty = Some("/dev/ttys001".into());
+    options.columns = Some(80);
+    options.rows = Some(24);
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [hot_item("@1", "initial preview line\n")]
+    })]);
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut size_probe = FakeSizeProbe::with_responses(["100x30"]);
+    let mut input = ScriptedInput::new([ScriptedInputEvent::Timeout]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_drivers(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+            &mut size_probe
+        ),
+        RELAUNCH_ON_RESIZE_EXIT
+    );
+    assert_eq!(size_probe.calls, vec![Some("/dev/ttys001".to_owned())]);
+    assert_eq!(client.requests.len(), 1);
+    assert_eq!(capture.calls, vec!["@1"]);
     cleanup(state_dir);
 }
 
