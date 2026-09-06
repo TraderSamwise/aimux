@@ -5,6 +5,11 @@ use aimux::project_service::topology::{
     rollup_health,
 };
 use serde_json::json;
+use std::fs::remove_dir_all;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn health_for_status_maps_status_and_pending_action() {
@@ -133,18 +138,22 @@ fn groups_desktop_state_sessions_teammates_and_services_by_worktree() {
 }
 
 #[test]
-fn route_serves_topology_from_injected_desktop_state_and_501_without_it() {
-    let unsupported = route_project_service_request(
-        &ProjectServiceRequestContext::new("/repo"),
+fn route_serves_topology_from_injected_or_derived_desktop_state() {
+    let project = temp_project("route-derived");
+    let state_dir = project.join("state");
+    let derived = route_project_service_request(
+        &ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir),
         "GET",
         routes::TOPOLOGY,
         None,
     );
-    assert_eq!(unsupported.status, 501);
+    assert_eq!(derived.status, 200);
+    assert_eq!(derived.body["ok"], true);
     assert_eq!(
-        unsupported.body["error"],
-        "desktop state not supported by this service"
+        derived.body["topology"]["counts"],
+        json!({ "worktrees": 1, "agents": 0, "services": 0 })
     );
+    cleanup(project);
 
     let context = ProjectServiceRequestContext::new("/repo").with_desktop_state(json!({
         "mainCheckoutInfo": { "name": "aimux" },
@@ -199,4 +208,18 @@ fn find_row<'a>(topology: &'a serde_json::Value, key: &str, value: &str) -> &'a 
         .iter()
         .find(|row| row[key] == value)
         .expect("row")
+}
+
+fn temp_project(label: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "aimux-rust-project-service-topology-{label}-{}-{}",
+        std::process::id(),
+        TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    cleanup(path.clone());
+    path
+}
+
+fn cleanup(path: PathBuf) {
+    let _ = remove_dir_all(path);
 }

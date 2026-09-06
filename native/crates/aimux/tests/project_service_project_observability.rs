@@ -229,17 +229,18 @@ fn route_serves_observability_from_desktop_state_runtime_exchange_and_notificati
     assert_story_contains(&response.body["project"], "task:task-open");
     assert_story_contains(&response.body["project"], "notif:notif-1");
 
-    let unsupported = route_project_service_request(
+    let derived = route_project_service_request(
         &ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir),
         "GET",
         routes::PROJECT_OBSERVABILITY,
         None,
     );
-    assert_eq!(unsupported.status, 501);
-    assert_eq!(
-        unsupported.body["error"],
-        "desktop state not supported by this service"
-    );
+    assert_eq!(derived.status, 200);
+    assert_eq!(derived.body["ok"], true);
+    assert_eq!(derived.body["project"]["summary"]["agentsRunning"], 0);
+    assert_eq!(derived.body["project"]["summary"]["services"], 0);
+    assert_eq!(derived.body["project"]["summary"]["openTasks"], 1);
+    assert_eq!(derived.body["project"]["summary"]["doneTasks"], 1);
     cleanup(project);
 }
 

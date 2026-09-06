@@ -1,12 +1,10 @@
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
-use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
-use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
-use super::desktop_state::{DesktopStateInput, build_desktop_state};
+use super::desktop_state::desktop_state_for_context;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
@@ -30,25 +28,14 @@ pub fn route_coordination_worklist_request(
 
     let project_state_dir = context.project_state_dir();
     let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-    let desktop_state = if let Some(state) = context.desktop_state.as_ref() {
-        state.clone()
-    } else {
-        let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
-            Ok(topology) => topology,
-            Err(error) => {
-                return Some(ProjectServiceDispatchResponse::json(
-                    500,
-                    json!({ "ok": false, "error": error }),
-                ));
-            }
-        };
-        let metadata = load_metadata_state(&project_state_dir);
-        build_desktop_state(DesktopStateInput {
-            project_root: context.project_root().to_string_lossy().into_owned(),
-            topology: &topology,
-            metadata_sessions: &metadata.sessions,
-            exchange: &exchange,
-        })
+    let desktop_state = match desktop_state_for_context(context) {
+        Ok(state) => state,
+        Err(error) => {
+            return Some(ProjectServiceDispatchResponse::json(
+                500,
+                json!({ "ok": false, "error": error }),
+            ));
+        }
     };
     let params = query_params(path);
     let participant = trimmed_query(&params, "participant").unwrap_or_else(|| "user".into());

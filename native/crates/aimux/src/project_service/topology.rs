@@ -3,6 +3,7 @@ use serde_json::{Map, Value, json};
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 
+use super::desktop_state::desktop_state_for_context;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 
@@ -14,11 +15,9 @@ pub fn route_topology_request(
     if !method.eq_ignore_ascii_case("GET") || project_service_pathname(path) != routes::TOPOLOGY {
         return None;
     }
-    let Some(state) = context.desktop_state.as_ref() else {
-        return Some(json_response(
-            501,
-            json!({ "ok": false, "error": "desktop state not supported by this service" }),
-        ));
+    let state = match desktop_state_for_context(context) {
+        Ok(state) => state,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
     let service_info = get_project_service_manifest()
         .ok()
@@ -34,7 +33,7 @@ pub fn route_topology_request(
         json!({
             "ok": true,
             "serviceInfo": service_info,
-            "topology": build_project_topology(project_name, build_topology_worktrees_from_desktop_state(state)),
+            "topology": build_project_topology(project_name, build_topology_worktrees_from_desktop_state(&state)),
         }),
     ))
 }

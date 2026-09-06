@@ -46,9 +46,8 @@ pub fn route_desktop_state_request(
             Value::Object(body),
         ));
     }
-    let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
-        Ok(topology) => topology,
+    let state = match desktop_state_for_context(context) {
+        Ok(state) => state,
         Err(error) => {
             return Some(ProjectServiceDispatchResponse::json(
                 500,
@@ -56,15 +55,23 @@ pub fn route_desktop_state_request(
             ));
         }
     };
+    Some(ProjectServiceDispatchResponse::json(200, state))
+}
+
+pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Result<Value, String> {
+    if let Some(desktop_state) = context.desktop_state.as_ref() {
+        return Ok(desktop_state.clone());
+    }
+    let project_state_dir = context.project_state_dir();
+    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
     let metadata = load_metadata_state(&project_state_dir);
     let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-    let state = build_desktop_state(DesktopStateInput {
+    Ok(build_desktop_state(DesktopStateInput {
         project_root: context.project_root().to_string_lossy().into_owned(),
         topology: &topology,
         metadata_sessions: &metadata.sessions,
         exchange: &exchange,
-    });
-    Some(ProjectServiceDispatchResponse::json(200, state))
+    }))
 }
 
 pub struct DesktopStateInput<'a> {

@@ -2,16 +2,13 @@ use serde_json::{Value, json};
 use std::cmp::Ordering;
 
 use crate::config::load_config_for_project;
-use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
-use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
-use super::desktop_state::{DesktopStateInput, build_desktop_state};
+use super::desktop_state::desktop_state_for_context;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 use super::team::load_team_config;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,19 +57,7 @@ pub fn route_orchestration_routes_request(
 }
 
 fn orchestration_desktop_state(context: &ProjectServiceRequestContext) -> Result<Value, String> {
-    if let Some(state) = context.desktop_state.as_ref() {
-        return Ok(state.clone());
-    }
-    let project_state_dir = context.project_state_dir();
-    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
-    let metadata = load_metadata_state(&project_state_dir);
-    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-    Ok(build_desktop_state(DesktopStateInput {
-        project_root: context.project_root().to_string_lossy().into_owned(),
-        topology: &topology,
-        metadata_sessions: &metadata.sessions,
-        exchange: &exchange,
-    }))
+    desktop_state_for_context(context)
 }
 
 fn build_orchestration_route_options(

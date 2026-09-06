@@ -3,6 +3,7 @@ use serde_json::{Map, Value, json};
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 
+use super::desktop_state::desktop_state_for_context;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::notifications::{NotificationQuery, list_notification_snapshot};
 use super::router::ProjectServiceRequestContext;
@@ -21,11 +22,9 @@ pub fn route_project_observability_request(
     {
         return None;
     }
-    let Some(state) = context.desktop_state.as_ref() else {
-        return Some(json_response(
-            501,
-            json!({ "ok": false, "error": "desktop state not supported by this service" }),
-        ));
+    let state = match desktop_state_for_context(context) {
+        Ok(state) => state,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
     let notification_snapshot = list_notification_snapshot(
         context.project_state_dir(),
@@ -35,8 +34,8 @@ pub fn route_project_observability_request(
         },
     );
     let exchange = read_runtime_exchange(runtime_exchange_path(context.project_state_dir()));
-    let mut sessions = array_field(state, "sessions").to_vec();
-    sessions.extend_from_slice(array_field(state, "teammates"));
+    let mut sessions = array_field(&state, "sessions").to_vec();
+    sessions.extend_from_slice(array_field(&state, "teammates"));
     let service_info = get_project_service_manifest()
         .ok()
         .and_then(|manifest| serde_json::to_value(manifest).ok())
@@ -48,8 +47,8 @@ pub fn route_project_observability_request(
             "serviceInfo": service_info,
             "project": build_project_observability(ProjectObservabilityInput {
                 sessions,
-                services: array_field(state, "services").to_vec(),
-                worktrees: array_field(state, "worktrees").to_vec(),
+                services: array_field(&state, "services").to_vec(),
+                worktrees: array_field(&state, "worktrees").to_vec(),
                 tasks: array_field(&exchange, "tasks").to_vec(),
                 notifications: notification_snapshot.notifications,
                 notification_unread_count: Some(notification_snapshot.unread_count),
