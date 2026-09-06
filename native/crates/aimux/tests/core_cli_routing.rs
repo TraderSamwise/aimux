@@ -1,16 +1,17 @@
 use aimux::core_cli_routing::{
     CoreAgentInputArgs, CoreAgentPsArgs, CoreDaemonRestartArgs, CoreHostAgentReadArgs,
     CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
-    CoreProjectEnsureArgs, CoreRestartArgs, core_command_args, has_core_global_logging_args,
-    is_core_cli_command, is_core_project_ensure_command, is_valid_core_project_ensure_args,
-    parse_core_agent_input_args, parse_core_agent_migrate_args, parse_core_agent_ps_args,
-    parse_core_agent_rename_args, parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
-    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
-    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs, core_command_args,
+    has_core_global_logging_args, is_core_cli_command, is_core_project_ensure_command,
+    is_valid_core_project_ensure_args, parse_core_agent_input_args, parse_core_agent_migrate_args,
+    parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
+    parse_core_host_agent_stream_args, parse_core_host_restart_args,
+    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
-    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
-    parse_core_team_args,
+    parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
+    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_runtime_restart_args, parse_core_team_args,
 };
 
 #[test]
@@ -388,6 +389,66 @@ fn team_parser_matches_show_init_role_mutation_forms() {
 }
 
 #[test]
+fn notification_parser_matches_cli_alias_forms() {
+    assert_eq!(
+        parse_core_notification_args(&[
+            "notify",
+            "--project=/repo",
+            "--title",
+            "Heads up",
+            "--subtitle=Agent",
+            "--body",
+            "Ready",
+            "--session",
+            "claude-1",
+            "--kind=attention",
+            "--json",
+        ]),
+        Some(CoreNotificationArgs {
+            command: "notify".into(),
+            project: Some("/repo".into()),
+            title: Some("Heads up".into()),
+            subtitle: Some("Agent".into()),
+            body: Some("Ready".into()),
+            session_id: Some("claude-1".into()),
+            kind: Some("attention".into()),
+            id: None,
+            ids: Vec::new(),
+            unread: false,
+            json: true,
+        })
+    );
+
+    let list = parse_core_notification_args(&[
+        "list-notifications",
+        "--project",
+        "/repo",
+        "--unread",
+        "--session=claude-1",
+    ])
+    .expect("list notification args");
+    assert_eq!(list.command, "list-notifications");
+    assert!(list.unread);
+    assert_eq!(list.session_id.as_deref(), Some("claude-1"));
+
+    let mutation = parse_core_notification_args(&[
+        "read-notifications",
+        "--id=note-1",
+        "--ids",
+        " note-2, ,note-3 ",
+        "--json",
+    ])
+    .expect("read notification args");
+    assert_eq!(mutation.id.as_deref(), Some("note-1"));
+    assert_eq!(mutation.ids, ["note-2", "note-3"]);
+    assert!(mutation.json);
+
+    assert!(parse_core_notification_args(&["notify", "--body", "Ready"]).is_none());
+    assert!(parse_core_notification_args(&["list-notifications", "--title", "x"]).is_none());
+    assert!(parse_core_notification_args(&["clear-notifications", "--project", "-repo"]).is_none());
+}
+
+#[test]
 fn logs_parser_preserves_values_that_start_with_hyphens() {
     assert_eq!(
         parse_core_logs_args(&["logs", "tail", "--project", "-foo", "-n", "-5", "--daemon",]),
@@ -625,6 +686,11 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["doctor", "versions"],
         vec!["doctor", "versions", "--json"],
         vec!["logs", "path", "--daemon"],
+        vec!["notify", "--title", "Heads up"],
+        vec!["notify", "--body", "Ready"],
+        vec!["list-notifications", "--unread"],
+        vec!["read-notifications", "--ids", "note-1,note-2"],
+        vec!["clear-notifications", "--bad"],
         vec!["projects", "list", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],

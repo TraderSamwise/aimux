@@ -954,6 +954,159 @@ pub fn parse_core_team_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTeamArgs> {
     })
 }
 
+pub fn parse_core_notification_args<S: AsRef<str>>(args: &[S]) -> Option<CoreNotificationArgs> {
+    let command = args.first().map(AsRef::as_ref)?;
+    if !matches!(
+        command,
+        "notify" | "list-notifications" | "read-notifications" | "clear-notifications"
+    ) {
+        return None;
+    }
+    let mut parsed = CoreNotificationArgs {
+        command: command.to_owned(),
+        project: None,
+        title: None,
+        subtitle: None,
+        body: None,
+        session_id: None,
+        kind: None,
+        id: None,
+        ids: Vec::new(),
+        unread: false,
+        json: false,
+    };
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            parsed.project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            parsed.project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--session" {
+            parsed.session_id = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--session=") {
+            if value.is_empty() {
+                return None;
+            }
+            parsed.session_id = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if command == "notify" && arg == "--title" {
+            parsed.title = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if command == "notify"
+            && let Some(value) = arg.strip_prefix("--title=")
+        {
+            parsed.title = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if command == "notify" && arg == "--subtitle" {
+            parsed.subtitle = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if command == "notify"
+            && let Some(value) = arg.strip_prefix("--subtitle=")
+        {
+            parsed.subtitle = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if command == "notify" && arg == "--body" {
+            parsed.body = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if command == "notify"
+            && let Some(value) = arg.strip_prefix("--body=")
+        {
+            parsed.body = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if command == "notify" && arg == "--kind" {
+            parsed.kind = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if command == "notify"
+            && let Some(value) = arg.strip_prefix("--kind=")
+        {
+            parsed.kind = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(command, "read-notifications" | "clear-notifications") && arg == "--id" {
+            parsed.id = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(command, "read-notifications" | "clear-notifications")
+            && let Some(value) = arg.strip_prefix("--id=")
+        {
+            parsed.id = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(command, "read-notifications" | "clear-notifications") && arg == "--ids" {
+            parsed.ids = split_notification_ids(required_value(args, index)?);
+            index += 2;
+            continue;
+        }
+        if matches!(command, "read-notifications" | "clear-notifications")
+            && let Some(value) = arg.strip_prefix("--ids=")
+        {
+            parsed.ids = split_notification_ids(value);
+            index += 1;
+            continue;
+        }
+        if command == "list-notifications" && arg == "--unread" {
+            parsed.unread = true;
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    if command == "notify" && parsed.title.is_none() {
+        return None;
+    }
+    Some(parsed)
+}
+
+fn split_notification_ids(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 #[allow(clippy::collapsible_if)]
 pub fn parse_core_logs_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLogsArgs> {
     if args.first().map(AsRef::as_ref) != Some("logs") {
@@ -1446,6 +1599,10 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("loop"), Some("add" | "remove" | "done" | "block")) => true,
         (Some("overseer"), Some("start" | "clear")) => true,
         (Some("team"), Some("show" | "init" | "add" | "default" | "remove")) => true,
+        (
+            Some("notify" | "list-notifications" | "read-notifications" | "clear-notifications"),
+            _,
+        ) => true,
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,

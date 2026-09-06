@@ -6,9 +6,9 @@ use crate::core_cli_routing::{
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
-    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
-    parse_core_team_args,
+    parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
+    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_runtime_restart_args, parse_core_team_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,10 @@ pub enum CoreCliOperation {
     TeamAdd,
     TeamRemove,
     TeamDefault,
+    NotificationSend,
+    NotificationList,
+    NotificationRead,
+    NotificationClear,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -530,6 +534,30 @@ fn agent_ps_text_path(project: &str, json: bool) -> String {
     path
 }
 
+fn notification_list_text_path(
+    project: &str,
+    unread: bool,
+    session_id: Option<&str>,
+    json: bool,
+) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.notification_list_text,
+        encode_query_component(project)
+    );
+    if unread {
+        path.push_str("&unread=1");
+    }
+    if let Some(session_id) = session_id {
+        path.push_str("&sessionId=");
+        path.push_str(&encode_query_component(session_id));
+    }
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
 fn text_route_path(path: &str, json: bool) -> String {
     if json {
         format!("{path}?json=1")
@@ -976,6 +1004,72 @@ where
                 path
             } else {
                 text_route_path(route, parsed.json)
+            };
+            (
+                operation,
+                CoreCliAction::TextRoute { path, body },
+                CoreCliFallback::None,
+            )
+        }
+        ("notify", _)
+        | ("list-notifications", _)
+        | ("read-notifications", _)
+        | ("clear-notifications", _) => {
+            let parsed = parse_core_notification_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid notification arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, path, body) = match parsed.command.as_str() {
+                "notify" => (
+                    CoreCliOperation::NotificationSend,
+                    text_route_path(CORE_API_ROUTES.notification_send_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "title": parsed.title,
+                        "subtitle": parsed.subtitle,
+                        "body": parsed.body,
+                        "sessionId": parsed.session_id,
+                        "kind": parsed.kind,
+                    })),
+                ),
+                "list-notifications" => (
+                    CoreCliOperation::NotificationList,
+                    notification_list_text_path(
+                        &project_root,
+                        parsed.unread,
+                        parsed.session_id.as_deref(),
+                        parsed.json,
+                    ),
+                    None,
+                ),
+                "read-notifications" => (
+                    CoreCliOperation::NotificationRead,
+                    text_route_path(CORE_API_ROUTES.notification_read_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "id": parsed.id,
+                        "ids": parsed.ids,
+                        "sessionId": parsed.session_id,
+                    })),
+                ),
+                "clear-notifications" => (
+                    CoreCliOperation::NotificationClear,
+                    text_route_path(CORE_API_ROUTES.notification_clear_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "id": parsed.id,
+                        "ids": parsed.ids,
+                        "sessionId": parsed.session_id,
+                    })),
+                ),
+                _ => unreachable!("validated notification command"),
             };
             (
                 operation,

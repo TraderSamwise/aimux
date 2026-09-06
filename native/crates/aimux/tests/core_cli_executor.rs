@@ -163,6 +163,8 @@ impl CoreCliRuntime for FakeRuntime {
             "overseer ok\n".into()
         } else if path.starts_with("/core/team/") {
             "team ok\n".into()
+        } else if path.starts_with("/core/notifications/") {
+            "notifications ok\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -858,6 +860,102 @@ fn team_commands_execute_native_text_routes_without_core_command_fallback() {
             (
                 "/core/team/remove-text?json=1".into(),
                 Some(json!({ "project": "/repo", "role": "planner" })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn notification_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let notify = run_core_cli_with(
+        &args(&[
+            "notify",
+            "--project=/repo",
+            "--title",
+            "Heads up",
+            "--subtitle=Agent",
+            "--body",
+            "Ready",
+            "--session=claude-1",
+            "--kind=attention",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let list = run_core_cli_with(
+        &args(&[
+            "list-notifications",
+            "--project=/repo",
+            "--unread",
+            "--session",
+            "claude-1",
+        ]),
+        &mut runtime,
+    );
+    let read = run_core_cli_with(
+        &args(&[
+            "read-notifications",
+            "--project",
+            "/repo",
+            "--id=note-1",
+            "--ids",
+            "note-2,note-3",
+            "--session=claude-1",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let clear = run_core_cli_with(
+        &args(&[
+            "clear-notifications",
+            "--project=/repo",
+            "--ids=note-4,note-5",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(notify.stdout, ["notifications ok"]);
+    assert_eq!(list.stdout, ["notifications ok"]);
+    assert_eq!(read.stdout, ["notifications ok"]);
+    assert_eq!(clear.stdout, ["notifications ok"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/notifications/send-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "title": "Heads up",
+                    "subtitle": "Agent",
+                    "body": "Ready",
+                    "sessionId": "claude-1",
+                    "kind": "attention",
+                })),
+            ),
+            (
+                "/core/notifications/list-text?project=%2Frepo&unread=1&sessionId=claude-1".into(),
+                None,
+            ),
+            (
+                "/core/notifications/read-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "id": "note-1",
+                    "ids": ["note-2", "note-3"],
+                    "sessionId": "claude-1",
+                })),
+            ),
+            (
+                "/core/notifications/clear-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "id": null,
+                    "ids": ["note-4", "note-5"],
+                    "sessionId": null,
+                })),
             ),
         ]
     );

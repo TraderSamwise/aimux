@@ -268,6 +268,110 @@ fn host_agent_stream_plans_native_text_route_with_stream_defaults() {
 }
 
 #[test]
+fn notification_aliases_plan_native_text_routes_with_resolved_project() {
+    let notify = classify_core_cli_with_project_resolver(
+        &[
+            "notify",
+            "--project",
+            "./child dir",
+            "--title",
+            "Heads up",
+            "--subtitle=Agent",
+            "--body",
+            "Ready",
+            "--session=claude-1",
+            "--kind",
+            "attention",
+            "--json",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("notify plan");
+    assert_eq!(notify.operation, CoreCliOperation::NotificationSend);
+    assert_eq!(
+        notify.action,
+        CoreCliAction::TextRoute {
+            path: "/core/notifications/send-text?json=1".into(),
+            body: Some(json!({
+                "project": "/resolved/./child dir",
+                "title": "Heads up",
+                "subtitle": "Agent",
+                "body": "Ready",
+                "sessionId": "claude-1",
+                "kind": "attention",
+            })),
+        }
+    );
+
+    let list = classify_core_cli(
+        &[
+            "list-notifications",
+            "--unread",
+            "--session",
+            "claude 1",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("list notifications plan");
+    assert_eq!(list.operation, CoreCliOperation::NotificationList);
+    assert_eq!(
+        list.action,
+        CoreCliAction::TextRoute {
+            path:
+                "/core/notifications/list-text?project=%2Frepo&unread=1&sessionId=claude%201&json=1"
+                    .into(),
+            body: None,
+        }
+    );
+
+    let read = classify_core_cli(
+        &[
+            "read-notifications",
+            "--id=note-1",
+            "--ids",
+            "note-2,note-3",
+            "--session=claude-1",
+        ],
+        &context(true, true),
+    )
+    .expect("read notifications plan");
+    assert_eq!(read.operation, CoreCliOperation::NotificationRead);
+    assert_eq!(
+        read.action,
+        CoreCliAction::TextRoute {
+            path: "/core/notifications/read-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "id": "note-1",
+                "ids": ["note-2", "note-3"],
+                "sessionId": "claude-1",
+            })),
+        }
+    );
+
+    let clear = classify_core_cli(
+        &["clear-notifications", "--ids=note-4,note-5"],
+        &context(true, true),
+    )
+    .expect("clear notifications plan");
+    assert_eq!(clear.operation, CoreCliOperation::NotificationClear);
+    assert_eq!(
+        clear.action,
+        CoreCliAction::TextRoute {
+            path: "/core/notifications/clear-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "id": null,
+                "ids": ["note-4", "note-5"],
+                "sessionId": null,
+            })),
+        }
+    );
+}
+
+#[test]
 fn agent_ps_plans_native_text_route_with_project_resolution() {
     let plan = classify_core_cli_with_project_resolver(
         &["ps", "--project", "./child dir", "--json"],
