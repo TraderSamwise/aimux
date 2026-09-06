@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "source": ["app/stores/coordination.test.ts", "app/stores/coordination.ts"],
+  "generatedBy": "scripts/capture-app-resource-store-contract.mjs",
+  "description": "App coordination worklist resource lifecycle and request-scope matching captured by running TypeScript Jotai atoms.",
+  "cases": [
+    {
+      "id": "app-state-coordination-store-001",
+      "name": "marks an in-flight refresh stale when a previous value exists",
+      "source": "app/stores/coordination.test.ts",
+      "api": "app-state-coordination-store",
+      "input": {
+        "name": "marks an in-flight refresh stale when a previous value exists",
+        "source": "app/stores/coordination.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "items": [
+                {
+                  "key": "notice-1",
+                  "kind": "notification",
+                  "type": "msg",
+                  "bucket": "awake",
+                  "title": "Needs input",
+                  "urgency": 10,
+                  "reachability": "live",
+                  "actionable": true,
+                  "stale": false,
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "begin" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "items": [
+              {
+                "key": "notice-1",
+                "kind": "notification",
+                "type": "msg",
+                "bucket": "awake",
+                "title": "Needs input",
+                "urgency": 10,
+                "reachability": "live",
+                "actionable": true,
+                "stale": false,
+                "sessionId": "agent-1"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": null,
+          "pending": true,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": {
+          "items": [
+            {
+              "key": "notice-1",
+              "kind": "notification",
+              "type": "msg",
+              "bucket": "awake",
+              "title": "Needs input",
+              "urgency": 10,
+              "reachability": "live",
+              "actionable": true,
+              "stale": false,
+              "sessionId": "agent-1"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": null
+      },
+      "inputSha256": "56623435bc5c892a4e7c857e2f226e61d349e11920259504569341bd86f4bf1d"
+    },
+    {
+      "id": "app-state-coordination-store-002",
+      "name": "keeps the last good value after a refresh failure",
+      "source": "app/stores/coordination.test.ts",
+      "api": "app-state-coordination-store",
+      "input": {
+        "name": "keeps the last good value after a refresh failure",
+        "source": "app/stores/coordination.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "items": [
+                {
+                  "key": "notice-1",
+                  "kind": "notification",
+                  "type": "msg",
+                  "bucket": "awake",
+                  "title": "Needs input",
+                  "urgency": 10,
+                  "reachability": "live",
+                  "actionable": true,
+                  "stale": false,
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "items": [
+              {
+                "key": "notice-1",
+                "kind": "notification",
+                "type": "msg",
+                "bucket": "awake",
+                "title": "Needs input",
+                "urgency": 10,
+                "reachability": "live",
+                "actionable": true,
+                "stale": false,
+                "sessionId": "agent-1"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": "service unavailable",
+          "pending": false,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": {
+          "items": [
+            {
+              "key": "notice-1",
+              "kind": "notification",
+              "type": "msg",
+              "bucket": "awake",
+              "title": "Needs input",
+              "urgency": 10,
+              "reachability": "live",
+              "actionable": true,
+              "stale": false,
+              "sessionId": "agent-1"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": "service unavailable"
+      },
+      "inputSha256": "846a86f10b86d805225a788b09826e59f6cfd0d96249f46507cb078601dfe06b"
+    },
+    {
+      "id": "app-state-coordination-store-003",
+      "name": "clears stale/error metadata after the resource recovers",
+      "source": "app/stores/coordination.test.ts",
+      "api": "app-state-coordination-store",
+      "input": {
+        "name": "clears stale/error metadata after the resource recovers",
+        "source": "app/stores/coordination.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "items": [
+                {
+                  "key": "notice-1",
+                  "kind": "notification",
+                  "type": "msg",
+                  "bucket": "awake",
+                  "title": "Needs input",
+                  "urgency": 10,
+                  "reachability": "live",
+                  "actionable": true,
+                  "stale": false,
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" },
+          {
+            "kind": "success",
+            "value": {
+              "items": [
+                {
+                  "key": "notice-2",
+                  "kind": "notification",
+                  "type": "msg",
+                  "bucket": "awake",
+                  "title": "Needs input",
+                  "urgency": 10,
+                  "reachability": "live",
+                  "actionable": true,
+                  "stale": false,
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 20
+          }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "items": [
+              {
+                "key": "notice-2",
+                "kind": "notification",
+                "type": "msg",
+                "bucket": "awake",
+                "title": "Needs input",
+                "urgency": 10,
+                "reachability": "live",
+                "actionable": true,
+                "stale": false,
+                "sessionId": "agent-1"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": null,
+          "pending": false,
+          "stale": false,
+          "updatedAt": 20
+        },
+        "value": {
+          "items": [
+            {
+              "key": "notice-2",
+              "kind": "notification",
+              "type": "msg",
+              "bucket": "awake",
+              "title": "Needs input",
+              "urgency": 10,
+              "reachability": "live",
+              "actionable": true,
+              "stale": false,
+              "sessionId": "agent-1"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": null
+      },
+      "inputSha256": "734d43cac3bf55658b8c54dc395e75fdafa9bdcdbd7098c69a46c366ba154469"
+    },
+    {
+      "id": "app-state-coordination-store-004",
+      "name": "clears the resource when the project service endpoint disappears",
+      "source": "app/stores/coordination.test.ts",
+      "api": "app-state-coordination-store",
+      "input": {
+        "name": "clears the resource when the project service endpoint disappears",
+        "source": "app/stores/coordination.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "items": [
+                {
+                  "key": "notice-1",
+                  "kind": "notification",
+                  "type": "msg",
+                  "bucket": "awake",
+                  "title": "Needs input",
+                  "urgency": 10,
+                  "reachability": "live",
+                  "actionable": true,
+                  "stale": false,
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "clear" }
+        ]
+      },
+      "output": {
+        "resource": { "value": null, "error": null, "pending": false, "stale": false, "updatedAt": null },
+        "value": null,
+        "error": null
+      },
+      "inputSha256": "e4c459c8c4ac044364b99fbad8c703ee15bf6e54ff0ae520b1b440cbd762e2ac"
+    },
+    {
+      "id": "app-state-coordination-store-005",
+      "name": "rejects in-flight results from an old endpoint generation",
+      "source": "app/stores/coordination.test.ts",
+      "api": "app-state-coordination-store",
+      "input": {
+        "name": "rejects in-flight results from an old endpoint generation",
+        "source": "app/stores/coordination.test.ts",
+        "actions": [],
+        "requestChecks": [
+          {
+            "request": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43190", "generation": 1 },
+            "current": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 }
+          },
+          {
+            "request": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 },
+            "current": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 }
+          }
+        ]
+      },
+      "output": {
+        "resource": { "value": null, "error": null, "pending": false, "stale": false, "updatedAt": null },
+        "value": null,
+        "error": null,
+        "requestChecks": [false, true]
+      },
+      "inputSha256": "3389ea9a11bb1bdc2dda54a7fb5b1bf005dbca9c320d7966e0859f5f09f36d1b"
+    }
+  ]
+}

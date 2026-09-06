@@ -62,6 +62,12 @@ Priority fixture groups:
 - `app-state/chat-output.json`: app chat output store snapshot/event ingestion,
   local interrupt hold, ANSI fallback, activity text retention/clearing, and
   transcript window merge behavior captured by running TypeScript Jotai atoms.
+- `app-state/coordination-store.json`: app coordination worklist resource
+  lifecycle and endpoint-generation request matching captured by running
+  TypeScript Jotai atoms.
+- `app-state/desktop-state-store.json`: app desktop-state worktree grouping,
+  active bucket filtering, retry error clearing, and resource lifecycle
+  captured by running TypeScript helpers and Jotai atoms.
 - `app-state/helpers.json`: chat transcript loading visibility, native pinned
   offset, terminal output hydration, visible-pane output mode, and active
   shared-session mapping/equality/merge/hydration behavior captured by running
@@ -85,9 +91,21 @@ Priority fixture groups:
 - `app-state/resource-request-tracker.json`: app project resource request
   tracker sequence, stale marker, and endpoint-generation invalidation behavior
   captured by running TypeScript, with nondeterministic key tokens normalized.
+- `app-state/library-store.json`: app library resource lifecycle and
+  endpoint-generation request matching captured by running TypeScript Jotai
+  atoms.
+- `app-state/notification-feed-store.json`: app notification feed resource
+  lifecycle, retry error clearing, and unread-count derivation captured by
+  running TypeScript Jotai atoms.
+- `app-state/security-store.json`: app security inbox add, duplicate update,
+  mark-read, clear, and persistence-shape behavior captured by running
+  TypeScript Jotai atoms with fixed time.
 - `app-state/settings.json`: durable app settings defaults, persisted-settings
   normalization, monitor viewport clamping, share normalization, and desktop
   zoom helpers captured by running TypeScript settings helpers.
+- `app-state/topology-store.json`: app topology resource lifecycle, transient
+  settle behavior, and endpoint-generation request matching captured by running
+  TypeScript Jotai atoms.
 - `app-state/ui-defaults.json`: ephemeral app sidebar and project-picker
   defaults captured by running TypeScript Jotai atoms.
 

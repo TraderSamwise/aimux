@@ -1,0 +1,298 @@
+{
+  "version": 1,
+  "source": ["app/stores/library.test.ts", "app/stores/library.ts"],
+  "generatedBy": "scripts/capture-app-resource-store-contract.mjs",
+  "description": "App library resource lifecycle and request-scope matching captured by running TypeScript Jotai atoms.",
+  "cases": [
+    {
+      "id": "app-state-library-store-001",
+      "name": "marks an in-flight refresh stale when a previous value exists",
+      "source": "app/stores/library.test.ts",
+      "api": "app-state-library-store",
+      "input": {
+        "name": "marks an in-flight refresh stale when a previous value exists",
+        "source": "app/stores/library.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "documents": [
+                {
+                  "id": "doc-1",
+                  "title": "AGENTS.md",
+                  "path": "/repo/AGENTS.md",
+                  "kind": "agents",
+                  "size": 1200,
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "content": "instructions"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "begin" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "documents": [
+              {
+                "id": "doc-1",
+                "title": "AGENTS.md",
+                "path": "/repo/AGENTS.md",
+                "kind": "agents",
+                "size": 1200,
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "content": "instructions"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": null,
+          "pending": true,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": {
+          "documents": [
+            {
+              "id": "doc-1",
+              "title": "AGENTS.md",
+              "path": "/repo/AGENTS.md",
+              "kind": "agents",
+              "size": 1200,
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "content": "instructions"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": null
+      },
+      "inputSha256": "46ba9accc4038d9b94191c1618705390396810b1d399c0f138fbc038395787ca"
+    },
+    {
+      "id": "app-state-library-store-002",
+      "name": "keeps the last good value after a refresh failure",
+      "source": "app/stores/library.test.ts",
+      "api": "app-state-library-store",
+      "input": {
+        "name": "keeps the last good value after a refresh failure",
+        "source": "app/stores/library.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "documents": [
+                {
+                  "id": "doc-1",
+                  "title": "AGENTS.md",
+                  "path": "/repo/AGENTS.md",
+                  "kind": "agents",
+                  "size": 1200,
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "content": "instructions"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "documents": [
+              {
+                "id": "doc-1",
+                "title": "AGENTS.md",
+                "path": "/repo/AGENTS.md",
+                "kind": "agents",
+                "size": 1200,
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "content": "instructions"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": "service unavailable",
+          "pending": false,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": {
+          "documents": [
+            {
+              "id": "doc-1",
+              "title": "AGENTS.md",
+              "path": "/repo/AGENTS.md",
+              "kind": "agents",
+              "size": 1200,
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "content": "instructions"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": "service unavailable"
+      },
+      "inputSha256": "d7cfbde4df3408d840311db4205db6bce7fe46d5afb34ccf50f32435908a4a2e"
+    },
+    {
+      "id": "app-state-library-store-003",
+      "name": "clears stale/error metadata after the resource recovers",
+      "source": "app/stores/library.test.ts",
+      "api": "app-state-library-store",
+      "input": {
+        "name": "clears stale/error metadata after the resource recovers",
+        "source": "app/stores/library.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "documents": [
+                {
+                  "id": "doc-1",
+                  "title": "AGENTS.md",
+                  "path": "/repo/AGENTS.md",
+                  "kind": "agents",
+                  "size": 1200,
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "content": "instructions"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" },
+          {
+            "kind": "success",
+            "value": {
+              "documents": [
+                {
+                  "id": "doc-2",
+                  "title": "AGENTS.md",
+                  "path": "/repo/AGENTS.md",
+                  "kind": "agents",
+                  "size": 1200,
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "content": "instructions"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 20
+          }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "documents": [
+              {
+                "id": "doc-2",
+                "title": "AGENTS.md",
+                "path": "/repo/AGENTS.md",
+                "kind": "agents",
+                "size": 1200,
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "content": "instructions"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": null,
+          "pending": false,
+          "stale": false,
+          "updatedAt": 20
+        },
+        "value": {
+          "documents": [
+            {
+              "id": "doc-2",
+              "title": "AGENTS.md",
+              "path": "/repo/AGENTS.md",
+              "kind": "agents",
+              "size": 1200,
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "content": "instructions"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": null
+      },
+      "inputSha256": "1d5fd7c1d9030f831efb5e1cd21c8628dc87d146964f130c44e1932b0717cd0a"
+    },
+    {
+      "id": "app-state-library-store-004",
+      "name": "clears the resource when the project service endpoint disappears",
+      "source": "app/stores/library.test.ts",
+      "api": "app-state-library-store",
+      "input": {
+        "name": "clears the resource when the project service endpoint disappears",
+        "source": "app/stores/library.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "documents": [
+                {
+                  "id": "doc-1",
+                  "title": "AGENTS.md",
+                  "path": "/repo/AGENTS.md",
+                  "kind": "agents",
+                  "size": 1200,
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "content": "instructions"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "clear" }
+        ]
+      },
+      "output": {
+        "resource": { "value": null, "error": null, "pending": false, "stale": false, "updatedAt": null },
+        "value": null,
+        "error": null
+      },
+      "inputSha256": "c8dafa4b9f74aefe3730e9ab767fc39f1c9fc1d4eea45cc2153010daa4dbc162"
+    },
+    {
+      "id": "app-state-library-store-005",
+      "name": "rejects in-flight results from an old endpoint generation",
+      "source": "app/stores/library.test.ts",
+      "api": "app-state-library-store",
+      "input": {
+        "name": "rejects in-flight results from an old endpoint generation",
+        "source": "app/stores/library.test.ts",
+        "actions": [],
+        "requestChecks": [
+          {
+            "request": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43190", "generation": 1 },
+            "current": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 }
+          },
+          {
+            "request": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 },
+            "current": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 }
+          }
+        ]
+      },
+      "output": {
+        "resource": { "value": null, "error": null, "pending": false, "stale": false, "updatedAt": null },
+        "value": null,
+        "error": null,
+        "requestChecks": [false, true]
+      },
+      "inputSha256": "e42143f1667843f73aaa9092787bb956c7393e3732751febdc6567f08e4e6af3"
+    }
+  ]
+}

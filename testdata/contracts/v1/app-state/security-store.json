@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "source": ["app/stores/security.test.ts", "app/stores/security.ts"],
+  "generatedBy": "scripts/capture-app-resource-store-contract.mjs",
+  "description": "App security inbox add, unread, mark-read, clear, and persistence-shape behavior captured by running TypeScript Jotai atoms with fixed time.",
+  "cases": [
+    {
+      "id": "app-state-security-store-001",
+      "name": "tracks unread security events and persists them",
+      "source": "app/stores/security.test.ts",
+      "api": "app-state-security-store",
+      "input": {
+        "name": "tracks unread security events and persists them",
+        "source": "app/stores/security.test.ts",
+        "actions": [
+          {
+            "kind": "add",
+            "event": {
+              "id": "sec-1",
+              "kind": "new_client_detected",
+              "title": "New remote client detected",
+              "body": "Safari from SG",
+              "createdAt": "2026-05-24T00:00:00.000Z"
+            }
+          },
+          { "kind": "markRead" },
+          { "kind": "clear" }
+        ]
+      },
+      "output": { "events": [], "unreadCount": 0, "storage": { "aimux-security-events": [] } },
+      "inputSha256": "8f935fdaae00b7cef7dd2cdf67864ba7724f841a841e2e008f1abb6d92075016"
+    },
+    {
+      "id": "app-state-security-store-002",
+      "name": "preserves received/read timestamps when a duplicate event arrives",
+      "source": "app/stores/security.ts",
+      "api": "app-state-security-store",
+      "input": {
+        "name": "preserves received/read timestamps when a duplicate event arrives",
+        "source": "app/stores/security.ts",
+        "actions": [
+          {
+            "kind": "add",
+            "event": {
+              "id": "sec-1",
+              "kind": "new_client_detected",
+              "title": "New remote client detected",
+              "body": "Safari from SG",
+              "createdAt": "2026-05-24T00:00:00.000Z"
+            }
+          },
+          { "kind": "markRead" },
+          {
+            "kind": "add",
+            "event": {
+              "id": "sec-1",
+              "kind": "new_client_detected",
+              "title": "New remote client detected",
+              "body": "Updated body",
+              "createdAt": "2026-05-24T00:00:00.000Z"
+            }
+          }
+        ]
+      },
+      "output": {
+        "events": [
+          {
+            "id": "sec-1",
+            "kind": "new_client_detected",
+            "title": "New remote client detected",
+            "body": "Updated body",
+            "createdAt": "2026-05-24T00:00:00.000Z",
+            "receivedAt": "2026-09-04T12:00:00.000Z",
+            "readAt": "2026-09-04T12:00:00.000Z"
+          }
+        ],
+        "unreadCount": 0,
+        "storage": {
+          "aimux-security-events": [
+            {
+              "id": "sec-1",
+              "kind": "new_client_detected",
+              "title": "New remote client detected",
+              "body": "Updated body",
+              "createdAt": "2026-05-24T00:00:00.000Z",
+              "receivedAt": "2026-09-04T12:00:00.000Z",
+              "readAt": "2026-09-04T12:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "0cd3edd3f2d29ab96bc7c178fbbc038ebbe9aba7891c6227a9b3ef452ac32517"
+    }
+  ]
+}

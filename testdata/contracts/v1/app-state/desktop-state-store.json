@@ -1,0 +1,353 @@
+{
+  "version": 1,
+  "source": ["app/stores/desktopState.test.ts", "app/stores/desktopState.ts", "app/lib/desktop-state.ts"],
+  "generatedBy": "scripts/capture-app-resource-store-contract.mjs",
+  "description": "App desktop-state worktree grouping, active bucket filtering, and critical resource lifecycle captured by running TypeScript helpers and Jotai atoms.",
+  "cases": [
+    {
+      "id": "app-state-desktop-state-store-001",
+      "name": "uses server-composed worktree groups instead of regrouping raw sessions",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "groupByWorktree",
+      "input": {
+        "name": "uses server-composed worktree groups instead of regrouping raw sessions",
+        "source": "app/stores/desktopState.test.ts",
+        "api": "groupByWorktree",
+        "state": {
+          "ok": true,
+          "sessions": [
+            { "id": "raw-extra", "status": "running", "toolConfigKey": "codex" },
+            { "id": "canonical", "status": "running", "toolConfigKey": "claude" }
+          ],
+          "services": [],
+          "worktrees": [],
+          "mainCheckoutInfo": { "name": "repo", "branch": "main" },
+          "mainCheckoutPath": "/repo",
+          "worktreeGroups": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "id": "canonical", "status": "running", "toolConfigKey": "claude" }],
+              "services": []
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "key": "__main_checkout__",
+          "name": "Main Checkout",
+          "branch": "main",
+          "path": null,
+          "isMainCheckout": true,
+          "sessions": [{ "id": "canonical", "status": "running", "toolConfigKey": "claude" }],
+          "services": []
+        }
+      ],
+      "inputSha256": "b72dbf34184a67d169b2e24f1356d19b9688ef844b70b464432ecec3eff977b7"
+    },
+    {
+      "id": "app-state-desktop-state-store-002",
+      "name": "keeps overseer sessions out of legacy client-side worktree grouping",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "groupByWorktree",
+      "input": {
+        "name": "keeps overseer sessions out of legacy client-side worktree grouping",
+        "source": "app/stores/desktopState.test.ts",
+        "api": "groupByWorktree",
+        "state": {
+          "ok": true,
+          "sessions": [
+            { "id": "overseer-flag", "status": "running", "toolConfigKey": "codex", "overseer": true },
+            { "id": "overseer-team", "status": "running", "toolConfigKey": "claude", "team": { "role": "overseer" } },
+            { "id": "agent", "status": "running", "toolConfigKey": "codex" }
+          ],
+          "services": [],
+          "worktrees": []
+        }
+      },
+      "output": [
+        {
+          "key": "__main_checkout__",
+          "name": "Main Checkout",
+          "branch": "",
+          "path": null,
+          "isMainCheckout": true,
+          "sessions": [{ "id": "agent", "status": "running", "toolConfigKey": "codex" }],
+          "services": []
+        }
+      ],
+      "inputSha256": "2e5cfe660bebaee852af271f143e8788fd78b6e5eb924c3a1315f3961df674c4"
+    },
+    {
+      "id": "app-state-desktop-state-store-003",
+      "name": "preserves pending worktree flags through worktree grouping",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "groupByWorktree",
+      "input": {
+        "name": "preserves pending worktree flags through worktree grouping",
+        "source": "app/stores/desktopState.test.ts",
+        "api": "groupByWorktree",
+        "state": {
+          "ok": true,
+          "sessions": [],
+          "services": [],
+          "worktrees": [
+            { "name": "feature", "path": "/repo/.aimux/worktrees/feature", "branch": "feature", "pending": true },
+            { "name": "remove-me", "path": "/repo/.aimux/worktrees/remove-me", "branch": "remove-me", "removing": true }
+          ]
+        }
+      },
+      "output": [
+        {
+          "key": "__main_checkout__",
+          "name": "Main Checkout",
+          "branch": "",
+          "path": null,
+          "isMainCheckout": true,
+          "sessions": [],
+          "services": []
+        },
+        {
+          "key": "/repo/.aimux/worktrees/feature",
+          "name": "feature",
+          "branch": "feature",
+          "path": "/repo/.aimux/worktrees/feature",
+          "isMainCheckout": false,
+          "pending": true,
+          "sessions": [],
+          "services": []
+        },
+        {
+          "key": "/repo/.aimux/worktrees/remove-me",
+          "name": "remove-me",
+          "branch": "remove-me",
+          "path": "/repo/.aimux/worktrees/remove-me",
+          "isMainCheckout": false,
+          "removing": true,
+          "sessions": [],
+          "services": []
+        }
+      ],
+      "inputSha256": "c8e2bbd5d59222764996501dc987ff200de262bbd55fa3c9a405ef0db6d1b6c4"
+    },
+    {
+      "id": "app-state-desktop-state-store-004",
+      "name": "filters sidebar buckets to active entries like TUI hidden-offline mode",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "activeWorktreeBuckets",
+      "input": {
+        "name": "filters sidebar buckets to active entries like TUI hidden-offline mode",
+        "source": "app/stores/desktopState.test.ts",
+        "api": "activeWorktreeBuckets",
+        "state": {
+          "ok": true,
+          "sessions": [],
+          "services": [],
+          "worktrees": [],
+          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "main" },
+          "mainCheckoutPath": "/repo",
+          "worktreeGroups": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [
+                { "id": "needs-live", "status": "running", "attention": "needs_input" },
+                { "id": "stale-needs", "status": "offline", "attention": "needs_input" },
+                { "id": "stopped", "status": "offline" }
+              ],
+              "services": [{ "id": "dead-service", "command": "dev", "args": [], "status": "offline" }]
+            },
+            {
+              "name": "dead",
+              "branch": "dead",
+              "path": "/repo/.aimux/worktrees/dead",
+              "status": "offline",
+              "sessions": [{ "id": "only-offline", "status": "offline" }],
+              "services": []
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "key": "__main_checkout__",
+          "name": "Main Checkout",
+          "branch": "main",
+          "path": null,
+          "isMainCheckout": true,
+          "sessions": [{ "id": "needs-live", "status": "running", "attention": "needs_input" }],
+          "services": []
+        }
+      ],
+      "inputSha256": "7a8a4271dca10f0b338e3a6e4403199f70d78cce8d83682b57244fcac733949d"
+    },
+    {
+      "id": "app-state-desktop-state-store-005",
+      "name": "marks an in-flight refresh stale when a previous value exists",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "app-state-desktop-state-store",
+      "input": {
+        "name": "marks an in-flight refresh stale when a previous value exists",
+        "source": "app/stores/desktopState.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+            "updatedAt": 10
+          },
+          { "kind": "begin" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+          "error": null,
+          "pending": true,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+        "error": null
+      },
+      "inputSha256": "7f076fbc8615e74713134db0ec54695b85d6d5f59074364591849479086586b6"
+    },
+    {
+      "id": "app-state-desktop-state-store-006",
+      "name": "keeps the last good value after a refresh failure",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "app-state-desktop-state-store",
+      "input": {
+        "name": "keeps the last good value after a refresh failure",
+        "source": "app/stores/desktopState.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+          "error": "service unavailable",
+          "pending": false,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+        "error": "service unavailable"
+      },
+      "inputSha256": "05a77ba49ae24e2f503b175fa2ad8bcbc40af70051161d0b11c51638f452117d"
+    },
+    {
+      "id": "app-state-desktop-state-store-007",
+      "name": "clears stale/error metadata after the resource recovers",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "app-state-desktop-state-store",
+      "input": {
+        "name": "clears stale/error metadata after the resource recovers",
+        "source": "app/stores/desktopState.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" },
+          {
+            "kind": "success",
+            "value": {
+              "ok": true,
+              "sessions": [{ "id": "agent-1", "status": "running", "toolConfigKey": "claude" }],
+              "services": [],
+              "worktrees": []
+            },
+            "updatedAt": 20
+          }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "ok": true,
+            "sessions": [{ "id": "agent-1", "status": "running", "toolConfigKey": "claude" }],
+            "services": [],
+            "worktrees": []
+          },
+          "error": null,
+          "pending": false,
+          "stale": false,
+          "updatedAt": 20
+        },
+        "value": {
+          "ok": true,
+          "sessions": [{ "id": "agent-1", "status": "running", "toolConfigKey": "claude" }],
+          "services": [],
+          "worktrees": []
+        },
+        "error": null
+      },
+      "inputSha256": "22c04fcad4b8f8b9f44614b78822235594f19f462bda2be34b2c615c2e07338d"
+    },
+    {
+      "id": "app-state-desktop-state-store-008",
+      "name": "clears the resource when the project service endpoint disappears",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "app-state-desktop-state-store",
+      "input": {
+        "name": "clears the resource when the project service endpoint disappears",
+        "source": "app/stores/desktopState.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+            "updatedAt": 10
+          },
+          { "kind": "clear" }
+        ]
+      },
+      "output": {
+        "resource": { "value": null, "error": null, "pending": false, "stale": false, "updatedAt": null },
+        "value": null,
+        "error": null
+      },
+      "inputSha256": "e421052cd341c54058b3493b5411340bad4166f2ce6cb3d03ad096c6764a1c04"
+    },
+    {
+      "id": "app-state-desktop-state-store-009",
+      "name": "clears stale refresh errors when retrying with a previous desktop-state",
+      "source": "app/stores/desktopState.test.ts",
+      "api": "app-state-desktop-state-store",
+      "input": {
+        "name": "clears stale refresh errors when retrying with a previous desktop-state",
+        "source": "app/stores/desktopState.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "request timed out after 10000ms" },
+          { "kind": "begin" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+          "error": null,
+          "pending": true,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": { "ok": true, "sessions": [], "services": [], "worktrees": [] },
+        "error": null
+      },
+      "inputSha256": "d946cdde6ffa61e9da68a77eaebcac1ba75142a6d809212796b36753dc877050"
+    }
+  ]
+}
