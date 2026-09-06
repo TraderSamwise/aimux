@@ -53,6 +53,7 @@ pub mod dashboard_renderer;
 pub mod dashboard_service_input;
 pub mod dashboard_terminal;
 pub mod dashboard_tool_picker;
+pub mod dashboard_tui_visibility;
 pub mod debug_state;
 pub mod desktop_notifier;
 pub mod desktop_notifier_contract;

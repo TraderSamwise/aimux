@@ -11,12 +11,18 @@ use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use crate::dashboard_navigation::DashboardEntryRef;
-use crate::dashboard_project_events::DashboardProjectRefreshState;
+use crate::dashboard_project_events::{
+    DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_footer_flash,
+};
 use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use crate::dashboard_service_input::render_service_input_overlay;
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
+use crate::dashboard_tui_visibility::{
+    DashboardTuiVisibilityState, consume_dashboard_tui_visibility_wake,
+    read_dashboard_tui_visibility_for_state, read_tmux_tui_visibility,
+};
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{self, Write};
@@ -25,6 +31,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DASHBOARD_KEY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const DASHBOARD_HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -52,8 +59,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut event_stream = None;
     let mut event_stream_retry_at = None;
     let mut refresh_state = DashboardProjectRefreshState::default();
+    let mut visibility_state = DashboardTuiVisibilityState {
+        started_in_dashboard: !options.once && options.desktop_state_file.is_none(),
+        ..DashboardTuiVisibilityState::default()
+    };
     let mut render_now = true;
     let mut last_render = Instant::now();
+    let clock_start = Instant::now();
     let mut stdout = io::stdout();
     let mut stdin = io::stdin();
     let _terminal = if options.once {
@@ -63,12 +75,33 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     };
 
     loop {
-        drain_dashboard_event_stream(
+        if drain_dashboard_event_stream(
             &mut event_stream,
             &mut event_stream_retry_at,
             &mut refresh_state,
             controller.as_mut(),
-        );
+        ) {
+            render_now = true;
+        }
+
+        let dashboard_visible = if visibility_state.started_in_dashboard {
+            read_dashboard_tui_visibility_for_state(
+                &mut visibility_state,
+                false,
+                elapsed_millis(clock_start),
+                read_tmux_tui_visibility,
+            )
+            .visible
+        } else {
+            true
+        };
+        if !dashboard_visible {
+            thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
+            continue;
+        }
+        if consume_dashboard_tui_visibility_wake(&mut visibility_state) {
+            render_now = true;
+        }
         if refresh_state.take_refresh_request() {
             render_now = true;
         }
@@ -157,16 +190,26 @@ fn drain_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
     refresh_state: &mut DashboardProjectRefreshState,
-    controller: Option<&mut DashboardController>,
-) {
+    mut controller: Option<&mut DashboardController>,
+) -> bool {
     let Some(stream) = event_stream.as_ref() else {
-        return;
+        return false;
     };
     let mut stream_closed = false;
     let mut stream_error = None;
+    let mut render = false;
     while let Ok(message) = stream.try_recv() {
         match message {
-            DashboardEventStreamMessage::Event(event) => refresh_state.observe(&event),
+            DashboardEventStreamMessage::Event(event) => {
+                if let DashboardProjectEvent::Alert(payload) = &event
+                    && let Some(message) = dashboard_alert_footer_flash("dashboard", payload)
+                    && let Some(controller) = controller.as_deref_mut()
+                {
+                    controller.footer_message = Some(message);
+                    render = true;
+                }
+                refresh_state.observe(&event);
+            }
             DashboardEventStreamMessage::Error(error) => {
                 stream_closed = true;
                 stream_error = Some(error);
@@ -182,11 +225,13 @@ fn drain_dashboard_event_stream(
         && let Some(controller) = controller
     {
         controller.footer_message = Some(error);
+        render = true;
     }
     if stream_closed {
         *event_stream = None;
         *retry_at = Some(Instant::now() + DASHBOARD_STREAM_RETRY_INTERVAL);
     }
+    render
 }
 
 fn reconcile_dashboard_event_stream(
@@ -216,6 +261,10 @@ fn reconcile_dashboard_event_stream(
     }
     *event_stream = Some(spawn_dashboard_project_event_stream(endpoint.clone()));
     *retry_at = None;
+}
+
+fn elapsed_millis(start: Instant) -> i64 {
+    start.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
 
 fn sync_dashboard_focus(
