@@ -138,6 +138,31 @@ fn launch_command_uses_stable_shim_for_native_install_root_entry() {
 }
 
 #[test]
+fn dashboard_launch_uses_native_internal_command_only_when_opted_in() {
+    let test_dir = TestDir::new();
+    let default_command = get_aimux_dashboard_launch_command(options(
+        &test_dir,
+        BTreeMap::new(),
+        Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
+    ));
+    assert_eq!(default_command.args, vec!["--tmux-dashboard-internal"]);
+
+    let node_command = get_aimux_dashboard_launch_command(options(
+        &test_dir,
+        BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into())]),
+        Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
+    ));
+    assert_eq!(node_command.args, vec!["--tmux-dashboard-internal"]);
+
+    let native_command = get_aimux_dashboard_launch_command(options(
+        &test_dir,
+        BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), " native ".into())]),
+        Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
+    ));
+    assert_eq!(native_command.args, vec!["__dashboard-internal-native"]);
+}
+
+#[test]
 fn project_service_and_identity_args_match_typescript_helpers() {
     let test_dir = TestDir::new();
     let project = get_aimux_project_service_launch_command(

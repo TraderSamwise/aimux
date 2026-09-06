@@ -49,7 +49,8 @@ pub fn get_aimux_daemon_launch_command(options: AimuxCliLaunchOptions) -> AimuxC
 }
 
 pub fn get_aimux_dashboard_launch_command(options: AimuxCliLaunchOptions) -> AimuxCliLaunchCommand {
-    resolve_aimux_cli_launch_command(vec!["--tmux-dashboard-internal".into()], options)
+    let args = dashboard_launch_args(&options.env);
+    resolve_aimux_cli_launch_command(args, options)
 }
 
 pub fn get_aimux_project_service_launch_command(
@@ -127,6 +128,18 @@ fn project_service_launch_args(project_id: &str, project_root: &str) -> Vec<Stri
         "--project-root".into(),
         project_root.into(),
     ]
+}
+
+fn dashboard_launch_args(env: &BTreeMap<String, String>) -> Vec<String> {
+    if env
+        .get("AIMUX_DASHBOARD_IMPLEMENTATION")
+        .map(|value| value.trim())
+        == Some("native")
+    {
+        vec!["__dashboard-internal-native".into()]
+    } else {
+        vec!["--tmux-dashboard-internal".into()]
+    }
 }
 
 struct ShouldUseStableShimInput<'a> {

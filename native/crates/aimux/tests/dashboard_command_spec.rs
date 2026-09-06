@@ -86,6 +86,32 @@ fn command_uses_dashboard_entrypoint_and_shell_wrapper() {
 }
 
 #[test]
+fn native_dashboard_selector_changes_entrypoint_and_stamp() {
+    let test_dir = TestDir::new();
+    let node = get_dashboard_command_spec_with_options(
+        "/tmp/repo",
+        source_options(&test_dir, BTreeMap::new()),
+    )
+    .expect("node spec");
+    let native = get_dashboard_command_spec_with_options(
+        "/tmp/repo",
+        source_options(
+            &test_dir,
+            BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into())]),
+        ),
+    )
+    .expect("native spec");
+    let node_command = command_text(&node);
+    let native_command = command_text(&native);
+
+    assert!(node_command.contains("--tmux-dashboard-internal"));
+    assert!(!node_command.contains("__dashboard-internal-native"));
+    assert!(native_command.contains("__dashboard-internal-native"));
+    assert!(native_command.contains("AIMUX_DASHBOARD_IMPLEMENTATION='native'"));
+    assert_ne!(node.dashboard_build_stamp, native.dashboard_build_stamp);
+}
+
+#[test]
 fn launch_environment_is_allowlisted_quoted_and_unsets_stable_paths_for_source() {
     let test_dir = TestDir::new();
     let options = source_options(
