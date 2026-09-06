@@ -215,6 +215,9 @@ Priority fixture groups:
 
 ## Runtime Migration
 
+- `runtime-state/atomic-write.json`: atomic text/JSON write, explicit file
+  mode, unique temp path, overwrite, and corrupt-file quarantine contracts
+  captured by running TypeScript `atomic-write`.
 - `runtime-state/service-state-snapshot.json`: runtime-stop service snapshot
   merging, stale compatibility state clearing, topology service demotion, and
   missing-worktree filtering captured by running TypeScript
