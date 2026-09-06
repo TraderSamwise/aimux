@@ -295,6 +295,13 @@ pub fn metadata_endpoint_path_by_project_id(
 }
 
 pub fn load_metadata_state(project_state_dir: impl AsRef<Path>) -> MetadataState {
+    load_metadata_state_at_unix_millis(project_state_dir, current_unix_millis())
+}
+
+pub fn load_metadata_state_at_unix_millis(
+    project_state_dir: impl AsRef<Path>,
+    now: u128,
+) -> MetadataState {
     let path = metadata_state_path(project_state_dir);
     let Some(Value::Object(raw)) = read_json_quarantine_corrupt(path) else {
         return MetadataState::empty();
@@ -314,7 +321,7 @@ pub fn load_metadata_state(project_state_dir: impl AsRef<Path>) -> MetadataState
         sessions,
     };
     scrub_projection_authority_fields(&mut state);
-    drop_expired_segments(&mut state, current_unix_millis());
+    drop_expired_segments(&mut state, now);
     state
 }
 
@@ -413,33 +420,42 @@ fn drop_expired_segments(state: &mut MetadataState, now: u128) {
         let Value::Object(session) = session else {
             continue;
         };
-        let Some(Value::Object(statusline)) = session.get_mut("statusline") else {
+        let Some(statusline_value) = session.get_mut("statusline") else {
             continue;
         };
-        for line in ["top", "bottom"] {
-            let Some(Value::Array(segments)) = statusline.get_mut(line) else {
-                continue;
-            };
-            let original_len = segments.len();
-            segments.retain(|segment| segment_is_live(segment, now));
-            if segments.len() == original_len {
-                continue;
+        let remove_statusline = match statusline_value {
+            Value::Object(statusline) => {
+                for line in ["top", "bottom"] {
+                    let Some(Value::Array(segments)) = statusline.get_mut(line) else {
+                        continue;
+                    };
+                    let original_len = segments.len();
+                    segments.retain(|segment| segment_is_live(segment, now));
+                    if segments.len() == original_len {
+                        continue;
+                    }
+                    if segments.is_empty() {
+                        statusline.remove(line);
+                    }
+                }
+                let top_empty = js_optional_length_is_empty(statusline.get("top"));
+                let bottom_empty = js_optional_length_is_empty(statusline.get("bottom"));
+                top_empty && bottom_empty
             }
-            if segments.is_empty() {
-                statusline.remove(line);
-            }
-        }
-        let top_empty = statusline
-            .get("top")
-            .and_then(Value::as_array)
-            .is_none_or(Vec::is_empty);
-        let bottom_empty = statusline
-            .get("bottom")
-            .and_then(Value::as_array)
-            .is_none_or(Vec::is_empty);
-        if top_empty && bottom_empty {
+            Value::Array(_) => true,
+            _ => false,
+        };
+        if remove_statusline {
             session.remove("statusline");
         }
+    }
+}
+
+fn js_optional_length_is_empty(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Array(values)) => values.is_empty(),
+        Some(Value::String(value)) => value.is_empty(),
+        _ => true,
     }
 }
 

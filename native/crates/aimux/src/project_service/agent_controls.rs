@@ -4,7 +4,7 @@ use crate::daemon_state::{load_metadata_state, save_metadata_state};
 use crate::project_api_contract::routes;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
-use super::metadata::update_session_metadata;
+use super::metadata::{update_session_metadata, update_session_metadata_at};
 use super::router::ProjectServiceRequestContext;
 
 const SESSION_LOOP_SOURCES: &[&str] = &[
@@ -35,6 +35,110 @@ pub fn route_agent_control_request(
         routes::agents::SCRIBE => Some(route_scribe(context, body)),
         _ => None,
     }
+}
+
+pub fn set_session_loop_metadata_at(
+    project_state_dir: impl AsRef<std::path::Path>,
+    session_id: &str,
+    loop_metadata: Value,
+    now: &str,
+) -> Result<(), String> {
+    let mut loop_last_action = Map::new();
+    loop_last_action.insert("action".into(), Value::String("add".into()));
+    if let Some(since) = loop_metadata.get("since").cloned() {
+        loop_last_action.insert("at".into(), since);
+    }
+    for key in [
+        "goal",
+        "source",
+        "updatedBy",
+        "updatedBySessionId",
+        "updatedByRole",
+        "reason",
+    ] {
+        if let Some(value) = loop_metadata.get(key).cloned() {
+            loop_last_action.insert(key.into(), value);
+        }
+    }
+    update_session_metadata_at(project_state_dir, session_id, now, |current| {
+        let mut current = object_value(current);
+        current.insert("loop".into(), loop_metadata.clone());
+        current.insert("loopLastAction".into(), Value::Object(loop_last_action));
+        Value::Object(current)
+    })
+    .map(|_| ())
+}
+
+pub fn clear_session_loop_metadata_at(
+    project_state_dir: impl AsRef<std::path::Path>,
+    session_id: &str,
+    loop_last_action: Option<Value>,
+    now: &str,
+) -> Result<(), String> {
+    update_session_metadata_at(project_state_dir, session_id, now, |current| {
+        let mut current = object_value(current);
+        current.remove("loop");
+        if let Some(loop_last_action) = loop_last_action.clone() {
+            current.insert("loopLastAction".into(), loop_last_action);
+        }
+        Value::Object(current)
+    })
+    .map(|_| ())
+}
+
+pub fn set_project_session_flag_at(
+    project_state_dir: impl AsRef<std::path::Path>,
+    session_id: &str,
+    key: &str,
+    value: bool,
+    now: &str,
+) -> Result<(), String> {
+    if !value {
+        return clear_project_flag_at(project_state_dir, session_id, key, now);
+    }
+    let project_state_dir = project_state_dir.as_ref();
+    let mut state = load_metadata_state(project_state_dir);
+    for (id, session) in &mut state.sessions {
+        if id != session_id
+            && session
+                .get(key)
+                .and_then(Value::as_bool)
+                .is_some_and(|current| current)
+            && let Value::Object(map) = session
+        {
+            map.remove(key);
+            map.insert("updatedAt".into(), Value::String(now.to_owned()));
+        }
+    }
+    let mut current = state
+        .sessions
+        .remove(session_id)
+        .map(object_value)
+        .unwrap_or_else(|| Map::from_iter([("updatedAt".into(), Value::String(now.to_owned()))]));
+    current.insert(key.into(), Value::Bool(true));
+    current.insert("updatedAt".into(), Value::String(now.to_owned()));
+    state
+        .sessions
+        .insert(session_id.to_owned(), Value::Object(current));
+    save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
+}
+
+pub fn clear_project_flag_at(
+    project_state_dir: impl AsRef<std::path::Path>,
+    session_id: &str,
+    key: &str,
+    now: &str,
+) -> Result<(), String> {
+    update_session_metadata_at(project_state_dir, session_id, now, |current| {
+        let mut current = object_value(current);
+        if key == "scribe" {
+            current.insert(key.into(), Value::Bool(false));
+        } else {
+            current.remove(key);
+        }
+        Value::Object(current)
+    })
+    .map(|_| ())
 }
 
 fn route_loop(
@@ -154,32 +258,8 @@ fn set_single_project_flag(
     key: &str,
     value: bool,
 ) -> Result<(), String> {
-    let project_state_dir = context.project_state_dir();
-    let mut state = load_metadata_state(&project_state_dir);
     let now = now_iso();
-    for (id, session) in &mut state.sessions {
-        if id != session_id
-            && session
-                .get(key)
-                .and_then(Value::as_bool)
-                .is_some_and(|current| current)
-            && let Value::Object(map) = session
-        {
-            map.remove(key);
-            map.insert("updatedAt".into(), Value::String(now.clone()));
-        }
-    }
-    let mut current = state
-        .sessions
-        .remove(session_id)
-        .map(object_value)
-        .unwrap_or_else(|| Map::from_iter([("updatedAt".into(), Value::String(now.clone()))]));
-    current.insert(key.into(), Value::Bool(value));
-    current.insert("updatedAt".into(), Value::String(now));
-    state
-        .sessions
-        .insert(session_id.to_owned(), Value::Object(current));
-    save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
+    set_project_session_flag_at(context.project_state_dir(), session_id, key, value, &now)
 }
 
 fn clear_project_flag(
@@ -187,16 +267,8 @@ fn clear_project_flag(
     session_id: &str,
     key: &str,
 ) -> Result<(), String> {
-    update_session_metadata(context.project_state_dir(), session_id, |current| {
-        let mut current = object_value(current);
-        if key == "scribe" {
-            current.insert(key.into(), Value::Bool(false));
-        } else {
-            current.remove(key);
-        }
-        Value::Object(current)
-    })
-    .map(|_| ())
+    let now = now_iso();
+    clear_project_flag_at(context.project_state_dir(), session_id, key, &now)
 }
 
 fn provenance(body: &Value) -> Map<String, Value> {

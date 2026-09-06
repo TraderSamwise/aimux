@@ -1,7 +1,9 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-use crate::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
+use crate::daemon_state::{
+    MetadataState, load_metadata_state, load_metadata_state_at_unix_millis, save_metadata_state,
+};
 use crate::project_api_contract::routes;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -16,8 +18,8 @@ use super::runtime_exchange::{
     compact_runtime_exchange_file, inspect_runtime_exchange_store, runtime_exchange_path,
 };
 
-const MAX_SEGMENT_DATA_BYTES: usize = 4096;
-const MAX_SEGMENT_TTL_SECONDS: f64 = 86_400.0;
+pub const MAX_SEGMENT_DATA_BYTES: usize = 4096;
+pub const MAX_SEGMENT_TTL_SECONDS: f64 = 86_400.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetadataUpdateResult {
@@ -251,13 +253,24 @@ pub fn update_session_metadata(
     session_id: &str,
     updater: impl FnOnce(Value) -> Value,
 ) -> Result<MetadataUpdateResult, String> {
+    update_session_metadata_at(project_state_dir, session_id, &now_iso(), updater)
+}
+
+pub fn update_session_metadata_at(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    now: &str,
+    updater: impl FnOnce(Value) -> Value,
+) -> Result<MetadataUpdateResult, String> {
     let project_state_dir = project_state_dir.as_ref();
-    let mut state = load_metadata_state(project_state_dir);
+    let mut state = parse_iso_millis(now)
+        .map(|now| load_metadata_state_at_unix_millis(project_state_dir, now))
+        .unwrap_or_else(|| load_metadata_state(project_state_dir));
     let current = state
         .sessions
         .get(session_id)
         .cloned()
-        .unwrap_or_else(|| json!({ "updatedAt": now_iso() }));
+        .unwrap_or_else(|| json!({ "updatedAt": now }));
     let next = updater(current.clone());
     if stable_metadata_payload(&current) == stable_metadata_payload(&next) {
         return Ok(MetadataUpdateResult {
@@ -266,7 +279,7 @@ pub fn update_session_metadata(
         });
     }
     let mut next = object_value(next);
-    next.insert("updatedAt".to_owned(), Value::String(now_iso()));
+    next.insert("updatedAt".to_owned(), Value::String(now.to_owned()));
     state
         .sessions
         .insert(session_id.to_owned(), Value::Object(next));
@@ -524,18 +537,28 @@ fn route_statusline_segment_request(
     }
 }
 
-fn put_statusline_segment(
+pub fn put_statusline_segment(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
     line: &str,
     segment: Value,
+) -> Result<MetadataUpdateResult, String> {
+    put_statusline_segment_at(project_state_dir, session_id, line, segment, &now_iso())
+}
+
+pub fn put_statusline_segment_at(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    line: &str,
+    segment: Value,
+    now: &str,
 ) -> Result<MetadataUpdateResult, String> {
     let id = segment
         .get("id")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    update_session_metadata(project_state_dir, session_id, |current| {
+    update_session_metadata_at(project_state_dir, session_id, now, |current| {
         let mut statusline = current
             .get("statusline")
             .and_then(Value::as_object)
@@ -553,13 +576,23 @@ fn put_statusline_segment(
     })
 }
 
-fn drop_statusline_segment(
+pub fn drop_statusline_segment(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
     id: &str,
     line: Option<&str>,
 ) -> Result<MetadataUpdateResult, String> {
-    update_session_metadata(project_state_dir, session_id, |mut current| {
+    drop_statusline_segment_at(project_state_dir, session_id, id, line, &now_iso())
+}
+
+pub fn drop_statusline_segment_at(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    id: &str,
+    line: Option<&str>,
+    now: &str,
+) -> Result<MetadataUpdateResult, String> {
+    update_session_metadata_at(project_state_dir, session_id, now, |mut current| {
         let Value::Object(session) = &mut current else {
             return current;
         };
@@ -576,14 +609,8 @@ fn drop_statusline_segment(
                 statusline.remove(current_line);
             }
         }
-        let top_empty = statusline
-            .get("top")
-            .and_then(Value::as_array)
-            .is_none_or(Vec::is_empty);
-        let bottom_empty = statusline
-            .get("bottom")
-            .and_then(Value::as_array)
-            .is_none_or(Vec::is_empty);
+        let top_empty = js_optional_length_is_empty(statusline.get("top"));
+        let bottom_empty = js_optional_length_is_empty(statusline.get("bottom"));
         if top_empty && bottom_empty {
             session.remove("statusline");
         }
@@ -591,7 +618,7 @@ fn drop_statusline_segment(
     })
 }
 
-fn segment_rejection(segment: &Value) -> Option<String> {
+pub fn segment_rejection(segment: &Value) -> Option<String> {
     if segment
         .get("id")
         .and_then(Value::as_str)
@@ -624,6 +651,14 @@ fn object_insert(value: Value, key: &str, inserted: Value) -> Value {
     let mut object = object_value(value);
     object.insert(key.to_owned(), inserted);
     Value::Object(object)
+}
+
+fn js_optional_length_is_empty(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Array(values)) => values.is_empty(),
+        Some(Value::String(value)) => value.is_empty(),
+        _ => true,
+    }
 }
 
 fn object_from_entries<const N: usize>(entries: [(&str, Value); N]) -> Value {
