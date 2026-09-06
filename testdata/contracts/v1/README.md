@@ -158,6 +158,10 @@ Priority fixture groups:
 - `coordination/model.json`: coordination inbox, worklist, stale-notification,
   reachability, sorting, and view composition cases captured by running the
   TypeScript coordination model functions.
+- `coordination/scribe-watcher.json`: scribe candidate selection, readiness
+  gates, bounded output reads, briefing construction, fingerprint cooldown,
+  stopped-scan delivery suppression, and active-candidate pruning captured by
+  running TypeScript `scribe-watcher` helpers.
 - `coordination/tasks-threads.json`: task compatibility filters, review-status
   normalization, thread summaries, latest-message selection, message grouping,
   and bounded message snapshots captured by running TypeScript `tasks` and

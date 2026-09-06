@@ -1,0 +1,757 @@
+{
+  "version": 1,
+  "source": ["src/scribe-watcher.test.ts"],
+  "generatedBy": "scripts/capture-scribe-watcher-contract.mjs",
+  "description": "Scribe watcher candidate selection, readiness gates, output reads, bounded briefing construction, fingerprint cooldown, stop, and active-candidate pruning captured by running the TypeScript implementation.",
+  "cases": [
+    {
+      "id": "scribe-watcher-001",
+      "name": "finds bounded idle/done normal sessions and skips project control sessions",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "findScribeCandidates",
+      "input": {
+        "name": "finds bounded idle/done normal sessions and skips project control sessions",
+        "source": "src/scribe-watcher.test.ts",
+        "api": "findScribeCandidates",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "overseer", "status": "running", "tool": "codex" },
+          { "id": "idle-agent", "status": "running", "tool": "codex" },
+          { "id": "done-agent", "status": "idle", "tool": "codex" },
+          { "id": "busy-agent", "status": "running", "tool": "codex" },
+          { "id": "needs-input", "status": "running", "tool": "codex" }
+        ],
+        "scribeId": "scribe",
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": { "scribe": true, "updatedAt": "2026-08-30T00:00:00.000Z" },
+            "overseer": { "overseer": true, "updatedAt": "2026-08-30T00:00:00.000Z" },
+            "idle-agent": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "context": { "worktreePath": "/repo/.aimux/worktrees/feature" }
+            },
+            "done-agent": {
+              "derived": { "activity": "done", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "busy-agent": {
+              "derived": { "activity": "working", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "needs-input": {
+              "derived": { "activity": "idle", "attention": "needs_response" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      "output": [
+        {
+          "id": "idle-agent",
+          "status": "running",
+          "activity": "idle",
+          "attention": "normal",
+          "worktreePath": "/repo/.aimux/worktrees/feature",
+          "tool": "codex"
+        },
+        { "id": "done-agent", "status": "idle", "activity": "done", "attention": "normal", "tool": "codex" }
+      ],
+      "inputSha256": "04607932b450a2e9802a4b83cf8f8a18205f0ac40021a7ad288fb2665261cb46"
+    },
+    {
+      "id": "scribe-watcher-002",
+      "name": "honors max candidates",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "findScribeCandidateIds",
+      "input": {
+        "name": "honors max candidates",
+        "source": "src/scribe-watcher.test.ts",
+        "api": "findScribeCandidateIds",
+        "sessions": [
+          { "id": "agent-0", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" },
+          { "id": "agent-2", "status": "running", "tool": "codex" },
+          { "id": "agent-3", "status": "running", "tool": "codex" },
+          { "id": "agent-4", "status": "running", "tool": "codex" }
+        ],
+        "maxScanCandidates": 2,
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "agent-0": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-2": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-3": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-4": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      "output": ["agent-0", "agent-1"],
+      "inputSha256": "57390eb0399555c5f18c18c5accd64ff7c2e9c683ad92e9da822b618c8160dae"
+    },
+    {
+      "id": "scribe-watcher-003",
+      "name": "renders changed bounded tails with ids and worktrees",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "buildScribeBriefing",
+      "input": {
+        "name": "renders changed bounded tails with ids and worktrees",
+        "source": "src/scribe-watcher.test.ts",
+        "api": "buildScribeBriefing",
+        "candidates": [
+          {
+            "id": "codex-1",
+            "tool": "codex",
+            "status": "running",
+            "activity": "idle",
+            "attention": "normal",
+            "worktreePath": "/repo/.aimux/worktrees/task",
+            "output": "Implemented parser tests.\n",
+            "outputChars": 26,
+            "fingerprint": "abc"
+          }
+        ]
+      },
+      "output": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=codex-1 tool=codex status=running activity=idle attention=normal worktree=/repo/.aimux/worktrees/task chars=26\n\n```text\nImplemented parser tests.\n```",
+      "inputSha256": "d3c3ac05cf22ea9265307cdedbb76ce632f810be12bab894b1cc3dc40ac3789e"
+    },
+    {
+      "id": "scribe-watcher-004",
+      "name": "scans immediately when started",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "agent-1": {
+              "derived": { "activity": "done", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-1": "agent finished setup" },
+        "ops": [{ "kind": "scan" }],
+        "name": "scans immediately when started",
+        "scanIntervalMs": 60000
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [{ "sessionId": "agent-1", "startLine": -80 }],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=done attention=normal chars=20\n\n```text\nagent finished setup\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "7876c4ad8d4d404e7667de02e6ead0d97169dbf46eb2d4152c724ff08115f92e"
+    },
+    {
+      "id": "scribe-watcher-005",
+      "name": "does nothing without a live scribe",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [{ "id": "agent-1", "status": "running", "tool": "codex" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-1": "agent finished docs" },
+        "ops": [{ "kind": "scan" }],
+        "name": "does nothing without a live scribe"
+      },
+      "output": [{ "kind": "scan", "readCalls": [], "sendCalls": [] }],
+      "inputSha256": "9521cffe6627f27f70add07c87d2440a32d22107f91c7c33585c9dec830a31f4"
+    },
+    {
+      "id": "scribe-watcher-006",
+      "name": "sends one bounded briefing for changed candidate output",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex", "worktreePath": "/repo/task" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "agent-1": {
+              "derived": { "activity": "done", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": {
+          "agent-1": {
+            "output": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxmeaningful tail"
+          }
+        },
+        "ops": [{ "kind": "scan" }],
+        "name": "sends one bounded briefing for changed candidate output"
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [{ "sessionId": "agent-1", "startLine": -80 }],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=done attention=normal worktree=/repo/task chars=3000\n\n```text\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxmeaningful tail\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "c9e0d71921d6e5e05adeefd0075406e7fcf2fd2452f995fb6427da01b819ce33"
+    },
+    {
+      "id": "scribe-watcher-007",
+      "name": "caps each automatic briefing even when many agents changed",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-0", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" },
+          { "id": "agent-2", "status": "running", "tool": "codex" },
+          { "id": "agent-3", "status": "running", "tool": "codex" },
+          { "id": "agent-4", "status": "running", "tool": "codex" },
+          { "id": "agent-5", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "agent-0": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-2": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-3": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-4": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-5": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": {
+          "agent-0": "agent-0 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work ",
+          "agent-1": "agent-1 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work ",
+          "agent-2": "agent-2 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work ",
+          "agent-3": "agent-3 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work ",
+          "agent-4": "agent-4 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work ",
+          "agent-5": "agent-5 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work "
+        },
+        "ops": [{ "kind": "scan" }],
+        "name": "caps each automatic briefing even when many agents changed",
+        "maxCandidates": 6,
+        "maxBriefingChars": 1500
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [
+            { "sessionId": "agent-0", "startLine": -80 },
+            { "sessionId": "agent-1", "startLine": -80 },
+            { "sessionId": "agent-2", "startLine": -80 },
+            { "sessionId": "agent-3", "startLine": -80 }
+          ],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-0 tool=codex status=running activity=idle attention=normal chars=408\n\n```text\nagent-0 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work\n```\n## id=agent-1 tool=codex status=running activity=idle attention=normal chars=408\n\n```text\nagent-1 work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work work\n```\n## id=agent-2 tool=codex status=running activity=idle attention=normal chars=49\n\n```text\nork work work work work work work work work work\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "1d2b04d74585f3f472e61ef62abba197c92443379fea8843ef565fbab76a8060"
+    },
+    {
+      "id": "scribe-watcher-008",
+      "name": "does not resend unchanged fingerprints after cooldown",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-1": "same output" },
+        "ops": [{ "kind": "scan" }, { "kind": "advance", "ms": 2 }, { "kind": "scan" }],
+        "name": "does not resend unchanged fingerprints after cooldown",
+        "cooldownMs": 1
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [{ "sessionId": "agent-1", "startLine": -80 }],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            }
+          ]
+        },
+        { "kind": "advance", "now": 10002 },
+        {
+          "kind": "scan",
+          "readCalls": [
+            { "sessionId": "agent-1", "startLine": -80 },
+            { "sessionId": "agent-1", "startLine": -80 }
+          ],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "a86e234335413ec5673ba9abc340e72e29adc832289cbb11ebd5b41a4e4f44a7"
+    },
+    {
+      "id": "scribe-watcher-009",
+      "name": "keeps scanning other candidates when one read fails",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" },
+          { "id": "agent-2", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "agent-2": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-2": { "output": "agent two finished docs" } },
+        "ops": [{ "kind": "scan" }],
+        "name": "keeps scanning other candidates when one read fails",
+        "readFailures": ["agent-1"]
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [
+            { "sessionId": "agent-1", "startLine": -80 },
+            { "sessionId": "agent-2", "startLine": -80 }
+          ],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-2 tool=codex status=running activity=idle attention=normal chars=23\n\n```text\nagent two finished docs\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "eecb3f3b5261cf179d20d4f675bc9a955a8c2140753a70fc7a9dd857846fb99a"
+    },
+    {
+      "id": "scribe-watcher-010",
+      "name": "skips sends while the scribe is busy",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "working", "attention": "normal" }
+            },
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-1": "agent finished docs" },
+        "ops": [{ "kind": "scan" }],
+        "name": "skips sends while the scribe is busy"
+      },
+      "output": [{ "kind": "scan", "readCalls": [], "sendCalls": [] }],
+      "inputSha256": "4a72cfd090375865835a127994f89ad6a6da068ea68a3989773789562e10a8d8"
+    },
+    {
+      "id": "scribe-watcher-011",
+      "name": "allows a live scribe before derived activity has been parsed",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": { "scribe": true, "updatedAt": "2026-08-30T00:00:00.000Z" },
+            "agent-1": {
+              "derived": { "activity": "done", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-1": "agent finished docs" },
+        "ops": [{ "kind": "scan" }],
+        "name": "allows a live scribe before derived activity has been parsed"
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [{ "sessionId": "agent-1", "startLine": -80 }],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=done attention=normal chars=19\n\n```text\nagent finished docs\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "478010e0eae154bbab566e6c1935e02883a5257dd3cbab1377e8858ab63497eb"
+    },
+    {
+      "id": "scribe-watcher-012",
+      "name": "continues past unchanged early candidates before applying delivery cap",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "unchanged-0", "status": "running", "tool": "codex" },
+          { "id": "unchanged-1", "status": "running", "tool": "codex" },
+          { "id": "unchanged-2", "status": "running", "tool": "codex" },
+          { "id": "unchanged-3", "status": "running", "tool": "codex" },
+          { "id": "changed-later", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "unchanged-0": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "unchanged-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "unchanged-2": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "unchanged-3": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            },
+            "changed-later": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": {
+          "unchanged-0": "same noise",
+          "unchanged-1": "same noise",
+          "unchanged-2": "same noise",
+          "unchanged-3": "same noise",
+          "changed-later": "new later work"
+        },
+        "ops": [{ "kind": "scan" }, { "kind": "advance", "ms": 2 }, { "kind": "scan" }],
+        "name": "continues past unchanged early candidates before applying delivery cap",
+        "cooldownMs": 1,
+        "maxCandidates": 4
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [
+            { "sessionId": "unchanged-0", "startLine": -80 },
+            { "sessionId": "unchanged-1", "startLine": -80 },
+            { "sessionId": "unchanged-2", "startLine": -80 },
+            { "sessionId": "unchanged-3", "startLine": -80 }
+          ],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=unchanged-0 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```\n## id=unchanged-1 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```\n## id=unchanged-2 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```\n## id=unchanged-3 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```"
+            }
+          ]
+        },
+        { "kind": "advance", "now": 10002 },
+        {
+          "kind": "scan",
+          "readCalls": [
+            { "sessionId": "unchanged-0", "startLine": -80 },
+            { "sessionId": "unchanged-1", "startLine": -80 },
+            { "sessionId": "unchanged-2", "startLine": -80 },
+            { "sessionId": "unchanged-3", "startLine": -80 },
+            { "sessionId": "unchanged-0", "startLine": -80 },
+            { "sessionId": "unchanged-1", "startLine": -80 },
+            { "sessionId": "unchanged-2", "startLine": -80 },
+            { "sessionId": "unchanged-3", "startLine": -80 },
+            { "sessionId": "changed-later", "startLine": -80 }
+          ],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=unchanged-0 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```\n## id=unchanged-1 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```\n## id=unchanged-2 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```\n## id=unchanged-3 tool=codex status=running activity=idle attention=normal chars=10\n\n```text\nsame noise\n```"
+            },
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=changed-later tool=codex status=running activity=idle attention=normal chars=14\n\n```text\nnew later work\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "749f572af99bd8c1c7c66ead5f0a3e926047579e57853b937dbeb335b44bcca0"
+    },
+    {
+      "id": "scribe-watcher-013",
+      "name": "does not deliver an in-flight scan after stop",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-1": "agent finished docs" },
+        "ops": [{ "kind": "scan" }],
+        "name": "does not deliver an in-flight scan after stop",
+        "stopDuringRead": { "output": "work after shutdown" }
+      },
+      "output": [
+        { "kind": "stopDuringRead", "readCalls": [{ "sessionId": "agent-1", "startLine": -80 }], "sendCalls": [] }
+      ],
+      "inputSha256": "b92fd4924856e5ac1e70f7cfc4f4ab50c48a51852bedd177445ecf6e472abeb6"
+    },
+    {
+      "id": "scribe-watcher-014",
+      "name": "forgets fingerprints for sessions that leave the active candidate set",
+      "source": "src/scribe-watcher.test.ts",
+      "api": "ScribeWatcher.scan",
+      "input": {
+        "source": "src/scribe-watcher.test.ts",
+        "api": "ScribeWatcher.scan",
+        "sessions": [
+          { "id": "scribe", "status": "running", "tool": "codex" },
+          { "id": "agent-1", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "scribe": {
+              "scribe": true,
+              "updatedAt": "2026-08-30T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "agent-1": {
+              "derived": { "activity": "idle", "attention": "normal" },
+              "updatedAt": "2026-08-30T00:00:00.000Z"
+            }
+          }
+        },
+        "readOutputs": { "agent-1": "same output", "agent-2": "same output" },
+        "ops": [
+          { "kind": "scan" },
+          { "kind": "advance", "ms": 2 },
+          { "kind": "setActiveSession", "sessionId": "agent-2" },
+          { "kind": "scan" },
+          { "kind": "advance", "ms": 2 },
+          { "kind": "setActiveSession", "sessionId": "agent-1" },
+          { "kind": "scan" }
+        ],
+        "name": "forgets fingerprints for sessions that leave the active candidate set",
+        "activeSessionId": "agent-1",
+        "cooldownMs": 1
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "readCalls": [{ "sessionId": "agent-1", "startLine": -80 }],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            }
+          ]
+        },
+        { "kind": "advance", "now": 10002 },
+        { "kind": "setActiveSession", "sessionId": "agent-2" },
+        {
+          "kind": "scan",
+          "readCalls": [
+            { "sessionId": "agent-1", "startLine": -80 },
+            { "sessionId": "agent-2", "startLine": -80 }
+          ],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            },
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-2 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            }
+          ]
+        },
+        { "kind": "advance", "now": 10004 },
+        { "kind": "setActiveSession", "sessionId": "agent-1" },
+        {
+          "kind": "scan",
+          "readCalls": [
+            { "sessionId": "agent-1", "startLine": -80 },
+            { "sessionId": "agent-2", "startLine": -80 },
+            { "sessionId": "agent-1", "startLine": -80 }
+          ],
+          "sendCalls": [
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            },
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-2 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            },
+            {
+              "sessionId": "scribe",
+              "text": "[aimux scribe check] Review these changed bounded agent tails and update the scribe notes only for meaningful distinct work.\nUse `aimux outline list --json` first when needed. Use stable topic keys and update existing entries instead of duplicating them.\nIgnore heartbeats, prompts, progress chatter, repeated status, and anything that is not real work.\n\n## id=agent-1 tool=codex status=running activity=idle attention=normal chars=11\n\n```text\nsame output\n```"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "b7a6279e2422e9114faddc010740527e6c09d9e641b5cb80d7ed1947de2f2627"
+    }
+  ]
+}
