@@ -11,9 +11,13 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_worktree_states, read_runtime_topology,
     runtime_topology_path,
 };
+use crate::tmux::CapturePaneOptions;
 
+use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::topology_desktop_session_list;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::http::query_params;
+use super::output_cache::AgentOutputCaptureCacheKey;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 use super::usage::parse_recency_timestamp;
@@ -25,28 +29,47 @@ const DASHBOARD_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "of
 const DASHBOARD_SERVICE_STATUSES: &[&str] = &[
     "planned", "starting", "running", "stopped", "offline", "error",
 ];
+const DESKTOP_STATE_PREVIEW_CAPTURE_LINES: i64 = 40;
+const DESKTOP_STATE_PREVIEW_MAX_CHARS: usize = 8_192;
 
 pub fn route_desktop_state_request(
     context: &ProjectServiceRequestContext,
     method: &str,
     path: &str,
 ) -> Option<ProjectServiceDispatchResponse> {
+    let mut runtime = SystemAgentOutputCaptureRuntime;
+    route_desktop_state_request_with_runtime(context, method, path, &mut runtime)
+}
+
+pub fn route_desktop_state_request_with_runtime(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> Option<ProjectServiceDispatchResponse> {
     if !method.eq_ignore_ascii_case("GET")
         || project_service_pathname(path) != routes::DESKTOP_STATE
     {
         return None;
     }
+    let params = query_params(path);
+    let include_preview = matches!(
+        params.get("includePreview").map(String::as_str),
+        Some("1" | "true")
+    );
     if let Some(desktop_state) = context.desktop_state.as_ref() {
         let mut body = desktop_state.as_object().cloned().unwrap_or_default();
         body.insert("ok".into(), Value::Bool(true));
         body.insert("serviceInfo".into(), service_info());
         body.insert("pendingInteractions".into(), Value::Array(Vec::new()));
-        return Some(ProjectServiceDispatchResponse::json(
-            200,
-            Value::Object(body),
-        ));
+        let body = if include_preview {
+            attach_desktop_state_previews(context, Value::Object(body), runtime)
+        } else {
+            Value::Object(body)
+        };
+        return Some(ProjectServiceDispatchResponse::json(200, body));
     }
-    let state = match desktop_state_for_context(context) {
+    let mut state = match desktop_state_for_context(context) {
         Ok(state) => state,
         Err(error) => {
             return Some(ProjectServiceDispatchResponse::json(
@@ -55,6 +78,9 @@ pub fn route_desktop_state_request(
             ));
         }
     };
+    if include_preview {
+        state = attach_desktop_state_previews(context, state, runtime);
+    }
     Some(ProjectServiceDispatchResponse::json(200, state))
 }
 
@@ -146,6 +172,58 @@ pub fn build_desktop_state(input: DesktopStateInput<'_>) -> Value {
     state.insert("controlPlane".into(), control_plane());
     state.insert("tasks".into(), task_counts(input.exchange));
     Value::Object(state)
+}
+
+pub fn attach_desktop_state_previews(
+    context: &ProjectServiceRequestContext,
+    mut state: Value,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> Value {
+    let Some(sessions) = state.get_mut("sessions").and_then(Value::as_array_mut) else {
+        return state;
+    };
+    for session in sessions {
+        if string_field(session, "id").is_none() {
+            continue;
+        }
+        let Some(window_id) = string_field(session, "tmuxWindowId").map(str::to_owned) else {
+            continue;
+        };
+        let options = CapturePaneOptions {
+            start_line: Some(-DESKTOP_STATE_PREVIEW_CAPTURE_LINES),
+            end_line: None,
+            include_escapes: true,
+        };
+        let Ok(output) = context.output_cache.capture_or_reuse(
+            AgentOutputCaptureCacheKey {
+                window_id: window_id.clone(),
+                options,
+            },
+            || runtime.capture_pane(&window_id, options),
+        ) else {
+            continue;
+        };
+        let preview = json!({
+            "output": trailing_chars(&output, DESKTOP_STATE_PREVIEW_MAX_CHARS),
+            "capturedAt": now_iso(),
+            "source": "capture",
+            "windowId": window_id,
+            "startLine": -DESKTOP_STATE_PREVIEW_CAPTURE_LINES,
+            "lineCount": DESKTOP_STATE_PREVIEW_CAPTURE_LINES,
+        });
+        if let Some(object) = session.as_object_mut() {
+            object.insert("previewSnapshot".into(), preview);
+        }
+    }
+    state
+}
+
+fn trailing_chars(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_owned();
+    }
+    value.chars().skip(char_count - max_chars).collect()
 }
 
 fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
@@ -632,4 +710,18 @@ fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
     {
         map.insert(key.into(), value);
     }
+}
+
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
 }

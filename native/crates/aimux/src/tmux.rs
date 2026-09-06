@@ -74,7 +74,7 @@ pub struct TmuxCommandSpec {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CapturePaneOptions {
     pub start_line: Option<i64>,
     pub end_line: Option<i64>,

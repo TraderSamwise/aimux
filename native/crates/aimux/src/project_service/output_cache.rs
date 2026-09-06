@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -5,7 +6,7 @@ use crate::tmux::CapturePaneOptions;
 
 pub const AGENT_OUTPUT_CAPTURE_CACHE_TTL_MS: u64 = 100;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AgentOutputCaptureCacheKey {
     pub window_id: String,
     pub options: CapturePaneOptions,
@@ -13,13 +14,12 @@ pub struct AgentOutputCaptureCacheKey {
 
 #[derive(Debug, Clone)]
 pub struct AgentOutputCaptureCache {
-    inner: Arc<Mutex<Option<AgentOutputCaptureCacheEntry>>>,
+    inner: Arc<Mutex<BTreeMap<AgentOutputCaptureCacheKey, AgentOutputCaptureCacheEntry>>>,
     ttl: Duration,
 }
 
 #[derive(Debug, Clone)]
 struct AgentOutputCaptureCacheEntry {
-    key: AgentOutputCaptureCacheKey,
     output: String,
     captured_at: Instant,
 }
@@ -33,7 +33,7 @@ impl Default for AgentOutputCaptureCache {
 impl AgentOutputCaptureCache {
     pub fn new(ttl: Duration) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(None)),
+            inner: Arc::new(Mutex::new(BTreeMap::new())),
             ttl,
         }
     }
@@ -47,18 +47,18 @@ impl AgentOutputCaptureCache {
         F: FnOnce() -> Result<String, String>,
     {
         let mut cached = self.inner.lock().map_err(|error| error.to_string())?;
-        if let Some(entry) = cached.as_ref()
-            && entry.key == key
-            && entry.captured_at.elapsed() <= self.ttl
-        {
+        cached.retain(|_, entry| entry.captured_at.elapsed() <= self.ttl);
+        if let Some(entry) = cached.get(&key) {
             return Ok(entry.output.clone());
         }
         let output = capture()?;
-        *cached = Some(AgentOutputCaptureCacheEntry {
+        cached.insert(
             key,
-            output: output.clone(),
-            captured_at: Instant::now(),
-        });
+            AgentOutputCaptureCacheEntry {
+                output: output.clone(),
+                captured_at: Instant::now(),
+            },
+        );
         Ok(output)
     }
 }

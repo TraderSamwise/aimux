@@ -1,9 +1,13 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
-use aimux::project_service::desktop_state::{DesktopStateInput, build_desktop_state};
+use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
+use aimux::project_service::desktop_state::{
+    DesktopStateInput, build_desktop_state, route_desktop_state_request_with_runtime,
+};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::tmux::CapturePaneOptions;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -11,6 +15,23 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct FakePreviewRuntime {
+    output: String,
+    calls: Vec<(String, CapturePaneOptions)>,
+}
+
+impl AgentOutputCaptureRuntime for FakePreviewRuntime {
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.calls.push((window_id.to_owned(), options));
+        Ok(self.output.clone())
+    }
+}
 
 #[test]
 fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime() {
@@ -185,6 +206,109 @@ fn route_desktop_state_reads_catalog_files_and_preserves_existing_snapshot_shape
     cleanup(project);
 }
 
+#[test]
+fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
+    let (project, state_dir) = write_desktop_state_fixtures("preview");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakePreviewRuntime {
+        output: "cold".into(),
+        calls: Vec::new(),
+    };
+
+    let plain = route_desktop_state_request_with_runtime(
+        &context,
+        "GET",
+        routes::DESKTOP_STATE,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(plain.status, 200);
+    assert!(runtime.calls.is_empty());
+    assert!(
+        find(plain.body["sessions"].as_array().unwrap(), "codex-live")
+            .get("previewSnapshot")
+            .is_none()
+    );
+
+    runtime.output = format!("{}tail", "x".repeat(9_000));
+    let preview = route_desktop_state_request_with_runtime(
+        &context,
+        "GET",
+        &format!("{}?includePreview=1", routes::DESKTOP_STATE),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(preview.status, 200);
+    assert_eq!(
+        runtime.calls,
+        vec![
+            (
+                "@3".to_owned(),
+                CapturePaneOptions {
+                    start_line: Some(-40),
+                    end_line: None,
+                    include_escapes: true,
+                },
+            ),
+            (
+                "@1".to_owned(),
+                CapturePaneOptions {
+                    start_line: Some(-40),
+                    end_line: None,
+                    include_escapes: true,
+                },
+            ),
+        ]
+    );
+    let live = find(preview.body["sessions"].as_array().unwrap(), "codex-live");
+    assert_eq!(live["previewSnapshot"]["windowId"], "@1");
+    assert_eq!(live["previewSnapshot"]["source"], "capture");
+    assert_eq!(live["previewSnapshot"]["startLine"], -40);
+    assert_eq!(live["previewSnapshot"]["lineCount"], 40);
+    assert!(live["previewSnapshot"]["capturedAt"].as_str().is_some());
+    assert_eq!(
+        live["previewSnapshot"]["output"].as_str().unwrap().len(),
+        8_192
+    );
+    assert!(
+        find(preview.body["sessions"].as_array().unwrap(), "codex-cold")
+            .get("previewSnapshot")
+            .is_none()
+    );
+
+    cleanup(project);
+}
+
+#[test]
+fn desktop_state_previews_reuse_cached_capture_per_window() {
+    let (project, state_dir) = write_desktop_state_fixtures("preview-cache");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakePreviewRuntime {
+        output: "first".into(),
+        calls: Vec::new(),
+    };
+    let path = format!("{}?includePreview=1", routes::DESKTOP_STATE);
+
+    let first =
+        route_desktop_state_request_with_runtime(&context, "GET", &path, &mut runtime).unwrap();
+    runtime.output = "second".into();
+    let second =
+        route_desktop_state_request_with_runtime(&context, "GET", &path, &mut runtime).unwrap();
+
+    assert_eq!(runtime.calls.len(), 2);
+    assert_eq!(
+        find(first.body["sessions"].as_array().unwrap(), "codex-live")["previewSnapshot"]["output"],
+        "first"
+    );
+    assert_eq!(
+        find(second.body["sessions"].as_array().unwrap(), "codex-live")["previewSnapshot"]["output"],
+        "first"
+    );
+    cleanup(project);
+}
+
 fn topology_fixture() -> Value {
     coerce_runtime_topology(&json!({
         "version": 1,
@@ -289,6 +413,27 @@ fn exchange_fixture() -> Value {
         "continuityRefs": [],
         "attachmentRefs": []
     })
+}
+
+fn write_desktop_state_fixtures(label: &str) -> (PathBuf, PathBuf) {
+    let project = temp_project(label);
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: metadata_fixture(),
+        },
+    )
+    .unwrap();
+    write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange_fixture()).unwrap();
+    (project, state_dir)
 }
 
 fn ids(items: &[Value]) -> Vec<String> {
