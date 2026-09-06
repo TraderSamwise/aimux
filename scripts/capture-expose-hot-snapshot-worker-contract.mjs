@@ -9,7 +9,9 @@ import prettier from "prettier";
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/tmux/expose-hot-snapshot-worker.json", ROOT);
 const hot = await import(new URL("dist/tmux/expose-hot-snapshot.js", ROOT));
+const paths = await import(new URL("dist/paths.js", ROOT));
 const worker = await import(new URL("dist/expose-hot-snapshot-worker.js", ROOT));
+const runtimeManager = await import(new URL("dist/tmux/runtime-manager.js", ROOT));
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const writeContractJson = async (url, contract) => {
@@ -65,6 +67,62 @@ function writeProjectSnapshot(home, projectRecord, items) {
   );
 }
 
+const managedWindow = (id, windowId, windowIndex, over = {}) => ({
+  target: {
+    sessionName: "aimux-test",
+    windowId,
+    windowIndex,
+    windowName: id,
+    paneDead: false,
+  },
+  metadata: {
+    kind: "agent",
+    sessionId: id,
+    command: "codex",
+    args: [],
+    toolConfigKey: "codex",
+    worktreePath: "/repo",
+    ...over.metadata,
+  },
+});
+
+function withMockedRuntime(managedWindows, fn) {
+  const proto = runtimeManager.TmuxRuntimeManager.prototype;
+  const original = {
+    getProjectSession: proto.getProjectSession,
+    listManagedWindows: proto.listManagedWindows,
+    listProjectManagedWindows: proto.listProjectManagedWindows,
+    listSessionNames: proto.listSessionNames,
+    listWindows: proto.listWindows,
+    isWindowAlive: proto.isWindowAlive,
+    captureTarget: proto.captureTarget,
+  };
+  const captureCalls = [];
+  proto.getProjectSession = () => ({ sessionName: "aimux-test" });
+  proto.listManagedWindows = () => managedWindows;
+  proto.listProjectManagedWindows = () => managedWindows;
+  proto.listSessionNames = () => ["aimux-test"];
+  proto.listWindows = () =>
+    managedWindows.map(({ target }) => ({
+      id: target.windowId,
+      index: target.windowIndex,
+      name: target.windowName,
+      active: target.windowId === "@1" || target.windowId === "@11",
+      activity: target.windowIndex,
+      paneDead: target.paneDead,
+    }));
+  proto.isWindowAlive = (target) => target.paneDead !== true;
+  proto.captureTarget = (target) => {
+    captureCalls.push(target.windowId);
+    return `${target.windowId} captured preview\n`;
+  };
+  try {
+    return fn(captureCalls);
+  } finally {
+    Object.assign(proto, original);
+  }
+}
+
 const cases = [];
 function record(name, setup, action) {
   const home = mkdtempSync(join(tmpdir(), "aimux-expose-hot-snapshot-worker-contract-"));
@@ -84,6 +142,27 @@ function record(name, setup, action) {
     input,
     output: normalize(output),
     inputSha256: hash(input),
+  });
+}
+
+function recordProject(name, setup, action) {
+  const home = mkdtempSync(join(tmpdir(), "aimux-expose-hot-snapshot-worker-contract-"));
+  const previousHome = process.env.AIMUX_HOME;
+  process.env.AIMUX_HOME = home;
+  const input = setup(home);
+  const output = action(home, input);
+  if (previousHome === undefined) delete process.env.AIMUX_HOME;
+  else process.env.AIMUX_HOME = previousHome;
+  rmSync(home, { recursive: true, force: true });
+  const normalizedInput = normalize({ name, ...input });
+  cases.push({
+    id: `tmux-expose-hot-snapshot-worker-${String(cases.length + 1).padStart(3, "0")}`,
+    name,
+    source: "src/expose-hot-snapshot-worker.ts",
+    api: "project hot snapshot worker helper",
+    input: normalizedInput,
+    output: normalize(output),
+    inputSha256: hash(normalizedInput),
   });
 }
 
@@ -145,6 +224,95 @@ record(
       global: snapshot(home, "proj-a", { projectRoot: "/repo/a", scope: "global" }),
     };
   },
+);
+
+recordProject(
+  "refreshes project and launch-context hot snapshots",
+  () => {
+    const projectRoot = "/repo";
+    const managedWindows = [managedWindow("agent-1", "@11", 1), managedWindow("agent-2", "@12", 2)];
+    hot.writeHotExposeScopeView(
+      paths.getProjectStateDirFor(projectRoot),
+      { projectRoot, scope: "worktree", worktreeKey: projectRoot, launchWindowId: "@99" },
+      {
+        scope: "worktree",
+        scopeLabel: "this worktree",
+        sublabel: "none",
+        items: [item("stale-agent", "@99")],
+      },
+    );
+    return { projectRoot, managedWindows };
+  },
+  (_home, { projectRoot, managedWindows }) =>
+    withMockedRuntime(managedWindows, (captureCalls) => {
+      worker.refreshProjectExposeHotSnapshots(projectRoot);
+      const dir = paths.getProjectStateDirFor(projectRoot);
+      return {
+        project: normalize(hot.readHotExposeScopeView(dir, { projectRoot, scope: "project" })),
+        worktree11: normalize(
+          hot.readHotExposeScopeView(dir, {
+            projectRoot,
+            scope: "worktree",
+            worktreeKey: projectRoot,
+            launchWindowId: "@11",
+          }),
+        ),
+        worktree12: normalize(
+          hot.readHotExposeScopeView(dir, {
+            projectRoot,
+            scope: "worktree",
+            worktreeKey: projectRoot,
+            launchWindowId: "@12",
+          }),
+        ),
+        stale99: hot.readHotExposeScopeView(dir, {
+          projectRoot,
+          scope: "worktree",
+          worktreeKey: projectRoot,
+          launchWindowId: "@99",
+        }),
+        captureCalls,
+      };
+    }),
+);
+
+recordProject(
+  "keeps live worktree expose snapshots outside the refresh cap",
+  () => {
+    const projectRoot = "/repo";
+    const managedWindows = Array.from({ length: 7 }, (_, index) => {
+      const number = index + 1;
+      return managedWindow(`agent-${number}`, `@${number}`, number);
+    });
+    const dir = paths.getProjectStateDirFor(projectRoot);
+    hot.writeHotExposeScopeView(
+      dir,
+      { projectRoot, scope: "worktree", worktreeKey: projectRoot, launchWindowId: "@7" },
+      {
+        scope: "worktree",
+        scopeLabel: "this worktree",
+        sublabel: "none",
+        items: [item("agent-7", "@7")],
+      },
+    );
+    return { projectRoot, managedWindows };
+  },
+  (_home, { projectRoot, managedWindows }) =>
+    withMockedRuntime(managedWindows, (captureCalls) => {
+      worker.refreshProjectExposeHotSnapshots(projectRoot);
+      const dir = paths.getProjectStateDirFor(projectRoot);
+      return {
+        worktree7: normalize(
+          hot.readHotExposeScopeView(dir, {
+            projectRoot,
+            scope: "worktree",
+            worktreeKey: projectRoot,
+            launchWindowId: "@7",
+          }),
+        ),
+        captureCalls,
+      };
+    }),
 );
 
 await writeContractJson(FIXTURE_PATH, {
