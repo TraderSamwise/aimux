@@ -1,11 +1,11 @@
 use aimux::core_cli_routing::{
-    CoreDaemonRestartArgs, CoreHostAgentReadArgs, CoreHostRestartArgs, CoreLogsArgs,
-    CoreLogsSubcommand, CoreProjectEnsureArgs, CoreRestartArgs, core_command_args,
+    CoreDaemonRestartArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs,
+    CoreLogsArgs, CoreLogsSubcommand, CoreProjectEnsureArgs, CoreRestartArgs, core_command_args,
     has_core_global_logging_args, is_core_cli_command, is_core_project_ensure_command,
     is_valid_core_project_ensure_args, parse_core_daemon_restart_args,
     parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
-    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
-    parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_host_agent_stream_args, parse_core_host_restart_args, parse_core_logs_args,
+    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -219,6 +219,77 @@ fn host_agent_read_parser_matches_commander_flag_math() {
         parse_core_host_agent_read_args(
             &["host", "agent-read", "claude-1", "--start-line", "1.5",]
         ),
+        None
+    );
+}
+
+#[test]
+fn host_agent_stream_parser_matches_commander_flag_math() {
+    assert_eq!(
+        parse_core_host_agent_stream_args(&["host", "agent-stream", "claude-1"]),
+        Some(CoreHostAgentStreamArgs {
+            session_id: "claude-1".into(),
+            project: None,
+            start_line: -2000,
+            interval_ms: 500,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_stream_args(&[
+            "host",
+            "agent-stream",
+            "--project=/repo",
+            "--start-line",
+            "-80",
+            "--interval-ms=250",
+            "claude-1",
+        ]),
+        Some(CoreHostAgentStreamArgs {
+            session_id: "claude-1".into(),
+            project: Some("/repo".into()),
+            start_line: -80,
+            interval_ms: 250,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_stream_args(&[
+            "host",
+            "agent-stream",
+            "claude-1",
+            "--lines",
+            "160",
+            "--interval-ms",
+            "100",
+        ]),
+        Some(CoreHostAgentStreamArgs {
+            session_id: "claude-1".into(),
+            project: None,
+            start_line: -160,
+            interval_ms: 100,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_stream_args(&["host", "agent-stream", "claude-1", "--lines", "0"]),
+        None
+    );
+    assert_eq!(
+        parse_core_host_agent_stream_args(&[
+            "host",
+            "agent-stream",
+            "claude-1",
+            "--interval-ms",
+            "99",
+        ]),
+        None
+    );
+    assert_eq!(
+        parse_core_host_agent_stream_args(&[
+            "host",
+            "agent-stream",
+            "claude-1",
+            "--interval-ms",
+            "fast",
+        ]),
         None
     );
 }

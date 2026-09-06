@@ -1,9 +1,9 @@
 use crate::core_cli_routing::{
-    CoreHostAgentReadArgsError, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
-    core_command_args, is_core_cli_command, parse_core_daemon_restart_args,
+    CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreHostRestartArgs, CoreLogsArgs,
+    CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_daemon_restart_args,
     parse_core_dashboard_reload_args, parse_core_host_agent_read_args_result,
-    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
-    parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_host_agent_stream_args_result, parse_core_host_restart_args, parse_core_logs_args,
+    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,7 @@ pub enum CoreCliOutputMode {
 pub enum CoreCliOperation {
     HostStatus,
     HostAgentRead,
+    HostAgentStream,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -452,6 +453,22 @@ fn host_agent_read_text_path(project: &str, session_id: &str, start_line: i64) -
     )
 }
 
+fn host_agent_stream_text_path(
+    project: &str,
+    session_id: &str,
+    start_line: i64,
+    interval_ms: i64,
+) -> String {
+    format!(
+        "{}?project={}&sessionId={}&startLine={}&intervalMs={}",
+        CORE_API_ROUTES.host_agent_stream_text,
+        encode_query_component(project),
+        encode_query_component(session_id),
+        start_line,
+        interval_ms
+    )
+}
+
 fn encode_query_component(value: &str) -> String {
     let mut output = String::new();
     for byte in value.bytes() {
@@ -568,6 +585,45 @@ where
                         &project_root,
                         &parsed.session_id,
                         parsed.start_line,
+                    ),
+                    body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("host", "agent-stream") => {
+            let parsed = parse_core_host_agent_stream_args_result(&args).map_err(|error| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: match error {
+                        CoreHostAgentStreamArgsError::LinesNotPositive => {
+                            "Error: --lines must be a positive integer"
+                        }
+                        CoreHostAgentStreamArgsError::StartLineNotInteger => {
+                            "Error: --start-line must be an integer"
+                        }
+                        CoreHostAgentStreamArgsError::IntervalMsInvalid => {
+                            "Error: --interval-ms must be an integer >= 100"
+                        }
+                        CoreHostAgentStreamArgsError::InvalidArguments => {
+                            "error: invalid host agent-stream arguments"
+                        }
+                    },
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::HostAgentStream,
+                CoreCliAction::TextRoute {
+                    path: host_agent_stream_text_path(
+                        &project_root,
+                        &parsed.session_id,
+                        parsed.start_line,
+                        parsed.interval_ms,
                     ),
                     body: None,
                 },

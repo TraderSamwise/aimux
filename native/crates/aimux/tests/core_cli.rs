@@ -223,6 +223,84 @@ fn invalid_host_agent_read_args_fail_before_node_fallback() {
 }
 
 #[test]
+fn host_agent_stream_plans_native_text_route_with_stream_defaults() {
+    let plan = classify_core_cli_with_project_resolver(
+        &[
+            "host",
+            "agent-stream",
+            "claude 1",
+            "--project",
+            "./child dir",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("host agent-stream plan");
+    assert_eq!(plan.operation, CoreCliOperation::HostAgentStream);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/host-agent-stream-text?project=%2Fresolved%2F.%2Fchild%20dir&sessionId=claude%201&startLine=-2000&intervalMs=500".into(),
+            body: None,
+        }
+    );
+
+    let lines = classify_core_cli(
+        &[
+            "host",
+            "agent-stream",
+            "codex-1",
+            "--lines=120",
+            "--interval-ms",
+            "250",
+        ],
+        &context(true, true),
+    )
+    .expect("host agent-stream --lines plan");
+    assert_eq!(
+        lines.action,
+        CoreCliAction::TextRoute {
+            path: "/core/host-agent-stream-text?project=%2Frepo&sessionId=codex-1&startLine=-120&intervalMs=250".into(),
+            body: None,
+        }
+    );
+}
+
+#[test]
+fn invalid_host_agent_stream_args_fail_before_node_fallback() {
+    let invalid_lines = classify_core_cli(
+        &["host", "agent-stream", "claude-1", "--lines", "-5"],
+        &context(true, true),
+    )
+    .expect_err("non-positive stream lines");
+    assert_eq!(
+        invalid_lines.to_string(),
+        "Error: --lines must be a positive integer"
+    );
+
+    let invalid_start = classify_core_cli(
+        &["host", "agent-stream", "claude-1", "--start-line", "10px"],
+        &context(true, true),
+    )
+    .expect_err("invalid stream start-line");
+    assert_eq!(
+        invalid_start.to_string(),
+        "Error: --start-line must be an integer"
+    );
+
+    let invalid_interval = classify_core_cli(
+        &["host", "agent-stream", "claude-1", "--interval-ms", "99"],
+        &context(true, true),
+    )
+    .expect_err("invalid stream interval");
+    assert_eq!(
+        invalid_interval.to_string(),
+        "Error: --interval-ms must be an integer >= 100"
+    );
+    assert_eq!(invalid_interval.exit_code(), 1);
+}
+
+#[test]
 fn daemon_status_uses_a_bounded_existing_daemon_request_and_stored_state_fallback() {
     let plan = classify_core_cli(&["daemon", "status", "--json"], &context(false, false))
         .expect("daemon status plan");

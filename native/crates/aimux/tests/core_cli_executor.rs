@@ -133,7 +133,9 @@ impl CoreCliRuntime for FakeRuntime {
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
         self.text_routes.push((path.to_owned(), body));
-        Ok(if path.starts_with("/core/host-agent-read-text?") {
+        Ok(if path.starts_with("/core/host-agent-stream-text?") {
+            "streamed output\n".into()
+        } else if path.starts_with("/core/host-agent-read-text?") {
             "pane output\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
@@ -469,6 +471,36 @@ fn host_agent_read_executes_native_text_route_without_core_command_fallback() {
         runtime.text_routes,
         [(
             "/core/host-agent-read-text?project=%2Frepo&sessionId=claude-1&startLine=-80".into(),
+            None,
+        )]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn host_agent_stream_executes_native_text_route_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let stream = run_core_cli_with(
+        &args(&[
+            "host",
+            "agent-stream",
+            "claude-1",
+            "--project=/repo",
+            "--start-line",
+            "-80",
+            "--interval-ms",
+            "250",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(stream.code, 0);
+    assert_eq!(stream.stdout, ["streamed output"]);
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            "/core/host-agent-stream-text?project=%2Frepo&sessionId=claude-1&startLine=-80&intervalMs=250".into(),
             None,
         )]
     );
