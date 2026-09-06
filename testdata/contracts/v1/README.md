@@ -677,6 +677,10 @@ Priority fixture groups:
 
 ## Plugin
 
+- `default-plugins/gh-pr-context.json`: default GitHub PR context target
+  selection from topology sessions, statusline fallback paths, metadata
+  fallback paths, service rows, duplicate filtering, and missing-path filtering
+  captured by running TypeScript `collectGithubPrTargets`.
 - `plugin/runtime.json`: plugin alert derivation, bundled default wrapper
   seeding/deletion behavior, failed-start cleanup status, and invalid module
   shape reporting captured by running TypeScript `plugin-runtime`; wrapper and
