@@ -47,7 +47,7 @@ export function ChatNewMessagesBadge({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
-        className="h-9 flex-row items-center gap-1.5 rounded-full border border-border bg-popover px-3 shadow-sm active:opacity-80"
+        className="h-9 flex-row items-center gap-1.5 rounded-full border border-border bg-card px-3 shadow-sm active:opacity-80"
         onPress={onPress}
       >
         <Text className="text-sm font-semibold text-foreground">{label}</Text>

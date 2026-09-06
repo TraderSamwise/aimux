@@ -834,6 +834,9 @@ export default function ChatScreen() {
     serviceDisconnected ||
     routeSessionMissing ||
     !displayServiceEndpoint;
+  const newMessageBadgeBottomOffset = effectiveChatChromeVisible
+    ? chatBottomContentReserve + 10
+    : composerFooterBottomPadding + 8;
   const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
@@ -2408,6 +2411,7 @@ export default function ChatScreen() {
                   allMessages={allMessages}
                   bottomContentInset={chatBottomContentReserve}
                   dividerWidth={chatDividerWidth}
+                  newMessageBadgeBottomOffset={newMessageBadgeBottomOffset}
                   placeholderState={chatPlaceholderState}
                   ref={chatViewportRef}
                   onChromeVisibleChange={handleChatChromeVisibleChange}
@@ -2432,6 +2436,7 @@ const AgentChatSessionViewport = React.forwardRef<
     allMessages: readonly ChatMessage[];
     bottomContentInset: number;
     dividerWidth: number;
+    newMessageBadgeBottomOffset: number;
     onChromeVisibleChange: (visible: boolean) => void;
     onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
     placeholderState: ChatTranscriptPlaceholderState;
@@ -2444,6 +2449,7 @@ const AgentChatSessionViewport = React.forwardRef<
     allMessages,
     bottomContentInset,
     dividerWidth,
+    newMessageBadgeBottomOffset,
     onChromeVisibleChange,
     onRetryTranscriptLoad,
     placeholderState,
@@ -2733,7 +2739,7 @@ const AgentChatSessionViewport = React.forwardRef<
         onPress={showNewest}
         visible={newMessageBadge.visible && newMessageBadge.count > 0}
         style={{
-          bottom: bottomContentInset + 10,
+          bottom: newMessageBadgeBottomOffset,
           alignItems: "center",
           left: 0,
           position: "absolute",
