@@ -429,6 +429,13 @@ pub struct CoreHostRestartArgs {
     pub serve: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreHostTopologyArgs {
+    pub json: bool,
+    pub raw: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoreHostAgentReadArgs {

@@ -9,13 +9,14 @@ use aimux::core_cli_routing::{
     parse_core_attachment_publish_args, parse_core_collaboration_args,
     parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
     parse_core_graveyard_args, parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
-    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
-    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
-    parse_core_project_ensure_args, parse_core_repair_args, parse_core_restart_args,
-    parse_core_runtime_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
-    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
+    parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
+    parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
+    parse_core_notification_args, parse_core_outline_args, parse_core_overseer_clear_args,
+    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_repair_args,
+    parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
+    parse_core_scribe_start_args, parse_core_task_args, parse_core_team_args,
+    parse_core_thread_args, parse_core_worktree_args,
 };
 
 #[test]
@@ -130,6 +131,24 @@ fn restart_parsers_keep_global_and_daemon_forms_distinct() {
         parse_core_restart_args(&["restart", "--project", "-repo"]),
         None
     );
+}
+
+#[test]
+fn host_topology_parser_matches_local_read_forms() {
+    let path = parse_core_host_topology_args(&["host", "topology"]).expect("path form");
+    assert!(!path.json);
+    assert!(!path.raw);
+
+    let raw = parse_core_host_topology_args(&["host", "topology", "--raw"]).expect("raw form");
+    assert!(raw.raw);
+    assert!(!raw.json);
+
+    let json = parse_core_host_topology_args(&["host", "topology", "--json"]).expect("json form");
+    assert!(json.json);
+    assert!(!json.raw);
+
+    assert!(parse_core_host_topology_args(&["host", "topology", "--project=/repo"]).is_none());
+    assert!(parse_core_host_topology_args(&["host", "topology", "--help"]).is_none());
 }
 
 #[test]

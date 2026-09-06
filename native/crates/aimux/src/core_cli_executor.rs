@@ -26,9 +26,11 @@ use crate::logs::{
 use crate::paths::PathResolver;
 use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 use crate::remote_login::{LoginAction, run_login_flow};
+use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{attach_session_argv, switch_client_argv};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -74,6 +76,9 @@ pub trait CoreCliRuntime {
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
+    fn runtime_topology_path(&self, project_root: &str) -> PathBuf;
+    fn read_text_file(&self, path: &Path) -> Result<String, String>;
+    fn read_runtime_topology(&self, path: &Path) -> Result<Value, String>;
     fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String>;
     fn restart_control_plane(
         &mut self,
@@ -208,6 +213,19 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         clear_log_file(path).map_err(|error| error.to_string())
     }
 
+    fn runtime_topology_path(&self, project_root: &str) -> PathBuf {
+        let mut resolver = PathResolver::from_env();
+        runtime_topology_path(resolver.project_state_dir_for(project_root))
+    }
+
+    fn read_text_file(&self, path: &Path) -> Result<String, String> {
+        fs::read_to_string(path).map_err(|error| error.to_string())
+    }
+
+    fn read_runtime_topology(&self, path: &Path) -> Result<Value, String> {
+        read_runtime_topology(path)
+    }
+
     fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String> {
         let session_name = target
             .get("sessionName")
@@ -308,6 +326,7 @@ fn run_plan(
         ),
         CoreCliAction::TextRoute { path, body } => run_text_route(&path, body, runtime),
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
+        CoreCliAction::HostTopology { json, raw } => run_host_topology(json, raw, runtime),
         CoreCliAction::RemoteStatus { relay_request } => {
             let credentials = runtime.credentials_for_status();
             let relay = match relay_request {
@@ -441,6 +460,30 @@ fn run_text_route(
     let text = runtime.request_daemon_text(path, body)?;
     Ok(CoreCliExecution::ok(vec![
         text.strip_suffix('\n').unwrap_or(&text).to_owned(),
+    ]))
+}
+
+fn run_host_topology(
+    json_mode: bool,
+    raw: bool,
+    runtime: &mut impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let project_root = runtime.resolve_project_root(&runtime.cwd());
+    let path = runtime.runtime_topology_path(&project_root);
+    if json_mode {
+        let topology = runtime.read_runtime_topology(&path)?;
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&topology).map_err(|error| error.to_string())?,
+        ]));
+    }
+    if raw {
+        let text = runtime.read_text_file(&path)?;
+        return Ok(CoreCliExecution::ok(vec![
+            text.strip_suffix('\n').unwrap_or(&text).to_owned(),
+        ]));
+    }
+    Ok(CoreCliExecution::ok(vec![
+        path.to_string_lossy().into_owned(),
     ]))
 }
 

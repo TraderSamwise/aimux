@@ -27,6 +27,9 @@ struct FakeRuntime {
     log_path: PathBuf,
     log_output: String,
     clear_count: Cell<usize>,
+    topology_path: PathBuf,
+    topology_raw: String,
+    topology_json: Value,
 }
 
 impl Default for FakeRuntime {
@@ -49,6 +52,9 @@ impl Default for FakeRuntime {
             log_path: PathBuf::from("/tmp/aimux.log"),
             log_output: String::new(),
             clear_count: Cell::new(0),
+            topology_path: PathBuf::from("/repo/.aimux/runtime-topology.yaml"),
+            topology_raw: "version: 1\ngeneratedAt: now\n".into(),
+            topology_json: json!({ "version": 1, "generatedAt": "now", "rigs": [] }),
         }
     }
 }
@@ -204,6 +210,18 @@ impl CoreCliRuntime for FakeRuntime {
     fn clear_log(&self, _path: &Path) -> Result<(), String> {
         self.clear_count.set(self.clear_count.get() + 1);
         Ok(())
+    }
+
+    fn runtime_topology_path(&self, _project_root: &str) -> PathBuf {
+        self.topology_path.clone()
+    }
+
+    fn read_text_file(&self, _path: &Path) -> Result<String, String> {
+        Ok(self.topology_raw.clone())
+    }
+
+    fn read_runtime_topology(&self, _path: &Path) -> Result<Value, String> {
+        Ok(self.topology_json.clone())
     }
 
     fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String> {
@@ -375,6 +393,24 @@ fn host_status_and_projects_render_text_and_json_like_core_cli() {
     assert_eq!(projects.code, 0);
     let parsed: Value = serde_json::from_str(&projects.stdout[0]).expect("projects JSON");
     assert_eq!(parsed["projects"][0]["path"], "/repo");
+}
+
+#[test]
+fn host_topology_executes_locally_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let path = run_core_cli_with(&args(&["host", "topology"]), &mut runtime);
+    let raw = run_core_cli_with(&args(&["host", "topology", "--raw"]), &mut runtime);
+    let parsed = run_core_cli_with(&args(&["host", "topology", "--json"]), &mut runtime);
+
+    assert_eq!(path.stdout, ["/repo/.aimux/runtime-topology.yaml"]);
+    assert_eq!(raw.stdout, ["version: 1\ngeneratedAt: now"]);
+    assert_eq!(
+        serde_json::from_str::<Value>(&parsed.stdout[0]).unwrap(),
+        json!({ "version": 1, "generatedAt": "now", "rigs": [] })
+    );
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
 }
 
 #[test]

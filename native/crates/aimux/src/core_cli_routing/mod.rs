@@ -2584,6 +2584,25 @@ pub fn parse_core_host_restart_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHos
     Some(parsed)
 }
 
+pub fn parse_core_host_topology_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHostTopologyArgs> {
+    if args.first().map(AsRef::as_ref) != Some("host")
+        || args.get(1).map(AsRef::as_ref) != Some("topology")
+        || has_help(args)
+    {
+        return None;
+    }
+    let mut json = false;
+    let mut raw = false;
+    for arg in &args[2..] {
+        match arg.as_ref() {
+            "--json" => json = true,
+            "--raw" => raw = true,
+            _ => return None,
+        }
+    }
+    Some(CoreHostTopologyArgs { json, raw })
+}
+
 pub fn parse_core_host_agent_read_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHostAgentReadArgs> {
     parse_core_host_agent_read_args_result(args).ok()
 }
@@ -3042,6 +3061,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("host"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("host"), Some("stop" | "kill")) => args.len() == 2,
         (Some("host"), Some("restart")) => parse_core_host_restart_args(args).is_some(),
+        (Some("host"), Some("topology")) => parse_core_host_topology_args(args).is_some(),
         (Some("host"), Some("agent-read")) => true,
         (Some("host"), Some("agent-stream")) => true,
         (Some("daemon"), Some("ensure" | "status" | "projects")) => {

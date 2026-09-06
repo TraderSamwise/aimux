@@ -6,7 +6,7 @@ use crate::core_cli_routing::{
     parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
     parse_core_graveyard_args, parse_core_host_agent_read_args_result,
     parse_core_host_agent_stream_args_result, parse_core_host_restart_args,
-    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_host_topology_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
     parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
@@ -109,6 +109,7 @@ pub enum CoreCliOperation {
     HostStop,
     HostKill,
     HostRestart,
+    HostTopology,
     DaemonEnsure,
     DaemonRestart,
     DaemonStatus,
@@ -368,6 +369,10 @@ pub enum CoreCliAction {
         project_root: Option<String>,
     },
     Logs(CoreLogsArgs),
+    HostTopology {
+        json: bool,
+        raw: bool,
+    },
     RemoteStatus {
         relay_request: Option<CoreCommandCall>,
     },
@@ -2037,6 +2042,18 @@ where
                 } else {
                     CoreCliFallback::None
                 },
+            )
+        }
+        ("host", "topology") => {
+            let parsed =
+                parse_core_host_topology_args(&args).expect("eligible host topology must parse");
+            (
+                CoreCliOperation::HostTopology,
+                CoreCliAction::HostTopology {
+                    json: parsed.json,
+                    raw: parsed.raw,
+                },
+                CoreCliFallback::None,
             )
         }
         ("daemon", "ensure") => (

@@ -94,6 +94,40 @@ fn sidecar_owned_commands_map_to_authoritative_names_and_payloads() {
 }
 
 #[test]
+fn host_topology_commands_plan_local_action() {
+    let path = classify_core_cli(&["host", "topology"], &context(true, true))
+        .expect("host topology path plan");
+    assert_eq!(path.operation, CoreCliOperation::HostTopology);
+    assert_eq!(
+        path.action,
+        CoreCliAction::HostTopology {
+            json: false,
+            raw: false
+        }
+    );
+
+    let raw = classify_core_cli(&["host", "topology", "--raw"], &context(true, true))
+        .expect("host topology raw plan");
+    assert_eq!(
+        raw.action,
+        CoreCliAction::HostTopology {
+            json: false,
+            raw: true
+        }
+    );
+
+    let json = classify_core_cli(&["host", "topology", "--json"], &context(true, true))
+        .expect("host topology json plan");
+    assert_eq!(
+        json.action,
+        CoreCliAction::HostTopology {
+            json: true,
+            raw: false
+        }
+    );
+}
+
+#[test]
 fn project_ensure_and_restart_use_the_supplied_project_resolver() {
     let plan = classify_core_cli_with_project_resolver(
         &["daemon", "project-ensure", "--project", "./child", "--json"],
