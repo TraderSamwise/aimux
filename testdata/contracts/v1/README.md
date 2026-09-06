@@ -287,6 +287,11 @@ Priority fixture groups:
   project registry mutation/pruning/failure behavior captured by running
   TypeScript `paths`.
 
+## Team
+
+- `team/semantics.json`: orphan teammate selection and project-control session
+  classification captured by running TypeScript `team`.
+
 ## Proxy
 
 - `proxy/project-binding.json`: proxy path parsing and project-service target

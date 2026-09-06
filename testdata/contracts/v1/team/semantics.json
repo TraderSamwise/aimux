@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "source": "src/team.test.ts",
+  "generatedBy": "scripts/capture-team-contract.mjs",
+  "description": "Team orphan selection and project-control session classification captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "team-semantics-001",
+      "name": "returns only teammate sessions whose parent id is not known",
+      "source": "src/team.test.ts",
+      "api": "selectOrphanTeammates",
+      "input": {
+        "sessions": [
+          { "id": "primary", "createdAt": "2026-05-01T00:00:00.000Z" },
+          {
+            "id": "attached",
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "team": { "teamId": "team-1", "parentSessionId": "primary" }
+          },
+          {
+            "id": "orphan",
+            "createdAt": "2026-05-02T00:00:00.000Z",
+            "team": { "teamId": "team-1", "parentSessionId": "missing" }
+          },
+          {
+            "id": "ordered-orphan",
+            "createdAt": "2026-05-03T00:00:00.000Z",
+            "team": { "teamId": "team-1", "parentSessionId": "missing", "order": 0 }
+          },
+          {
+            "id": "orphan",
+            "createdAt": "2026-05-04T00:00:00.000Z",
+            "team": { "teamId": "team-1", "parentSessionId": "missing", "order": 10 }
+          }
+        ],
+        "knownParentIds": ["primary"]
+      },
+      "output": ["ordered-orphan", "orphan"],
+      "inputSha256": "29e2e5c177caa1d1929436580740e315fd331dfc8b09a94325224c7701240dc0"
+    },
+    {
+      "id": "team-semantics-002",
+      "name": "allows explicit scribe demotion to override stale team role metadata",
+      "source": "src/team.test.ts",
+      "api": "isProjectControlSessionBatch",
+      "input": {
+        "items": [
+          { "session": { "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" } } },
+          { "session": { "scribe": false, "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" } } },
+          { "session": { "overseer": true } },
+          { "session": { "projectControl": true } },
+          { "session": { "team": { "teamId": "team-1", "parentSessionId": "primary", "role": "coder" } } }
+        ]
+      },
+      "output": [true, false, true, true, false],
+      "inputSha256": "11b1609d9e6f6c522acb890544afcb516a40b23d6499f5d59784d2f75461721f"
+    }
+  ]
+}

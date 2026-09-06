@@ -93,6 +93,7 @@ pub mod session_viewed;
 pub mod shell_args;
 pub mod shell_hooks;
 pub mod statusline_model_contract;
+pub mod team_contract;
 pub mod tmux;
 pub mod tmux_control;
 pub mod tmux_exec_metrics;
