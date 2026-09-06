@@ -194,7 +194,7 @@ fn sanitize_lease_part(value: Option<&str>) -> String {
         .collect()
 }
 
-fn parse_iso_millis(value: &str) -> Option<i64> {
+pub fn parse_iso_millis(value: &str) -> Option<i64> {
     let (date, time) = value.split_once('T')?;
     let mut date_parts = date.split('-');
     let year = date_parts.next()?.parse::<i64>().ok()?;

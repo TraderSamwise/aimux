@@ -396,10 +396,13 @@ fn agent_output_stream_fingerprint(payload: &serde_json::Value) -> String {
 }
 
 fn serve_project_service_listener(listener: TcpListener, startup: ProjectServiceStartup) {
-    let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
-        startup.project_root,
-        startup.project_state_dir,
-    ));
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(
+            startup.project_root,
+            startup.project_state_dir,
+        )
+        .with_hot_snapshot_background_refresh(),
+    );
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else {
             continue;

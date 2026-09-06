@@ -42,6 +42,7 @@ use super::switchable_agents::route_switchable_agent_request;
 use super::team::route_team_request;
 use super::topology::route_topology_request;
 use super::usage::route_usage_request;
+use super::visual_clients::ProjectHotSnapshotCoordinator;
 use super::work_outline::route_work_outline_request;
 use super::worktrees::route_worktree_read_request;
 
@@ -56,6 +57,7 @@ pub struct ProjectServiceRequestContext {
     pub output_projection_cache: AgentOutputProjectionCache,
     pub output_metrics: AgentOutputReadMetrics,
     pub project_events: ProjectEventBus,
+    pub visual_clients: ProjectHotSnapshotCoordinator,
 }
 
 impl ProjectServiceRequestContext {
@@ -70,6 +72,7 @@ impl ProjectServiceRequestContext {
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
+            visual_clients: ProjectHotSnapshotCoordinator::default(),
         }
     }
 
@@ -87,7 +90,13 @@ impl ProjectServiceRequestContext {
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
+            visual_clients: ProjectHotSnapshotCoordinator::default(),
         }
+    }
+
+    pub fn with_hot_snapshot_background_refresh(mut self) -> Self {
+        self.visual_clients = ProjectHotSnapshotCoordinator::new(true);
+        self
     }
 
     pub fn with_session_label(

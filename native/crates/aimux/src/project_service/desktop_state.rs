@@ -23,6 +23,7 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
 use super::usage::parse_recency_timestamp;
+use super::visual_clients::VisualClientLeaseRoute;
 
 const ACTIVE_WORKTREE_STATUSES: &[&str] = &[
     "planned", "creating", "active", "removing", "missing", "error",
@@ -89,6 +90,13 @@ pub fn route_desktop_state_request_with_runtime(
         params.get("includePreview").map(String::as_str),
         Some("1" | "true")
     );
+    let include_chat_preview = matches!(
+        params.get("includeChatPreview").map(String::as_str),
+        Some("1" | "true")
+    );
+    if include_preview || include_chat_preview {
+        touch_desktop_preview_client(context, &params, include_preview, include_chat_preview);
+    }
     if let Some(desktop_state) = context.desktop_state.as_ref() {
         let mut body = desktop_state.as_object().cloned().unwrap_or_default();
         body.insert("ok".into(), Value::Bool(true));
@@ -114,6 +122,25 @@ pub fn route_desktop_state_request_with_runtime(
         state = attach_desktop_state_previews(context, state, runtime);
     }
     Some(ProjectServiceDispatchResponse::json(200, state))
+}
+
+fn touch_desktop_preview_client(
+    context: &ProjectServiceRequestContext,
+    params: &BTreeMap<String, String>,
+    requested_preview: bool,
+    requested_chat_preview: bool,
+) -> bool {
+    context.visual_clients.touch_route_lease(
+        params,
+        VisualClientLeaseRoute {
+            surface: "desktop-state",
+            requested_preview,
+            requested_chat_preview,
+            default_kind: None,
+        },
+        context.project_root(),
+        &context.project_state_dir(),
+    )
 }
 
 pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Result<Value, String> {

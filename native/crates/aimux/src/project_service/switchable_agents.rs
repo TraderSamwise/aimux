@@ -22,6 +22,7 @@ use super::preview_snapshots::{
 };
 use super::router::ProjectServiceRequestContext;
 use super::usage::{load_last_used_state, parse_recency_timestamp};
+use super::visual_clients::VisualClientLeaseRoute;
 
 const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 const LIVE_SERVICE_STATUSES: &[&str] = &["starting", "running"];
@@ -144,6 +145,26 @@ pub fn route_switchable_agent_request_with_runtime(
         params.get("includePreview").map(String::as_str),
         Some("1" | "true")
     );
+    let include_chat_preview = params
+        .get("includeChatPreview")
+        .is_some_and(|value| value == "1");
+    if include_preview || include_chat_preview {
+        context.visual_clients.touch_route_lease(
+            &params,
+            VisualClientLeaseRoute {
+                surface: if expose {
+                    "expose"
+                } else {
+                    "switchable-agents"
+                },
+                requested_preview: include_preview,
+                requested_chat_preview: include_chat_preview,
+                default_kind: if expose { Some("expose") } else { None },
+            },
+            context.project_root(),
+            &project_state_dir,
+        );
+    }
     let metadata = load_metadata_state(&project_state_dir);
     let entries = topology_switchable_entries(&topology, &metadata.sessions);
     let last_used = load_last_used_state(&project_state_dir);
