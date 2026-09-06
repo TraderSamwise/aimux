@@ -799,6 +799,9 @@ Priority fixture groups:
 - `terminal/key-parser.json`: carriage-return/line-feed Enter normalization,
   Alt+Enter normalization, and focus-report/key splitting captured by running
   TypeScript `parseKeys`.
+- `terminal/line-editor.json`: single-line editor cursor movement, editing,
+  paste newline normalization, key-consumption, reverse-video cursor, and
+  horizontal scroll rendering captured by running TypeScript `line-editor`.
 
 ## Transcript
 
