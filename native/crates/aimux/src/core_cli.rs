@@ -3,14 +3,14 @@ use crate::core_cli_routing::{
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_collaboration_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_host_agent_read_args_result,
-    parse_core_host_agent_stream_args_result, parse_core_host_restart_args,
-    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_dashboard_reload_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
+    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
     parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args,
+    parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,17 @@ pub enum CoreCliOperation {
     ThreadSend,
     ThreadMarkSeen,
     ThreadStatus,
+    WorktreeList,
+    WorktreeCreate,
+    WorktreeCacheCleanup,
+    WorktreeRemove,
+    WorktreeGraveyard,
+    WorktreeResurrect,
+    WorktreeDeleteGraveyard,
+    GraveyardList,
+    GraveyardSend,
+    GraveyardResurrect,
+    GraveyardCleanup,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -640,6 +651,14 @@ fn thread_show_text_path(project: &str, thread_id: &str, json: bool) -> String {
         encode_query_component(project),
         encode_query_component(thread_id)
     );
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
+fn project_text_path(base: &str, project: &str, json: bool) -> String {
+    let mut path = format!("{base}?project={}", encode_query_component(project));
     if json {
         path.push_str("&json=1");
     }
@@ -1429,6 +1448,119 @@ where
                     })),
                 ),
                 _ => unreachable!("validated thread subcommand"),
+            };
+            (
+                operation,
+                CoreCliAction::TextRoute { path, body },
+                CoreCliFallback::None,
+            )
+        }
+        (
+            "worktree",
+            "list" | "create" | "cleanup-caches" | "remove" | "graveyard" | "resurrect"
+            | "delete-graveyard",
+        ) => {
+            let parsed = parse_core_worktree_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid worktree arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, path, body) = match parsed.subcommand.as_str() {
+                "list" => (
+                    CoreCliOperation::WorktreeList,
+                    project_text_path(
+                        CORE_API_ROUTES.worktree_list_text,
+                        &project_root,
+                        parsed.json,
+                    ),
+                    None,
+                ),
+                "create" => (
+                    CoreCliOperation::WorktreeCreate,
+                    text_route_path(CORE_API_ROUTES.worktree_create_text, parsed.json),
+                    Some(json!({ "project": project_root, "name": parsed.name })),
+                ),
+                "cleanup-caches" => (
+                    CoreCliOperation::WorktreeCacheCleanup,
+                    text_route_path(CORE_API_ROUTES.worktree_cache_cleanup_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "dryRun": !parsed.yes,
+                        "includeActive": parsed.include_active,
+                    })),
+                ),
+                "remove" => (
+                    CoreCliOperation::WorktreeRemove,
+                    text_route_path(CORE_API_ROUTES.worktree_remove_text, parsed.json),
+                    Some(json!({ "project": project_root, "path": parsed.path })),
+                ),
+                "graveyard" => (
+                    CoreCliOperation::WorktreeGraveyard,
+                    text_route_path(CORE_API_ROUTES.worktree_graveyard_text, parsed.json),
+                    Some(json!({ "project": project_root, "path": parsed.path })),
+                ),
+                "resurrect" => (
+                    CoreCliOperation::WorktreeResurrect,
+                    text_route_path(CORE_API_ROUTES.worktree_resurrect_text, parsed.json),
+                    Some(json!({ "project": project_root, "path": parsed.path })),
+                ),
+                "delete-graveyard" => (
+                    CoreCliOperation::WorktreeDeleteGraveyard,
+                    text_route_path(CORE_API_ROUTES.worktree_delete_graveyard_text, parsed.json),
+                    Some(json!({ "project": project_root, "path": parsed.path })),
+                ),
+                _ => unreachable!("validated worktree subcommand"),
+            };
+            (
+                operation,
+                CoreCliAction::TextRoute { path, body },
+                CoreCliFallback::None,
+            )
+        }
+        ("graveyard", "list" | "send" | "resurrect" | "cleanup") => {
+            let parsed = parse_core_graveyard_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid graveyard arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, path, body) = match parsed.subcommand.as_str() {
+                "list" => (
+                    CoreCliOperation::GraveyardList,
+                    project_text_path(
+                        CORE_API_ROUTES.graveyard_list_text,
+                        &project_root,
+                        parsed.json,
+                    ),
+                    None,
+                ),
+                "send" => (
+                    CoreCliOperation::GraveyardSend,
+                    text_route_path(CORE_API_ROUTES.graveyard_send_text, parsed.json),
+                    Some(json!({ "project": project_root, "sessionId": parsed.session_id })),
+                ),
+                "resurrect" => (
+                    CoreCliOperation::GraveyardResurrect,
+                    text_route_path(CORE_API_ROUTES.graveyard_resurrect_text, parsed.json),
+                    Some(json!({ "project": project_root, "sessionId": parsed.session_id })),
+                ),
+                "cleanup" => (
+                    CoreCliOperation::GraveyardCleanup,
+                    text_route_path(CORE_API_ROUTES.graveyard_cleanup_text, parsed.json),
+                    Some(json!({ "project": project_root, "dryRun": parsed.dry_run })),
+                ),
+                _ => unreachable!("validated graveyard subcommand"),
             };
             (
                 operation,

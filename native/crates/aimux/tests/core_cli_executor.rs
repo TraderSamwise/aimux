@@ -172,6 +172,8 @@ impl CoreCliRuntime for FakeRuntime {
             || path.starts_with("/core/thread/")
         {
             "task task-1\nthread thread-1\n".into()
+        } else if path.starts_with("/core/worktree/") || path.starts_with("/core/graveyard/") {
+            "worktree ok\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -1408,6 +1410,135 @@ fn thread_commands_execute_native_text_routes_without_core_command_fallback() {
                     "owner": "user",
                     "waitingOn": "claude-1,codex-1",
                 })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let list = run_core_cli_with(
+        &args(&["worktree", "list", "--project=/repo", "--json"]),
+        &mut runtime,
+    );
+    let create = run_core_cli_with(
+        &args(&["worktree", "create", "feature", "--project=/repo"]),
+        &mut runtime,
+    );
+    let cleanup = run_core_cli_with(
+        &args(&[
+            "worktree",
+            "cleanup-caches",
+            "--project=/repo",
+            "--yes",
+            "--include-active",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let remove = run_core_cli_with(
+        &args(&["worktree", "remove", "../feature", "--project=/repo"]),
+        &mut runtime,
+    );
+    let graveyard_worktree = run_core_cli_with(
+        &args(&["worktree", "graveyard", "../feature", "--project=/repo"]),
+        &mut runtime,
+    );
+    let resurrect_worktree = run_core_cli_with(
+        &args(&["worktree", "resurrect", "../feature", "--project=/repo"]),
+        &mut runtime,
+    );
+    let delete_worktree = run_core_cli_with(
+        &args(&[
+            "worktree",
+            "delete-graveyard",
+            "../feature",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let graveyard_list = run_core_cli_with(
+        &args(&["graveyard", "list", "--project=/repo"]),
+        &mut runtime,
+    );
+    let graveyard_send = run_core_cli_with(
+        &args(&["graveyard", "send", "claude-1", "--project=/repo", "--json"]),
+        &mut runtime,
+    );
+    let graveyard_resurrect = run_core_cli_with(
+        &args(&["graveyard", "resurrect", "claude-1", "--project=/repo"]),
+        &mut runtime,
+    );
+    let graveyard_cleanup = run_core_cli_with(
+        &args(&["graveyard", "cleanup", "--project=/repo", "--dry-run"]),
+        &mut runtime,
+    );
+
+    for execution in [
+        list,
+        create,
+        cleanup,
+        remove,
+        graveyard_worktree,
+        resurrect_worktree,
+        delete_worktree,
+        graveyard_list,
+        graveyard_send,
+        graveyard_resurrect,
+        graveyard_cleanup,
+    ] {
+        assert_eq!(execution.stdout, ["worktree ok"]);
+    }
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/worktree/list-text?project=%2Frepo&json=1".into(),
+                None,
+            ),
+            (
+                "/core/worktree/create-text".into(),
+                Some(json!({ "project": "/repo", "name": "feature" })),
+            ),
+            (
+                "/core/worktree/cache-cleanup-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "dryRun": false,
+                    "includeActive": true,
+                })),
+            ),
+            (
+                "/core/worktree/remove-text".into(),
+                Some(json!({ "project": "/repo", "path": "../feature" })),
+            ),
+            (
+                "/core/worktree/graveyard-text".into(),
+                Some(json!({ "project": "/repo", "path": "../feature" })),
+            ),
+            (
+                "/core/worktree/resurrect-text".into(),
+                Some(json!({ "project": "/repo", "path": "../feature" })),
+            ),
+            (
+                "/core/worktree/delete-graveyard-text".into(),
+                Some(json!({ "project": "/repo", "path": "../feature" })),
+            ),
+            ("/core/graveyard/list-text?project=%2Frepo".into(), None,),
+            (
+                "/core/graveyard/send-text?json=1".into(),
+                Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+            ),
+            (
+                "/core/graveyard/resurrect-text".into(),
+                Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+            ),
+            (
+                "/core/graveyard/cleanup-text".into(),
+                Some(json!({ "project": "/repo", "dryRun": true })),
             ),
         ]
     );

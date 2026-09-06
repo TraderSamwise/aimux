@@ -743,6 +743,113 @@ fn thread_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn worktree_and_graveyard_commands_plan_native_text_routes() {
+    let list = classify_core_cli_with_project_resolver(
+        &["worktree", "list", "--project", "./child", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("worktree list plan");
+    assert_eq!(list.operation, CoreCliOperation::WorktreeList);
+    assert_eq!(
+        list.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/list-text?project=%2Fresolved%2F.%2Fchild&json=1".into(),
+            body: None,
+        }
+    );
+
+    let create = classify_core_cli(&["worktree", "create", "feature"], &context(true, true))
+        .expect("worktree create plan");
+    assert_eq!(create.operation, CoreCliOperation::WorktreeCreate);
+    assert_eq!(
+        create.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/create-text".into(),
+            body: Some(json!({ "project": "/repo", "name": "feature" })),
+        }
+    );
+
+    let cleanup = classify_core_cli(
+        &[
+            "worktree",
+            "cleanup-caches",
+            "--yes",
+            "--include-active",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("worktree cleanup plan");
+    assert_eq!(cleanup.operation, CoreCliOperation::WorktreeCacheCleanup);
+    assert_eq!(
+        cleanup.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/cache-cleanup-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "dryRun": false,
+                "includeActive": true,
+            })),
+        }
+    );
+
+    let remove = classify_core_cli(
+        &["worktree", "remove", "../feature", "--json"],
+        &context(true, true),
+    )
+    .expect("worktree remove plan");
+    assert_eq!(remove.operation, CoreCliOperation::WorktreeRemove);
+    assert_eq!(
+        remove.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/remove-text?json=1".into(),
+            body: Some(json!({ "project": "/repo", "path": "../feature" })),
+        }
+    );
+
+    let graveyard_list = classify_core_cli(&["graveyard", "list", "--json"], &context(true, true))
+        .expect("graveyard list plan");
+    assert_eq!(graveyard_list.operation, CoreCliOperation::GraveyardList);
+    assert_eq!(
+        graveyard_list.action,
+        CoreCliAction::TextRoute {
+            path: "/core/graveyard/list-text?project=%2Frepo&json=1".into(),
+            body: None,
+        }
+    );
+
+    let send = classify_core_cli(
+        &["graveyard", "send", "claude-1", "--project=/repo"],
+        &context(true, true),
+    )
+    .expect("graveyard send plan");
+    assert_eq!(send.operation, CoreCliOperation::GraveyardSend);
+    assert_eq!(
+        send.action,
+        CoreCliAction::TextRoute {
+            path: "/core/graveyard/send-text".into(),
+            body: Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+        }
+    );
+
+    let cleanup_graveyard =
+        classify_core_cli(&["graveyard", "cleanup", "--dry-run"], &context(true, true))
+            .expect("graveyard cleanup plan");
+    assert_eq!(
+        cleanup_graveyard.operation,
+        CoreCliOperation::GraveyardCleanup
+    );
+    assert_eq!(
+        cleanup_graveyard.action,
+        CoreCliAction::TextRoute {
+            path: "/core/graveyard/cleanup-text".into(),
+            body: Some(json!({ "project": "/repo", "dryRun": true })),
+        }
+    );
+}
+
+#[test]
 fn agent_ps_plans_native_text_route_with_project_resolution() {
     let plan = classify_core_cli_with_project_resolver(
         &["ps", "--project", "./child dir", "--json"],

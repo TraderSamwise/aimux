@@ -1,19 +1,19 @@
 use aimux::core_cli_routing::{
     CoreAgentInputArgs, CoreAgentPsArgs, CoreCollaborationArgs, CoreDaemonRestartArgs,
-    CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs,
-    CoreLogsSubcommand, CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs, CoreTaskArgs,
-    CoreThreadArgs, core_command_args, has_core_global_logging_args, is_core_cli_command,
-    is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_input_args,
-    parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_collaboration_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
-    parse_core_host_agent_stream_args, parse_core_host_restart_args,
-    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    CoreGraveyardArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs,
+    CoreLogsArgs, CoreLogsSubcommand, CoreNotificationArgs, CoreProjectEnsureArgs, CoreRestartArgs,
+    CoreTaskArgs, CoreThreadArgs, CoreWorktreeArgs, core_command_args,
+    has_core_global_logging_args, is_core_cli_command, is_core_project_ensure_command,
+    is_valid_core_project_ensure_args, parse_core_agent_input_args, parse_core_agent_migrate_args,
+    parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_collaboration_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
     parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args,
+    parse_core_thread_args, parse_core_worktree_args,
 };
 
 #[test]
@@ -680,6 +680,73 @@ fn thread_parser_matches_orchestration_forms() {
 }
 
 #[test]
+fn worktree_and_graveyard_parsers_match_cli_forms() {
+    let cleanup = parse_core_worktree_args(&[
+        "worktree",
+        "cleanup-caches",
+        "--project=/repo",
+        "--yes",
+        "--include-active",
+        "--json",
+    ])
+    .expect("worktree cleanup args");
+    assert_eq!(
+        cleanup,
+        CoreWorktreeArgs {
+            subcommand: "cleanup-caches".into(),
+            project: Some("/repo".into()),
+            name: None,
+            path: None,
+            yes: true,
+            include_active: true,
+            json: true,
+        }
+    );
+
+    let create =
+        parse_core_worktree_args(&["worktree", "create", "feature"]).expect("worktree create args");
+    assert_eq!(create.name.as_deref(), Some("feature"));
+
+    let remove = parse_core_worktree_args(&[
+        "worktree",
+        "remove",
+        "../feature",
+        "--project",
+        "/repo",
+        "--json",
+    ])
+    .expect("worktree remove args");
+    assert_eq!(remove.path.as_deref(), Some("../feature"));
+    assert_eq!(remove.project.as_deref(), Some("/repo"));
+    assert!(remove.json);
+
+    let graveyard =
+        parse_core_graveyard_args(&["graveyard", "send", "claude-1", "--project=/repo", "--json"])
+            .expect("graveyard send args");
+    assert_eq!(
+        graveyard,
+        CoreGraveyardArgs {
+            subcommand: "send".into(),
+            project: Some("/repo".into()),
+            session_id: Some("claude-1".into()),
+            dry_run: false,
+            json: true,
+        }
+    );
+    let cleanup_graveyard = parse_core_graveyard_args(&["graveyard", "cleanup", "--dry-run"])
+        .expect("graveyard cleanup args");
+    assert!(cleanup_graveyard.dry_run);
+
+    assert!(parse_core_worktree_args(&["worktree", "create"]).is_none());
+    assert!(parse_core_worktree_args(&["worktree", "remove", "--project", "/repo"]).is_none());
+    assert!(
+        parse_core_worktree_args(&["worktree", "cleanup-caches", "--include-active=1"]).is_none()
+    );
+    assert!(parse_core_graveyard_args(&["graveyard", "send"]).is_none());
+    assert!(parse_core_graveyard_args(&["graveyard", "cleanup", "--yes"]).is_none());
+}
+
+#[test]
 fn logs_parser_preserves_values_that_start_with_hyphens() {
     assert_eq!(
         parse_core_logs_args(&["logs", "tail", "--project", "-foo", "-n", "-5", "--daemon",]),
@@ -938,6 +1005,13 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["thread", "send", "thread-1", "body", "--from", "user"],
         vec!["thread", "mark-seen", "thread-1", "--session"],
         vec!["thread", "status", "thread-1", "--status=waiting"],
+        vec!["worktree", "list"],
+        vec!["worktree", "create", "feature"],
+        vec!["worktree", "remove", "../feature"],
+        vec!["worktree", "cleanup-caches", "--include-active=1"],
+        vec!["graveyard", "list"],
+        vec!["graveyard", "send", "claude-1"],
+        vec!["graveyard", "cleanup", "--dry-run"],
         vec!["projects", "list", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],
@@ -971,6 +1045,10 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["review", "approve"],
         vec!["thread", "show"],
         vec!["thread", "send", "thread-1", "--from", "user"],
+        vec!["worktree", "create"],
+        vec!["worktree", "create", "--help"],
+        vec!["graveyard", "send"],
+        vec!["graveyard", "send", "--help"],
         vec!["daemon", "project-ensure", "-h"],
         vec!["remote", "unlock"],
         vec![],
