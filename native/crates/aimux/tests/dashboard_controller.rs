@@ -137,21 +137,76 @@ fn pending_worktree_enter_sets_footer_message_without_request() {
 }
 
 #[test]
+fn printable_navigation_keys_still_drive_dashboard_commands() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('j')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.navigation.focused_worktree_path(&snapshot),
+        Some("<WORKTREE>")
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('l')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+}
+
+#[test]
+fn service_input_collects_printable_text_and_dispatches_create() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('v')),
+        DashboardControllerEffect::Render
+    );
+    for character in "yarn dev".chars() {
+        assert_eq!(
+            controller.handle_key(&snapshot, DashboardKey::Printable(character)),
+            DashboardControllerEffect::Render
+        );
+    }
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected service create request");
+    };
+
+    assert_eq!(request.path, routes::services::CREATE);
+    assert_eq!(
+        request.body,
+        json!({
+            "command": "yarn dev",
+            "worktreePath": "<ROOT>"
+        })
+    );
+    assert!(controller.service_input.is_none());
+}
+
+#[test]
 fn parses_common_dashboard_key_sequences() {
-    assert_eq!(parse_dashboard_key(b"j"), DashboardKey::Down);
+    assert_eq!(parse_dashboard_key(b"j"), DashboardKey::Printable('j'));
     assert_eq!(parse_dashboard_key(b"\x1b[B"), DashboardKey::Down);
-    assert_eq!(parse_dashboard_key(b"k"), DashboardKey::Up);
+    assert_eq!(parse_dashboard_key(b"k"), DashboardKey::Printable('k'));
     assert_eq!(parse_dashboard_key(b"\x1b[A"), DashboardKey::Up);
     assert_eq!(parse_dashboard_key(b"\r"), DashboardKey::Enter);
-    assert_eq!(parse_dashboard_key(b"l"), DashboardKey::Enter);
+    assert_eq!(parse_dashboard_key(b"l"), DashboardKey::Printable('l'));
     assert_eq!(parse_dashboard_key(b"\x1b[C"), DashboardKey::Enter);
-    assert_eq!(parse_dashboard_key(b"h"), DashboardKey::Back);
+    assert_eq!(parse_dashboard_key(b"h"), DashboardKey::Printable('h'));
     assert_eq!(parse_dashboard_key(b"\x1b[D"), DashboardKey::Back);
-    assert_eq!(parse_dashboard_key(b"x"), DashboardKey::Stop);
-    assert_eq!(parse_dashboard_key(b"q"), DashboardKey::Quit);
-    assert_eq!(parse_dashboard_key(b"n"), DashboardKey::NewAgent);
-    assert_eq!(parse_dashboard_key(b"v"), DashboardKey::NewService);
-    assert_eq!(parse_dashboard_key(b"4"), DashboardKey::Digit('4'));
+    assert_eq!(parse_dashboard_key(b"x"), DashboardKey::Printable('x'));
+    assert_eq!(parse_dashboard_key(b"q"), DashboardKey::Printable('q'));
+    assert_eq!(parse_dashboard_key(b"n"), DashboardKey::Printable('n'));
+    assert_eq!(parse_dashboard_key(b"v"), DashboardKey::Printable('v'));
+    assert_eq!(parse_dashboard_key(b"\x7f"), DashboardKey::Backspace);
+    assert_eq!(parse_dashboard_key(b"4"), DashboardKey::Printable('4'));
 }
 
 fn snapshot() -> DesktopStateSnapshot {

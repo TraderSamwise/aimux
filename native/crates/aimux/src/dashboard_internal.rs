@@ -13,6 +13,7 @@ use crate::dashboard_navigation::DashboardEntryRef;
 use crate::dashboard_project_events::DashboardProjectRefreshState;
 use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
+use crate::dashboard_service_input::render_service_input_overlay;
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_key};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use anyhow::{Context, Result};
@@ -269,6 +270,18 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_tool_picker_overlay(
             tool_picker,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if let Some(service_input) = controller.service_input.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_service_input_overlay(
+            service_input,
             options.cols,
             options.rows,
         ));

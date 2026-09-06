@@ -5,6 +5,7 @@ use crate::dashboard_create::{DashboardCreateBlocked, DashboardCreatePlan};
 use crate::dashboard_model::DesktopStateSnapshot;
 use crate::dashboard_navigation::{DashboardNavigationOutcome, DashboardNavigationState};
 use crate::dashboard_renderer::DashboardNavLevel;
+use crate::dashboard_service_input::{DashboardServiceInputEffect, DashboardServiceInputState};
 use crate::dashboard_tool_picker::{
     DashboardToolEntry, DashboardToolPickerEffect, DashboardToolPickerState,
 };
@@ -14,6 +15,7 @@ pub struct DashboardController {
     pub navigation: DashboardNavigationState,
     pub footer_message: Option<String>,
     pub tool_picker: Option<DashboardToolPickerState>,
+    pub service_input: Option<DashboardServiceInputState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +33,7 @@ impl DashboardController {
             navigation: DashboardNavigationState::new(snapshot),
             footer_message: None,
             tool_picker: None,
+            service_input: None,
         }
     }
 
@@ -45,9 +48,13 @@ impl DashboardController {
     ) -> DashboardControllerEffect {
         self.navigation.clamp(snapshot);
         self.footer_message = None;
+        if self.service_input.is_some() {
+            return self.handle_service_input_key(snapshot, key);
+        }
         if self.tool_picker.is_some() {
             return self.handle_tool_picker_key(snapshot, key);
         }
+        let key = normalize_dashboard_command_key(key);
         match key {
             DashboardKey::Quit => DashboardControllerEffect::Quit,
             DashboardKey::NewAgent => DashboardControllerEffect::OpenAgentToolPicker,
@@ -82,10 +89,14 @@ impl DashboardController {
                 _ => DashboardControllerEffect::Ignored,
             },
             DashboardKey::NewService => {
-                self.footer_message = Some("Service input is not ported yet".into());
+                self.service_input = Some(DashboardServiceInputState::default());
                 DashboardControllerEffect::Render
             }
             DashboardKey::Other => {
+                self.navigation.clear_quick_jump();
+                DashboardControllerEffect::Ignored
+            }
+            DashboardKey::Backspace | DashboardKey::Printable(_) => {
                 self.navigation.clear_quick_jump();
                 DashboardControllerEffect::Ignored
             }
@@ -103,20 +114,27 @@ impl DashboardController {
         };
         let effect = match key {
             DashboardKey::Back => DashboardToolPickerEffect::Close,
-            DashboardKey::Up => {
+            DashboardKey::Up | DashboardKey::Printable('k') => {
                 tool_picker.move_prev();
                 DashboardToolPickerEffect::Render
             }
-            DashboardKey::Down => {
+            DashboardKey::Down | DashboardKey::Printable('j') => {
                 tool_picker.move_next();
                 DashboardToolPickerEffect::Render
             }
-            DashboardKey::Digit(digit) => tool_picker.select_digit(digit, worktree_path),
+            DashboardKey::Digit(digit) | DashboardKey::Printable(digit)
+                if digit.is_ascii_digit() =>
+            {
+                tool_picker.select_digit(digit, worktree_path)
+            }
             DashboardKey::Enter => tool_picker.create_selected(worktree_path),
             DashboardKey::Quit
             | DashboardKey::Stop
             | DashboardKey::NewAgent
             | DashboardKey::NewService
+            | DashboardKey::Backspace
+            | DashboardKey::Digit(_)
+            | DashboardKey::Printable(_)
             | DashboardKey::Other => DashboardToolPickerEffect::Render,
         };
         match effect {
@@ -130,6 +148,51 @@ impl DashboardController {
                 DashboardControllerEffect::Request(request)
             }
             DashboardToolPickerEffect::Create(DashboardCreatePlan::Blocked(blocked)) => {
+                self.footer_message = Some(match blocked {
+                    DashboardCreateBlocked::ToolPickerRequired => "Select a tool".into(),
+                    DashboardCreateBlocked::ServiceCommandInputRequired => {
+                        "Enter a service command".into()
+                    }
+                });
+                DashboardControllerEffect::Render
+            }
+        }
+    }
+
+    fn handle_service_input_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        let worktree_path = self.navigation.focused_worktree_path(snapshot);
+        let Some(service_input) = self.service_input.as_mut() else {
+            return DashboardControllerEffect::Ignored;
+        };
+        let effect = match key {
+            DashboardKey::Back => DashboardServiceInputEffect::Close,
+            DashboardKey::Enter => service_input.create(worktree_path),
+            DashboardKey::Backspace => service_input.handle_backspace(),
+            DashboardKey::Printable(character) => service_input.handle_printable(character),
+            DashboardKey::Up
+            | DashboardKey::Down
+            | DashboardKey::Stop
+            | DashboardKey::NewAgent
+            | DashboardKey::NewService
+            | DashboardKey::Quit
+            | DashboardKey::Digit(_)
+            | DashboardKey::Other => DashboardServiceInputEffect::Render,
+        };
+        match effect {
+            DashboardServiceInputEffect::Render => DashboardControllerEffect::Render,
+            DashboardServiceInputEffect::Close => {
+                self.service_input = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardServiceInputEffect::Create(DashboardCreatePlan::Request(request)) => {
+                self.service_input = None;
+                DashboardControllerEffect::Request(request)
+            }
+            DashboardServiceInputEffect::Create(DashboardCreatePlan::Blocked(blocked)) => {
                 self.footer_message = Some(match blocked {
                     DashboardCreateBlocked::ToolPickerRequired => "Select a tool".into(),
                     DashboardCreateBlocked::ServiceCommandInputRequired => {
@@ -182,20 +245,38 @@ pub enum DashboardKey {
     NewService,
     Quit,
     Digit(char),
+    Backspace,
+    Printable(char),
     Other,
 }
 
 pub fn parse_dashboard_key(bytes: &[u8]) -> DashboardKey {
     match bytes {
-        b"\r" | b"\n" | b"l" | b"\x1b[C" => DashboardKey::Enter,
-        b"\x1b" | b"h" | b"\x1b[D" => DashboardKey::Back,
-        b"q" => DashboardKey::Quit,
-        b"x" => DashboardKey::Stop,
-        b"n" => DashboardKey::NewAgent,
-        b"v" => DashboardKey::NewService,
-        b"j" | b"\x1b[B" => DashboardKey::Down,
-        b"k" | b"\x1b[A" => DashboardKey::Up,
-        [digit] if digit.is_ascii_digit() => DashboardKey::Digit(*digit as char),
+        b"\r" | b"\n" | b"\x1b[C" => DashboardKey::Enter,
+        b"\x1b" | b"\x1b[D" => DashboardKey::Back,
+        b"\x7f" | b"\x08" => DashboardKey::Backspace,
+        b"\x1b[B" => DashboardKey::Down,
+        b"\x1b[A" => DashboardKey::Up,
+        [byte] if byte.is_ascii_graphic() || *byte == b' ' => {
+            DashboardKey::Printable(*byte as char)
+        }
         _ => DashboardKey::Other,
+    }
+}
+
+fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
+    match key {
+        DashboardKey::Printable('\r')
+        | DashboardKey::Printable('\n')
+        | DashboardKey::Printable('l') => DashboardKey::Enter,
+        DashboardKey::Printable('h') => DashboardKey::Back,
+        DashboardKey::Printable('q') => DashboardKey::Quit,
+        DashboardKey::Printable('x') => DashboardKey::Stop,
+        DashboardKey::Printable('n') => DashboardKey::NewAgent,
+        DashboardKey::Printable('v') => DashboardKey::NewService,
+        DashboardKey::Printable('j') => DashboardKey::Down,
+        DashboardKey::Printable('k') => DashboardKey::Up,
+        DashboardKey::Printable(digit) if digit.is_ascii_digit() => DashboardKey::Digit(digit),
+        other => other,
     }
 }

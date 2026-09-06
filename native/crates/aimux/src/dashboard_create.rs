@@ -62,7 +62,7 @@ fn plan_agent_create(intent: &DashboardAgentCreateIntent) -> DashboardCreatePlan
 }
 
 fn plan_service_create(intent: &DashboardServiceCreateIntent) -> DashboardCreatePlan {
-    let Some(command) = nonempty(intent.command.as_deref()) else {
+    let Some(command) = intent.command.as_deref() else {
         return DashboardCreatePlan::Blocked(DashboardCreateBlocked::ServiceCommandInputRequired);
     };
     let mut body = Map::new();

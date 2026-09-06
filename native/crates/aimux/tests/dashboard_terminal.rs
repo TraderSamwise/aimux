@@ -7,7 +7,7 @@ fn read_dashboard_key_maps_bytes_from_reader() {
     let mut input = b"j".as_slice();
     assert_eq!(
         read_dashboard_key(&mut input).expect("read key"),
-        Some(DashboardKey::Down)
+        Some(DashboardKey::Printable('j'))
     );
 }
 

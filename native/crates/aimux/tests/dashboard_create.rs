@@ -83,9 +83,9 @@ fn service_command_maps_to_project_service_create_request_without_defaults() {
 }
 
 #[test]
-fn blank_service_command_requires_interactive_input() {
+fn absent_service_command_requires_interactive_input() {
     let intent = DashboardCreateIntent::Service(DashboardServiceCreateIntent {
-        command: Some("   ".into()),
+        command: None,
         service_id: Some("service-web".into()),
         worktree_path: None,
     });
@@ -94,6 +94,21 @@ fn blank_service_command_requires_interactive_input() {
         plan_dashboard_create(&intent),
         DashboardCreatePlan::Blocked(DashboardCreateBlocked::ServiceCommandInputRequired)
     );
+}
+
+#[test]
+fn blank_service_command_maps_to_interactive_shell_create() {
+    let intent = DashboardCreateIntent::Service(DashboardServiceCreateIntent {
+        command: Some("".into()),
+        service_id: None,
+        worktree_path: None,
+    });
+
+    let DashboardCreatePlan::Request(request) = plan_dashboard_create(&intent) else {
+        panic!("blank command should still create an interactive shell service");
+    };
+
+    assert_eq!(request.body, json!({ "command": "" }));
 }
 
 #[test]

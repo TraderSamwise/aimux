@@ -28,6 +28,7 @@ pub mod dashboard_processes;
 pub mod dashboard_project_events;
 pub mod dashboard_readiness;
 pub mod dashboard_renderer;
+pub mod dashboard_service_input;
 pub mod dashboard_terminal;
 pub mod dashboard_tool_picker;
 pub mod debug_state;
