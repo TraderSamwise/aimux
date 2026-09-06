@@ -127,6 +127,13 @@ Priority fixture groups:
   parsing captured by running TypeScript `claude-hooks` and `codex-hooks`
   helpers.
 
+## Install Cleanup
+
+- `install-cleanup/cleanup.json`: install retention planning, reference
+  detection, deletion/dry-run behavior, debris reclamation, environment root
+  handling, and conservative defaults captured by running TypeScript
+  `install-cleanup` helpers.
+
 ## Expose
 
 - `expose/pane-output-tap.json`: pane output tap ownership, adoption, renewal,

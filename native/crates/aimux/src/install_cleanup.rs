@@ -1,6 +1,6 @@
 use crate::cli_launcher::get_aimux_stable_shim_path;
 use crate::process_inspector::list_process_args;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
@@ -29,6 +29,7 @@ pub enum InstallKeepReason {
 pub struct InstallCleanupCandidate {
     pub name: String,
     pub path: String,
+    #[serde(serialize_with = "serialize_js_number")]
     pub age_days: f64,
     pub size_bytes: u64,
 }
@@ -663,6 +664,17 @@ fn format_bytes(bytes: u64) -> String {
         format!("{} MB", (bytes as f64 / 1_000_000.0).round() as u64)
     } else {
         format!("{bytes} B")
+    }
+}
+
+fn serialize_js_number<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.is_finite() && value.fract() == 0.0 {
+        serializer.serialize_i64(*value as i64)
+    } else {
+        serializer.serialize_f64(*value)
     }
 }
 
