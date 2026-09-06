@@ -222,6 +222,16 @@ Priority fixture groups:
   switch, minimum retention, and out-of-range fallback captured by running
   TypeScript `recording-config`.
 
+## Event Loop
+
+- `event-loop/budget.json`: event-loop budget thresholds, sync-share rounding,
+  insufficient-sample handling, unstarted-monitor failure, and multi-reason
+  reporting captured by running TypeScript `event-loop-budget`.
+- `event-loop/metrics.json`: event-loop monitor start/stop/not-monitoring
+  observations captured by running TypeScript `event-loop-metrics`; the Rust
+  fixture is an ignored checklist until the daemon exposes an equivalent
+  histogram API.
+
 ## Graveyard
 
 - `graveyard/cleanup.json`: graveyard cleanup plan cutoffs, retention
