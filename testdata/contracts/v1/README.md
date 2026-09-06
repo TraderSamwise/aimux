@@ -151,6 +151,11 @@ Priority fixture groups:
 
 ## Notifications
 
+- `notifications/policy.json`: app notification policy session snapshots, agent
+  transitions, daemon record mapping, live alert mapping, stale filtering,
+  category gates, dedupe keys, targets, and batch observation captured by
+  running TypeScript `app/lib/notification-policy` helpers with `Date.now`
+  fixed.
 - `notifications/osc.json`: OSC 9, OSC 99, OSC 777, chunk buffering, ST
   terminator, base64, and malformed-payload behavior captured by running the
   TypeScript `OscNotificationParser`.

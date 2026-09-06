@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn run_app_display_helpers_contract_case(input: &Value) -> Value {
     let api = input.get("api").and_then(Value::as_str).unwrap_or_default();
