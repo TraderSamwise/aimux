@@ -1,11 +1,13 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     agent_status_chip, list_switchable_agent_items, resolve_next_agent, resolve_prev_agent,
-    serialize_fast_control_item,
+    route_switchable_agent_request_with_runtime, serialize_fast_control_item,
 };
 use aimux::runtime_topology::runtime_topology_path;
+use aimux::tmux::CapturePaneOptions;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -13,6 +15,23 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Default)]
+struct FakePreviewRuntime {
+    output: String,
+    calls: Vec<(String, CapturePaneOptions)>,
+}
+
+impl AgentOutputCaptureRuntime for FakePreviewRuntime {
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.calls.push((window_id.to_owned(), options));
+        Ok(self.output.clone())
+    }
+}
 
 #[test]
 fn filters_project_control_and_keeps_services_in_worktree_scope() {
@@ -310,6 +329,96 @@ fn route_switchable_agents_reads_topology_metadata_and_last_used() {
     cleanup(project);
 }
 
+#[test]
+fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
+    let project = temp_project("route-switchable-preview");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "codex-live".into(),
+                json!({ "derived": { "activity": "running" } }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let path = "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1";
+    let mut runtime = FakePreviewRuntime {
+        output: format!("{}tail", "x".repeat(9_000)),
+        calls: Vec::new(),
+    };
+
+    let plain =
+        route_switchable_agent_request_with_runtime(&context, "GET", path, &mut runtime).unwrap();
+
+    assert_eq!(plain.status, 200);
+    assert!(runtime.calls.is_empty());
+    assert!(
+        plain.body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item.get("previewSnapshot").is_none())
+    );
+
+    let preview_path = format!("{path}&includePreview=1");
+    let first =
+        route_switchable_agent_request_with_runtime(&context, "GET", &preview_path, &mut runtime)
+            .unwrap();
+    runtime.output = "second".into();
+    let second =
+        route_switchable_agent_request_with_runtime(&context, "GET", &preview_path, &mut runtime)
+            .unwrap();
+
+    assert_eq!(
+        runtime.calls,
+        vec![
+            (
+                "@1".to_owned(),
+                CapturePaneOptions {
+                    start_line: Some(-40),
+                    end_line: None,
+                    include_escapes: true,
+                },
+            ),
+            (
+                "@3".to_owned(),
+                CapturePaneOptions {
+                    start_line: Some(-40),
+                    end_line: None,
+                    include_escapes: true,
+                },
+            ),
+        ]
+    );
+    let first_items = first.body["items"].as_array().unwrap();
+    let second_items = second.body["items"].as_array().unwrap();
+    let live = find(first_items, "codex-live");
+    assert_eq!(live["previewSnapshot"]["windowId"], "@1");
+    assert_eq!(live["previewSnapshot"]["source"], "capture");
+    assert_eq!(live["previewSnapshot"]["startLine"], -40);
+    assert_eq!(live["previewSnapshot"]["lineCount"], 40);
+    assert!(live["previewSnapshot"]["capturedAt"].as_str().is_some());
+    assert_eq!(
+        live["previewSnapshot"]["output"].as_str().unwrap().len(),
+        8_192
+    );
+    assert_eq!(
+        find(second_items, "codex-live")["previewSnapshot"]["output"],
+        live["previewSnapshot"]["output"]
+    );
+    cleanup(project);
+}
+
 fn agent_entry(
     window_id: &str,
     window_index: i64,
@@ -411,6 +520,13 @@ fn context(current_window_id: &str, current_path: &str) -> SwitchableContext {
 
 fn ids(items: &[aimux::project_service::switchable_agents::SwitchableAgentItem]) -> Vec<String> {
     items.iter().map(|item| item.id.clone()).collect()
+}
+
+fn find<'a>(items: &'a [Value], id: &str) -> &'a Value {
+    items
+        .iter()
+        .find(|item| item["id"] == id)
+        .unwrap_or_else(|| panic!("missing item {id}"))
 }
 
 fn window_ids(

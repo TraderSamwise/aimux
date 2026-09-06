@@ -9,19 +9,24 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_session_states, read_runtime_topology,
     runtime_topology_path,
 };
+use crate::tmux::CapturePaneOptions;
 
+use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::expose_ordering::{
     ExposeOrderingOptions, ExposeSublabel, assign_worktree_tones, dashboard_worktree_order_paths,
     expose_tile_context_for_item, order_expose_items,
 };
 use super::http::{query_params, trimmed_query};
+use super::output_cache::AgentOutputCaptureCacheKey;
 use super::router::ProjectServiceRequestContext;
 use super::usage::{load_last_used_state, parse_recency_timestamp};
 
 const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 const LIVE_SERVICE_STATUSES: &[&str] = &["starting", "running"];
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+const EXPOSE_PREVIEW_CAPTURE_LINES: i64 = 40;
+const EXPOSE_PREVIEW_MAX_CHARS: usize = 8_192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentListScope {
@@ -88,6 +93,16 @@ pub fn route_switchable_agent_request(
     method: &str,
     path: &str,
 ) -> Option<ProjectServiceDispatchResponse> {
+    let mut runtime = SystemAgentOutputCaptureRuntime;
+    route_switchable_agent_request_with_runtime(context, method, path, &mut runtime)
+}
+
+pub fn route_switchable_agent_request_with_runtime(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> Option<ProjectServiceDispatchResponse> {
     if !method.eq_ignore_ascii_case("GET")
         || project_service_pathname(path) != routes::controls::SWITCHABLE_AGENTS
     {
@@ -126,6 +141,10 @@ pub fn route_switchable_agent_request(
         display_order_ids: dashboard_display_order_ids(context.desktop_state.as_ref()),
     };
     let expose = params.get("expose").is_some_and(|value| value == "1");
+    let include_preview = matches!(
+        params.get("includePreview").map(String::as_str),
+        Some("1" | "true")
+    );
     let metadata = load_metadata_state(&project_state_dir);
     let entries = topology_switchable_entries(&topology, &metadata.sessions);
     let last_used = load_last_used_state(&project_state_dir);
@@ -165,13 +184,17 @@ pub fn route_switchable_agent_request(
     let items = items
         .into_iter()
         .map(|item| {
-            serialize_route_item(
+            let mut serialized = serialize_route_item(
                 &item,
                 options.raw_labels,
                 sublabel,
                 &route_project_root,
                 expose_tones.as_ref(),
-            )
+            );
+            if include_preview {
+                attach_expose_preview_snapshot(context, &mut serialized, runtime);
+            }
+            serialized
         })
         .collect::<Vec<_>>();
     Some(ProjectServiceDispatchResponse::json(
@@ -550,6 +573,71 @@ fn serialize_route_item(
         map.insert("exposeStatus".into(), chip);
     }
     serialized
+}
+
+fn attach_expose_preview_snapshot(
+    context: &ProjectServiceRequestContext,
+    item: &mut Value,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) {
+    let Some(window_id) = item
+        .get("target")
+        .and_then(|target| target.get("windowId"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let options = CapturePaneOptions {
+        start_line: Some(-EXPOSE_PREVIEW_CAPTURE_LINES),
+        end_line: None,
+        include_escapes: true,
+    };
+    let Ok((output, _coalesced)) = context.output_cache.capture_or_reuse(
+        AgentOutputCaptureCacheKey {
+            window_id: window_id.clone(),
+            options,
+        },
+        || runtime.capture_pane(&window_id, options),
+    ) else {
+        return;
+    };
+    let Some(map) = item.as_object_mut() else {
+        return;
+    };
+    map.insert(
+        "previewSnapshot".into(),
+        json!({
+            "output": trailing_chars(&output, EXPOSE_PREVIEW_MAX_CHARS),
+            "capturedAt": now_iso(),
+            "source": "capture",
+            "windowId": window_id,
+            "startLine": -EXPOSE_PREVIEW_CAPTURE_LINES,
+            "lineCount": EXPOSE_PREVIEW_CAPTURE_LINES,
+        }),
+    );
+}
+
+fn trailing_chars(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_owned();
+    }
+    value.chars().skip(char_count - max_chars).collect()
+}
+
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
 }
 
 fn resolve_current_managed_window<'a>(
