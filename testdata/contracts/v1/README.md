@@ -113,6 +113,11 @@ Priority fixture groups:
 
 ## Coordination
 
+- `coordination/mutations.json`: thread-helper and direct-message mutation
+  contracts captured by running TypeScript `threads` and `orchestration`
+  helpers, including runtime-exchange side effects. Current Rust route parity
+  covers the orchestration cases; direct `threads` helper cases remain a
+  checklist until a Rust public API exists.
 - `coordination/model.json`: coordination inbox, worklist, stale-notification,
   reachability, sorting, and view composition cases captured by running the
   TypeScript coordination model functions.
@@ -197,6 +202,12 @@ Priority fixture groups:
 - `orchestration/routing.json`: direct, role, tool, worktree, liveness, and
   workflow-pressure recipient routing captured by running TypeScript
   `orchestration-routing` helpers.
+
+## Workflow
+
+- `workflow/entries.json`: workflow entry, coordination-thread, filter, family,
+  and next-action contracts captured by running TypeScript `workflow` helpers
+  over runtime-exchange snapshots.
 
 ## Runtime Coherence
 

@@ -1,0 +1,643 @@
+{
+  "version": 1,
+  "source": "src/threads.test.ts, src/orchestration.test.ts",
+  "generatedBy": "scripts/capture-coordination-mutations-contract.mjs",
+  "description": "Thread and direct-message mutation contracts captured by running TypeScript threads/orchestration helpers, including runtime-exchange side effects.",
+  "normalization": {
+    "ids": "Generated thread/message ids are tokenized in first-appearance order.",
+    "timestamps": "ISO timestamps are replaced with <ts> after per-object monotonicity checks."
+  },
+  "cases": [
+    {
+      "id": "coordination-mutations-001",
+      "name": "opens conversation threads and records them in the exchange",
+      "source": "src/threads.test.ts",
+      "input": {
+        "source": "threads",
+        "scenario": "threads-open",
+        "operations": [
+          {
+            "route": "/threads/open",
+            "body": {
+              "from": "claude-1",
+              "title": "Review API shape",
+              "kind": "conversation",
+              "participants": ["codex-1"]
+            },
+            "save": "opened"
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "thread": {
+            "id": "<id:1>",
+            "title": "Review API shape",
+            "kind": "conversation",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "createdBy": "claude-1",
+            "participants": ["claude-1", "codex-1"],
+            "status": "open"
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Review API shape",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"]
+            }
+          ],
+          "messages": [],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "f6138a94072f9faa51cab247c13885ac726f3c1499f1a6b029a6f6aae7c9a5ce"
+    },
+    {
+      "id": "coordination-mutations-002",
+      "name": "appends messages and derives unread inbox state",
+      "source": "src/threads.test.ts",
+      "input": {
+        "source": "threads",
+        "scenario": "threads-send",
+        "operations": [
+          {
+            "route": "/threads/open",
+            "body": {
+              "from": "claude-1",
+              "title": "Ask about parser",
+              "kind": "conversation",
+              "participants": ["codex-1"]
+            },
+            "save": "opened"
+          },
+          {
+            "route": "/threads/send",
+            "body": {
+              "threadIdFrom": "opened.thread.id",
+              "from": "claude-1",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Why this parser?"
+            }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "thread": {
+            "id": "<id:1>",
+            "title": "Ask about parser",
+            "kind": "conversation",
+            "status": "open",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "createdBy": "claude-1",
+            "participants": ["claude-1", "codex-1"],
+            "lastMessageId": "<id:2>",
+            "unreadBy": ["codex-1"]
+          },
+          "message": {
+            "id": "<id:2>",
+            "threadId": "<id:1>",
+            "ts": "<ts>",
+            "from": "claude-1",
+            "to": ["codex-1"],
+            "kind": "request",
+            "body": "Why this parser?"
+          },
+          "messages": [
+            {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-1",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Why this parser?"
+            }
+          ]
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Ask about parser",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"],
+              "lastMessageId": "<id:2>",
+              "unreadBy": ["codex-1"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-1",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Why this parser?"
+            }
+          ],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [
+            {
+              "id": "inbox:codex-1:thread:<id:1>",
+              "participantId": "codex-1",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "state": "unread",
+              "urgency": 3,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "3e91aa9b5a4ca53ab2708f301eee96376326050eabc46a1e3fb9c56c25cb2ec2"
+    },
+    {
+      "id": "coordination-mutations-003",
+      "name": "marks a thread seen for one participant",
+      "source": "src/threads.test.ts",
+      "input": {
+        "source": "threads",
+        "scenario": "threads-mark-seen",
+        "operations": [
+          {
+            "route": "/threads/open",
+            "body": {
+              "from": "claude-1",
+              "title": "Ask about parser",
+              "kind": "conversation",
+              "participants": ["codex-1"]
+            },
+            "save": "opened"
+          },
+          {
+            "route": "/threads/send",
+            "body": {
+              "threadIdFrom": "opened.thread.id",
+              "from": "claude-1",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Why this parser?"
+            }
+          },
+          { "route": "/threads/mark-seen", "body": { "threadIdFrom": "opened.thread.id", "session": "codex-1" } }
+        ]
+      },
+      "output": {
+        "result": {
+          "thread": {
+            "id": "<id:1>",
+            "title": "Ask about parser",
+            "kind": "conversation",
+            "status": "open",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "createdBy": "claude-1",
+            "participants": ["claude-1", "codex-1"],
+            "lastMessageId": "<id:2>",
+            "unreadBy": []
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Ask about parser",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"],
+              "lastMessageId": "<id:2>",
+              "unreadBy": []
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-1",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Why this parser?"
+            }
+          ],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "e7630c360dfd2cc2f6137c7375fd4549b86210c30b858dfc6e630fa342c23e6b"
+    },
+    {
+      "id": "coordination-mutations-004",
+      "name": "updates thread status and clears waits when done",
+      "source": "src/threads.test.ts",
+      "input": {
+        "source": "threads",
+        "scenario": "threads-status",
+        "operations": [
+          {
+            "route": "/threads/open",
+            "body": {
+              "from": "claude-1",
+              "title": "Ask about parser",
+              "kind": "conversation",
+              "participants": ["codex-1"]
+            },
+            "save": "opened"
+          },
+          {
+            "route": "/threads/status",
+            "body": { "threadIdFrom": "opened.thread.id", "status": "done", "owner": "claude-1" }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "thread": {
+            "id": "<id:1>",
+            "title": "Ask about parser",
+            "kind": "conversation",
+            "status": "done",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "createdBy": "claude-1",
+            "participants": ["claude-1", "codex-1"],
+            "owner": "claude-1",
+            "waitingOn": []
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Ask about parser",
+              "kind": "conversation",
+              "status": "done",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"],
+              "owner": "claude-1",
+              "waitingOn": []
+            }
+          ],
+          "messages": [],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "f4175455478d1868887d2667b573ad9ed7002da02d7a9712fa8aecdebacd0359"
+    },
+    {
+      "id": "coordination-mutations-005",
+      "name": "opens and reuses direct conversation threads",
+      "source": "src/orchestration.test.ts",
+      "input": {
+        "source": "orchestration",
+        "scenario": "direct-reuse",
+        "operations": [
+          {
+            "route": "/threads/send",
+            "body": {
+              "from": "user",
+              "to": ["codex-1"],
+              "body": "Please review the parser change.",
+              "title": "Parser review"
+            },
+            "save": "first"
+          },
+          { "route": "/threads/send", "body": { "from": "user", "to": ["codex-1"], "body": "Any update?" } }
+        ]
+      },
+      "output": {
+        "result": {
+          "first": {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Parser review",
+              "kind": "conversation",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "user",
+              "participants": ["user", "codex-1"],
+              "owner": "user",
+              "waitingOn": ["codex-1"],
+              "lastMessageId": "<id:2>",
+              "unreadBy": ["codex-1"]
+            },
+            "message": {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "user",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Please review the parser change."
+            },
+            "threadCreated": true
+          },
+          "second": {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Parser review",
+              "kind": "conversation",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "user",
+              "participants": ["user", "codex-1"],
+              "owner": "user",
+              "waitingOn": ["codex-1"],
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-1"]
+            },
+            "message": {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "user",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Any update?"
+            },
+            "threadCreated": false
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Parser review",
+              "kind": "conversation",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "user",
+              "participants": ["user", "codex-1"],
+              "owner": "user",
+              "waitingOn": ["codex-1"],
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-1"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "user",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Please review the parser change."
+            },
+            {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "user",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Any update?"
+            }
+          ],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:1>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "waitingOn": ["codex-1"],
+              "owner": "user",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:codex-1:thread:<id:1>",
+              "participantId": "codex-1",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "f4c3c9381d20109a830af92aa67f2340adad0bba8be9d36863b70b60db561294"
+    },
+    {
+      "id": "coordination-mutations-006",
+      "name": "marks replies as waiting on the next recipients",
+      "source": "src/orchestration.test.ts",
+      "input": {
+        "source": "orchestration",
+        "scenario": "thread-reply",
+        "operations": [
+          {
+            "route": "/threads/send",
+            "body": { "from": "claude-lead", "to": ["codex-1"], "body": "Take the next debugging pass." },
+            "save": "created"
+          },
+          {
+            "route": "/threads/send",
+            "body": {
+              "threadIdFrom": "created.thread.id",
+              "from": "codex-1",
+              "to": ["claude-lead"],
+              "kind": "reply",
+              "body": "I found the root cause. Can you confirm the rollout plan?"
+            }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "created": {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Conversation: claude-lead → codex-1",
+              "kind": "conversation",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-1"],
+              "owner": "claude-lead",
+              "waitingOn": ["codex-1"],
+              "lastMessageId": "<id:2>",
+              "unreadBy": ["codex-1"]
+            },
+            "message": {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Take the next debugging pass."
+            },
+            "threadCreated": true
+          },
+          "replied": {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Conversation: claude-lead → codex-1",
+              "kind": "conversation",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-1"],
+              "owner": "codex-1",
+              "waitingOn": ["claude-lead"],
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "codex-1",
+              "to": ["claude-lead"],
+              "kind": "reply",
+              "body": "I found the root cause. Can you confirm the rollout plan?"
+            },
+            "threadCreated": false
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Conversation: claude-lead → codex-1",
+              "kind": "conversation",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-1"],
+              "owner": "codex-1",
+              "waitingOn": ["claude-lead"],
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["claude-lead"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-1"],
+              "kind": "request",
+              "body": "Take the next debugging pass."
+            },
+            {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "codex-1",
+              "to": ["claude-lead"],
+              "kind": "reply",
+              "body": "I found the root cause. Can you confirm the rollout plan?"
+            }
+          ],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:1>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "waitingOn": ["claude-lead"],
+              "owner": "codex-1",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:claude-lead:thread:<id:1>",
+              "participantId": "claude-lead",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "c48d73a355d9a5c03e62730c26e2484bf6c6d9eb80d19e0be5fe84978f5dec04"
+    }
+  ]
+}

@@ -1060,7 +1060,7 @@ fn send_direct_message(
                 exchange,
                 ThreadInput {
                     title: input.title.unwrap_or_else(|| {
-                        format!("Conversation: {from} -> {}", recipients.join(", "))
+                        format!("Conversation: {from} \u{2192} {}", recipients.join(", "))
                     }),
                     kind: "conversation".into(),
                     created_by: from.clone(),

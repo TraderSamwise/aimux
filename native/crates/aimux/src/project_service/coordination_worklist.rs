@@ -444,6 +444,111 @@ pub fn build_coordination_thread_entries(
     entries
 }
 
+pub fn build_workflow_entries(
+    exchange: &Value,
+    current_participant: &str,
+    all_kinds: bool,
+) -> Vec<Value> {
+    build_coordination_thread_entries(exchange, current_participant)
+        .into_iter()
+        .filter(|entry| {
+            all_kinds
+                || matches!(
+                    entry
+                        .get("thread")
+                        .and_then(|thread| string_field(thread, "kind")),
+                    Some("task" | "review" | "handoff")
+                )
+        })
+        .collect()
+}
+
+pub fn filter_workflow_entries(
+    entries: &[Value],
+    filter: &str,
+    current_participant: &str,
+) -> Vec<Value> {
+    match filter {
+        "all" => entries.to_vec(),
+        "on_me" => entries
+            .iter()
+            .filter(|entry| {
+                entry.get("thread").is_some_and(|thread| {
+                    string_array(thread, "waitingOn").contains(&current_participant.to_owned())
+                })
+            })
+            .cloned()
+            .collect(),
+        "blocked" => entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .get("thread")
+                    .and_then(|thread| string_field(thread, "status"))
+                    == Some("blocked")
+                    || entry
+                        .get("task")
+                        .and_then(|task| string_field(task, "status"))
+                        == Some("blocked")
+            })
+            .cloned()
+            .collect(),
+        "families" => entries
+            .iter()
+            .filter(|entry| array_field(entry, "familyTaskIds").len() > 1)
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub fn describe_workflow_next_action(entry: &Value, current_participant: &str) -> String {
+    let thread = entry.get("thread").unwrap_or(&Value::Null);
+    let waits_on_me = string_array(thread, "waitingOn")
+        .iter()
+        .any(|participant| participant == current_participant);
+    if string_field(thread, "kind") == Some("handoff") {
+        if waits_on_me && string_field(thread, "owner") == string_field(thread, "createdBy") {
+            return "accept handoff".into();
+        }
+        if waits_on_me {
+            return "reply to handoff".into();
+        }
+        return "check handoff".into();
+    }
+    let task = entry.get("task");
+    if task.and_then(|task| string_field(task, "type")) == Some("review") {
+        if waits_on_me {
+            return "review decision".into();
+        }
+        if task.and_then(|task| string_field(task, "reviewStatus")) == Some("changes_requested") {
+            return "follow up changes".into();
+        }
+        return "review thread".into();
+    }
+    if let Some(task) = task {
+        match string_field(task, "status") {
+            Some("assigned") => return "accept task".into(),
+            Some("blocked") => return "unblock task".into(),
+            Some("in_progress") => return "continue task".into(),
+            _ => {}
+        }
+        if array_field(entry, "familyTaskIds").len() > 1 {
+            return "continue chain".into();
+        }
+        if waits_on_me {
+            return "reply in thread".into();
+        }
+    }
+    if waits_on_me {
+        return "reply".into();
+    }
+    if string_field(thread, "status") == Some("blocked") {
+        return "inspect blocked thread".into();
+    }
+    "open thread".into()
+}
+
 #[derive(Clone, Copy)]
 struct Reachable<'a> {
     reachability: &'static str,
