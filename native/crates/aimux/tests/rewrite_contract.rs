@@ -15,13 +15,19 @@ fn rewrite_status_tracks_translation_first_phases() {
     assert_eq!(status.version, 2);
     assert!(status.strategy.contains("translation first"));
     assert!(status.end_state.contains("zero Node"));
-    assert_eq!(status.progress_estimate_percent, 12);
-    assert!(status.active_slice.contains("native dashboard parity"));
+    assert_eq!(status.progress_estimate_percent, 18);
+    assert!(status.active_slice.contains("dashboard launches"));
     assert!(
         status
             .checkpoints
             .iter()
             .any(|checkpoint| checkpoint.contains("runtime event route"))
+    );
+    assert!(
+        status
+            .checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.contains("native dashboard is the default"))
     );
     assert_eq!(status.phases.len(), 9);
     assert_eq!(status.phases[0].id, "phase-0");
