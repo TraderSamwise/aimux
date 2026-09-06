@@ -3,6 +3,10 @@
   "generatedAt": "2026-09-07T00:00:00.000Z",
   "generatedBy": "scripts/capture-expose-ordering-contract.mjs",
   "source": "src/tmux/expose-ordering.ts",
+  "sources": [
+    "src/tmux/expose-ordering.test.ts",
+    "src/tmux/expose-ordering.ts"
+  ],
   "subject": "src/tmux/expose-ordering.ts",
   "description": "Expose ordering, grouping, worktree labels, tones, and tile context captured by running TypeScript.",
   "caseCount": 14,

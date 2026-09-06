@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/runtime-coherence.ts",
+  "sources": [
+    "src/runtime-coherence.test.ts",
+    "src/runtime-coherence.ts"
+  ],
   "generatedBy": "scripts/capture-runtime-coherence-contract.mjs",
   "description": "Runtime coherence version, restart, tmux contract, dashboard staleness, process path, and rendered-report contracts captured by running TypeScript with mocked runtime dependencies.",
   "constants": {

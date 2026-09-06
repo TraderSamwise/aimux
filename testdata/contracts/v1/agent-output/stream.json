@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/agent-output-stream.ts",
+  "sources": [
+    "src/agent-output-stream.test.ts",
+    "src/agent-output-stream.ts"
+  ],
   "generatedBy": "scripts/capture-agent-output-io-contracts.mjs",
   "description": "Agent output SSE text handler contracts captured by running the TypeScript stream handler.",
   "cases": [

@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/project-api-contract.ts",
+  "sources": [
+    "src/project-api-contract.test.ts",
+    "src/project-api-contract.ts"
+  ],
   "description": "Canonical project-service HTTP route list for Rust parity.",
   "routes": [
     "/events",

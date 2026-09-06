@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/alert-display.ts",
+  "sources": [
+    "src/alert-display.test.ts",
+    "src/alert-display.ts"
+  ],
   "generatedBy": "scripts/capture-model-contracts.mjs",
   "description": "Alert display contracts captured by running the TypeScript alert display helpers.",
   "cases": [

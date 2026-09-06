@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/core-command-contract.ts",
+  "sources": [
+    "src/core-command-contract.test.ts",
+    "src/core-command-contract.ts"
+  ],
   "description": "Canonical daemon core-command route list for Rust parity.",
   "routes": [
     ["commands", "/core/commands"],

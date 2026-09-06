@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/expose-pane-output-tap.ts",
+  "sources": [
+    "src/expose-pane-output-tap.test.ts",
+    "src/expose-pane-output-tap.ts"
+  ],
   "generatedBy": "scripts/capture-expose-pane-output-tap-contract.mjs",
   "description": "Expose pane output tap ownership, adoption, renewal, expiry, compaction, and failure contracts captured by running TypeScript with mocked tmux calls.",
   "constants": {

@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/multiplexer/dashboard-model.ts",
+  "sources": [
+    "src/multiplexer/dashboard-model.test.ts",
+    "src/multiplexer/dashboard-model.ts"
+  ],
   "description": "Desktop-state count and visibility fixture for Rust parity.",
   "cases": []
 }

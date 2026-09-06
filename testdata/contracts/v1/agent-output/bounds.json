@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/agent-output-bounds.ts",
+  "sources": [
+    "src/agent-output-bounds.test.ts",
+    "src/agent-output-bounds.ts"
+  ],
   "generatedBy": "scripts/capture-agent-output-io-contracts.mjs",
   "description": "Agent output capture bounds captured by running the TypeScript bounds helpers.",
   "constants": { "DEFAULT_AGENT_OUTPUT_START_LINE": -120, "MAX_AGENT_OUTPUT_CAPTURE_LINES": 2000 },

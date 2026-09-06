@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/attachment-text.ts",
+  "sources": [
+    "src/attachment-text.test.ts",
+    "src/attachment-text.ts"
+  ],
   "generatedBy": "scripts/capture-model-contracts.mjs",
   "description": "Attachment text recovery contracts captured by running recoverWrappedAttachments.",
   "cases": [

@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/tmux/runtime-manager.ts",
+  "sources": [
+    "src/tmux/runtime-manager.test.ts",
+    "src/tmux/runtime-manager.ts"
+  ],
   "description": "Canonical tmux argv cases for Rust parity.",
   "cases": [
     {

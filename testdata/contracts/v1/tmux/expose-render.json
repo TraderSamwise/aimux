@@ -3,6 +3,10 @@
   "generatedAt": "2026-09-06T00:00:00.000Z",
   "generatedBy": "scripts/capture-tmux-expose-render-contract.mjs",
   "source": "src/tmux/expose.ts",
+  "sources": [
+    "src/tmux/expose.test.ts",
+    "src/tmux/expose.ts"
+  ],
   "subject": "src/tmux/expose.ts",
   "description": "Expose tile header fitting and ANSI tile rendering captured by running TypeScript.",
   "caseCount": 7,

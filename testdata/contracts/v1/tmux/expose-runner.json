@@ -3,6 +3,10 @@
   "generatedAt": "2026-09-07T00:00:00.000Z",
   "generatedBy": "scripts/capture-tmux-expose-runner-contract.mjs",
   "source": "src/tmux/expose.ts",
+  "sources": [
+    "src/tmux/expose.test.ts",
+    "src/tmux/expose.ts"
+  ],
   "subject": "src/tmux/expose.ts",
   "description": "runTmuxExpose key, scope, focus/selection, capture, and UI-state side effects captured by running TypeScript with tmux patched at the runtime-manager boundary.",
   "caseCount": 6,

@@ -3,6 +3,10 @@
   "generatedAt": "2026-09-07T00:00:00.000Z",
   "generatedBy": "scripts/capture-tmux-statusline-render-contract.mjs",
   "source": "src/tmux/statusline.ts",
+  "sources": [
+    "src/tmux/statusline.test.ts",
+    "src/tmux/statusline.ts"
+  ],
   "subject": "src/tmux/statusline.ts",
   "description": "tmux statusline rendering captured from TypeScript renderTmuxStatuslineFromData.",
   "caseCount": 7,

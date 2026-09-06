@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/metadata-store.ts",
+  "sources": [
+    "src/metadata-store.test.ts",
+    "src/metadata-store.ts"
+  ],
   "generatedBy": "scripts/capture-metadata-store-contract.mjs",
   "description": "Metadata store persistence, authority-field scrubbing, loop/control flags, statusline segment, and malformed-shape contracts captured by running TypeScript.",
   "constants": { "MAX_SEGMENT_DATA_BYTES": 4096, "MAX_SEGMENT_TTL_SECONDS": 86400 },

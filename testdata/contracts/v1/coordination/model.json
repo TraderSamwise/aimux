@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/coordination-model.ts",
+  "sources": [
+    "src/coordination-model.test.ts",
+    "src/coordination-model.ts"
+  ],
   "generatedBy": "scripts/capture-model-contracts.mjs",
   "description": "Coordination model/worklist contracts captured by running the TypeScript model functions.",
   "cases": [

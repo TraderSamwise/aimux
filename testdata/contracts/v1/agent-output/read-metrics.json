@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/agent-output-read-metrics.ts",
+  "sources": [
+    "src/agent-output-read-metrics.test.ts",
+    "src/agent-output-read-metrics.ts"
+  ],
   "generatedBy": "scripts/capture-agent-output-io-contracts.mjs",
   "description": "Agent output read metric contracts captured by running the TypeScript metric accumulator.",
   "cases": [

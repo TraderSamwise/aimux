@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/project-scanner.ts",
+  "sources": [
+    "src/project-scanner.test.ts",
+    "src/project-scanner.ts"
+  ],
   "description": "Mixed project registry fixture for Rust parity.",
   "projects": []
 }

@@ -3,6 +3,10 @@
   "generatedAt": "2026-09-07T00:00:00.000Z",
   "generatedBy": "scripts/capture-tmux-runtime-open-target-contract.mjs",
   "source": "src/tmux/runtime-manager.ts",
+  "sources": [
+    "src/tmux/runtime-manager.test.ts",
+    "src/tmux/runtime-manager.ts"
+  ],
   "subject": "src/tmux/runtime-manager.ts",
   "description": "TmuxRuntimeManager.openTarget client-session resolution captured by running TypeScript.",
   "caseCount": 3,

@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "src/backend-session-discovery.ts",
+  "sources": [
+    "src/backend-session-discovery.test.ts",
+    "src/backend-session-discovery.ts"
+  ],
   "generatedBy": "scripts/capture-backend-session-discovery-contract.mjs",
   "description": "Backend session discovery, transcript relocation, and moved-session argv contracts captured by running TypeScript filesystem helpers.",
   "cases": [

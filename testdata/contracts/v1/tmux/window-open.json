@@ -3,6 +3,10 @@
   "generatedAt": "2026-09-07T00:00:00.000Z",
   "generatedBy": "scripts/capture-tmux-window-open-contract.mjs",
   "source": "src/tmux/window-open.ts",
+  "sources": [
+    "src/tmux/window-open.test.ts",
+    "src/tmux/window-open.ts"
+  ],
   "subject": "src/tmux/window-open.ts",
   "description": "managed tmux window opening captured by running TypeScript window-open helpers against a fake tmux runtime.",
   "caseCount": 8,
