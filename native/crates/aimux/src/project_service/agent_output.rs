@@ -337,15 +337,15 @@ fn read_agent_output_route(
         return json_error(400, error);
     }
     match read_agent_output_payload(context, &session_id, start_line, mode, runtime) {
-        Ok(payload) => {
+        Ok(result) => {
             context.output_metrics.record(AgentOutputReadRecord {
                 source: output_read_source(path).to_owned(),
                 session_id,
                 changed: Some(true),
-                coalesced: false,
+                coalesced: result.coalesced,
                 error: false,
             });
-            ProjectServiceDispatchResponse::json(200, payload)
+            ProjectServiceDispatchResponse::json(200, result.payload)
         }
         Err(response) => {
             context.output_metrics.record(AgentOutputReadRecord {
@@ -368,13 +368,19 @@ fn output_read_source(path: &str) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct AgentOutputPayloadRead {
+    pub payload: Value,
+    pub coalesced: bool,
+}
+
 pub(super) fn read_agent_output_payload(
     context: &ProjectServiceRequestContext,
     session_id: &str,
     start_line: Option<i64>,
     mode: AgentOutputResponseMode,
     runtime: &mut impl AgentOutputCaptureRuntime,
-) -> Result<Value, Box<ProjectServiceDispatchResponse>> {
+) -> Result<AgentOutputPayloadRead, Box<ProjectServiceDispatchResponse>> {
     let capture_window = agent_output_capture_window(start_line);
     let project_state_dir = context.project_state_dir();
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
@@ -392,7 +398,7 @@ pub(super) fn read_agent_output_payload(
         end_line: capture_window.end_line,
         include_escapes: true,
     };
-    let output_ansi = match context.output_cache.capture_or_reuse(
+    let (output_ansi, coalesced) = match context.output_cache.capture_or_reuse(
         AgentOutputCaptureCacheKey {
             window_id: window_id.clone(),
             options: capture_options,
@@ -453,7 +459,10 @@ pub(super) fn read_agent_output_payload(
             body.insert(key, value);
         }
     }
-    Ok(Value::Object(body))
+    Ok(AgentOutputPayloadRead {
+        payload: Value::Object(body),
+        coalesced,
+    })
 }
 
 fn attach_live_pane_route(
@@ -505,7 +514,7 @@ fn attach_live_pane_route(
         AgentOutputResponseMode::Full,
         runtime,
     ) {
-        Ok(payload) => payload,
+        Ok(result) => result.payload,
         Err(response) => return *response,
     };
     if let Value::Object(map) = &mut payload {

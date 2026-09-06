@@ -229,14 +229,14 @@ fn encode_project_event_output_frame(
         _ => AgentOutputResponseMode::Full,
     };
     match read_agent_output_payload(context, session_id, stream.start_line, mode, runtime) {
-        Ok(payload) => {
-            let fingerprint = agent_output_stream_fingerprint(&payload);
+        Ok(result) => {
+            let fingerprint = agent_output_stream_fingerprint(&result.payload);
             if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
                 context.output_metrics.record(AgentOutputReadRecord {
                     source: "events".to_owned(),
                     session_id: session_id.to_owned(),
                     changed: Some(false),
-                    coalesced: false,
+                    coalesced: result.coalesced,
                     error: false,
                 });
                 return Vec::new();
@@ -246,10 +246,10 @@ fn encode_project_event_output_frame(
                 source: "events".to_owned(),
                 session_id: session_id.to_owned(),
                 changed: Some(true),
-                coalesced: false,
+                coalesced: result.coalesced,
                 error: false,
             });
-            encode_sse_event("agent_output", &payload)
+            encode_sse_event("agent_output", &result.payload)
         }
         Err(response) => {
             context.output_metrics.record(AgentOutputReadRecord {
@@ -281,14 +281,14 @@ fn encode_agent_output_stream_frame(
         _ => AgentOutputResponseMode::Full,
     };
     match read_agent_output_payload(context, session_id, stream.start_line, mode, runtime) {
-        Ok(payload) => {
-            let fingerprint = agent_output_stream_fingerprint(&payload);
+        Ok(result) => {
+            let fingerprint = agent_output_stream_fingerprint(&result.payload);
             if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
                 context.output_metrics.record(AgentOutputReadRecord {
                     source: "output-stream".to_owned(),
                     session_id: session_id.to_owned(),
                     changed: Some(false),
-                    coalesced: false,
+                    coalesced: result.coalesced,
                     error: false,
                 });
                 return encode_sse_keepalive();
@@ -298,10 +298,10 @@ fn encode_agent_output_stream_frame(
                 source: "output-stream".to_owned(),
                 session_id: session_id.to_owned(),
                 changed: Some(true),
-                coalesced: false,
+                coalesced: result.coalesced,
                 error: false,
             });
-            encode_sse_event("output", &payload)
+            encode_sse_event("output", &result.payload)
         }
         Err(response) => {
             context.output_metrics.record(AgentOutputReadRecord {

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::tmux::CapturePaneOptions;
 
-pub const AGENT_OUTPUT_CAPTURE_CACHE_TTL_MS: u64 = 100;
+pub const AGENT_OUTPUT_CAPTURE_CACHE_TTL_MS: u64 = 450;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AgentOutputCaptureCacheKey {
@@ -42,14 +42,14 @@ impl AgentOutputCaptureCache {
         &self,
         key: AgentOutputCaptureCacheKey,
         capture: F,
-    ) -> Result<String, String>
+    ) -> Result<(String, bool), String>
     where
         F: FnOnce() -> Result<String, String>,
     {
         let mut cached = self.inner.lock().map_err(|error| error.to_string())?;
         cached.retain(|_, entry| entry.captured_at.elapsed() <= self.ttl);
         if let Some(entry) = cached.get(&key) {
-            return Ok(entry.output.clone());
+            return Ok((entry.output.clone(), true));
         }
         let output = capture()?;
         cached.insert(
@@ -59,6 +59,6 @@ impl AgentOutputCaptureCache {
                 captured_at: Instant::now(),
             },
         );
-        Ok(output)
+        Ok((output, false))
     }
 }

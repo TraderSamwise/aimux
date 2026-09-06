@@ -240,10 +240,16 @@ fn output_stream_writer_emits_native_chat_output_frames() {
     assert_eq!(output.matches("event: output\n").count(), 1);
     assert!(!output.contains("\"parsed\""));
     assert!(!output.contains("\"outputAnsi\""));
+    assert_eq!(runtime.calls.len(), 1);
     let metrics = context.output_metrics.snapshot();
     assert_eq!(metrics["bySource"]["output-stream"]["changed"], 1);
     assert!(
         metrics["bySource"]["output-stream"]["unchanged"]
+            .as_u64()
+            .is_some_and(|count| count >= 1)
+    );
+    assert!(
+        metrics["bySource"]["output-stream"]["coalesced"]
             .as_u64()
             .is_some_and(|count| count >= 1)
     );

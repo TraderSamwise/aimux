@@ -194,7 +194,7 @@ pub fn attach_desktop_state_previews(
             end_line: None,
             include_escapes: true,
         };
-        let Ok(output) = context.output_cache.capture_or_reuse(
+        let Ok((output, _coalesced)) = context.output_cache.capture_or_reuse(
             AgentOutputCaptureCacheKey {
                 window_id: window_id.clone(),
                 options,
