@@ -109,6 +109,13 @@ Priority fixture groups:
   and runtime-exchange side-effect behavior captured by running TypeScript
   notification helpers.
 
+## Operation Failures
+
+- `operation-failures/failures.json`: dashboard operation failure add/list/clear
+  persistence, target matching, duplicate replacement, active filtering, and
+  side-effect state captured by running TypeScript dashboard operation-failure
+  helpers.
+
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
