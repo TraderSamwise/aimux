@@ -126,6 +126,9 @@ Priority fixture groups:
 - `agent-output/liveness.json`: `readAgentOutput` output/activity/attention
   projections captured by running the TypeScript multiplexer helper with mocked
   pane capture and persisted derived metadata.
+- `agent-output/io-methods.json`: orchestration delivery side effects for the
+  agent IO method table captured by running TypeScript
+  `agentIoMethods.deliverOrchestrationMessage`.
 - `agent-output/parser-adversarial.json`: golden `{ input, output }` cases
   captured by running the TypeScript `parseAgentOutput` implementation against
   the exported adversarial fixtures, parser fixture tests, compact parser
