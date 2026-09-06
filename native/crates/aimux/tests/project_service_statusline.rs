@@ -96,7 +96,9 @@ fn statusline_refresh_writes_snapshot_and_tmux_artifacts() {
     assert!(agent_top.contains(":3000"));
     let bottom =
         read_to_string(state_dir.join("tmux-statusline").join("bottom-@1.txt")).expect("bottom");
-    assert!(bottom.contains("[codex]"));
+    assert!(bottom.contains("#[fg=black,bg=yellow] codex"));
+    assert!(bottom.contains("yarn dev"));
+    assert!(bottom.contains("team: reviewer idle"));
     assert!(bottom.contains("#[fg=green]plugin ok#[default]"));
     let dashboard_bottom = read_to_string(
         state_dir

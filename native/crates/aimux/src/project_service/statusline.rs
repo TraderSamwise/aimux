@@ -358,32 +358,61 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
         return render_dashboard_screens(string_field(snapshot, "dashboardScreen"))
             .join("  \u{00b7}  ");
     }
-    let current_session_id = resolve_current_session_id(snapshot, project_root, options);
-    let scoped_path = resolve_scoped_worktree_path(snapshot, project_root, options.current_path);
-    let mut chips = all_statusline_sessions(snapshot)
-        .into_iter()
-        .filter(|session| !matches!(string_field(session, "status"), Some("offline" | "exited")))
-        .filter(|session| !is_project_control_session(session))
-        .filter(|session| {
-            normalize_path(string_field(session, "worktreePath"), project_root) == scoped_path
-        })
-        .take(5)
-        .map(|session| {
-            let title = compact_session_title(session);
-            if string_field(session, "id") == current_session_id.as_deref() {
-                format!("[{title}]")
-            } else {
-                title
-            }
-        })
-        .collect::<Vec<_>>();
-    chips.extend(render_plugin_segments(
+    let focused_teammate = resolve_focused_teammate(snapshot, project_root, options);
+    let focused_overseer = focused_teammate
+        .is_none()
+        .then(|| resolve_focused_control_session(snapshot, project_root, options, "overseer"))
+        .flatten();
+    let focused_scribe = (focused_teammate.is_none() && focused_overseer.is_none())
+        .then(|| resolve_focused_control_session(snapshot, project_root, options, "scribe"))
+        .flatten();
+
+    let chips = if let Some(overseer) = focused_overseer {
+        vec![render_control_session_segment(overseer, "overseer")]
+    } else if let Some(scribe) = focused_scribe {
+        vec![render_control_session_segment(scribe, "scribe")]
+    } else if focused_teammate.is_some() {
+        resolve_focused_teammate_group(snapshot, project_root, options)
+            .into_iter()
+            .map(|session| {
+                render_teammate_chip(
+                    session,
+                    string_field(session, "id")
+                        == focused_teammate.and_then(|session| string_field(session, "id")),
+                )
+            })
+            .collect::<Vec<_>>()
+    } else {
+        resolve_scoped_sessions(snapshot, project_root, options)
+            .into_iter()
+            .map(|(session, is_current)| render_session_chip(session, is_current))
+            .collect::<Vec<_>>()
+    };
+
+    let mut detail_parts = Vec::new();
+    if let Some(headline) = render_exact_headline(snapshot, project_root, options) {
+        detail_parts.push(headline);
+    }
+    if focused_teammate.is_some() {
+        detail_parts.push(tmux_style("team plane", "cyan"));
+    } else if let Some(teammates) = render_teammate_segment(snapshot, project_root, options) {
+        detail_parts.push(teammates);
+    }
+    detail_parts.extend(render_plugin_segments(
         snapshot,
         project_root,
         "bottom",
         options,
     ));
-    chips.join("  \u{00b7}  ")
+    let chip_text = chips.join("  \u{00b7}  ");
+    let detail = detail_parts.join("  \u{00b7}  ");
+    if detail.is_empty() {
+        chip_text
+    } else if chip_text.is_empty() {
+        detail
+    } else {
+        format!("{chip_text}  |  {detail}")
+    }
 }
 
 fn render_control_plane(snapshot: &Value) -> String {
@@ -488,7 +517,31 @@ fn render_active_metadata(
     options: RenderOptions<'_>,
 ) -> Option<String> {
     let session_id = resolve_exact_current_session_id(snapshot, project_root, options)?;
+    let active_session = find_statusline_session(snapshot, session_id);
     let metadata = snapshot.get("metadata")?.get(session_id)?;
+    if let Some(label) = active_session
+        .and_then(|session| session.get("semantic"))
+        .and_then(|semantic| semantic.get("presentation"))
+        .and_then(|presentation| string_field(presentation, "statusLabel"))
+        .filter(|label| *label != "idle" && *label != "offline")
+    {
+        return Some(label.to_owned());
+    }
+    if let Some(unread_count) = active_session
+        .and_then(|session| session.get("semantic"))
+        .and_then(|semantic| semantic.get("notifications"))
+        .and_then(|notifications| number_field(notifications, "unreadCount"))
+        .filter(|count| *count > 0)
+    {
+        return Some(format!("{unread_count} unread"));
+    }
+    if let Some(new_count) = active_session
+        .and_then(|session| session.get("semantic"))
+        .and_then(|semantic| number_field(semantic, "activityNewCount"))
+        .filter(|count| *count > 0)
+    {
+        return Some(format!("new {new_count}"));
+    }
     if let Some(status) = metadata
         .get("status")
         .and_then(|status| string_field(status, "text"))
@@ -578,41 +631,248 @@ fn render_service_context(service: &Value) -> Option<String> {
         .map(|url| trim_text(url, 18))
 }
 
-fn resolve_current_session_id(
+fn resolve_scoped_sessions<'a>(
+    snapshot: &'a Value,
+    project_root: &str,
+    options: RenderOptions<'_>,
+) -> Vec<(&'a Value, bool)> {
+    let scoped_path = resolve_scoped_worktree_path(snapshot, project_root, options.current_path);
+    let mut agents = Vec::new();
+    let mut services = Vec::new();
+    for session in statusline_session_group(snapshot, "sessions")
+        .into_iter()
+        .filter(|session| is_live_footer_session(session))
+        .filter(|session| !is_project_control_session(session))
+        .filter(|session| {
+            normalize_path(string_field(session, "worktreePath"), project_root) == scoped_path
+        })
+    {
+        if string_field(session, "kind") == Some("service") {
+            services.push(session);
+        } else {
+            agents.push(session);
+        }
+    }
+    agents
+        .into_iter()
+        .chain(services)
+        .take(5)
+        .map(|session| {
+            let is_current = options
+                .current_window_id
+                .map(|window_id| string_field(session, "tmuxWindowId") == Some(window_id))
+                .unwrap_or_else(|| session.get("active").and_then(Value::as_bool) == Some(true));
+            (session, is_current)
+        })
+        .collect()
+}
+
+fn resolve_focused_teammate<'a>(
+    snapshot: &'a Value,
+    project_root: &str,
+    options: RenderOptions<'_>,
+) -> Option<&'a Value> {
+    let exact_id = resolve_exact_current_session_id(snapshot, project_root, options)?;
+    statusline_session_group(snapshot, "teammates")
+        .into_iter()
+        .find(|session| {
+            string_field(session, "id") == Some(exact_id) && is_live_footer_session(session)
+        })
+}
+
+fn resolve_focused_teammate_group<'a>(
+    snapshot: &'a Value,
+    project_root: &str,
+    options: RenderOptions<'_>,
+) -> Vec<&'a Value> {
+    let Some(focused) = resolve_focused_teammate(snapshot, project_root, options) else {
+        return Vec::new();
+    };
+    let Some(parent_session_id) = string_field_from_path(focused, &["team", "parentSessionId"])
+    else {
+        return Vec::new();
+    };
+    let mut teammates = statusline_session_group(snapshot, "teammates")
+        .into_iter()
+        .filter(|session| {
+            string_field_from_path(session, &["team", "parentSessionId"]) == Some(parent_session_id)
+        })
+        .filter(|session| is_live_footer_session(session))
+        .collect::<Vec<_>>();
+    teammates.sort_by(compare_teammate_sessions);
+    teammates.truncate(5);
+    teammates
+}
+
+fn resolve_current_teammates<'a>(
+    snapshot: &'a Value,
+    project_root: &str,
+    options: RenderOptions<'_>,
+) -> Vec<&'a Value> {
+    let Some(parent_session_id) = resolve_exact_current_session_id(snapshot, project_root, options)
+    else {
+        return Vec::new();
+    };
+    let Some(parent_session) = statusline_session_group(snapshot, "sessions")
+        .into_iter()
+        .find(|session| string_field(session, "id") == Some(parent_session_id))
+    else {
+        return Vec::new();
+    };
+    if string_field_from_path(parent_session, &["team", "parentSessionId"]).is_some() {
+        return Vec::new();
+    }
+    let mut teammates = statusline_session_group(snapshot, "teammates")
+        .into_iter()
+        .filter(|session| {
+            string_field_from_path(session, &["team", "parentSessionId"]) == Some(parent_session_id)
+        })
+        .filter(|session| is_live_footer_session(session))
+        .collect::<Vec<_>>();
+    teammates.sort_by(compare_teammate_sessions);
+    teammates.truncate(5);
+    teammates
+}
+
+fn resolve_focused_control_session<'a>(
+    snapshot: &'a Value,
+    project_root: &str,
+    options: RenderOptions<'_>,
+    control_kind: &str,
+) -> Option<&'a Value> {
+    let exact_id = resolve_exact_current_session_id(snapshot, project_root, options)?;
+    statusline_session_group(snapshot, "sessions")
+        .into_iter()
+        .find(|session| {
+            string_field(session, "id") == Some(exact_id)
+                && is_control_session_kind(session, control_kind)
+                && is_live_footer_session(session)
+        })
+}
+
+fn render_session_chip(session: &Value, is_current: bool) -> String {
+    let identity = trim_text(&compact_session_title(session), 18);
+    let hint = render_session_compact_hint(session);
+    let badge = if hint
+        .as_deref()
+        .is_some_and(|hint| hint.contains(" unread") || hint.contains(" new"))
+    {
+        None
+    } else {
+        render_semantic_badge(session.get("semantic"))
+    };
+    let label = trim_text(
+        &[Some(identity), hint, badge]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" "),
+        28,
+    );
+    if is_current {
+        tmux_invert(&format!(" {label} "), "yellow")
+    } else {
+        label
+    }
+}
+
+fn render_teammate_chip(session: &Value, is_current: bool) -> String {
+    let identity = trim_text(&teammate_label(session), 18);
+    let hint = render_session_compact_hint(session);
+    let badge = if hint
+        .as_deref()
+        .is_some_and(|hint| hint.contains(" unread") || hint.contains(" new"))
+    {
+        None
+    } else {
+        render_semantic_badge(session.get("semantic"))
+    };
+    let label = trim_text(
+        &[Some(identity), hint, badge]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" "),
+        28,
+    );
+    if is_current {
+        tmux_invert(&format!(" {label} "), "cyan")
+    } else {
+        tmux_style(&label, "cyan")
+    }
+}
+
+fn render_teammate_segment(
     snapshot: &Value,
     project_root: &str,
     options: RenderOptions<'_>,
 ) -> Option<String> {
-    if let Some(window_id) = options.current_window_id {
-        return all_statusline_sessions(snapshot)
-            .into_iter()
-            .find(|session| string_field(session, "tmuxWindowId") == Some(window_id))
-            .and_then(|session| string_field(session, "id").map(str::to_owned));
+    let teammates = resolve_current_teammates(snapshot, project_root, options);
+    if teammates.is_empty() {
+        return None;
     }
-    if let Some(current_window) = options.current_window {
-        let scoped_path =
-            resolve_scoped_worktree_path(snapshot, project_root, options.current_path);
-        if let Some(session) = statusline_session_group(snapshot, "sessions")
+    let labels = teammates
+        .iter()
+        .take(3)
+        .map(|teammate| {
+            let identity = teammate_label(teammate);
+            let hint = render_session_compact_hint(teammate)
+                .or_else(|| semantic_status_label(teammate))
+                .or_else(|| string_field(teammate, "status").map(str::to_owned));
+            trim_text(
+                &[Some(identity), hint]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                24,
+            )
+        })
+        .collect::<Vec<_>>();
+    let more = if teammates.len() > labels.len() {
+        format!(" +{}", teammates.len() - labels.len())
+    } else {
+        String::new()
+    };
+    Some(format!("team: {}{more}", labels.join(", ")))
+}
+
+fn render_control_session_segment(session: &Value, label: &str) -> String {
+    let hint = render_session_compact_hint(session)
+        .or_else(|| semantic_status_label(session))
+        .or_else(|| string_field(session, "status").map(str::to_owned));
+    let detail = trim_text(
+        &[Some(compact_session_title(session)), hint]
             .into_iter()
-            .find(|session| {
-                session_matches_scoped_window(session, &scoped_path, current_window, project_root)
-            })
-        {
-            return string_field(session, "id").map(str::to_owned);
-        }
-        if let Some(teammate) = statusline_session_group(snapshot, "teammates")
-            .into_iter()
-            .find(|session| {
-                session_matches_scoped_window(session, &scoped_path, current_window, project_root)
-            })
-        {
-            return string_field(teammate, "id").map(str::to_owned);
-        }
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" "),
+        28,
+    );
+    if detail.is_empty() {
+        tmux_style(label, "cyan")
+    } else {
+        format!("{}  {detail}", tmux_style(label, "cyan"))
     }
-    statusline_session_group(snapshot, "sessions")
+}
+
+fn render_exact_headline(
+    snapshot: &Value,
+    project_root: &str,
+    options: RenderOptions<'_>,
+) -> Option<String> {
+    let session_id = resolve_exact_current_session_id(snapshot, project_root, options)?;
+    find_statusline_session(snapshot, session_id)
+        .and_then(|session| string_field(session, "headline"))
+        .map(str::trim)
+        .filter(|headline| !headline.is_empty())
+        .map(|headline| trim_text(headline, 42))
+}
+
+fn find_statusline_session<'a>(snapshot: &'a Value, session_id: &str) -> Option<&'a Value> {
+    all_statusline_sessions(snapshot)
         .into_iter()
-        .find(|session| session.get("active").and_then(Value::as_bool) == Some(true))
-        .and_then(|session| string_field(session, "id").map(str::to_owned))
+        .find(|session| string_field(session, "id") == Some(session_id))
 }
 
 fn resolve_exact_current_session_id<'a>(
@@ -707,11 +967,27 @@ fn compact_session_title(session: &Value) -> String {
     {
         return command.to_owned();
     }
-    let tool = string_field(session, "tool")
-        .unwrap_or_else(|| string_field(session, "id").unwrap_or("session"));
-    let label = string_field(session, "label")
-        .filter(|label| !is_autogenerated_label(label, tool))
-        .unwrap_or(tool);
+    let is_service = string_field(session, "kind") == Some("service");
+    let tool = string_field(session, "tool").unwrap_or_else(|| {
+        if is_service {
+            "service"
+        } else {
+            string_field(session, "id").unwrap_or("session")
+        }
+    });
+    let label = if is_service {
+        string_field(session, "label")
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .unwrap_or(tool)
+    } else {
+        string_field(session, "label")
+            .filter(|label| !is_autogenerated_label(label, tool))
+            .unwrap_or(tool)
+    };
+    if is_service {
+        return format!("{label}[svc]");
+    }
     if let Some(role) = string_field(session, "role") {
         format!("{label}({role})")
     } else {
@@ -720,10 +996,105 @@ fn compact_session_title(session: &Value) -> String {
 }
 
 fn is_project_control_session(session: &Value) -> bool {
-    session.get("overseer").and_then(Value::as_bool) == Some(true)
-        || session.get("scribe").and_then(Value::as_bool) == Some(true)
-        || string_field(session, "role") == Some("overseer")
-        || string_field(session, "role") == Some("scribe")
+    session.get("projectControl").and_then(Value::as_bool) == Some(true)
+        || is_control_session_kind(session, "overseer")
+        || is_control_session_kind(session, "scribe")
+}
+
+fn is_control_session_kind(session: &Value, control_kind: &str) -> bool {
+    let flag = match control_kind {
+        "overseer" => "overseer",
+        "scribe" => "scribe",
+        _ => return false,
+    };
+    session.get("overseer").and_then(Value::as_bool) == Some(true) && control_kind == "overseer"
+        || session.get("scribe").and_then(Value::as_bool) == Some(true) && control_kind == "scribe"
+        || string_field(session, "role") == Some(control_kind)
+        || string_field_from_path(session, &["team", "role"]) == Some(control_kind)
+        || session.get(flag).and_then(Value::as_bool) == Some(true)
+}
+
+fn is_live_footer_session(session: &Value) -> bool {
+    !matches!(string_field(session, "status"), Some("offline" | "exited"))
+}
+
+fn teammate_label(session: &Value) -> String {
+    string_field_from_path(session, &["team", "label"])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            string_field(session, "label")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            string_field_from_path(session, &["team", "role"])
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(str::to_owned)
+        .unwrap_or_else(|| compact_session_title(session))
+}
+
+fn render_session_compact_hint(session: &Value) -> Option<String> {
+    session
+        .get("semantic")
+        .and_then(|semantic| semantic.get("presentation"))
+        .and_then(|presentation| string_field(presentation, "compactHint"))
+        .map(str::to_owned)
+}
+
+fn semantic_status_label(session: &Value) -> Option<String> {
+    session
+        .get("semantic")
+        .and_then(|semantic| semantic.get("presentation"))
+        .and_then(|presentation| string_field(presentation, "statusLabel"))
+        .map(str::to_owned)
+}
+
+fn render_semantic_badge(semantic: Option<&Value>) -> Option<String> {
+    let semantic = semantic?;
+    let attention = semantic
+        .get("user")
+        .and_then(|user| string_field(user, "attention"));
+    match attention {
+        Some("error") => return Some("\u{2717}".to_owned()),
+        Some("needs_input" | "needs_response") => return Some("?".to_owned()),
+        Some("blocked") => return Some("!".to_owned()),
+        _ => {}
+    }
+    let label = semantic
+        .get("user")
+        .and_then(|user| string_field(user, "label"));
+    match label {
+        Some("done") => Some("\u{2713}".to_owned()),
+        Some("working") => Some("\u{21bb}".to_owned()),
+        Some("starting") => Some("\u{2026}".to_owned()),
+        _ => None,
+    }
+}
+
+fn compare_teammate_sessions(left: &&Value, right: &&Value) -> std::cmp::Ordering {
+    teammate_order(left)
+        .cmp(&teammate_order(right))
+        .then_with(|| teammate_created_at(left).cmp(teammate_created_at(right)))
+        .then_with(|| {
+            string_field(left, "id")
+                .unwrap_or("")
+                .cmp(string_field(right, "id").unwrap_or(""))
+        })
+}
+
+fn teammate_order(session: &Value) -> u64 {
+    session
+        .get("team")
+        .and_then(|team| team.get("order"))
+        .and_then(Value::as_u64)
+        .unwrap_or(u64::MAX)
+}
+
+fn teammate_created_at(session: &Value) -> &str {
+    string_field(session, "createdAt").unwrap_or("\u{10ffff}")
 }
 
 fn is_autogenerated_label(label: &str, tool: &str) -> bool {
@@ -777,6 +1148,14 @@ fn number_field(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(Value::as_i64)
 }
 
+fn string_field_from_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str()
+}
+
 fn strip_http_scheme(value: &str) -> &str {
     value
         .strip_prefix("http://")
@@ -786,6 +1165,10 @@ fn strip_http_scheme(value: &str) -> &str {
 
 fn tmux_style(text: &str, color: &str) -> String {
     format!("#[fg={color}]{text}#[default]")
+}
+
+fn tmux_invert(text: &str, color: &str) -> String {
+    format!("#[fg=black,bg={color}]{text}#[default]")
 }
 
 fn is_statusline_stale(snapshot: &Value) -> bool {
@@ -909,6 +1292,254 @@ mod tests {
             ),
             Some("parent")
         );
+    }
+
+    #[test]
+    fn bottom_line_renders_scoped_agents_semantics_and_headline() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "id": "a",
+                    "kind": "agent",
+                    "tool": "codex",
+                    "label": "coder",
+                    "windowName": "coder",
+                    "tmuxWindowId": "@1",
+                    "role": "coder",
+                    "status": "running",
+                    "active": true,
+                    "headline": "Fix auth flow",
+                    "worktreePath": "/repo",
+                    "semantic": semantic("running", "needs_input", "on you", 0)
+                },
+                {
+                    "id": "b",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "status": "idle",
+                    "windowName": "claude",
+                    "worktreePath": "/repo",
+                    "semantic": semantic("done", "none", Value::Null, 0)
+                }
+            ],
+            "metadata": {
+                "a": { "derived": { "attention": "needs_input", "unseenCount": 3 } },
+                "b": { "derived": { "activity": "done" } }
+            }
+        });
+
+        let rendered = render_bottom_line(
+            &snapshot,
+            "/repo",
+            RenderOptions {
+                current_window: Some("coder"),
+                current_window_id: Some("@1"),
+                current_path: Some("/repo"),
+            },
+        );
+
+        assert!(rendered.contains("#[fg=black,bg=yellow] coder(coder) on you ? #[default]"));
+        assert!(rendered.contains("claude \u{2713}"));
+        assert!(rendered.contains("  |  Fix auth flow"));
+    }
+
+    #[test]
+    fn bottom_line_keeps_parent_teammates_as_detail_segment() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "id": "parent",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "role": "coder",
+                    "windowName": "claude",
+                    "tmuxWindowId": "@1",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                },
+                {
+                    "id": "service",
+                    "kind": "service",
+                    "tool": "shell",
+                    "windowName": "shell",
+                    "tmuxWindowId": "@2",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                }
+            ],
+            "teammates": [
+                {
+                    "id": "reviewer",
+                    "kind": "agent",
+                    "tool": "codex",
+                    "role": "reviewer",
+                    "label": "review",
+                    "windowName": "codex",
+                    "tmuxWindowId": "@9",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "team": { "teamId": "team-1", "parentSessionId": "parent", "role": "reviewer", "label": "review", "order": 1 }
+                },
+                {
+                    "id": "other",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "windowName": "claude",
+                    "tmuxWindowId": "@10",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "team": { "teamId": "team-2", "parentSessionId": "other-parent", "role": "coder", "label": "other" }
+                }
+            ]
+        });
+
+        let rendered = render_bottom_line(
+            &snapshot,
+            "/repo",
+            RenderOptions {
+                current_window: Some("claude"),
+                current_window_id: Some("@1"),
+                current_path: Some("/repo"),
+            },
+        );
+
+        assert!(rendered.contains("#[fg=black,bg=yellow] claude(coder) #[default]"));
+        assert!(rendered.contains("shell[svc]"));
+        assert!(rendered.contains("team: review running"));
+        assert!(!rendered.contains("other"));
+        assert!(rendered.find("claude(coder)").unwrap() < rendered.find("shell[svc]").unwrap());
+        assert!(rendered.find("shell[svc]").unwrap() < rendered.find("team:").unwrap());
+    }
+
+    #[test]
+    fn bottom_line_renders_focused_teammate_plane() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "id": "parent",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "role": "coder",
+                    "windowName": "claude",
+                    "tmuxWindowId": "@1",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                },
+                {
+                    "id": "service",
+                    "kind": "service",
+                    "tool": "shell",
+                    "windowName": "shell",
+                    "tmuxWindowId": "@2",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                }
+            ],
+            "teammates": [
+                {
+                    "id": "reviewer",
+                    "kind": "agent",
+                    "tool": "codex",
+                    "role": "reviewer",
+                    "label": "review",
+                    "windowName": "codex",
+                    "tmuxWindowId": "@9",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "headline": "Review the parser patch",
+                    "semantic": semantic("running", "needs_input", "on you", 0),
+                    "team": { "teamId": "team-1", "parentSessionId": "parent", "role": "reviewer", "label": "review", "order": 1 }
+                },
+                {
+                    "id": "implementer",
+                    "kind": "agent",
+                    "tool": "codex",
+                    "role": "implementer",
+                    "label": "impl",
+                    "windowName": "codex",
+                    "tmuxWindowId": "@11",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "semantic": semantic("idle", "none", "4 new", 4),
+                    "team": { "teamId": "team-1", "parentSessionId": "parent", "role": "implementer", "label": "impl", "order": 2 }
+                },
+                {
+                    "id": "other",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "windowName": "claude",
+                    "tmuxWindowId": "@10",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "team": { "teamId": "team-2", "parentSessionId": "other-parent", "role": "coder", "label": "other" }
+                }
+            ],
+            "metadata": {
+                "reviewer": {
+                    "statusline": { "bottom": [{ "id": "bottom", "text": "review-bottom" }] }
+                }
+            }
+        });
+
+        let rendered = render_bottom_line(
+            &snapshot,
+            "/repo",
+            RenderOptions {
+                current_window: Some("codex"),
+                current_window_id: Some("@9"),
+                current_path: Some("/repo"),
+            },
+        );
+
+        assert!(rendered.contains("#[fg=black,bg=cyan] review on you ? #[default]"));
+        assert!(rendered.contains("#[fg=cyan]impl 4 new#[default]"));
+        assert!(!rendered.contains("shell[svc]"));
+        assert!(rendered.contains("Review the parser patch"));
+        assert!(rendered.contains("review-bottom"));
+        assert!(rendered.contains("team plane"));
+        assert!(!rendered.contains("other"));
+    }
+
+    fn semantic(
+        status_label: &str,
+        attention: &str,
+        compact_hint: impl Into<Value>,
+        activity_new_count: i64,
+    ) -> Value {
+        json!({
+            "runtime": {
+                "lifecycle": "running",
+                "isAlive": true,
+                "canEnter": true,
+                "canReceiveInput": true,
+                "canInterrupt": true
+            },
+            "user": {
+                "label": status_label,
+                "attention": attention,
+                "source": "runtime"
+            },
+            "notifications": { "unreadCount": 0 },
+            "orchestration": {
+                "pressure": "none",
+                "assignedTask": false,
+                "canBeAssignedWork": true
+            },
+            "presentation": {
+                "statusLabel": status_label,
+                "compactHint": compact_hint.into(),
+                "attentionScore": 0
+            },
+            "attention": attention,
+            "activityNewCount": activity_new_count,
+            "threadUnreadCount": 0,
+            "pendingDeliveryCount": 0,
+            "waitingOnMeCount": 0,
+            "waitingOnThemCount": 0,
+            "blockedCount": 0,
+            "familyCount": 0,
+            "hasActiveTask": false
+        })
     }
 }
 
