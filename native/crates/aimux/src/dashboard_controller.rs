@@ -649,6 +649,19 @@ impl DashboardScreen {
             Self::Graveyard => "graveyard",
         }
     }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "dashboard" => Some(Self::Dashboard),
+            "help" => Some(Self::Help),
+            "coordination" => Some(Self::Coordination),
+            "project" => Some(Self::Project),
+            "library" => Some(Self::Library),
+            "topology" => Some(Self::Topology),
+            "graveyard" => Some(Self::Graveyard),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

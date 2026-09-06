@@ -30,6 +30,7 @@ use crate::dashboard_tui_visibility::{
     DashboardTuiVisibilityState, consume_dashboard_tui_visibility_wake, mark_dashboard_tui_visible,
     read_dashboard_tui_visibility_for_loop, read_tmux_tui_visibility,
 };
+use crate::dashboard_ui_state::DashboardUiStatePersistence;
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{self, Write};
@@ -63,6 +64,11 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut scroll_offset = 0;
     let mut latest_snapshot = None;
     let mut latest_endpoint = None;
+    let mut ui_state = if options.once || options.desktop_state_file.is_some() {
+        None
+    } else {
+        DashboardUiStatePersistence::for_project(&options.project_root).ok()
+    };
     let mut event_stream = None;
     let mut event_stream_retry_at = None;
     let mut refresh_state = DashboardProjectRefreshState::default();
@@ -137,8 +143,16 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 .unwrap_or(false);
             let visible_model =
                 filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
-            let controller =
-                controller.get_or_insert_with(|| DashboardController::new(&visible_model.snapshot));
+            let controller = controller.get_or_insert_with(|| {
+                let mut controller = DashboardController::new(&visible_model.snapshot);
+                if let Some(screen) = ui_state
+                    .as_ref()
+                    .and_then(DashboardUiStatePersistence::load_screen)
+                {
+                    controller.screen = screen;
+                }
+                controller
+            });
             let frame = render_dashboard_snapshot(
                 &options,
                 controller,
@@ -149,6 +163,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             );
             stdout.write_all(frame.frame.as_bytes())?;
             stdout.flush()?;
+            if let Some(ui_state) = ui_state.as_mut() {
+                let _ = ui_state.persist_screen(controller.screen);
+            }
             scroll_offset = frame.scroll_offset;
             if !ready_marked {
                 let _ = mark_native_dashboard_ready(&options.project_root);
