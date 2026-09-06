@@ -299,6 +299,41 @@ describe("MessageBlock table text", () => {
     ]);
   });
 
+  it("splits loose pipe table blocks without separator rows", () => {
+    expect(
+      splitMarkdownTableSegments(
+        [
+          "Before",
+          "",
+          "| stage | seat map label | reservation label |",
+          '| minted, untouched | amber hollow, "In an invitation" | In an invitation |',
+          '| guest holding it | still "In an invitation" | In an invitation |',
+          "| bought | Sold | Sold |",
+          "",
+          "After",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "text", text: "Before" },
+      {
+        kind: "table",
+        text: [
+          "| stage | seat map label | reservation label |",
+          '| minted, untouched | amber hollow, "In an invitation" | In an invitation |',
+          '| guest holding it | still "In an invitation" | In an invitation |',
+          "| bought | Sold | Sold |",
+        ].join("\n"),
+      },
+      { kind: "text", text: "After" },
+    ]);
+  });
+
+  it("does not promote ordinary prose with isolated pipes", () => {
+    expect(splitMarkdownTableSegments("Before\nmaybe a | b\nanother c | d\nAfter")).toEqual([
+      { kind: "text", text: "Before\nmaybe a | b\nanother c | d\nAfter" },
+    ]);
+  });
+
   it("splits terminal box tables into horizontally scrollable text segments", () => {
     expect(
       splitMarkdownTableSegments(
