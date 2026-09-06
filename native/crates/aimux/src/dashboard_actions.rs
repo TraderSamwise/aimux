@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 pub enum DashboardActionKind {
     Enter,
     Stop,
+    ClearOperationFailures,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,22 +28,20 @@ pub fn plan_dashboard_action(
     entry: Option<DashboardEntryRef<'_>>,
     action: DashboardActionKind,
 ) -> DashboardActionPlan {
-    let Some(entry) = entry else {
-        return DashboardActionPlan::Ignored;
-    };
-    match (entry, action) {
-        (DashboardEntryRef::Session(session), DashboardActionKind::Enter) => {
-            plan_session_enter(session)
+    match action {
+        DashboardActionKind::ClearOperationFailures => {
+            request(routes::OPERATION_FAILURES_CLEAR, json!({}))
         }
-        (DashboardEntryRef::Service(service), DashboardActionKind::Enter) => {
-            plan_service_enter(service)
-        }
-        (DashboardEntryRef::Session(session), DashboardActionKind::Stop) => {
-            plan_session_stop(session)
-        }
-        (DashboardEntryRef::Service(service), DashboardActionKind::Stop) => {
-            plan_service_stop(service)
-        }
+        DashboardActionKind::Enter => match entry {
+            Some(DashboardEntryRef::Session(session)) => plan_session_enter(session),
+            Some(DashboardEntryRef::Service(service)) => plan_service_enter(service),
+            None => DashboardActionPlan::Ignored,
+        },
+        DashboardActionKind::Stop => match entry {
+            Some(DashboardEntryRef::Session(session)) => plan_session_stop(session),
+            Some(DashboardEntryRef::Service(service)) => plan_service_stop(service),
+            None => DashboardActionPlan::Ignored,
+        },
     }
 }
 

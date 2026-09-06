@@ -75,6 +75,30 @@ fn stop_key_dispatches_selected_session_stop() {
 }
 
 #[test]
+fn clear_failures_key_dispatches_only_when_failures_exist() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('X')),
+        DashboardControllerEffect::Ignored
+    );
+
+    snapshot.operation_failures.push(json!({
+        "id": "failure-1",
+        "operation": "stop",
+    }));
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('X'))
+    else {
+        panic!("expected clear failures request");
+    };
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::OPERATION_FAILURES_CLEAR);
+    assert_eq!(request.body, json!({}));
+}
+
+#[test]
 fn new_agent_key_opens_tool_picker_effect() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
@@ -351,6 +375,7 @@ fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"h"), DashboardKey::Printable('h'));
     assert_eq!(parse_dashboard_key(b"\x1b[D"), DashboardKey::Left);
     assert_eq!(parse_dashboard_key(b"x"), DashboardKey::Printable('x'));
+    assert_eq!(parse_dashboard_key(b"X"), DashboardKey::Printable('X'));
     assert_eq!(parse_dashboard_key(b"q"), DashboardKey::Printable('q'));
     assert_eq!(parse_dashboard_key(b"n"), DashboardKey::Printable('n'));
     assert_eq!(parse_dashboard_key(b"v"), DashboardKey::Printable('v'));

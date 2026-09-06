@@ -114,6 +114,18 @@ fn stop_dispatches_by_entry_kind_and_ignores_cold_entries() {
 }
 
 #[test]
+fn clear_operation_failures_posts_global_clear_request() {
+    assert_eq!(
+        plan_dashboard_action(None, DashboardActionKind::ClearOperationFailures),
+        DashboardActionPlan::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::OPERATION_FAILURES_CLEAR,
+            body: json!({}),
+        })
+    );
+}
+
+#[test]
 fn pending_entries_block_actions() {
     let snapshot = snapshot();
     let mut session = snapshot.sessions[0].clone();

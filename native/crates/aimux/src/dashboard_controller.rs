@@ -89,6 +89,7 @@ impl DashboardController {
             },
             DashboardKey::Enter => self.handle_enter(snapshot),
             DashboardKey::Stop => self.handle_action(snapshot, DashboardActionKind::Stop),
+            DashboardKey::ClearFailures => self.handle_clear_failures(snapshot),
             DashboardKey::Digit(digit) => match self.navigation.handle_digit(snapshot, digit) {
                 DashboardNavigationOutcome::EntrySelected(entry) => {
                     match plan_dashboard_action(Some(entry), DashboardActionKind::Enter) {
@@ -165,6 +166,7 @@ impl DashboardController {
             | DashboardKey::NewService
             | DashboardKey::ForkAgent
             | DashboardKey::SwitchTool
+            | DashboardKey::ClearFailures
             | DashboardKey::Backspace
             | DashboardKey::Digit(_)
             | DashboardKey::Tab
@@ -280,6 +282,7 @@ impl DashboardController {
             | DashboardKey::NewService
             | DashboardKey::ForkAgent
             | DashboardKey::SwitchTool
+            | DashboardKey::ClearFailures
             | DashboardKey::LaunchOptions
             | DashboardKey::Quit
             | DashboardKey::Digit(_)
@@ -393,6 +396,23 @@ impl DashboardController {
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
         }
     }
+
+    fn handle_clear_failures(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        if snapshot.operation_failures.is_empty() {
+            return DashboardControllerEffect::Ignored;
+        }
+        match plan_dashboard_action(None, DashboardActionKind::ClearOperationFailures) {
+            DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Blocked(message) => {
+                self.footer_message = Some(message);
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,6 +426,7 @@ pub enum DashboardKey {
     NewService,
     ForkAgent,
     SwitchTool,
+    ClearFailures,
     LaunchOptions,
     Quit,
     Digit(char),
@@ -492,6 +513,7 @@ fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
         DashboardKey::Left => DashboardKey::Back,
         DashboardKey::Printable('q') => DashboardKey::Quit,
         DashboardKey::Printable('x') => DashboardKey::Stop,
+        DashboardKey::Printable('X') => DashboardKey::ClearFailures,
         DashboardKey::Printable('n') => DashboardKey::NewAgent,
         DashboardKey::Printable('v') => DashboardKey::NewService,
         DashboardKey::Printable('f') => DashboardKey::ForkAgent,
