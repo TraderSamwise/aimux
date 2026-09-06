@@ -144,6 +144,15 @@ Priority fixture groups:
   story ordering, review tagging, story-limit, and empty-input behavior captured
   by running TypeScript `buildProjectObservability`.
 
+## Project Catalog
+
+- `project-catalog/scanner.json`: project scanner status-headline,
+  statusline-enrichment, desktop filtering, dashboard-session-name, and
+  discovery contracts captured by running TypeScript `project-scanner` helpers
+  with a temporary `AIMUX_HOME`. This is currently a Rust checklist corpus
+  because there is no public scanner API outside the daemon/project catalog
+  implementation.
+
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
