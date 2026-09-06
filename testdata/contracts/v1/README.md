@@ -721,6 +721,10 @@ Priority fixture groups:
 - `runtime-state/dashboard-ui-state-store.json`: dashboard UI shared/client
   persistence, screen normalization, selection restore, and item ordering
   behavior captured by running TypeScript `dashboard/ui-state-store`.
+- `runtime-state/project-event-stream.json`: dashboard project event stream
+  debounce/coalescing, hidden-dashboard rechecks, lifecycle suppression, SSE
+  reconnect/backoff/idle timeout, alert flash, and buffered-event disposal
+  behavior captured by running TypeScript `multiplexer/project-event-stream`.
 - `runtime-state/tui-runtime-mutations.json`: TUI runtime mutation queue
   context coalescing, mark-seen retry, backoff preemption, and teardown side
   effects captured by running TypeScript `multiplexer/tui-runtime-mutations`.
