@@ -188,6 +188,9 @@ impl ProjectEventBus {
         insert_record_string(record, &mut event, "categoryLabel", "categoryLabel");
         insert_record_string(record, &mut event, "reasonLabel", "reasonLabel");
         insert_record_string(record, &mut event, "dedupeKey", "dedupeKey");
+        if input.force_notify {
+            event.insert("forceNotify".to_owned(), Value::Bool(true));
+        }
         if let Some(interaction) = record
             .get("interaction")
             .cloned()

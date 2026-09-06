@@ -81,6 +81,7 @@ pub struct NotificationWriteInput {
     pub created_at: Option<String>,
     pub unread: bool,
     pub interaction: Option<Value>,
+    pub force_notify: bool,
 }
 
 impl Default for NotificationWriteInput {
@@ -103,6 +104,7 @@ impl Default for NotificationWriteInput {
             created_at: None,
             unread: true,
             interaction: None,
+            force_notify: false,
         }
     }
 }

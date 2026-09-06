@@ -172,6 +172,64 @@ fn router_publishes_runtime_event_route_update_after_handler_side_effects() {
     cleanup(project);
 }
 
+#[test]
+fn router_publishes_runtime_notify_alert_before_route_update() {
+    let project = temp_project("runtime-notify-project-update");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::runtime::NOTIFY,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "kind": "blocked",
+            "title": "blocked",
+            "message": "Need credentials",
+            "force": true
+        })),
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, json!({ "ok": true }));
+
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].event["type"], "alert");
+    assert_eq!(events[0].event["kind"], "blocked");
+    assert_eq!(events[0].event["sessionId"], "codex-1");
+    assert_eq!(events[0].event["message"], "Need credentials");
+    assert_eq!(events[0].event["forceNotify"], true);
+    assert!(
+        events[0].event["notificationId"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert_eq!(events[1].event["type"], "project_update");
+    assert_eq!(events[1].event["reason"], "alert");
+    assert_eq!(events[1].event["sessionId"], "codex-1");
+    assert_eq!(
+        events[1].event["views"],
+        json!([
+            "coordination-worklist",
+            "notifications",
+            "project-observability"
+        ])
+    );
+    assert_eq!(events[2].event["type"], "project_update");
+    assert_eq!(events[2].event["reason"], "POST /notify");
+    assert!(events[2].event.get("sessionId").is_none());
+    assert_eq!(
+        events[2].event["views"],
+        json!([
+            "coordination-worklist",
+            "notifications",
+            "project-observability"
+        ])
+    );
+    cleanup(project);
+}
+
 fn temp_project(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "aimux-rust-project-service-router-{label}-{}-{}",

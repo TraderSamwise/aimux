@@ -174,7 +174,7 @@ pub fn route_runtime_metadata_request(
                 &context.project_events,
             )
         }
-        routes::runtime::NOTIFY => Some(route_runtime_notify(&project_state_dir, body)),
+        routes::runtime::NOTIFY => Some(route_runtime_notify(context, &project_state_dir, body)),
         routes::runtime::COMPACT_EXCHANGE => {
             let path = runtime_exchange_path(&project_state_dir);
             let result = compact_runtime_exchange_file(&path);
@@ -195,6 +195,7 @@ pub fn route_runtime_metadata_request(
 }
 
 fn route_runtime_notify(
+    context: &ProjectServiceRequestContext,
     project_state_dir: impl AsRef<Path>,
     body: &Value,
 ) -> ProjectServiceDispatchResponse {
@@ -221,10 +222,19 @@ fn route_runtime_notify(
         branch: trimmed_event_string(body, "branch"),
         dedupe_key: notify_dedupe_key(&kind, session_id.as_deref(), &title, body),
         unread: force || !focused,
+        force_notify: force,
         ..NotificationWriteInput::default()
     };
+    let alert = notification.clone();
     match add_notification(project_state_dir, notification) {
-        Ok(_) => ok(),
+        Ok(record) => {
+            context.project_events.publish_alert_from_notification(
+                context.project_root(),
+                &alert,
+                &record,
+            );
+            ok()
+        }
         Err(error) => json_response(500, json!({ "ok": false, "error": error })),
     }
 }
