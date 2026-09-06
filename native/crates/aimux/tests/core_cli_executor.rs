@@ -493,6 +493,51 @@ fn host_topology_executes_locally_without_core_command_fallback() {
 }
 
 #[test]
+fn agent_identity_executes_locally_without_core_command_fallback() {
+    let mut runtime = FakeRuntime {
+        topology_json: json!({
+            "sessions": [{
+                "id": "codex-1",
+                "tool": "codex",
+                "toolConfigKey": "codex",
+                "command": "codex",
+                "status": "running",
+                "backendSessionId": "0710a963-a473-430f-9f9a-e27dd4546328",
+                "worktreePath": "/repo",
+            }],
+            "nodes": [],
+            "bindings": [],
+        }),
+        ..FakeRuntime::default()
+    };
+
+    let text = run_core_cli_with(&args(&["id", "codex-1", "--project=/repo"]), &mut runtime);
+    let json = run_core_cli_with(
+        &args(&["id", "codex-1", "--project=/repo", "--json"]),
+        &mut runtime,
+    );
+    let missing = run_core_cli_with(&args(&["id", "ghost-1", "--project=/repo"]), &mut runtime);
+
+    assert_eq!(text.code, 0);
+    assert_eq!(
+        text.stdout,
+        [
+            "codex-1  canonical=codex  backend=0710a963-a473-430f-9f9a-e27dd4546328  status=running  source=topology",
+            "worktree: /repo",
+        ]
+    );
+    assert_eq!(json.code, 0);
+    assert!(json.stdout[0].contains("\"aimuxId\": \"codex-1\""));
+    assert_eq!(missing.code, 1);
+    assert_eq!(
+        missing.stderr,
+        ["Error: Agent \"ghost-1\" is not managed in runtime topology"]
+    );
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
+}
+
+#[test]
 fn daemon_status_uses_stored_state_when_daemon_request_fails() {
     let mut runtime = FakeRuntime {
         fail_commands: true,

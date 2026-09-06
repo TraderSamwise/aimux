@@ -1344,6 +1344,22 @@ fn agent_ps_plans_native_text_route_with_project_resolution() {
         }
     );
 
+    let identity = classify_core_cli_with_project_resolver(
+        &["id", "codex-1", "--project", "./child dir", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("id plan");
+    assert_eq!(identity.operation, CoreCliOperation::AgentIdentity);
+    assert_eq!(identity.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        identity.action,
+        CoreCliAction::AgentIdentity {
+            project_root: "/resolved/./child dir".into(),
+            session_id: "codex-1".into(),
+        }
+    );
+
     let malformed = classify_core_cli(&["ps", "--project", "--json"], &context(true, true))
         .expect_err("malformed ps");
     assert_eq!(malformed.exit_code(), 1);

@@ -25,6 +25,15 @@ pub struct CoreAgentListArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreAgentIdentityArgs {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreAgentInputArgs {
     pub session_id: String,
     pub text: String,

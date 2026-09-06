@@ -172,6 +172,22 @@ pub fn parse_core_agent_list_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgent
     })
 }
 
+pub fn parse_core_agent_identity_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentIdentityArgs> {
+    if args.first().map(AsRef::as_ref) != Some("id") {
+        return None;
+    }
+    let session_id = args.get(1)?.as_ref();
+    if session_id.trim().is_empty() || session_id.starts_with('-') {
+        return None;
+    }
+    let parsed = parse_project_json_flags(&args[2..])?;
+    Some(CoreAgentIdentityArgs {
+        session_id: session_id.to_owned(),
+        project: parsed.project,
+        json: parsed.json,
+    })
+}
+
 pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentInputArgs> {
     if args.first().map(AsRef::as_ref) != Some("input") {
         return None;
@@ -3189,6 +3205,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
         (Some("init"), _) => args.len() == 1,
         (Some("list"), _) => parse_core_agent_list_args(args).is_some(),
+        (Some("id"), _) => parse_core_agent_identity_args(args).is_some(),
         (Some("ps"), _) => true,
         (Some("input"), _) => true,
         (Some("rename"), _) => true,

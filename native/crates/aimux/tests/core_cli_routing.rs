@@ -1,11 +1,12 @@
 use aimux::core_cli_routing::{
-    CoreAgentInputArgs, CoreAgentListArgs, CoreAgentPsArgs, CoreCollaborationArgs,
-    CoreDaemonRestartArgs, CoreDoctorArgs, CoreGraveyardArgs, CoreHostAgentReadArgs,
-    CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
-    CoreMetadataArgs, CoreNotificationArgs, CoreProjectEnsureArgs, CoreRepairArgs, CoreRestartArgs,
-    CoreTaskArgs, CoreThreadArgs, CoreWorktreeArgs, core_command_args,
-    has_core_global_logging_args, is_core_cli_command, is_core_project_ensure_command,
-    is_valid_core_project_ensure_args, parse_core_agent_input_args, parse_core_agent_list_args,
+    CoreAgentIdentityArgs, CoreAgentInputArgs, CoreAgentListArgs, CoreAgentPsArgs,
+    CoreCollaborationArgs, CoreDaemonRestartArgs, CoreDoctorArgs, CoreGraveyardArgs,
+    CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs,
+    CoreLogsSubcommand, CoreMetadataArgs, CoreNotificationArgs, CoreProjectEnsureArgs,
+    CoreRepairArgs, CoreRestartArgs, CoreTaskArgs, CoreThreadArgs, CoreWorktreeArgs,
+    core_command_args, has_core_global_logging_args, is_core_cli_command,
+    is_core_project_ensure_command, is_valid_core_project_ensure_args,
+    parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_attachment_publish_args, parse_core_collaboration_args,
     parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
@@ -209,6 +210,32 @@ fn agent_list_parser_matches_project_json_forms() {
         None
     );
     assert_eq!(parse_core_agent_list_args(&["list", "extra"]), None);
+}
+
+#[test]
+fn agent_identity_parser_matches_project_json_forms() {
+    assert_eq!(
+        parse_core_agent_identity_args(&["id", "codex-1"]),
+        Some(CoreAgentIdentityArgs {
+            session_id: "codex-1".into(),
+            project: None,
+            json: false,
+        })
+    );
+    assert_eq!(
+        parse_core_agent_identity_args(&["id", "codex-1", "--project=/repo", "--json"]),
+        Some(CoreAgentIdentityArgs {
+            session_id: "codex-1".into(),
+            project: Some("/repo".into()),
+            json: true,
+        })
+    );
+    assert_eq!(parse_core_agent_identity_args(&["id"]), None);
+    assert_eq!(parse_core_agent_identity_args(&["id", "--json"]), None);
+    assert_eq!(
+        parse_core_agent_identity_args(&["id", "codex-1", "extra"]),
+        None
+    );
 }
 
 #[test]
@@ -1301,6 +1328,7 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["doctor", "lifecycle", "--project", "/repo"],
         vec!["logs", "path", "--daemon"],
         vec!["list", "--json"],
+        vec!["id", "codex-1", "--project=/repo", "--json"],
         vec!["notify", "--title", "Heads up"],
         vec!["notify", "--body", "Ready"],
         vec!["list-notifications", "--unread"],
@@ -1370,6 +1398,9 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["thread", "send", "thread-1", "--from", "user"],
         vec!["threads", "thread-1"],
         vec!["list", "extra"],
+        vec!["id"],
+        vec!["id", "--json"],
+        vec!["id", "codex-1", "extra"],
         vec!["worktree", "create"],
         vec!["worktree", "create", "--help"],
         vec!["graveyard", "send"],

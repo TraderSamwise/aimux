@@ -1,3 +1,7 @@
+use crate::backend_session_ids::{
+    build_agent_identity_error_payload, build_agent_identity_payload, render_agent_identity_lines,
+    resolve_agent_identity,
+};
 use crate::config::init_project;
 use crate::core_cli::{
     CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCommandCall,
@@ -400,6 +404,10 @@ fn run_plan(
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
         CoreCliAction::InitProject => run_init_project(runtime),
         CoreCliAction::HostTopology { json, raw } => run_host_topology(json, raw, runtime),
+        CoreCliAction::AgentIdentity {
+            project_root,
+            session_id,
+        } => run_agent_identity(output_mode, &project_root, &session_id, runtime),
         CoreCliAction::RemoteStatus { relay_request } => {
             let credentials = runtime.credentials_for_status();
             let relay = match relay_request {
@@ -727,6 +735,41 @@ fn run_host_topology(
     Ok(CoreCliExecution::ok(vec![
         path.to_string_lossy().into_owned(),
     ]))
+}
+
+fn run_agent_identity(
+    output_mode: CoreCliOutputMode,
+    project_root: &str,
+    session_id: &str,
+    runtime: &impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let path = runtime.runtime_topology_path(project_root);
+    let topology = runtime.read_runtime_topology(&path)?;
+    match resolve_agent_identity(project_root, session_id, &topology) {
+        Ok(identity) => {
+            let payload = build_agent_identity_payload(project_root, &identity);
+            render_json_or_lines(
+                output_mode,
+                payload.clone(),
+                render_agent_identity_lines(&payload),
+            )
+        }
+        Err(error) if output_mode == CoreCliOutputMode::Json => Ok(CoreCliExecution {
+            code: 1,
+            stdout: vec![
+                serde_json::to_string_pretty(&build_agent_identity_error_payload(
+                    project_root,
+                    &error,
+                ))
+                .map_err(|error| error.to_string())?,
+            ],
+            stderr: Vec::new(),
+        }),
+        Err(error) => Ok(CoreCliExecution::error(
+            format!("Error: {}", error.reason),
+            1,
+        )),
+    }
 }
 
 fn run_command_action(

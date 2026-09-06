@@ -1,8 +1,8 @@
 use crate::core_cli_routing::{
     CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreHostRestartArgs, CoreLogsArgs,
-    CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_input_args,
-    parse_core_agent_list_args, parse_core_agent_migrate_args, parse_core_agent_ps_args,
-    parse_core_agent_rename_args, parse_core_attachment_publish_args,
+    CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_identity_args,
+    parse_core_agent_input_args, parse_core_agent_list_args, parse_core_agent_migrate_args,
+    parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_attachment_publish_args,
     parse_core_collaboration_args, parse_core_daemon_restart_args,
     parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
@@ -41,6 +41,7 @@ pub enum CoreCliOperation {
     HostAgentStream,
     AgentInput,
     AgentList,
+    AgentIdentity,
     AgentRename,
     AgentMigrate,
     AgentPs,
@@ -387,6 +388,10 @@ pub enum CoreCliAction {
     HostTopology {
         json: bool,
         raw: bool,
+    },
+    AgentIdentity {
+        project_root: String,
+        session_id: String,
     },
     RemoteStatus {
         relay_request: Option<CoreCommandCall>,
@@ -1006,6 +1011,27 @@ where
                 CoreCliAction::TextRoute {
                     path: agent_list_text_path(&project_root, parsed.json),
                     body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("id", _) => {
+            let parsed = parse_core_agent_identity_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid id arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::AgentIdentity,
+                CoreCliAction::AgentIdentity {
+                    project_root,
+                    session_id: parsed.session_id,
                 },
                 CoreCliFallback::None,
             )
