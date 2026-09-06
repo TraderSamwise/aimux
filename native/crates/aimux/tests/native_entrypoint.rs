@@ -184,6 +184,39 @@ fn root_resume_entry_stays_native_even_when_node_fallback_is_configured() {
     cleanup(root);
 }
 
+#[test]
+fn doctor_installs_stays_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-doctor-installs");
+    let install_root = root.join("native");
+    fs::create_dir_all(root.join("dist")).expect("create dist");
+    fs::create_dir_all(&install_root).expect("create install root");
+    fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .current_dir(&root)
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_INSTALL_ROOT", &install_root)
+        .env("AIMUX_NODE_BIN", node)
+        .args(["doctor", "installs", "--json"])
+        .output()
+        .expect("run native aimux");
+
+    assert!(output.status.success());
+    assert!(
+        !log.exists(),
+        "doctor installs should not invoke node fallback"
+    );
+    let body: Value = serde_json::from_slice(&output.stdout).expect("doctor installs json");
+    assert_eq!(body["dryRun"], true);
+    assert_eq!(
+        body["plan"]["root"].as_str(),
+        Some(install_root.to_str().unwrap())
+    );
+    cleanup(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {

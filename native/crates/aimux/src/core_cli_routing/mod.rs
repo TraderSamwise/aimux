@@ -2425,7 +2425,9 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         return None;
     }
     let subcommand = match args.get(1).map(AsRef::as_ref) {
-        Some("disk" | "exchange" | "lifecycle" | "tmux") => args[1].as_ref().to_owned(),
+        Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs") => {
+            args[1].as_ref().to_owned()
+        }
         _ => return None,
     };
     let mut parsed = CoreDoctorArgs {
@@ -2435,6 +2437,9 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         session: None,
         window_id: None,
         include_active: false,
+        fix: false,
+        retention_days: None,
+        keep_recent: None,
         json: false,
     };
     let mut index = 2;
@@ -2447,6 +2452,35 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         }
         if parsed.subcommand == "disk" && arg == "--include-active" {
             parsed.include_active = true;
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "installs" && arg == "--fix" {
+            parsed.fix = true;
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "installs" && arg == "--retention-days" {
+            parsed.retention_days = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "installs"
+            && let Some(value) = arg.strip_prefix("--retention-days=")
+        {
+            parsed.retention_days = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "installs" && arg == "--keep-recent" {
+            parsed.keep_recent = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "installs"
+            && let Some(value) = arg.strip_prefix("--keep-recent=")
+        {
+            parsed.keep_recent = Some(value.to_owned());
             index += 1;
             continue;
         }
@@ -3078,7 +3112,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("daemon"), Some("project-ensure")) => true,
         (Some("debug-state"), Some(_)) => args.len() == 2 && !args[1].as_ref().starts_with('-'),
         (Some("doctor"), Some("versions")) => has_only_allowed_flags(&args[2..], &["--json"]),
-        (Some("doctor"), Some("disk" | "exchange" | "lifecycle" | "tmux")) => {
+        (Some("doctor"), Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs")) => {
             parse_core_doctor_args(args).is_some()
         }
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),

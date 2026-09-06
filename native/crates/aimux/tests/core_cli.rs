@@ -1147,6 +1147,30 @@ fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
             body: None,
         }
     );
+
+    let installs = classify_core_cli(
+        &[
+            "doctor",
+            "installs",
+            "--fix",
+            "--retention-days",
+            "0",
+            "--keep-recent=2",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("doctor installs plan");
+    assert_eq!(installs.operation, CoreCliOperation::DoctorInstalls);
+    assert_eq!(installs.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        installs.action,
+        CoreCliAction::InstallCleanup {
+            fix: true,
+            retention_days: Some("0".into()),
+            keep_recent: Some("2".into()),
+        }
+    );
 }
 
 #[test]

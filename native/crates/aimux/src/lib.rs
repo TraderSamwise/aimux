@@ -34,6 +34,7 @@ pub mod dashboard_terminal;
 pub mod dashboard_tool_picker;
 pub mod debug_state;
 pub mod expose_socket;
+pub mod install_cleanup;
 pub mod launcher_env;
 pub mod local_ui_server;
 pub mod logs;

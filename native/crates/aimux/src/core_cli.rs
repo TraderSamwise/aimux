@@ -104,6 +104,7 @@ pub enum CoreCliOperation {
     DoctorExchange,
     DoctorLifecycle,
     DoctorTmux,
+    DoctorInstalls,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -394,6 +395,11 @@ pub enum CoreCliAction {
     },
     DebugState {
         target: String,
+    },
+    InstallCleanup {
+        fix: bool,
+        retention_days: Option<String>,
+        keep_recent: Option<String>,
     },
 }
 
@@ -2126,7 +2132,7 @@ where
             },
             CoreCliFallback::None,
         ),
-        ("doctor", "disk" | "exchange" | "lifecycle" | "tmux") => {
+        ("doctor", "disk" | "exchange" | "lifecycle" | "tmux" | "installs") => {
             let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
             if parsed.subcommand == "disk" {
                 let project_root = parsed.project.as_deref().map(&resolve_project_root);
@@ -2139,6 +2145,16 @@ where
                             parsed.json,
                         ),
                         body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "installs" {
+                (
+                    CoreCliOperation::DoctorInstalls,
+                    CoreCliAction::InstallCleanup {
+                        fix: parsed.fix,
+                        retention_days: parsed.retention_days,
+                        keep_recent: parsed.keep_recent,
                     },
                     CoreCliFallback::None,
                 )

@@ -388,6 +388,11 @@ pub struct CoreDoctorArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_id: Option<String>,
     pub include_active: bool,
+    pub fix: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_recent: Option<String>,
     pub json: bool,
 }
 

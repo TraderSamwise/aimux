@@ -21,6 +21,11 @@ use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{AimuxDaemonInfo, DaemonState, load_daemon_info, load_daemon_state};
 use crate::daemon_supervisor::ensure_daemon_running;
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
+use crate::install_cleanup::{
+    DEFAULT_INSTALL_KEEP_RECENT, DEFAULT_INSTALL_RETENTION_DAYS, PlanInstallCleanupOptions,
+    RunInstallCleanupInput, is_install_cleanup_dry_run, plan_install_cleanup,
+    render_install_cleanup_result, run_install_cleanup,
+};
 use crate::logs::{
     LogSelectionOptions, clear_log_file, parse_line_count, read_last_log_lines, selected_log_path,
 };
@@ -431,7 +436,55 @@ fn run_plan(
             let text = runtime.debug_state_report(&target)?;
             Ok(CoreCliExecution::ok(vec![text]))
         }
+        CoreCliAction::InstallCleanup {
+            fix,
+            retention_days,
+            keep_recent,
+        } => run_install_cleanup_action(output_mode, fix, retention_days, keep_recent),
     }
+}
+
+fn run_install_cleanup_action(
+    output_mode: CoreCliOutputMode,
+    fix: bool,
+    retention_days: Option<String>,
+    keep_recent: Option<String>,
+) -> Result<CoreCliExecution, String> {
+    let plan = plan_install_cleanup(PlanInstallCleanupOptions {
+        retention_days: Some(parse_count(
+            retention_days.as_deref(),
+            DEFAULT_INSTALL_RETENTION_DAYS,
+        )),
+        keep_recent: Some(parse_count(
+            keep_recent.as_deref(),
+            DEFAULT_INSTALL_KEEP_RECENT,
+        )),
+        ..PlanInstallCleanupOptions::default()
+    });
+    let result = run_install_cleanup(
+        plan,
+        RunInstallCleanupInput {
+            dry_run: Some(is_install_cleanup_dry_run(fix)),
+            ..RunInstallCleanupInput::default()
+        },
+    );
+    match output_mode {
+        CoreCliOutputMode::Json => Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?,
+        ])),
+        CoreCliOutputMode::Text => Ok(CoreCliExecution::ok(vec![render_install_cleanup_result(
+            &result,
+        )])),
+    }
+}
+
+fn parse_count<T>(raw: Option<&str>, fallback: T) -> T
+where
+    T: TryFrom<u64> + Copy,
+{
+    raw.and_then(|value| value.parse::<u64>().ok())
+        .and_then(|value| T::try_from(value).ok())
+        .unwrap_or(fallback)
 }
 
 fn run_restart_control_plane(
