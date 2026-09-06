@@ -25,6 +25,8 @@ const GAP: i64 = 1;
 const MIN_TILE_WIDTH: i64 = 30;
 const MIN_TILE_HEIGHT: i64 = 5;
 const RESET: &str = "\x1b[0m";
+const TITLE_ROW: i64 = 1;
+const CONTENT_LEFT: i64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -674,10 +676,11 @@ pub fn run_tmux_expose_with_client(
         }
     };
     let mut sort_mode = read_expose_ui_state(&options.project_state_dir).sort_mode;
-    let mut items = order_items(&view.items, sort_mode);
+    let mut items = order_items(&view, &options.project_root, sort_mode);
     let mut index = 0_usize;
     let mut leader_pending = false;
-    let _ = render_plain_expose(output, &view, &items, index);
+    let mut layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
+        .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
     let mut buffer = [0_u8; 8192];
     loop {
         let count = match input.read(&mut buffer) {
@@ -711,7 +714,7 @@ pub fn run_tmux_expose_with_client(
                 };
                 let _ =
                     write_expose_ui_state(&options.project_state_dir, ExposeUiState { sort_mode });
-                items = order_items(&view.items, sort_mode);
+                items = order_items(&view, &options.project_root, sort_mode);
                 index = selected_window_id
                     .and_then(|window_id| {
                         items
@@ -719,7 +722,8 @@ pub fn run_tmux_expose_with_client(
                             .position(|item| item_window_id(Some(item)) == Some(window_id.as_str()))
                     })
                     .unwrap_or_else(|| index.min(items.len().saturating_sub(1)));
-                let _ = render_plain_expose(output, &view, &items, index);
+                layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
+                    .unwrap_or(layout);
                 continue;
             }
             if key == ExposeKey::Char('g') {
@@ -732,9 +736,10 @@ pub fn run_tmux_expose_with_client(
                     client,
                 ) {
                     view = next_view;
-                    items = order_items(&view.items, sort_mode);
+                    items = order_items(&view, &options.project_root, sort_mode);
                     index = index.min(items.len().saturating_sub(1));
-                    let _ = render_plain_expose(output, &view, &items, index);
+                    layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
+                        .unwrap_or(layout);
                 }
                 continue;
             }
@@ -749,10 +754,14 @@ pub fn run_tmux_expose_with_client(
                         if focus_or_select(&options, &context, &deps, client, &item) {
                             return finish_plain_expose(output, 0);
                         }
-                        let _ = render_plain_expose(output, &view, &items, index);
+                        layout =
+                            render_grid_expose(output, &view, &items, index, &options, sort_mode)
+                                .unwrap_or(layout);
                     }
                     _ => {
-                        let _ = render_plain_expose(output, &view, &items, index);
+                        layout =
+                            render_grid_expose(output, &view, &items, index, &options, sort_mode)
+                                .unwrap_or(layout);
                     }
                 }
                 continue;
@@ -761,7 +770,8 @@ pub fn run_tmux_expose_with_client(
                 && ('1'..='9').contains(&ch)
             {
                 let target = ch as usize - '1' as usize;
-                if target < items.len().min(9) {
+                let visible_count = (layout.visible_count.max(0) as usize).min(items.len());
+                if target < visible_count.min(9) {
                     index = target;
                     if focus_or_select(&options, &context, &deps, client, &items[index]) {
                         return finish_plain_expose(output, 0);
@@ -774,9 +784,10 @@ pub fn run_tmux_expose_with_client(
                         client,
                     ) {
                         view = next_view;
-                        items = order_items(&view.items, sort_mode);
+                        items = order_items(&view, &options.project_root, sort_mode);
                     }
-                    let _ = render_plain_expose(output, &view, &items, index);
+                    layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
+                        .unwrap_or(layout);
                 }
                 continue;
             }
@@ -792,21 +803,30 @@ pub fn run_tmux_expose_with_client(
                 continue;
             }
             let previous = index;
+            let visible_count = (layout.visible_count.max(0) as usize).min(items.len());
+            let tile_cols = layout.tile_cols.max(1) as usize;
             match key {
                 ExposeKey::Right | ExposeKey::Tab | ExposeKey::Char('l') | ExposeKey::Char('n') => {
-                    index = (index + 1) % items.len()
+                    index = (index + 1) % visible_count
                 }
                 ExposeKey::Left | ExposeKey::Char('h') | ExposeKey::Char('p') => {
-                    index = (index + items.len() - 1) % items.len()
+                    index = (index + visible_count - 1) % visible_count
                 }
                 ExposeKey::Down | ExposeKey::Char('j') => {
-                    index = (index + 3).min(items.len().saturating_sub(1))
+                    if index + tile_cols < visible_count {
+                        index += tile_cols;
+                    }
                 }
-                ExposeKey::Up | ExposeKey::Char('k') => index = index.saturating_sub(3),
+                ExposeKey::Up | ExposeKey::Char('k') => {
+                    if index >= tile_cols {
+                        index -= tile_cols;
+                    }
+                }
                 _ => {}
             }
             if previous != index {
-                let _ = render_plain_expose(output, &view, &items, index);
+                layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
+                    .unwrap_or(layout);
             }
         }
     }
@@ -1074,47 +1094,122 @@ fn finish_plain_expose(output: &mut impl Write, code: i32) -> i32 {
     code
 }
 
-fn render_plain_expose(
+fn render_grid_expose(
     output: &mut impl Write,
     view: &ExposeScopeView,
     items: &[Value],
     selected_index: usize,
-) -> std::io::Result<()> {
-    write!(output, "\x1b[2J\x1b[H\x1b[?25l")?;
-    writeln!(output, "aimux expose - {}", view.scope_label)?;
-    if items.is_empty() {
-        writeln!(output, "No sessions.")?;
-    }
-    for (index, item) in items.iter().take(9).enumerate() {
-        let prefix = if index == selected_index { ">" } else { " " };
-        let number = index + 1;
-        let label = item.get("label").and_then(Value::as_str).unwrap_or("?");
-        let project = item
-            .get("projectName")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let worktree = item
-            .get("exposeContext")
-            .and_then(|context| context.get("worktree"))
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let window_id = item_window_id(Some(item)).unwrap_or("");
-        let context = [project, worktree]
-            .into_iter()
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>()
-            .join(" / ");
-        if context.is_empty() {
-            writeln!(output, "{prefix} {number}. {label}  {window_id}")?;
-        } else {
-            writeln!(output, "{prefix} {number}. {label}  {context}  {window_id}")?;
+    options: &TmuxExposeOptions,
+    sort_mode: ExposeSortMode,
+) -> std::io::Result<GridLayout> {
+    let cols = options.columns.unwrap_or(80) as i64;
+    let rows = options.rows.unwrap_or(24) as i64;
+    let layout = compute_layout(items.len() as i64, cols, rows);
+    let visible_count = (layout.visible_count.max(0) as usize).min(items.len());
+    let selected_index = selected_index.min(visible_count.saturating_sub(1));
+    let hidden = items.len().saturating_sub(visible_count);
+    let more = if hidden > 0 {
+        format!("   +{hidden} more (use ^A s)")
+    } else {
+        String::new()
+    };
+    let zoom = if view.scope == ExposeScope::Global {
+        ""
+    } else {
+        " · g zoom out"
+    };
+    let sort_label = if sort_mode == ExposeSortMode::RecentOutput {
+        "recent output"
+    } else {
+        "default order"
+    };
+    let title = truncate_ansi(
+        &format!(
+            "\x1b[1mExposé · {} ({}) · {sort_label}{RESET}",
+            view.scope_label,
+            items.len()
+        ),
+        cols.saturating_sub(2) as usize,
+    );
+    let help = truncate_ansi(
+        &format!(
+            "\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open · r sort · O overseer · ^A d dashboard{zoom} · q/Esc close{more}{RESET}"
+        ),
+        cols.saturating_sub(2) as usize,
+    );
+    let mut rendered = "\x1b[?2026h\x1b[2J".to_owned();
+    rendered.push_str(&format!("\x1b[{TITLE_ROW};{}H{title}", CONTENT_LEFT + 1));
+    if visible_count == 0 {
+        let message = format!("No active agents in {}.", view.scope_label);
+        let message_col = CONTENT_LEFT + ((cols - message.chars().count() as i64) / 2).max(0);
+        let message_row = (rows / 2).max(1);
+        rendered.push_str(&format!(
+            "\x1b[{message_row};{message_col}H\x1b[2m{message}{RESET}"
+        ));
+    } else {
+        let tones = assign_value_worktree_tones(items, &options.project_root);
+        for tile_index in 0..visible_count {
+            rendered.push_str(&render_tile_at(
+                tile_index,
+                selected_index,
+                &layout,
+                items,
+                &tones,
+                view,
+                options,
+            ));
         }
     }
-    writeln!(output, "q close  enter open  g scope  r sort  O overseer")?;
-    output.flush()
+    rendered.push_str(&format!(
+        "\x1b[{rows};{}H{help}\x1b[?2026l",
+        CONTENT_LEFT + 1
+    ));
+    output.write_all(rendered.as_bytes())?;
+    output.flush()?;
+    Ok(layout)
 }
 
-fn order_items(items: &[Value], sort_mode: ExposeSortMode) -> Vec<Value> {
+fn render_tile_at(
+    tile_index: usize,
+    selected_index: usize,
+    layout: &GridLayout,
+    items: &[Value],
+    tones: &BTreeMap<String, i64>,
+    view: &ExposeScopeView,
+    options: &TmuxExposeOptions,
+) -> String {
+    let row_offset = (tile_index as i64 / layout.tile_cols) * layout.tile_height;
+    let column = tile_index as i64 % layout.tile_cols;
+    let top = TITLE_ROW + layout.grid_top_row + row_offset;
+    let left = CONTENT_LEFT + column * (layout.tile_width + GAP);
+    let item = &items[tile_index];
+    let raw = item
+        .get("previewSnapshot")
+        .and_then(|snapshot| snapshot.get("output"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let preview = tile_preview(raw, layout.body_lines);
+    let context = tile_context_for_value(item, view.sublabel, &options.project_root, tones);
+    draw_tile(DrawTileInput {
+        item,
+        preview: &preview,
+        badge: tile_index as i64 + 1,
+        selected: tile_index == selected_index,
+        top,
+        left,
+        width: layout.tile_width,
+        layout,
+        context: &context,
+        options,
+    })
+}
+
+fn order_items(
+    view: &ExposeScopeView,
+    _project_root: &Path,
+    sort_mode: ExposeSortMode,
+) -> Vec<Value> {
+    let items = &view.items;
     let mut ordered = items.to_vec();
     if sort_mode != ExposeSortMode::RecentOutput {
         return ordered;
@@ -1127,6 +1222,85 @@ fn order_items(items: &[Value], sort_mode: ExposeSortMode) -> Vec<Value> {
             .then_with(|| item_recent_rank(left).cmp(&item_recent_rank(right)))
     });
     ordered
+}
+
+fn assign_value_worktree_tones(items: &[Value], project_root: &Path) -> BTreeMap<String, i64> {
+    let mut tones = BTreeMap::new();
+    for item in items {
+        let root = item
+            .get("projectRoot")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| project_root.to_path_buf());
+        let key = value_worktree_tone_key(item, &root);
+        tones
+            .entry(key.clone())
+            .or_insert_with(|| worktree_color_code_for_path(&key));
+    }
+    tones
+}
+
+fn tile_context_for_value(
+    item: &Value,
+    sublabel: ExposeSublabel,
+    project_root: &Path,
+    tones: &BTreeMap<String, i64>,
+) -> TileContext {
+    if sublabel == ExposeSublabel::None {
+        return TileContext {
+            worktree: String::new(),
+            project: None,
+            tone: None,
+        };
+    }
+    let root = item
+        .get("projectRoot")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project_root.to_path_buf());
+    let key = value_worktree_tone_key(item, &root);
+    let project = if sublabel == ExposeSublabel::ProjectWorktree {
+        item.get("projectName")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    } else {
+        None
+    };
+    TileContext {
+        worktree: short_value_worktree(item, &root),
+        project,
+        tone: tones.get(&key).copied(),
+    }
+}
+
+fn short_value_worktree(item: &Value, project_root: &Path) -> String {
+    let Some(worktree_path) = item
+        .get("metadata")
+        .and_then(|metadata| metadata.get("worktreePath"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return "main".into();
+    };
+    if lexical_resolve(worktree_path) == lexical_resolve(project_root) {
+        return "main".into();
+    }
+    Path::new(worktree_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(worktree_path)
+        .to_owned()
+}
+
+fn value_worktree_tone_key(item: &Value, project_root: &Path) -> String {
+    let path = item
+        .get("metadata")
+        .and_then(|metadata| metadata.get("worktreePath"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project_root.to_path_buf());
+    lexical_resolve(path).to_string_lossy().into_owned()
 }
 
 fn item_recency_at(item: &Value) -> &str {
@@ -1305,6 +1479,86 @@ fn worktree_color_ansi_for_code(code: i64) -> String {
     let g = (code >> 8) & 0xff;
     let b = code & 0xff;
     format!("38;2;{r};{g};{b}")
+}
+
+fn worktree_color_code_for_path(path: &str) -> i64 {
+    worktree_color_code_for_key(
+        Some(&format!("path:{}", clean_worktree_color_part(path))),
+        "default",
+    )
+}
+
+fn clean_worktree_color_part(value: &str) -> String {
+    let trimmed = value.trim();
+    let mut output = String::with_capacity(trimmed.len());
+    let mut previous_slash = false;
+    for character in trimmed.chars() {
+        let next = if character == '\\' { '/' } else { character };
+        if next == '/' {
+            if previous_slash {
+                continue;
+            }
+            previous_slash = true;
+        } else {
+            previous_slash = false;
+        }
+        output.push(next);
+    }
+    output
+}
+
+fn worktree_color_code_for_key(key: Option<&str>, fallback_key: &str) -> i64 {
+    let source = format!(
+        "aimux-worktree-color-rgb:v7490:{}",
+        key.unwrap_or(fallback_key)
+    );
+    let hash = mix32(stable_string_hash(&source));
+    let (r, g, b) = boosted_rgb_from_hash(hash);
+    ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff)
+}
+
+fn stable_string_hash(value: &str) -> u32 {
+    let mut hash = 0x811c9dc5_u32;
+    for unit in value.encode_utf16() {
+        hash ^= u32::from(unit);
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+fn mix32(value: u32) -> u32 {
+    let mut hash = value;
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x7feb352d);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x846ca68b);
+    hash ^= hash >> 16;
+    hash
+}
+
+fn boosted_rgb_from_hash(hash: u32) -> (i64, i64, i64) {
+    let mut r = 80 + i64::from((hash & 0xff) % 156);
+    let mut g = 80 + i64::from(((hash >> 8) & 0xff) % 156);
+    let mut b = 80 + i64::from(((hash >> 16) & 0xff) % 156);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    if max - min < 80 {
+        if max == r {
+            r = (r + 70).min(255);
+        } else if max == g {
+            g = (g + 70).min(255);
+        } else {
+            b = (b + 70).min(255);
+        }
+        if min == r {
+            r = (r - 45).max(65);
+        } else if min == g {
+            g = (g - 45).max(65);
+        } else {
+            b = (b - 45).max(65);
+        }
+    }
+    (r, g, b)
 }
 
 fn agent_status_kind(metadata: &Value) -> Option<String> {
