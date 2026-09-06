@@ -721,6 +721,9 @@ Priority fixture groups:
 - `runtime-state/dashboard-ui-state-store.json`: dashboard UI shared/client
   persistence, screen normalization, selection restore, and item ordering
   behavior captured by running TypeScript `dashboard/ui-state-store`.
+- `runtime-state/tui-runtime-mutations.json`: TUI runtime mutation queue
+  context coalescing, mark-seen retry, backoff preemption, and teardown side
+  effects captured by running TypeScript `multiplexer/tui-runtime-mutations`.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
