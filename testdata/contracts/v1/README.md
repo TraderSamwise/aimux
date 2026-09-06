@@ -215,6 +215,10 @@ Priority fixture groups:
 
 ## Runtime Migration
 
+- `runtime-state/service-state-snapshot.json`: runtime-stop service snapshot
+  merging, stale compatibility state clearing, topology service demotion, and
+  missing-worktree filtering captured by running TypeScript
+  `multiplexer/service-state-snapshot`.
 - `runtime-migration/migration.json`: report, explicit import, rollback,
   corrupt legacy file, global agent-dir copy avoidance, and blocked existing
   exchange behavior captured by running TypeScript `runtime-migration` helpers

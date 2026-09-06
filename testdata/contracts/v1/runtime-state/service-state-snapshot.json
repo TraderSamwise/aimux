@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/service-state-snapshot.test.ts",
+  "generatedBy": "scripts/capture-service-state-snapshot-contract.mjs",
+  "description": "Service runtime snapshot merge, persistence, topology demotion, and missing-worktree contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-service-snapshot-001",
+      "name": "merges runtime-stop service snapshots as offline services without stale tmux retention",
+      "source": "src/multiplexer/service-state-snapshot.test.ts",
+      "api": "mergeServiceSnapshots",
+      "input": {
+        "existing": {
+          "savedAt": "2026-05-01T00:00:00.000Z",
+          "cwd": "/repo",
+          "sessions": [{ "id": "agent-1", "tool": "codex", "toolConfigKey": "codex", "command": "codex", "args": [] }],
+          "services": [
+            { "id": "stale-service", "label": "stale", "launchCommandLine": "yarn stale" },
+            { "id": "service-1", "label": "old", "launchCommandLine": "yarn dev" }
+          ]
+        },
+        "snapshots": [
+          {
+            "id": "service-1",
+            "label": "web",
+            "launchCommandLine": "yarn dev",
+            "cwd": "/repo/apps/web",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 2, "windowName": "web" },
+            "retained": true
+          }
+        ],
+        "cwd": "/repo",
+        "savedAt": "2026-05-02T00:00:00.000Z"
+      },
+      "output": {
+        "savedAt": "2026-05-02T00:00:00.000Z",
+        "cwd": "/repo",
+        "services": [{ "id": "service-1", "label": "web", "launchCommandLine": "yarn dev", "cwd": "/repo/apps/web" }]
+      },
+      "inputSha256": "73713f54999aa4e7b25103e75c67bf6ff47f4ec6251f77cd668aa28e9aff8b89"
+    },
+    {
+      "id": "runtime-state-service-snapshot-002",
+      "name": "does not let runtime-stop agent snapshots mutate topology",
+      "source": "src/multiplexer/service-state-snapshot.test.ts",
+      "api": "mergeRuntimeSnapshots",
+      "input": {
+        "existing": {
+          "savedAt": "2026-05-01T00:00:00.000Z",
+          "cwd": "<repo>",
+          "sessions": [
+            {
+              "id": "old-id",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "lifecycle": "live",
+              "backendSessionId": "backend-1",
+              "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "claude" }
+            }
+          ],
+          "services": []
+        },
+        "snapshots": {
+          "sessions": [
+            {
+              "id": "new-id",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": ["--resume"],
+              "lifecycle": "live",
+              "backendSessionId": "backend-1",
+              "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 2, "windowName": "claude" }
+            }
+          ]
+        },
+        "savedAt": "2026-05-02T00:00:00.000Z"
+      },
+      "output": {
+        "merged": { "savedAt": "2026-05-02T00:00:00.000Z", "cwd": "<repo>", "services": [] },
+        "topologySessions": []
+      },
+      "inputSha256": "1cf9610271c26bc1e4a8f00721571169861d4c4a321a99dc35f0abc3b327bcc0"
+    },
+    {
+      "id": "runtime-state-service-snapshot-003",
+      "name": "demotes observed running services to topology stopped state before tmux stop",
+      "source": "src/multiplexer/service-state-snapshot.test.ts",
+      "api": "persistProjectRuntimeSnapshotsBeforeTmuxStop",
+      "input": {
+        "service": {
+          "id": "service-1",
+          "label": "web",
+          "launchCommandLine": "yarn web",
+          "worktreePath": "<repo>",
+          "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 2, "windowName": "web" }
+        },
+        "metadataCreatedAt": "2026-05-01T00:00:00.000Z"
+      },
+      "output": {
+        "stopped": [
+          {
+            "id": "service-1",
+            "status": "stopped",
+            "args": [],
+            "launchCommandLine": "yarn web",
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "web",
+            "createdAt": "2026-05-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "b9291d5a17d44ef7cc37457f998b9192847f7562f4f77a97fed56cca8822b8f2"
+    },
+    {
+      "id": "runtime-state-service-snapshot-004",
+      "name": "clears stale compatibility service snapshots when no service windows are observed",
+      "source": "src/multiplexer/service-state-snapshot.test.ts",
+      "api": "persistNoWindows",
+      "input": {
+        "state": {
+          "savedAt": "2026-05-01T00:00:00.000Z",
+          "cwd": "<repo>",
+          "services": [{ "id": "stale-service", "label": "stale", "launchCommandLine": "yarn stale" }]
+        }
+      },
+      "output": {
+        "result": { "sessions": [], "services": [] },
+        "state": { "savedAt": "<ts:1>", "cwd": "<repo>", "services": [] }
+      },
+      "inputSha256": "c180b754011abad28a63a73be7385b938c0de22c00f30444239abb56e44f43c3"
+    },
+    {
+      "id": "runtime-state-service-snapshot-005",
+      "name": "does not snapshot managed windows for missing worktrees",
+      "source": "src/multiplexer/service-state-snapshot.test.ts",
+      "api": "snapshotProjectServiceWindows",
+      "input": {
+        "windows": [
+          {
+            "target": { "windowId": "@1", "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-1",
+              "command": "codex",
+              "args": [],
+              "worktreePath": "<repo>/.aimux/worktrees/missing"
+            }
+          },
+          {
+            "target": { "windowId": "@2", "windowName": "shell" },
+            "metadata": {
+              "kind": "service",
+              "sessionId": "service-1",
+              "command": "shell",
+              "args": [],
+              "worktreePath": "<repo>/.aimux/worktrees/missing"
+            }
+          }
+        ]
+      },
+      "output": [],
+      "inputSha256": "967108daeea15c6221ccfec391bb1df7c45fd18bafcfe82112c6528fdad77e96"
+    }
+  ]
+}
