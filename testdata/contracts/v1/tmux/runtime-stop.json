@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-runtime-stop-contract.mjs",
+  "source": "src/tmux/runtime-stop.ts",
+  "subject": "src/tmux/runtime-stop.ts",
+  "description": "Runtime stop session filtering and kill ordering captured by running TypeScript.",
+  "caseCount": 4,
+  "cases": [
+    {
+      "id": "tmux-runtime-stop-001",
+      "name": "lists only host and client sessions with clients before host",
+      "source": "src/tmux/runtime-stop.ts",
+      "api": "runtime-stop",
+      "input": {
+        "name": "lists only host and client sessions with clients before host",
+        "hostSession": "aimux-repo",
+        "sessions": [
+          "user-session",
+          "aimux-repo",
+          "aimux-repo-client-deadbeef",
+          "aimux-repo-client-1234567g",
+          "aimux-other-client-deadbeef",
+          "aimux-repo-client-feedface"
+        ]
+      },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "sessions": ["aimux-repo-client-deadbeef", "aimux-repo-client-feedface", "aimux-repo"],
+          "calls": [["getProjectSession", "<repo>"], ["listSessionNames"]]
+        }
+      },
+      "inputSha256": "2da24665ba8a6351f43f80de6fc9aa3db5f83bbd46f25855d2d74f18249ebd2a"
+    },
+    {
+      "id": "tmux-runtime-stop-002",
+      "name": "stop returns empty when tmux is unavailable",
+      "source": "src/tmux/runtime-stop.ts",
+      "api": "runtime-stop",
+      "input": {
+        "name": "stop returns empty when tmux is unavailable",
+        "available": false,
+        "hostSession": "aimux-repo",
+        "sessions": ["aimux-repo", "aimux-repo-client-deadbeef"]
+      },
+      "output": { "thrown": null, "snapshot": { "killed": [], "calls": [["isAvailable"]] } },
+      "inputSha256": "f2fc08a420a525cf45c4f712cb38facb2f06be32dfbdb2eace9368076e85e555"
+    },
+    {
+      "id": "tmux-runtime-stop-003",
+      "name": "persists snapshots before killing clients and host",
+      "source": "src/tmux/runtime-stop.ts",
+      "api": "runtime-stop",
+      "input": {
+        "name": "persists snapshots before killing clients and host",
+        "hostSession": "aimux-repo",
+        "sessions": ["aimux-repo", "aimux-repo-client-deadbeef", "aimux-repo-client-feedface"]
+      },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "killed": ["aimux-repo-client-deadbeef", "aimux-repo-client-feedface", "aimux-repo"],
+          "calls": [
+            ["isAvailable"],
+            ["listProjectManagedWindows", "<repo>"],
+            ["getProjectSession", "<repo>"],
+            ["listSessionNames"],
+            ["hasSession", "aimux-repo-client-deadbeef"],
+            ["killSession", "aimux-repo-client-deadbeef"],
+            ["hasSession", "aimux-repo-client-feedface"],
+            ["killSession", "aimux-repo-client-feedface"],
+            ["hasSession", "aimux-repo"],
+            ["killSession", "aimux-repo"]
+          ]
+        }
+      },
+      "inputSha256": "7acdec65353cddb673c7d61ec544795fa79349993bd56db670b66bcc829c530e"
+    },
+    {
+      "id": "tmux-runtime-stop-004",
+      "name": "skips missing sessions then throws on failed kill",
+      "source": "src/tmux/runtime-stop.ts",
+      "api": "runtime-stop",
+      "input": {
+        "name": "skips missing sessions then throws on failed kill",
+        "hostSession": "aimux-repo",
+        "sessions": ["aimux-repo-client-deadbeef", "aimux-repo-client-feedface", "aimux-repo"],
+        "missing": ["aimux-repo-client-deadbeef"],
+        "killErrors": ["aimux-repo"]
+      },
+      "output": { "thrown": "kill failed: aimux-repo", "snapshot": null },
+      "inputSha256": "b1825be5ea53752150f7064d4d670dd5adcbeda31404426f1621efeb74f65af5"
+    }
+  ]
+}
