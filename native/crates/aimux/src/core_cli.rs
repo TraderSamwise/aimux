@@ -11,8 +11,8 @@ use crate::core_cli_routing::{
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
     parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_repair_args, parse_core_restart_args,
-    parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args, parse_core_worktree_args,
+    parse_core_runtime_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
+    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,8 @@ pub enum CoreCliOperation {
     LoopBlock,
     OverseerStart,
     OverseerClear,
+    ScribeStart,
+    ScribeClear,
     TeamShow,
     TeamInit,
     TeamAdd,
@@ -1199,6 +1201,56 @@ where
                 CoreCliOperation::OverseerClear,
                 CoreCliAction::TextRoute {
                     path: text_route_path(CORE_API_ROUTES.overseer_clear_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("scribe", "start") => {
+            let parsed = parse_core_scribe_start_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid scribe start arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::ScribeStart,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.scribe_start_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "tool": parsed.tool,
+                        "worktreePath": parsed.worktree,
+                        "open": parsed.open,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("scribe", "clear") => {
+            let parsed = parse_core_scribe_clear_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid scribe clear arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::ScribeClear,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.scribe_clear_text, parsed.json),
                     body: Some(json!({
                         "project": project_root,
                         "sessionId": parsed.session_id,

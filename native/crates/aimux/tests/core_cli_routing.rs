@@ -14,8 +14,8 @@ use aimux::core_cli_routing::{
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
     parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_repair_args, parse_core_restart_args,
-    parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args, parse_core_worktree_args,
+    parse_core_runtime_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
+    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 
 #[test]
@@ -490,6 +490,36 @@ fn overseer_parsers_match_start_and_clear_forms() {
 
     assert!(parse_core_overseer_start_args(&["overseer", "start", "--tool"]).is_none());
     assert!(parse_core_overseer_clear_args(&["overseer", "clear"]).is_none());
+}
+
+#[test]
+fn scribe_parsers_match_start_and_clear_forms() {
+    let start = parse_core_scribe_start_args(&[
+        "scribe",
+        "start",
+        "--tool",
+        "claude",
+        "--worktree=feature",
+        "--no-open",
+        "--json",
+    ])
+    .expect("scribe start");
+    assert_eq!(start.tool.as_deref(), Some("claude"));
+    assert_eq!(start.worktree.as_deref(), Some("feature"));
+    assert!(!start.open);
+    assert!(start.json);
+
+    let default_tool =
+        parse_core_scribe_start_args(&["scribe", "start"]).expect("scribe start default tool");
+    assert_eq!(default_tool.tool, None);
+
+    let clear = parse_core_scribe_clear_args(&["scribe", "clear", "scribe-1", "--project=/repo"])
+        .expect("scribe clear");
+    assert_eq!(clear.session_id, "scribe-1");
+    assert_eq!(clear.project.as_deref(), Some("/repo"));
+
+    assert!(parse_core_scribe_start_args(&["scribe", "start", "--tool"]).is_none());
+    assert!(parse_core_scribe_clear_args(&["scribe", "clear"]).is_none());
 }
 
 #[test]

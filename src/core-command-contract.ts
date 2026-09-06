@@ -41,6 +41,8 @@ export const CORE_API_ROUTES = {
   outlineUpdateText: "/core/outline/update-text",
   overseerClearText: "/core/overseer/clear-text",
   overseerStartText: "/core/overseer/start-text",
+  scribeClearText: "/core/scribe/clear-text",
+  scribeStartText: "/core/scribe/start-text",
   teamAddText: "/core/team/add-text",
   teamDefaultText: "/core/team/default-text",
   teamInitText: "/core/team/init-text",

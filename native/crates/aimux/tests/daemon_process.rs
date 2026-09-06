@@ -19,6 +19,7 @@ use aimux::daemon::text::operations::{
 use aimux::daemon::text::overseer::DaemonOverseerTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon::text::project_content::DaemonProjectContentTextRuntime;
+use aimux::daemon::text::scribe::DaemonScribeTextRuntime;
 use aimux::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
@@ -405,6 +406,25 @@ impl DaemonWorktreeTextRuntime for FakeRuntime {
 }
 
 impl DaemonOverseerTextRuntime for FakeRuntime {
+    fn resolve_project_root(&self, value: &str) -> String {
+        value.into()
+    }
+
+    fn default_tool(&self, _project_root: &str) -> String {
+        "claude".into()
+    }
+
+    fn post_project_service_json(
+        &mut self,
+        _project: &str,
+        _route_path: &str,
+        _body: Value,
+    ) -> ProjectServiceJsonResult {
+        Self::unsupported_json_result()
+    }
+}
+
+impl DaemonScribeTextRuntime for FakeRuntime {
     fn resolve_project_root(&self, value: &str) -> String {
         value.into()
     }

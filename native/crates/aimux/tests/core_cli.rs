@@ -1479,6 +1479,58 @@ fn overseer_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn scribe_commands_plan_native_text_routes() {
+    let start = classify_core_cli(
+        &[
+            "scribe",
+            "start",
+            "--tool",
+            "claude",
+            "--worktree",
+            "feature",
+            "--no-open",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("scribe start plan");
+    assert_eq!(start.operation, CoreCliOperation::ScribeStart);
+    assert_eq!(
+        start.action,
+        CoreCliAction::TextRoute {
+            path: "/core/scribe/start-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "tool": "claude",
+                "worktreePath": "feature",
+                "open": false,
+            })),
+        }
+    );
+
+    let clear = classify_core_cli(
+        &["scribe", "clear", "scribe-1", "--project=/repo"],
+        &context(true, true),
+    )
+    .expect("scribe clear plan");
+    assert_eq!(clear.operation, CoreCliOperation::ScribeClear);
+    assert_eq!(
+        clear.action,
+        CoreCliAction::TextRoute {
+            path: "/core/scribe/clear-text".into(),
+            body: Some(json!({ "project": "/repo", "sessionId": "scribe-1" })),
+        }
+    );
+
+    assert_eq!(
+        classify_core_cli(&["scribe", "clear"], &context(true, true))
+            .expect_err("missing scribe session")
+            .exit_code(),
+        1
+    );
+}
+
+#[test]
 fn team_commands_plan_native_text_routes() {
     let show = classify_core_cli(&["team", "show", "--project=/repo"], &context(true, true))
         .expect("team show plan");

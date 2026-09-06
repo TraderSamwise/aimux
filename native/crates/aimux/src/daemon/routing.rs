@@ -305,6 +305,8 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.outline_update_text,
     crate::core_command_contract::CORE_API_ROUTES.overseer_clear_text,
     crate::core_command_contract::CORE_API_ROUTES.overseer_start_text,
+    crate::core_command_contract::CORE_API_ROUTES.scribe_clear_text,
+    crate::core_command_contract::CORE_API_ROUTES.scribe_start_text,
     crate::core_command_contract::CORE_API_ROUTES.project_ensure_text,
     crate::core_command_contract::CORE_API_ROUTES.team_add_text,
     crate::core_command_contract::CORE_API_ROUTES.team_default_text,

@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    97,
+    99,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -70,6 +70,8 @@ define_string_contract!(
         outline_update_text => ("outlineUpdateText", "/core/outline/update-text"),
         overseer_clear_text => ("overseerClearText", "/core/overseer/clear-text"),
         overseer_start_text => ("overseerStartText", "/core/overseer/start-text"),
+        scribe_clear_text => ("scribeClearText", "/core/scribe/clear-text"),
+        scribe_start_text => ("scribeStartText", "/core/scribe/start-text"),
         team_add_text => ("teamAddText", "/core/team/add-text"),
         team_default_text => ("teamDefaultText", "/core/team/default-text"),
         team_init_text => ("teamInitText", "/core/team/init-text"),

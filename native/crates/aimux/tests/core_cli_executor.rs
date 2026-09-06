@@ -161,6 +161,8 @@ impl CoreCliRuntime for FakeRuntime {
             "loop ok\n".into()
         } else if path.starts_with("/core/overseer/") {
             "overseer ok\n".into()
+        } else if path.starts_with("/core/scribe/") {
+            "scribe ok\n".into()
         } else if path.starts_with("/core/team/") {
             "team ok\n".into()
         } else if path.starts_with("/core/notifications/") {
@@ -880,6 +882,51 @@ fn overseer_commands_execute_native_text_routes_without_core_command_fallback() 
             (
                 "/core/overseer/clear-text".into(),
                 Some(json!({ "project": "/repo", "sessionId": "boss" })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn scribe_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let start = run_core_cli_with(
+        &args(&[
+            "scribe",
+            "start",
+            "--tool",
+            "claude",
+            "--worktree",
+            "feature",
+            "--no-open",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let clear = run_core_cli_with(
+        &args(&["scribe", "clear", "scribe-1", "--project=/repo"]),
+        &mut runtime,
+    );
+
+    assert_eq!(start.stdout, ["scribe ok"]);
+    assert_eq!(clear.stdout, ["scribe ok"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/scribe/start-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "tool": "claude",
+                    "worktreePath": "feature",
+                    "open": false,
+                })),
+            ),
+            (
+                "/core/scribe/clear-text".into(),
+                Some(json!({ "project": "/repo", "sessionId": "scribe-1" })),
             ),
         ]
     );

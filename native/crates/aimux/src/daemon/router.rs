@@ -20,6 +20,7 @@ use crate::daemon::text::overseer::{DaemonOverseerTextRuntime, route_overseer_te
 use crate::daemon::text::project_content::{
     DaemonProjectContentTextRuntime, route_project_content_text_request,
 };
+use crate::daemon::text::scribe::{DaemonScribeTextRuntime, route_scribe_text_request};
 use crate::daemon::text::system::{DaemonSystemTextRuntime, route_system_text_request};
 use crate::daemon::text::team::{DaemonTeamTextRuntime, route_team_text_request};
 use crate::daemon::text::worktrees::{DaemonWorktreeTextRuntime, route_worktree_text_request};
@@ -36,6 +37,7 @@ pub trait DaemonRouteRuntime:
     + DaemonMetadataTextRuntime
     + DaemonAgentTextRuntime
     + DaemonOverseerTextRuntime
+    + DaemonScribeTextRuntime
     + DaemonNotificationTextRuntime
     + DaemonTeamTextRuntime
     + DaemonWorktreeTextRuntime
@@ -55,6 +57,7 @@ impl<T> DaemonRouteRuntime for T where
         + DaemonMetadataTextRuntime
         + DaemonAgentTextRuntime
         + DaemonOverseerTextRuntime
+        + DaemonScribeTextRuntime
         + DaemonNotificationTextRuntime
         + DaemonTeamTextRuntime
         + DaemonWorktreeTextRuntime
@@ -124,6 +127,9 @@ pub fn route_daemon_request(
         return response;
     }
     if let Some(response) = route_overseer_text_request(runtime, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_scribe_text_request(runtime, method, path, body) {
         return response;
     }
     if let Some(response) = route_notification_text_request(runtime, method, path, body) {

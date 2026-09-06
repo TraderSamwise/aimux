@@ -556,6 +556,15 @@ pub fn render_core_overseer_clear_lines(payload: &Value) -> Vec<String> {
         js_string(field(payload, "sessionId"))
     )]
 }
+pub fn render_core_scribe_start_lines(payload: &Value) -> Vec<String> {
+    vec![format!("scribe {}", js_string(field(payload, "sessionId")))]
+}
+pub fn render_core_scribe_clear_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "scribe cleared {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
 
 fn required_team_role(payload: &Value) -> Option<&str> {
     field(payload, "role")

@@ -863,6 +863,141 @@ pub fn parse_core_overseer_clear_args<S: AsRef<str>>(args: &[S]) -> Option<CoreO
     })
 }
 
+pub fn parse_core_scribe_start_args<S: AsRef<str>>(args: &[S]) -> Option<CoreScribeStartArgs> {
+    if args.first().map(AsRef::as_ref) != Some("scribe")
+        || args.get(1).map(AsRef::as_ref) != Some("start")
+        || has_help(args)
+    {
+        return None;
+    }
+    let mut tool = None;
+    let mut project = None;
+    let mut worktree = None;
+    let mut open = true;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--no-open" {
+            open = false;
+            index += 1;
+            continue;
+        }
+        if arg == "--tool" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--tool=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--worktree" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--worktree=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(CoreScribeStartArgs {
+        tool,
+        project,
+        worktree,
+        open,
+        json,
+    })
+}
+
+pub fn parse_core_scribe_clear_args<S: AsRef<str>>(args: &[S]) -> Option<CoreScribeClearArgs> {
+    if args.first().map(AsRef::as_ref) != Some("scribe")
+        || args.get(1).map(AsRef::as_ref) != Some("clear")
+        || has_help(args)
+    {
+        return None;
+    }
+    let mut session_id = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return None;
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreScribeClearArgs {
+        session_id: session_id?,
+        project,
+        json,
+    })
+}
+
 pub fn parse_core_team_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTeamArgs> {
     if args.first().map(AsRef::as_ref) != Some("team") {
         return None;
@@ -2867,6 +3002,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("stop"), _) => stop_has_session_or_invalid_agent_shape(args),
         (Some("loop"), Some("add" | "remove" | "done" | "block")) => true,
         (Some("overseer"), Some("start" | "clear")) => true,
+        (Some("scribe"), Some("start" | "clear")) => true,
         (Some("team"), Some("show" | "init" | "add" | "default" | "remove")) => true,
         (Some("message"), Some("send")) => has_workflow_required_positional(args),
         (Some("handoff"), Some("send" | "accept" | "complete")) => {

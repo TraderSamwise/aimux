@@ -21,6 +21,7 @@ use aimux::daemon::text::operations::{
 use aimux::daemon::text::overseer::DaemonOverseerTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon::text::project_content::DaemonProjectContentTextRuntime;
+use aimux::daemon::text::scribe::DaemonScribeTextRuntime;
 use aimux::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
@@ -150,6 +151,14 @@ impl FakeRouterRuntime {
                     "ok": true,
                     "referenceText": "Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt",
                     "attachment": { "id": "att_1" }
+                }),
+            ),
+            project_routes::agents::SCRIBE => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "sessionId": body.get("sessionId").cloned().unwrap_or_else(|| json!("scribe-1")),
+                    "scribe": false
                 }),
             ),
             _ => ProjectServiceJsonResult::ok(
@@ -482,6 +491,25 @@ impl DaemonAgentTextRuntime for FakeRouterRuntime {
 }
 
 impl DaemonOverseerTextRuntime for FakeRouterRuntime {
+    fn resolve_project_root(&self, value: &str) -> String {
+        <Self as DaemonStatusRuntime>::resolve_project_root(self, value)
+    }
+
+    fn default_tool(&self, _project_root: &str) -> String {
+        "claude".into()
+    }
+
+    fn post_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Value,
+    ) -> ProjectServiceJsonResult {
+        self.project_post_result(project, route_path, body)
+    }
+}
+
+impl DaemonScribeTextRuntime for FakeRouterRuntime {
     fn resolve_project_root(&self, value: &str) -> String {
         <Self as DaemonStatusRuntime>::resolve_project_root(self, value)
     }
@@ -837,6 +865,36 @@ fn unified_router_dispatches_status_command_and_split_text_modules() {
             .iter()
             .any(|call| call == "get:/repo:/work-outline?sessionId=codex-1&q=parser")
     );
+
+    let scribe = route_daemon_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.scribe_start_text,
+        Some(&json!({ "project": "/repo", "tool": "codex", "open": false })),
+        "issued",
+        &context,
+    );
+    assert_eq!(text_body(scribe), "scribe claude-1\n");
+    assert!(runtime.calls.iter().any(|call| {
+        call.starts_with("post:/repo:/agents/spawn:")
+            && call.contains("\"scribe\":true")
+            && call.contains("\"open\":false")
+    }));
+
+    let scribe_clear = route_daemon_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.scribe_clear_text,
+        Some(&json!({ "project": "/repo", "sessionId": "scribe-1" })),
+        "issued",
+        &context,
+    );
+    assert_eq!(text_body(scribe_clear), "scribe cleared scribe-1\n");
+    assert!(runtime.calls.iter().any(|call| {
+        call.starts_with("post:/repo:/agents/scribe:")
+            && call.contains("\"sessionId\":\"scribe-1\"")
+            && call.contains("\"active\":false")
+    }));
 
     let attachment = route_daemon_request(
         &mut runtime,
