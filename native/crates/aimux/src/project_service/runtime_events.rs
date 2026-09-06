@@ -61,15 +61,6 @@ fn route_runtime_event_inner(
             Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
         }
     }
-    if let Some(event_bus) = event_bus {
-        event_bus.publish_project_update_for_route(
-            project_root,
-            "POST",
-            crate::project_api_contract::routes::runtime::EVENT,
-            None,
-            None,
-        );
-    }
     Some(ok())
 }
 

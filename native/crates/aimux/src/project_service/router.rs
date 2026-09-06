@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
+use crate::project_api_contract::project_api_views_for_mutation_route;
 
 use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
@@ -140,99 +141,94 @@ pub fn route_project_service_request(
     path: &str,
     body: Option<&Value>,
 ) -> ProjectServiceDispatchResponse {
-    if let Some(response) = route_event_stream_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_team_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_notifications_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_attachment_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_library_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_topology_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_project_observability_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_agent_read_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_worktree_read_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_agent_control_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_lifecycle_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_prompt_context_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_agent_output_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_desktop_state_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_coordination_worklist_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_switchable_agent_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_control_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_orchestration_routes_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_exchange_read_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_read_request(context, method, path) {
-        return response;
-    }
-    if let Some(response) = route_plan_request(context.project_root(), method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_work_outline_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_notification_context_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_usage_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_operation_failures_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_shell_state_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_statusline_refresh_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_hook_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_interaction_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_coordination_mutation_request(context, method, path, body) {
-        return response;
-    }
-    if let Some(response) = route_runtime_metadata_request(context, method, path, body) {
-        return response;
-    }
+    let response = if let Some(response) = route_event_stream_request(context, method, path) {
+        response
+    } else if let Some(response) = route_team_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_notifications_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_attachment_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_library_request(context, method, path) {
+        response
+    } else if let Some(response) = route_topology_request(context, method, path) {
+        response
+    } else if let Some(response) = route_project_observability_request(context, method, path) {
+        response
+    } else if let Some(response) = route_agent_read_request(context, method, path) {
+        response
+    } else if let Some(response) = route_worktree_read_request(context, method, path) {
+        response
+    } else if let Some(response) = route_agent_control_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_lifecycle_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_prompt_context_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_agent_output_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_desktop_state_request(context, method, path) {
+        response
+    } else if let Some(response) = route_coordination_worklist_request(context, method, path) {
+        response
+    } else if let Some(response) = route_switchable_agent_request(context, method, path) {
+        response
+    } else if let Some(response) = route_control_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_orchestration_routes_request(context, method, path) {
+        response
+    } else if let Some(response) = route_exchange_read_request(context, method, path) {
+        response
+    } else if let Some(response) = route_read_request(context, method, path) {
+        response
+    } else if let Some(response) = route_plan_request(context.project_root(), method, path, body) {
+        response
+    } else if let Some(response) = route_work_outline_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_notification_context_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_usage_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_operation_failures_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_shell_state_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_statusline_refresh_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_hook_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_interaction_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_coordination_mutation_request(context, method, path, body)
+    {
+        response
+    } else if let Some(response) = route_runtime_metadata_request(context, method, path, body) {
+        response
+    } else {
+        route_unimplemented_project_service_request(method, path)
+    };
+    publish_project_update_for_response(context, method, path, &response);
+    response
+}
 
-    route_unimplemented_project_service_request(method, path)
+fn publish_project_update_for_response(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    response: &ProjectServiceDispatchResponse,
+) {
+    if !(200..300).contains(&response.status) {
+        return;
+    }
+    let pathname = super::dispatcher::project_service_pathname(path);
+    if project_api_views_for_mutation_route(method, pathname).is_none() {
+        return;
+    }
+    context.project_events.publish_project_update_for_route(
+        context.project_root(),
+        method,
+        pathname,
+        None,
+        None,
+    );
 }

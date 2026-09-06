@@ -184,7 +184,7 @@ fn runtime_event_dispatcher_publishes_alert_and_project_update_events() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body, json!({ "ok": true }));
     let events = context.project_events.events_since(0, None);
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 2);
     assert_eq!(events[0].event["type"], "alert");
     assert_eq!(events[0].event["kind"], "needs_input");
     assert_eq!(events[0].event["sessionId"], "codex-1");
@@ -203,20 +203,6 @@ fn runtime_event_dispatcher_publishes_alert_and_project_update_events() {
             "coordination-worklist",
             "notifications",
             "project-observability"
-        ])
-    );
-    assert_eq!(events[2].event["type"], "project_update");
-    assert_eq!(events[2].event["reason"], "POST /event");
-    assert!(events[2].event.get("sessionId").is_none());
-    assert_eq!(
-        events[2].event["views"],
-        json!([
-            "agents",
-            "coordination-worklist",
-            "desktop-state",
-            "project-observability",
-            "topology",
-            "worktrees"
         ])
     );
     cleanup(project);
@@ -256,10 +242,7 @@ fn runtime_event_task_done_updates_metadata_without_alert_event() {
         },
     );
     assert_eq!(snapshot.total, 0);
-    let events = context.project_events.events_since(0, None);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event["type"], "project_update");
-    assert_eq!(events[0].event["reason"], "POST /event");
+    assert!(context.project_events.events_since(0, None).is_empty());
     cleanup(project);
 }
 
