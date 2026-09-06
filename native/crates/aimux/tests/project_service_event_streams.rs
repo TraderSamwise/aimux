@@ -6,6 +6,8 @@ use serde_json::json;
 use std::fs::remove_dir_all;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -26,6 +28,7 @@ fn project_events_stream_returns_ready_snapshot() {
     assert_eq!(stream.session_id.as_deref(), Some("codex-1"));
     assert_eq!(stream.start_line, Some(-2000));
     assert_eq!(stream.interval_ms, 250);
+    assert_eq!(stream.keepalive_interval_ms, Some(15_000));
     assert_eq!(stream.mode.as_deref(), Some("chat"));
     assert_eq!(stream.event_cursor, Some(0));
     let body = String::from_utf8(response.bytes.unwrap()).unwrap();
@@ -93,6 +96,53 @@ fn project_events_stream_starts_after_existing_events_and_filters_by_session() {
 }
 
 #[test]
+fn project_event_bus_wait_wakes_on_publish() {
+    let project = temp_project("event-wait");
+    let context = ProjectServiceRequestContext::new(&project);
+    let bus = context.project_events.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        bus.publish(json!({
+            "type": "project_update",
+            "projectId": "project",
+            "ts": "2026-01-01T00:00:00.000Z",
+            "views": ["desktop-state"],
+        }));
+    });
+
+    let started = Instant::now();
+    assert!(
+        context
+            .project_events
+            .wait_for_events_since(0, None, Duration::from_millis(500))
+    );
+    assert!(started.elapsed() < Duration::from_millis(300));
+    cleanup(project);
+}
+
+#[test]
+fn project_event_bus_wait_respects_session_filter() {
+    let project = temp_project("event-wait-filter");
+    let context = ProjectServiceRequestContext::new(&project);
+    context.project_events.publish(json!({
+        "type": "project_update",
+        "projectId": "project",
+        "ts": "2026-01-01T00:00:00.000Z",
+        "views": ["desktop-state"],
+        "sessionId": "codex-other",
+    }));
+
+    let started = Instant::now();
+    assert!(!context.project_events.wait_for_events_since(
+        0,
+        Some("codex-1"),
+        Duration::from_millis(30)
+    ));
+    assert!(started.elapsed() >= Duration::from_millis(20));
+    cleanup(project);
+}
+
+#[test]
 fn output_and_interaction_streams_return_ready_snapshots() {
     let project = temp_project("output");
     let context = ProjectServiceRequestContext::new(&project);
@@ -109,6 +159,7 @@ fn output_and_interaction_streams_return_ready_snapshots() {
     assert_eq!(output_stream.session_id.as_deref(), Some("codex-1"));
     assert_eq!(output_stream.start_line, Some(5));
     assert_eq!(output_stream.interval_ms, 500);
+    assert_eq!(output_stream.keepalive_interval_ms, None);
     assert_eq!(output_stream.mode.as_deref(), Some("full"));
     assert!(output_body.contains("\"sessionId\":\"codex-1\""));
     assert!(output_body.contains("\"startLine\":5"));
@@ -127,6 +178,7 @@ fn output_and_interaction_streams_return_ready_snapshots() {
     );
     assert!(interaction_stream.session_id.is_none());
     assert_eq!(interaction_stream.interval_ms, 500);
+    assert_eq!(interaction_stream.keepalive_interval_ms, Some(15_000));
     assert!(interaction_stream.mode.is_none());
     assert_eq!(
         String::from_utf8(interaction.bytes.unwrap()).unwrap(),

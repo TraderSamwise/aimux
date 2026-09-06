@@ -1,7 +1,8 @@
 use serde_json::{Map, Value};
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::paths::compute_project_id;
 use crate::project_api_contract::{
@@ -16,7 +17,13 @@ const MAX_PROJECT_EVENTS: usize = 512;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProjectEventBus {
-    inner: Arc<Mutex<ProjectEventBusState>>,
+    inner: Arc<ProjectEventBusInner>,
+}
+
+#[derive(Debug, Default)]
+struct ProjectEventBusInner {
+    state: Mutex<ProjectEventBusState>,
+    changed: Condvar,
 }
 
 #[derive(Debug, Default)]
@@ -34,13 +41,14 @@ pub struct ProjectEventRecord {
 impl ProjectEventBus {
     pub fn latest_sequence(&self) -> u64 {
         self.inner
+            .state
             .lock()
             .map(|state| state.latest_sequence)
             .unwrap_or(0)
     }
 
     pub fn publish(&self, event: Value) -> u64 {
-        let Ok(mut state) = self.inner.lock() else {
+        let Ok(mut state) = self.inner.state.lock() else {
             return 0;
         };
         state.latest_sequence = state.latest_sequence.saturating_add(1);
@@ -51,6 +59,8 @@ impl ProjectEventBus {
         while state.events.len() > MAX_PROJECT_EVENTS {
             state.events.pop_front();
         }
+        drop(state);
+        self.inner.changed.notify_all();
         sequence
     }
 
@@ -59,16 +69,41 @@ impl ProjectEventBus {
         after_sequence: u64,
         session_filter: Option<&str>,
     ) -> Vec<ProjectEventRecord> {
-        let Ok(state) = self.inner.lock() else {
+        let Ok(state) = self.inner.state.lock() else {
             return Vec::new();
         };
-        state
-            .events
-            .iter()
-            .filter(|record| record.sequence > after_sequence)
-            .filter(|record| event_matches_session(&record.event, session_filter))
-            .cloned()
-            .collect()
+        events_since_locked(&state, after_sequence, session_filter)
+    }
+
+    pub fn wait_for_events_since(
+        &self,
+        after_sequence: u64,
+        session_filter: Option<&str>,
+        timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        let Ok(mut state) = self.inner.state.lock() else {
+            return false;
+        };
+        loop {
+            if state_has_events_since(&state, after_sequence, session_filter) {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let Ok((next_state, wait_result)) = self.inner.changed.wait_timeout(state, remaining)
+            else {
+                return false;
+            };
+            state = next_state;
+            if wait_result.timed_out()
+                && !state_has_events_since(&state, after_sequence, session_filter)
+            {
+                return false;
+            }
+        }
     }
 
     pub fn publish_project_update_for_route(
@@ -169,6 +204,30 @@ impl ProjectEventBus {
             input.worktree_path.clone(),
         );
     }
+}
+
+fn events_since_locked(
+    state: &ProjectEventBusState,
+    after_sequence: u64,
+    session_filter: Option<&str>,
+) -> Vec<ProjectEventRecord> {
+    state
+        .events
+        .iter()
+        .filter(|record| record.sequence > after_sequence)
+        .filter(|record| event_matches_session(&record.event, session_filter))
+        .cloned()
+        .collect()
+}
+
+fn state_has_events_since(
+    state: &ProjectEventBusState,
+    after_sequence: u64,
+    session_filter: Option<&str>,
+) -> bool {
+    state.events.iter().any(|record| {
+        record.sequence > after_sequence && event_matches_session(&record.event, session_filter)
+    })
 }
 
 fn event_matches_session(event: &Value, session_filter: Option<&str>) -> bool {

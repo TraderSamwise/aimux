@@ -156,7 +156,13 @@ pub fn write_project_service_response_with_runtime(
         let mut last_project_event_sequence = stream.event_cursor.unwrap_or_default();
         let mut last_stream_write = Instant::now();
         loop {
-            thread::sleep(Duration::from_millis(interval_ms));
+            wait_for_next_stream_tick(
+                stream,
+                context,
+                last_project_event_sequence,
+                interval_ms,
+                last_stream_write,
+            );
             let frame = match stream.kind {
                 ProjectServiceStreamKind::ProjectEvents => {
                     let frame = encode_project_event_stream_frame(
@@ -199,6 +205,27 @@ pub fn write_project_service_response_with_runtime(
     Ok(())
 }
 
+fn wait_for_next_stream_tick(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: Option<&ProjectServiceRequestContext>,
+    after_sequence: u64,
+    interval_ms: u64,
+    last_write: Instant,
+) {
+    if stream.kind == ProjectServiceStreamKind::ProjectEvents
+        && stream.session_id.is_none()
+        && let Some(context) = context
+    {
+        let wait = duration_until_stream_keepalive(stream, last_write)
+            .unwrap_or_else(|| Duration::from_millis(interval_ms));
+        let _ = context
+            .project_events
+            .wait_for_events_since(after_sequence, None, wait);
+        return;
+    }
+    thread::sleep(Duration::from_millis(interval_ms));
+}
+
 fn stream_keepalive_due(
     stream: &super::dispatcher::ProjectServiceStreamPlan,
     last_write: Instant,
@@ -208,6 +235,15 @@ fn stream_keepalive_due(
     };
     let interval_ms = u64::try_from(interval_ms).unwrap_or(15_000).max(100);
     last_write.elapsed() >= Duration::from_millis(interval_ms)
+}
+
+fn duration_until_stream_keepalive(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    last_write: Instant,
+) -> Option<Duration> {
+    let interval_ms = u64::try_from(stream.keepalive_interval_ms?).ok()?.max(100);
+    let interval = Duration::from_millis(interval_ms);
+    Some(interval.saturating_sub(last_write.elapsed()))
 }
 
 fn encode_project_event_stream_frame(
