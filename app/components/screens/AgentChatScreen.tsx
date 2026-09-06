@@ -1622,10 +1622,10 @@ export default function ChatScreen() {
   function goBack() {
     blurWebActiveElement();
     if (isSharedSessionView) {
-      router.replace("/shares");
+      router.dismissTo("/shares");
       return;
     }
-    router.replace(buildMainTabHref("project", projectPath));
+    router.dismissTo(buildMainTabHref("project", projectPath));
   }
 
   function toggleSharePanel() {
@@ -2844,14 +2844,17 @@ function ChatTranscriptPlaceholder({
   const loading = state.kind === "loading";
   return (
     <View className="flex-1 items-center justify-center px-4 py-10">
-      <View className="max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 shadow-sm">
+      <View
+        className="max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 shadow-sm"
+        style={{ minWidth: 240 }}
+      >
         <View className="flex-row items-center gap-2">
           {loading ? (
             <ActivityIndicator size="small" color="#a1a1aa" />
           ) : state.kind === "error" ? (
             <CircleAlert size={18} color="#f87171" />
           ) : null}
-          <View className="flex-1">
+          <View className="min-w-0 shrink">
             <Text className="text-sm text-muted-foreground">{state.title}</Text>
             <Text className="mt-1 text-xs text-muted-foreground">{state.message}</Text>
           </View>
