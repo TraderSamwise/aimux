@@ -715,6 +715,9 @@ Priority fixture groups:
 - `runtime-state/dashboard-repair-notices.json`: dashboard repair notice
   recording, timestamp, flash suppression, and render side effects captured by
   running TypeScript `multiplexer/repair-notices`.
+- `runtime-state/dashboard-ui-state-store.json`: dashboard UI shared/client
+  persistence, screen normalization, selection restore, and item ordering
+  behavior captured by running TypeScript `dashboard/ui-state-store`.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
