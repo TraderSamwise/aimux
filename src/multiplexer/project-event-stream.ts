@@ -32,7 +32,7 @@ export const PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS = 35_000;
 export const PROJECT_EVENT_STREAM_RETRY_BASE_MS = 1_000;
 export const PROJECT_EVENT_STREAM_RETRY_MAX_MS = 15_000;
 export const EVENT_REFRESH_DEBOUNCE_MS = 250;
-export const HIDDEN_TUI_EVENT_REFRESH_RECHECK_MS = 1_000;
+export const HIDDEN_TUI_EVENT_REFRESH_RECHECK_MS = 10_000;
 
 class DashboardProjectEventAdapter {
   private controller: AbortController | null = null;

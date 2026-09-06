@@ -19,6 +19,7 @@ import { hydrateDashboardNotificationScreenState } from "./notifications.js";
 import { filterDashboardVisibleModel } from "../dashboard/visibility.js";
 import { recede } from "../tui/render/theme.js";
 import type { TmuxTarget } from "../tmux/runtime-manager.js";
+import { markDashboardTuiVisible } from "./tui-visibility.js";
 
 export const dashboardStateMethods = {
   isTmuxBackend(this: any): boolean {
@@ -50,6 +51,7 @@ export const dashboardStateMethods = {
   },
 
   handleDashboardFocusIn(this: any): void {
+    markDashboardTuiVisible(this);
     this.loadDashboardUiState();
     this.hydrateDashboardScreenState?.();
     this.writeDashboardClientStatuslineFile();

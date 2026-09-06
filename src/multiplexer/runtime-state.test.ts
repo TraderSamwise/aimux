@@ -26,6 +26,7 @@ import {
   startStatusRefresh,
   stopStatusRefresh,
   stopSessionToOffline,
+  DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS,
 } from "./runtime-state.js";
 
 import { SessionBootstrapService } from "../session-bootstrap.js";
@@ -257,8 +258,41 @@ describe("startStatusRefresh", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
+  it("backs off visibility checks for hidden tmux dashboards", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const isDashboardTuiVisible = vi.fn(() => false);
+    const host: any = {
+      startedInDashboard: true,
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "dashboard",
+      dashboardStartupPriming: false,
+      dashboardNextBackgroundRefreshAt: 0,
+      isDashboardTuiVisible,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(isDashboardTuiVisible).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync((DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS + 1) * 1000);
+    stopStatusRefresh(host);
+
+    expect(isDashboardTuiVisible).toHaveBeenCalledTimes(2);
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
   it("forces one dashboard model refresh when a hidden dashboard becomes visible", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(0);
     const isDashboardTuiVisible = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
     const host: any = {
       startedInDashboard: true,
@@ -278,7 +312,7 @@ describe("startStatusRefresh", () => {
 
     startStatusRefresh(host);
     await vi.advanceTimersByTimeAsync(1000);
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync((DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS + 1) * 1000);
     await Promise.resolve();
     stopStatusRefresh(host);
 

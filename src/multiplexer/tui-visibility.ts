@@ -243,6 +243,22 @@ export function isDashboardTuiVisible(host: any, options: { force?: boolean } = 
   return readDashboardTuiVisibilityForHost(host, options).visible;
 }
 
+export function markDashboardTuiVisible(host: any, options: { now?: number; paneId?: string } = {}): void {
+  if (!host) return;
+  const previousVisible = (host.dashboardTuiVisibility as TuiVisibilitySnapshot | null | undefined)?.visible ?? true;
+  host.dashboardTuiVisibility = {
+    paneId: options.paneId ?? process.env.TMUX_PANE?.trim() ?? host.dashboardTuiVisibility?.paneId,
+    attached: true,
+    activeWindow: true,
+    visible: true,
+    reason: "visible",
+  } satisfies TuiVisibilitySnapshot;
+  host.dashboardTuiVisibilityCheckedAt = options.now ?? Date.now();
+  host.dashboardHiddenVisibilityRecheckAt = 0;
+  host.dashboardHiddenVisibilitySkipTicks = 0;
+  if (!previousVisible) host.dashboardTuiVisibilityWakePending = true;
+}
+
 export function consumeDashboardTuiVisibilityWake(host: any): boolean {
   const pending = host?.dashboardTuiVisibilityWakePending === true;
   if (host) host.dashboardTuiVisibilityWakePending = false;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   consumeDashboardTuiVisibilityWake,
   findTmuxPaneForProcess,
+  markDashboardTuiVisible,
   parseTmuxVisibility,
   parseProcessParents,
   parseTmuxPaneRows,
@@ -238,5 +239,24 @@ describe("readDashboardTuiVisibilityForHost", () => {
     expect(host.dashboardTuiVisibility.visible).toBe(true);
     expect(consumeDashboardTuiVisibilityWake(host)).toBe(true);
     expect(consumeDashboardTuiVisibilityWake(host)).toBe(false);
+  });
+
+  it("marks focus-in dashboards visible without waiting for the next tmux query", () => {
+    const host: any = {
+      dashboardTuiVisibility: parseTmuxVisibility("1\t0", "%1"),
+      dashboardTuiVisibilityCheckedAt: 1000,
+      dashboardHiddenVisibilityRecheckAt: 5000,
+    };
+
+    markDashboardTuiVisible(host, { now: 2000, paneId: "%1" });
+
+    expect(host.dashboardTuiVisibility).toMatchObject({
+      paneId: "%1",
+      visible: true,
+      reason: "visible",
+    });
+    expect(host.dashboardTuiVisibilityCheckedAt).toBe(2000);
+    expect(host.dashboardHiddenVisibilityRecheckAt).toBe(0);
+    expect(consumeDashboardTuiVisibilityWake(host)).toBe(true);
   });
 });

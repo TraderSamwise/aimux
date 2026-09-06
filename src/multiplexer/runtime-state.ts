@@ -46,6 +46,7 @@ type RuntimeStateHost = any;
 type ManagedAgentWindow = { target: any; metadata: any };
 
 const DASHBOARD_BACKGROUND_REFRESH_MS = 2000;
+export const DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS = 10;
 const IDLE_NOTIFICATION_SETTLE_MS = 10_000;
 const STARTING_ORPHAN_RECONCILE_GRACE_MS = 5_000;
 
@@ -283,14 +284,35 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
     recordOnlineAgentsForRestore(host);
 
     if (host.mode === "dashboard") {
-      const tuiVisible = readDashboardTuiVisibilityForHost(host, { force: true }).visible;
+      const now = Date.now();
+      const cachedTuiVisibility = host.dashboardTuiVisibility;
+      let tuiVisibility = cachedTuiVisibility;
+      let checkedTuiVisibility = false;
+      if (cachedTuiVisibility && !cachedTuiVisibility.visible) {
+        const hiddenSkipTicks =
+          typeof host.dashboardHiddenVisibilitySkipTicks === "number" ? host.dashboardHiddenVisibilitySkipTicks : 0;
+        if (hiddenSkipTicks > 0) {
+          host.dashboardHiddenVisibilitySkipTicks = hiddenSkipTicks - 1;
+        } else {
+          tuiVisibility = readDashboardTuiVisibilityForHost(host, { force: true, now });
+          checkedTuiVisibility = true;
+        }
+      } else {
+        tuiVisibility = readDashboardTuiVisibilityForHost(host, { force: true, now });
+        checkedTuiVisibility = true;
+      }
       const tuiJustWoke = consumeDashboardTuiVisibilityWake(host);
-      if (!tuiVisible) return;
+      if (!tuiVisibility.visible) {
+        if (checkedTuiVisibility) {
+          host.dashboardHiddenVisibilitySkipTicks = DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS;
+        }
+        return;
+      }
+      host.dashboardHiddenVisibilitySkipTicks = 0;
       if (tuiJustWoke) {
         host.dashboardNextBackgroundRefreshAt = 0;
         host.invalidateDashboardFrame?.();
       }
-      const now = Date.now();
       if (host.dashboardStartupPriming) {
         if (dashboardNeedsRender) {
           host.renderCurrentDashboardView();
