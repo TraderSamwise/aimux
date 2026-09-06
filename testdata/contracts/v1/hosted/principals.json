@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "source": "src/full/hosted-principals.test.ts",
+  "generatedBy": "scripts/capture-hosted-principals-contract.mjs",
+  "description": "Hosted principal token, hash, mode, grant, revoke, last-seen, active-count, lock, malformed-store, and corrupt-store behavior captured by running TypeScript hosted-principals helpers. Generated principal identities are normalized after execution.",
+  "cases": [
+    {
+      "id": "hosted-principals-001",
+      "name": "starts empty when nothing is persisted",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "empty" },
+      "output": { "version": 1, "principals": [] },
+      "inputSha256": "0c5d9195a8de9650cac9247451713c974be0fa19928ce4a74d9addc746e2d399"
+    },
+    {
+      "id": "hosted-principals-002",
+      "name": "returns the token once and persists only its hash",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "token-hash-only" },
+      "output": {
+        "tokenHasPrefix": true,
+        "hashMatchesToken": true,
+        "hashHasPrefix": true,
+        "rawContainsToken": false,
+        "rawContainsHash": true
+      },
+      "inputSha256": "5ebeecca2d3803ec27c4d7465e9ce1431b5c754dcaf677e4636ab271e964b7fe"
+    },
+    {
+      "id": "hosted-principals-003",
+      "name": "writes the store 0600 inside a 0700 directory",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "store-modes" },
+      "output": { "fileMode": 384, "dirMode": 448 },
+      "inputSha256": "4e6653647decd6d56187d71794b1b352a23b73178e253b2ee44020993b769c26"
+    },
+    {
+      "id": "hosted-principals-004",
+      "name": "resolves a live token and rejects an unknown one",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "resolve-live-token" },
+      "output": { "liveMatches": true, "unknown": null, "empty": null, "blank": null },
+      "inputSha256": "eee48cb03027782de28c982245b56efb2cd59ec761c26ecf8deb1c102238f22d"
+    },
+    {
+      "id": "hosted-principals-005",
+      "name": "stops resolving a revoked token",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "revoke-token" },
+      "output": { "first": true, "resolvedAfterRevoke": null, "second": false, "missing": false },
+      "inputSha256": "add3ea050e78248913a3ed33a191aff5b0f386259fb4a5412caf1b9a13f5b0ca"
+    },
+    {
+      "id": "hosted-principals-006",
+      "name": "keeps grants scoped to one project and session",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "grant-scope" },
+      "output": { "grant": true, "same": true, "differentProject": false, "differentSession": false },
+      "inputSha256": "075034ff36d7402b9c94ca1e7d3716b2cf358530d5b3d38296cb3115051010ad"
+    },
+    {
+      "id": "hosted-principals-007",
+      "name": "normalizes project roots so a trailing slash still matches",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "grant-root-normalization" },
+      "output": true,
+      "inputSha256": "cfcd8e04b3e3a263e20fd090b5739fdc0f0787508f8b490cada36b607d404008"
+    },
+    {
+      "id": "hosted-principals-008",
+      "name": "never authorizes a revoked principal even with a matching grant",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "revoked-grant" },
+      "output": false,
+      "inputSha256": "5255b3b0d4992fcd03dd928fbf51a07bdcbb466716d99c08ff90180efa1e0a71"
+    },
+    {
+      "id": "hosted-principals-009",
+      "name": "does not duplicate an identical grant, and refuses partial ones",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "duplicate-partial-grants" },
+      "output": { "grantsLength": 1, "emptyRoot": false, "emptySession": false },
+      "inputSha256": "21ec79ee614366497a499367eaa7774eff1bdd4d25d396315ac07caa0fc67503"
+    },
+    {
+      "id": "hosted-principals-010",
+      "name": "refuses to grant to a revoked principal",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "grant-revoked-principal" },
+      "output": false,
+      "inputSha256": "0ae8fdb10206bb6a30699489003a0ad2ab7c04c17f04a0c82469dd7576b83f0b"
+    },
+    {
+      "id": "hosted-principals-011",
+      "name": "ungrants only the named session",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "ungrant-session" },
+      "output": { "first": true, "second": false, "grants": [{ "projectRoot": "/srv/grand", "sessionId": "two" }] },
+      "inputSha256": "c414f90b4a07d25f3eb8ab4decce7317fc9375c2a2ec93519e40bcd98df2c773"
+    },
+    {
+      "id": "hosted-principals-012",
+      "name": "keeps principals separate",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "separate-principals" },
+      "output": { "resolvedSecond": true, "secondHasFirstGrant": false, "count": 2 },
+      "inputSha256": "71cade91f5ca9065951640421aa8ad90f406bdaec0f650f23afdd6acb608743f"
+    },
+    {
+      "id": "hosted-principals-013",
+      "name": "records last-seen without disturbing other fields",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "last-seen-throttle" },
+      "output": { "lastSeenNotNull": true, "label": "a", "throttledSame": true },
+      "inputSha256": "e81a6153a02c744176dc0489dde1944df560d63d96bf6b39fc31e2e597ad45f2"
+    },
+    {
+      "id": "hosted-principals-014",
+      "name": "counts only active principals",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "count-active" },
+      "output": [0, 2, 1],
+      "inputSha256": "44afe27ac2f3965dd13e9662df81fbcfc2559eae0832b3e25b21984c5b0474d0"
+    },
+    {
+      "id": "hosted-principals-015",
+      "name": "refuses a relative project root on the check side",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "relative-root-check" },
+      "output": { "relative": false, "empty": false },
+      "inputSha256": "f23a71c442d9a0b4551a3fb539945dbb0c313ef5be52817650252e6684988adf"
+    },
+    {
+      "id": "hosted-principals-016",
+      "name": "releases the store lock after each mutation",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "lock-released" },
+      "output": { "lockExists": false },
+      "inputSha256": "9900d0718eb46a658d192a58609b5142711fdd4b8efa972cb0cdd8dff0ba1380"
+    },
+    {
+      "id": "hosted-principals-017",
+      "name": "steals a stale lock rather than deadlocking",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "stale-lock" },
+      "output": { "ids": ["<principal:1>"], "lockExists": false },
+      "inputSha256": "2586e6f35d547714190ec2763e553cb432833811a42dbbb263448662a49e56a4"
+    },
+    {
+      "id": "hosted-principals-018",
+      "name": "refuses to persist over a store it could not read",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "unreadable-store" },
+      "output": { "threw": true, "count": 1 },
+      "inputSha256": "f0526784376b56d2f3381681fa329497c4f730446741d0903a288ab18c0a1c24"
+    },
+    {
+      "id": "hosted-principals-019",
+      "name": "drops malformed entries and survives a corrupt store",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "malformed-corrupt-store" },
+      "output": { "loadedIds": ["prn_ok"], "afterCorrupt": { "version": 1, "principals": [] }, "quarantined": true },
+      "inputSha256": "8d25a701d629cb3dc23e6f85a095a9d993d0f925088ec37b446fde5fa0a66c50"
+    },
+    {
+      "id": "hosted-principals-020",
+      "name": "does not match a stored hash of the wrong length",
+      "source": "src/full/hosted-principals.test.ts",
+      "api": "hosted-principals",
+      "input": { "scenario": "short-hash" },
+      "output": null,
+      "inputSha256": "c1c90ca2e7cea61c54a7be5887a7945648ef514d1ccde139caf9d9f12c0929d5"
+    }
+  ]
+}

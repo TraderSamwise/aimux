@@ -338,6 +338,10 @@ Priority fixture groups:
   outbox drain/torn-line/CLI-audit side effects captured by running TypeScript
   hosted-lockdown and hosted-outbox helpers, with lockdown timestamps normalized
   after execution.
+- `hosted/principals.json`: hosted principal token, hash, file mode, grant,
+  revoke, last-seen, active-count, lock, malformed-store, and corrupt-store
+  behavior captured by running TypeScript hosted-principals helpers, with
+  generated principal identities normalized after execution.
 - `hosted/rate-limit.json`: hosted per-principal request, concurrency,
   idle-prune, and byte-budget limiter behavior captured by running TypeScript
   `HostedRateLimiter`.
