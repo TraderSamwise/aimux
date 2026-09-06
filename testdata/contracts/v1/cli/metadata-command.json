@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "source": "src/cli/metadata.test.ts",
+  "generatedBy": "scripts/capture-cli-wrapper-contracts.mjs",
+  "description": "Metadata CLI endpoint printing, service URL mapping, set-services posting, and non-numeric progress rejection captured by running TypeScript registerMetadataCommand with recorded dependencies.",
+  "cases": [
+    {
+      "id": "cli-metadata-command-001",
+      "name": "maps service URLs to runtime metadata",
+      "source": "src/cli/metadata.test.ts",
+      "api": "serviceMetadataFromUrls",
+      "input": { "urls": ["http://localhost:3000", "https://example.com/app"], "label": "web" },
+      "output": [
+        { "label": "web", "url": "http://localhost:3000", "port": 3000 },
+        { "label": "web", "url": "https://example.com/app" }
+      ],
+      "inputSha256": "7e7eb9f553db31531bc05c958007296ae4138bdf33e242463ccc8d91964350a3"
+    },
+    {
+      "id": "cli-metadata-command-002",
+      "name": "prints the metadata endpoint",
+      "source": "src/cli/metadata.test.ts",
+      "api": "registerMetadataCommand",
+      "input": { "args": ["metadata", "endpoint"] },
+      "output": {
+        "result": null,
+        "logs": [["http://127.0.0.1:4321"]],
+        "errors": [],
+        "exitCode": null,
+        "calls": { "getProjectServiceEndpoint": [[]], "postProjectServiceJson": [] }
+      },
+      "inputSha256": "9c22e74bcd1cb19cdf551801a496fdac3c0bc7cb6588e3e7b27caa9438399d59"
+    },
+    {
+      "id": "cli-metadata-command-003",
+      "name": "posts set-services to the runtime metadata route",
+      "source": "src/cli/metadata.test.ts",
+      "api": "registerMetadataCommand",
+      "input": {
+        "args": [
+          "metadata",
+          "set-services",
+          "codex-1",
+          "--url",
+          "http://localhost:3000",
+          "http://127.0.0.1:5173/",
+          "--label",
+          "dev"
+        ]
+      },
+      "output": {
+        "result": null,
+        "logs": [],
+        "errors": [],
+        "exitCode": null,
+        "calls": {
+          "getProjectServiceEndpoint": [],
+          "postProjectServiceJson": [
+            [
+              "/set-services",
+              {
+                "session": "codex-1",
+                "services": [
+                  { "label": "dev", "url": "http://localhost:3000", "port": 3000 },
+                  { "label": "dev", "url": "http://127.0.0.1:5173/", "port": 5173 }
+                ]
+              }
+            ]
+          ]
+        }
+      },
+      "inputSha256": "ecb4288e3957880eda51b2035a5325959be1e292e5258da65d292808ea36590c"
+    },
+    {
+      "id": "cli-metadata-command-004",
+      "name": "rejects non-numeric progress values without posting",
+      "source": "src/cli/metadata.test.ts",
+      "api": "registerMetadataCommand",
+      "input": { "args": ["metadata", "set-progress", "codex-1", "one", "2"] },
+      "output": {
+        "result": null,
+        "logs": [],
+        "errors": [["metadata set-progress requires numeric <current> and <total>"]],
+        "exitCode": 1,
+        "calls": { "getProjectServiceEndpoint": [], "postProjectServiceJson": [] }
+      },
+      "inputSha256": "04f6367c5a243c03f152061979bb9ed327a3926991631250f66d97f1b173ead6"
+    }
+  ]
+}

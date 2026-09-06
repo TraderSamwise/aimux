@@ -587,6 +587,15 @@ Priority fixture groups:
 - `cli/parsing.json`: process command-line flag value matching and shell/env
   assignment parsing captured by running TypeScript `process-args` and
   `shell-args`.
+- `cli/metadata-command.json`: metadata CLI endpoint printing, service URL
+  mapping, set-services posting, and non-numeric progress rejection captured by
+  running TypeScript `registerMetadataCommand` with recorded dependencies.
+- `cli/logs-command.json`: logs CLI path/tail/clear/empty-tail console output
+  and dependency calls captured by running TypeScript `registerLogsCommand`
+  with recorded dependencies.
+- `cli/work-outline-command.json`: work outline CLI rendering, list/show query
+  construction, and update posting captured by running TypeScript
+  `registerWorkOutlineCommand` with recorded dependencies.
 
 ## Paths
 

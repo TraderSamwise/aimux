@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "source": "src/cli/logs.test.ts",
+  "generatedBy": "scripts/capture-cli-wrapper-contracts.mjs",
+  "description": "Logs CLI path/tail/clear/empty-tail console output and dependency calls captured by running TypeScript registerLogsCommand with recorded dependencies.",
+  "cases": [
+    {
+      "id": "cli-logs-command-001",
+      "name": "prints the selected log path",
+      "source": "src/cli/logs.test.ts",
+      "api": "registerLogsCommand",
+      "input": { "args": ["logs", "path", "--project", "/repo"] },
+      "output": {
+        "result": { "threw": false },
+        "logs": [["/logs/project"]],
+        "errors": [],
+        "exitCode": null,
+        "calls": {
+          "selectedLogPath": [[{ "project": "/repo" }]],
+          "parseLineCount": [],
+          "readLastLogLines": [],
+          "clearLogFile": [],
+          "exit": []
+        }
+      },
+      "inputSha256": "5f7de7c818f77b7dd210953d95a1cec6c5f81fe7a4ac2b2f0b681c0ec27603d2"
+    },
+    {
+      "id": "cli-logs-command-002",
+      "name": "tails selected log lines",
+      "source": "src/cli/logs.test.ts",
+      "api": "registerLogsCommand",
+      "input": { "args": ["logs", "tail", "--daemon", "--lines", "5"] },
+      "output": {
+        "result": { "threw": false },
+        "logs": [["line one\nline two"]],
+        "errors": [],
+        "exitCode": null,
+        "calls": {
+          "selectedLogPath": [[{ "lines": "5", "daemon": true }]],
+          "parseLineCount": [["5"]],
+          "readLastLogLines": [["/logs/daemon", 5]],
+          "clearLogFile": [],
+          "exit": []
+        }
+      },
+      "inputSha256": "b0f5a3e74ece54ae3597af103447ca50cef4c854a3d11b609699b4036bc7a530"
+    },
+    {
+      "id": "cli-logs-command-003",
+      "name": "clears the selected log file",
+      "source": "src/cli/logs.test.ts",
+      "api": "registerLogsCommand",
+      "input": { "args": ["logs", "clear"] },
+      "output": {
+        "result": { "threw": false },
+        "logs": [["Cleared /logs/project"]],
+        "errors": [],
+        "exitCode": null,
+        "calls": {
+          "selectedLogPath": [[{}]],
+          "parseLineCount": [],
+          "readLastLogLines": [],
+          "clearLogFile": [["/logs/project"]],
+          "exit": []
+        }
+      },
+      "inputSha256": "6260e4c7460a7bc83b367400e488247cad3b873a9519c53a0ffd7f6b85b2cabe"
+    },
+    {
+      "id": "cli-logs-command-004",
+      "name": "exits when there are no log entries to tail",
+      "source": "src/cli/logs.test.ts",
+      "api": "registerLogsCommand",
+      "input": { "args": ["logs", "tail"] },
+      "output": {
+        "result": { "threw": true, "message": "exit" },
+        "logs": [],
+        "errors": [["No log entries at /logs/missing"]],
+        "exitCode": null,
+        "calls": {
+          "selectedLogPath": [[{ "lines": "80" }]],
+          "parseLineCount": [["80"]],
+          "readLastLogLines": [["/logs/missing", 80]],
+          "clearLogFile": [],
+          "exit": [[1]]
+        }
+      },
+      "inputSha256": "467537c716a7675ccd779bd780f2ef44b61d8ffba27bde4a8202129fcb437ddb"
+    }
+  ]
+}
