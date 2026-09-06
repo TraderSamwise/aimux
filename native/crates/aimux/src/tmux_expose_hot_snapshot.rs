@@ -48,10 +48,15 @@ struct HotExposeSnapshotFile {
 
 pub fn hot_expose_scope_key(input: &HotExposeScopeKey) -> HotExposeScopeKey {
     HotExposeScopeKey {
-        project_root: normalized_path(&input.project_root),
+        project_root: normalize_hot_snapshot_path(&input.project_root),
         scope: input.scope,
         worktree_key: (input.scope == ExposeScope::Worktree)
-            .then(|| input.worktree_key.as_deref().map(normalized_path))
+            .then(|| {
+                input
+                    .worktree_key
+                    .as_deref()
+                    .map(normalize_hot_snapshot_path)
+            })
             .flatten(),
         launch_window_id: (input.scope == ExposeScope::Worktree)
             .then(|| input.launch_window_id.clone())
@@ -284,7 +289,7 @@ fn prune_views(
 
 fn view_matches_prune(record: &Map<String, Value>, prune: &HotExposeScopePrune) -> bool {
     record.get("projectRoot").and_then(Value::as_str)
-        == Some(normalized_path(&prune.project_root).as_str())
+        == Some(normalize_hot_snapshot_path(&prune.project_root).as_str())
         && prune.scopes.as_ref().is_none_or(|scopes| {
             record
                 .get("scope")
@@ -416,7 +421,7 @@ fn cache_id(input: &HotExposeScopeKey) -> String {
     .join("|")
 }
 
-fn normalized_path(path: &str) -> String {
+pub fn normalize_hot_snapshot_path(path: &str) -> String {
     let path = Path::new(path);
     let absolute = if path.is_absolute() {
         path.to_path_buf()
