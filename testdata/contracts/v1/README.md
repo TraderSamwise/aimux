@@ -612,6 +612,15 @@ Priority fixture groups:
   running TypeScript `logLifecycleAlways`; the Rust fixture is an ignored
   checklist until the logging subsystem is ported.
 
+## Dashboard
+
+- `dashboard/order.json`: dashboard saved-order keying, stale-id
+  normalization, movement, and per-worktree session/service ordering captured
+  by running TypeScript `dashboard/order` helpers.
+- `dashboard/visibility.json`: dashboard offline-session classification and
+  hide-offline model filtering captured by running TypeScript
+  `dashboard/visibility` helpers.
+
 ## Library
 
 - `library/entries.json`: library stub-plan detection, allowlisted project
