@@ -204,6 +204,28 @@ pub fn claude_transcript_path(
         .join(format!("{backend_session_id}.jsonl"))
 }
 
+pub fn relocate_claude_transcript(
+    source_cwd: &str,
+    target_cwd: &str,
+    backend_session_id: &str,
+    projects_dir: Option<&Path>,
+) -> bool {
+    let from = claude_transcript_path(source_cwd, backend_session_id, projects_dir);
+    let to = claude_transcript_path(target_cwd, backend_session_id, projects_dir);
+    if from == to {
+        return true;
+    }
+    if !from.exists() {
+        return false;
+    }
+    if let Some(parent) = to.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return false;
+    }
+    fs::copy(from, to).is_ok()
+}
+
 pub fn discover_claude_backend_session_id(
     cwd: &str,
     projects_dir: Option<&Path>,

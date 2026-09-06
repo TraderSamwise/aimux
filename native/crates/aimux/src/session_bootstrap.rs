@@ -53,6 +53,30 @@ pub fn scribe_team() -> Value {
     serde_json::json!({ "teamId": "scribe", "parentSessionId": "", "role": "scribe" })
 }
 
+pub fn compose_tool_args(
+    tool_args: &[String],
+    action_args: &[String],
+    saved_args: &[String],
+) -> Vec<String> {
+    let trailing_args = if !tool_args.is_empty()
+        && saved_args.len() >= tool_args.len()
+        && tool_args
+            .iter()
+            .enumerate()
+            .all(|(index, arg)| saved_args.get(index) == Some(arg))
+    {
+        saved_args[tool_args.len()..].to_vec()
+    } else {
+        saved_args.to_vec()
+    };
+    tool_args
+        .iter()
+        .cloned()
+        .chain(action_args.iter().cloned())
+        .chain(trailing_args)
+        .collect()
+}
+
 pub fn build_session_preamble(
     project_root: &Path,
     session_id: &str,
