@@ -85,6 +85,7 @@ pub mod runtime_topology_worktrees;
 pub mod runtime_topology_worktrees_services_contract;
 pub mod session_bootstrap;
 pub mod session_recency;
+pub mod session_runtime;
 pub mod session_viewed;
 pub mod shell_hooks;
 pub mod statusline_model_contract;

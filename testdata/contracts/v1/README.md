@@ -246,6 +246,11 @@ Priority fixture groups:
   stripping, CRLF parsing, and mtime fallback captured by running TypeScript
   `library`.
 
+## Session
+
+- `session/runtime.json`: SessionRuntime transport data and exit event
+  forwarding captured by running TypeScript `session-runtime`.
+
 ## Proxy
 
 - `proxy/project-binding.json`: proxy path parsing and project-service target
