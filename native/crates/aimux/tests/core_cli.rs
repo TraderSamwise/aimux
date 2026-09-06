@@ -1360,6 +1360,15 @@ fn agent_ps_plans_native_text_route_with_project_resolution() {
         }
     );
 
+    let compact = classify_core_cli(&["compact"], &context(true, true)).expect("compact plan");
+    assert_eq!(compact.operation, CoreCliOperation::Compact);
+    assert_eq!(
+        compact.action,
+        CoreCliAction::Compact {
+            project_root: "/repo".into(),
+        }
+    );
+
     let malformed = classify_core_cli(&["ps", "--project", "--json"], &context(true, true))
         .expect_err("malformed ps");
     assert_eq!(malformed.exit_code(), 1);

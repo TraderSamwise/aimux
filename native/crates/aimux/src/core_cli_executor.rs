@@ -3,6 +3,7 @@ use crate::backend_session_ids::{
     resolve_agent_identity,
 };
 use crate::config::init_project;
+use crate::context_compactor::{context_dir, list_history_session_ids, llm_compact};
 use crate::core_cli::{
     CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCommandCall,
     CoreCommandOk, CoreLoopActorContext, classify_core_cli_with_project_resolver,
@@ -408,6 +409,7 @@ fn run_plan(
             project_root,
             session_id,
         } => run_agent_identity(output_mode, &project_root, &session_id, runtime),
+        CoreCliAction::Compact { project_root } => run_compact(&project_root),
         CoreCliAction::RemoteStatus { relay_request } => {
             let credentials = runtime.credentials_for_status();
             let relay = match relay_request {
@@ -770,6 +772,21 @@ fn run_agent_identity(
             1,
         )),
     }
+}
+
+fn run_compact(project_root: &str) -> Result<CoreCliExecution, String> {
+    let session_ids = match list_history_session_ids(project_root) {
+        Ok(session_ids) => session_ids,
+        Err(message) => return Ok(CoreCliExecution::error(message, 1)),
+    };
+    llm_compact(project_root, &session_ids);
+    Ok(CoreCliExecution::ok(vec![
+        format!("Compacting history for {} session(s)...", session_ids.len()),
+        format!(
+            "Done. Summary written to {}/summary.md",
+            context_dir(project_root).display()
+        ),
+    ]))
 }
 
 fn run_command_action(

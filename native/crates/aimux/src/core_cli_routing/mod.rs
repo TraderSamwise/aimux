@@ -3206,6 +3206,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("init"), _) => args.len() == 1,
         (Some("list"), _) => parse_core_agent_list_args(args).is_some(),
         (Some("id"), _) => parse_core_agent_identity_args(args).is_some(),
+        (Some("compact"), _) => args.len() == 1,
         (Some("ps"), _) => true,
         (Some("input"), _) => true,
         (Some("rename"), _) => true,

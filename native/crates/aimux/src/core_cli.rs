@@ -42,6 +42,7 @@ pub enum CoreCliOperation {
     AgentInput,
     AgentList,
     AgentIdentity,
+    Compact,
     AgentRename,
     AgentMigrate,
     AgentPs,
@@ -392,6 +393,9 @@ pub enum CoreCliAction {
     AgentIdentity {
         project_root: String,
         session_id: String,
+    },
+    Compact {
+        project_root: String,
     },
     RemoteStatus {
         relay_request: Option<CoreCommandCall>,
@@ -1036,6 +1040,13 @@ where
                 CoreCliFallback::None,
             )
         }
+        ("compact", _) => (
+            CoreCliOperation::Compact,
+            CoreCliAction::Compact {
+                project_root: context.current_project_root.clone(),
+            },
+            CoreCliFallback::None,
+        ),
         ("rename", _) => {
             let parsed = parse_core_agent_rename_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {

@@ -3,6 +3,7 @@ pub mod backend_session_ids;
 pub mod build_info;
 pub mod cli_launcher;
 pub mod config;
+pub mod context_compactor;
 pub mod contracts;
 pub mod core_cli;
 pub mod core_cli_executor;

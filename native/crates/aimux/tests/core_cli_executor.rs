@@ -538,6 +538,18 @@ fn agent_identity_executes_locally_without_core_command_fallback() {
 }
 
 #[test]
+fn compact_claims_cli_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let compact = run_core_cli_with(&args(&["compact"]), &mut runtime);
+
+    assert_eq!(compact.code, 1);
+    assert_eq!(compact.stderr, ["No history found at /repo/.aimux/history"]);
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
+}
+
+#[test]
 fn daemon_status_uses_stored_state_when_daemon_request_fails() {
     let mut runtime = FakeRuntime {
         fail_commands: true,
