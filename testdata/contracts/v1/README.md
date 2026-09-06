@@ -281,6 +281,12 @@ Priority fixture groups:
   assignment parsing captured by running TypeScript `process-args` and
   `shell-args`.
 
+## Paths
+
+- `paths/behavior.json`: path identity, runtime-private log/state location, and
+  project registry mutation/pruning/failure behavior captured by running
+  TypeScript `paths`.
+
 ## Proxy
 
 - `proxy/project-binding.json`: proxy path parsing and project-service target
