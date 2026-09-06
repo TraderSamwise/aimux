@@ -11,11 +11,17 @@ describe("package manifest", () => {
 
     expect(packageJson.files).toEqual(
       expect.arrayContaining([
+        "bin",
+        "dist-ui",
+        "docs",
         "scripts/tmux-control.sh",
         "scripts/tmux-open-hyperlink.sh",
         "scripts/tmux-statusline.sh",
+        "native/darwin-arm64",
+        "native/darwin-x64",
       ]),
     );
+    expect(packageJson.files).not.toContain("dist");
     expect(packageJson.files).not.toContain("scripts/installed-aimux-shim.sh");
   });
 });

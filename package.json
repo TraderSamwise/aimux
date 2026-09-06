@@ -8,7 +8,6 @@
   },
   "files": [
     "bin",
-    "dist",
     "dist-ui",
     "docs",
     "scripts/tmux-control.sh",
