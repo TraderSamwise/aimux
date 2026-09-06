@@ -15,8 +15,8 @@ fn rewrite_status_tracks_translation_first_phases() {
     assert_eq!(status.version, 2);
     assert!(status.strategy.contains("translation first"));
     assert!(status.end_state.contains("zero Node"));
-    assert_eq!(status.progress_estimate_percent, 18);
-    assert!(status.active_slice.contains("dashboard launches"));
+    assert_eq!(status.progress_estimate_percent, 20);
+    assert!(status.active_slice.contains("legacy Node"));
     assert!(
         status
             .checkpoints
@@ -27,7 +27,13 @@ fn rewrite_status_tracks_translation_first_phases() {
         status
             .checkpoints
             .iter()
-            .any(|checkpoint| checkpoint.contains("native dashboard is the default"))
+            .any(|checkpoint| checkpoint.contains("feature-parity default"))
+    );
+    assert!(
+        status
+            .checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.contains("legacy Node control-plane"))
     );
     assert_eq!(status.phases.len(), 9);
     assert_eq!(status.phases[0].id, "phase-0");
