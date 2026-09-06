@@ -54,9 +54,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
   const overlayTopChrome = isChatRoute(pathname);
+  const resolvedTopInset = resolveChromeTopInset(insets.top);
   const topChromeHideDistance = chatTopBarReserveHeight({
     pairingBannerVisible: showPairingBanner,
-    topInset: resolveChromeTopInset(insets.top),
+    topInset: resolvedTopInset,
   });
 
   // Mobile drawer should start closed — users don't expect it open on load.
@@ -107,7 +108,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Menu size={20} color="#a1a1aa" />
     </Button>
   ) : undefined;
-  const sidebarSurface = overlayTopChrome ? (
+  const desktopSidebarSurface = overlayTopChrome ? (
     <View className="flex-1 bg-[#161719]">
       <View
         style={{
@@ -116,6 +117,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           position: "absolute",
           right: 0,
           top: topChromeHideDistance,
+        }}
+      >
+        <Sidebar />
+      </View>
+    </View>
+  ) : (
+    <Sidebar />
+  );
+  const mobileSidebarSurface = overlayTopChrome ? (
+    <View className="flex-1 bg-[#161719]">
+      <View
+        style={{
+          bottom: 0,
+          left: 0,
+          position: "absolute",
+          right: 0,
+          top: resolvedTopInset,
         }}
       >
         <Sidebar />
@@ -165,8 +183,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </ChatChromeMotion>
         </View>
         <View className="flex-1 flex-row">
-          {isDesktop ? sidebarSurface : null}
-          {isTablet && sidebarOpen ? sidebarSurface : null}
+          {isDesktop ? desktopSidebarSurface : null}
+          {isTablet && sidebarOpen ? desktopSidebarSurface : null}
           <View className="flex-1">{children}</View>
 
           {isMobile && sidebarOpen ? (
@@ -191,7 +209,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 transform: [{ translateX }],
               }}
             >
-              {sidebarSurface}
+              {mobileSidebarSurface}
             </RNAnimated.View>
           ) : null}
         </View>
