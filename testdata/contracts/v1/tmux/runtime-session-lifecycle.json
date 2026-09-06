@@ -1,0 +1,3811 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-runtime-session-lifecycle-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "TmuxRuntimeManager project-session lifecycle behavior captured by running TypeScript.",
+  "caseCount": 9,
+  "cases": [
+    {
+      "id": "tmux-runtime-session-lifecycle-001",
+      "name": "creates detached project session with full managed configuration",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": {
+        "name": "creates detached project session with full managed configuration",
+        "projectRoot": "/repo/mobile"
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "a18e755d7efe7c448aaf42b18280dfde08fbded1c683db52188e006d5ae8e36a"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-002",
+      "name": "does not append duplicate terminal features on reconfigure",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": { "name": "does not append duplicate terminal features on reconfigure", "projectRoot": "/repo/mobile" },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "4f2acab058e6d47c83fcc3e50dd693ee951ebefe4fd2db6617a2597afc577c9d"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-003",
+      "name": "stamps an existing project session missing the runtime contract",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": {
+        "name": "stamps an existing project session missing the runtime contract",
+        "projectRoot": "/repo/mobile",
+        "sessionExists": true
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "eab4ce92a77ba03226b871def1c056a205e02bed78a2585ae2e975ab216ab717"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-004",
+      "name": "skips final runtime contract stamp when existing session already has one",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": {
+        "name": "skips final runtime contract stamp when existing session already has one",
+        "projectRoot": "/repo/mobile",
+        "sessionExists": true,
+        "currentContract": "2"
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "be0f4743ecc251b1757e975ba62548aca502371f2b08fdd7c20d883b5f239e36"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-005",
+      "name": "retries when tmux drops the project session during contract stamping",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": {
+        "name": "retries when tmux drops the project session during contract stamping",
+        "projectRoot": "/repo/mobile",
+        "dropDuringContract": true
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "c06deb18fb4105073a5e03a915ad0fc379d1e54c7a37c738ec45dfc61ba3c5a5"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-006",
+      "name": "retries when tmux drops the project session during configuration",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": {
+        "name": "retries when tmux drops the project session during configuration",
+        "projectRoot": "/repo/mobile",
+        "dropDuringConfiguration": true
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "00108740ed03a835b565472aa6ce1a5cb331be0914e77895a45d903d969e03a7"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-007",
+      "name": "continues when an older tmux refuses extended-keys-format",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": {
+        "name": "continues when an older tmux refuses extended-keys-format",
+        "projectRoot": "/repo/mobile",
+        "extendedKeysFormatError": "invalid option: extended-keys-format"
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "8e2a466fb433c2b24c895fb03f80198f5facd213e480d5e8d1fa02a754e66af4"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-008",
+      "name": "propagates non-option failures from extended-keys-format",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": {
+        "name": "propagates non-option failures from extended-keys-format",
+        "projectRoot": "/repo/mobile",
+        "extendedKeysFormatError": "no server running on /tmp/tmux-1000/default"
+      },
+      "output": {
+        "thrown": "no server running on /tmp/tmux-1000/default",
+        "result": null,
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] }
+        ],
+        "terminalFeatures": ""
+      },
+      "inputSha256": "b4637755712f12d5a7afd11409a8d26b81da8f23df4e7681e2ede476b984c204"
+    },
+    {
+      "id": "tmux-runtime-session-lifecycle-009",
+      "name": "uses a custom dashboard command for new host sessions",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.ensureProjectSession",
+      "input": { "name": "uses a custom dashboard command for new host sessions", "projectRoot": "/repo/mobile" },
+      "output": {
+        "thrown": null,
+        "result": {
+          "projectRoot": "/repo/mobile",
+          "projectId": "mobile-078d0ecd20ec",
+          "sessionName": "aimux-mobile-078d0ecd20ec"
+        },
+        "execCalls": [
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          { "args": ["list-sessions", "-F", "#{session_name}"] },
+          { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-078d0ecd20ec",
+              "-c",
+              "/repo/mobile/app",
+              "-n",
+              "dashboard",
+              "node",
+              "dist/main.js",
+              "dashboard"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-project-state-dir",
+              "<aimux-home>/projects/mobile-078d0ecd20ec"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "@aimux-runtime-owner",
+              "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
+          {
+            "args": [
+              "set-hook",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "pane-focus-in",
+              "run-shell -b 'sh '\"'\"'<repo>/scripts/tmux-control.sh'\"'\"' active --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1'"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "bell-action", "none"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "monitor-bell", "off"] },
+          { "args": ["set-window-option", "-t", "aimux-mobile-078d0ecd20ec", "aggressive-resize", "on"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys", "always"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "extended-keys-format", "csi-u"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:ccolour"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:cstyle"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:RGB"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          { "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:extkeys"] },
+          { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
+          {
+            "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
+          },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
+          { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
+          { "args": ["source-file", "<mouse-bindings.conf>"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "C-j",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys C-j"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "root",
+              "S-Enter",
+              "if-shell",
+              "-F",
+              "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+              "send-keys -H 1b 5b 31 33 3b 32 75",
+              "send-keys S-Enter"
+            ]
+          },
+          { "args": ["unbind-key", "-T", "prefix", "s"] },
+          { "args": ["unbind-key", "-T", "prefix", "n"] },
+          { "args": ["unbind-key", "-T", "prefix", "p"] },
+          { "args": ["unbind-key", "-T", "prefix", "d"] },
+          { "args": ["unbind-key", "-T", "prefix", "u"] },
+          { "args": ["unbind-key", "-T", "prefix", "e"] },
+          { "args": ["unbind-key", "-T", "prefix", "g"] },
+          { "args": ["unbind-key", "-T", "prefix", "m"] },
+          { "args": ["unbind-key", "-T", "prefix", "O"] },
+          { "args": ["unbind-key", "-T", "prefix", "K"] },
+          { "args": ["unbind-key", "-T", "prefix", "0"] },
+          { "args": ["unbind-key", "-T", "prefix", "1"] },
+          { "args": ["unbind-key", "-T", "prefix", "2"] },
+          { "args": ["unbind-key", "-T", "prefix", "3"] },
+          { "args": ["unbind-key", "-T", "prefix", "4"] },
+          { "args": ["unbind-key", "-T", "prefix", "5"] },
+          { "args": ["unbind-key", "-T", "prefix", "6"] },
+          { "args": ["unbind-key", "-T", "prefix", "7"] },
+          { "args": ["unbind-key", "-T", "prefix", "8"] },
+          { "args": ["unbind-key", "-T", "prefix", "9"] },
+          { "args": ["unbind-key", "-T", "prefix", "Any"] },
+          { "args": ["bind-key", "-T", "prefix", "C-a", "send-prefix"] },
+          { "args": ["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "1",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 1 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "2",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 2 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "3",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 3 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "4",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 4 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "5",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 5 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "6",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 6 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "7",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 7 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "8",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 8 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "9",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' window --index 9 --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "n",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' next --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-r",
+              "-T",
+              "prefix",
+              "p",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' prev --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "s",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' menu --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "u",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' attention --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "g",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' expose --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "m",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' meta --aimux-home '<aimux-home>' --daemon-port '54321' --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "e",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' team --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "O",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' overseer --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "d",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' dashboard --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "i",
+              "run-shell",
+              "-b",
+              "sh '<repo>/scripts/tmux-control.sh' coordination --current-client-session #{q:client_session} --client-tty #{q:client_tty} --current-window #{q:window_name} --current-window-id #{q:window_id} --current-path #{q:pane_current_path} --pane-id #{q:pane_id} >/dev/null 2>&1"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"] },
+          { "args": ["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"] },
+          {
+            "args": [
+              "bind-key",
+              "-T",
+              "prefix",
+              "q",
+              "if-shell",
+              "-F",
+              "#{@aimux-project-root}",
+              "switch-client -T root",
+              "display-panes"
+            ]
+          },
+          { "args": ["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status", "2"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-interval", "0"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-style", "bg=colour236,fg=colour252"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "message-style", "bg=colour24,fg=colour255,bold"]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "message-command-style",
+              "bg=colour24,fg=colour255"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-separator", " "] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-status-current-format", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-left", ""] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "status-right", ""] },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[0]",
+              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+            ]
+          },
+          {
+            "args": [
+              "set-option",
+              "-t",
+              "aimux-mobile-078d0ecd20ec",
+              "status-format[1]",
+              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+            ]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
+        ],
+        "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
+      },
+      "inputSha256": "16fc0f41c9f1e54cd0b448a187f8d41ae74eaec48e98546d32285b010d654f6d"
+    }
+  ]
+}
