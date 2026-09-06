@@ -108,7 +108,12 @@ import {
 } from "@/lib/chat-visible-transcript";
 import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
+import {
+  chatTranscriptPlaceholderState,
+  type ChatTranscriptPlaceholderState,
+} from "@/lib/chat-loading";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
+import type { AgentOutputFeedPurpose } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -135,6 +140,7 @@ import {
   activityFamily,
   activityTextFamily,
   clearLocalInterruptHoldAtom,
+  lastErrorFamily,
   markOutputInterruptedAtom,
   transcriptFamily,
 } from "@/stores/chat";
@@ -476,6 +482,7 @@ export default function ChatScreen() {
   const markOutputInterrupted = useSetAtom(markOutputInterruptedAtom);
   const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
   const transcript = useAtomValue(transcriptFamily(sessionKey));
+  const transcriptLastError = useAtomValue(lastErrorFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
   const activityText = useAtomValue(activityTextFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
@@ -793,7 +800,7 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [endpointHost, endpointPort, stateProjectPath]);
 
-  const { refreshOutputSnapshot } = useAgentOutputFeed({
+  const { initialStatus: initialOutputStatus, refreshOutputSnapshot } = useAgentOutputFeed({
     appVisible,
     enabled: heartbeatReady && !routeSessionMissing,
     endpoint: serviceEndpoint ?? null,
@@ -813,6 +820,15 @@ export default function ChatScreen() {
   const allMessages = useMemo<ChatMessage[]>(() => {
     return mergeAcceptedComposerMessages(parsedMessages, acceptedComposerMessages);
   }, [acceptedComposerMessages, parsedMessages]);
+  const chatPlaceholderState = useMemo(
+    () =>
+      chatTranscriptPlaceholderState({
+        initialStatus: initialOutputStatus,
+        lastError: transcriptLastError,
+        messageCount: allMessages.length,
+      }),
+    [allMessages.length, initialOutputStatus, transcriptLastError],
+  );
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
@@ -1245,6 +1261,13 @@ export default function ChatScreen() {
     setSendError,
     token,
   ]);
+
+  const handleRetryTranscriptLoad = useCallback(
+    (purpose: AgentOutputFeedPurpose = "poll") => {
+      void refreshOutputSnapshot(purpose, { surfaceError: true }).catch(() => {});
+    },
+    [refreshOutputSnapshot],
+  );
 
   useEffect(() => {
     nativeChatSendRef.current = () => {
@@ -2201,7 +2224,9 @@ export default function ChatScreen() {
                   key={chatViewportKey}
                   allMessages={allMessages}
                   dividerWidth={chatDividerWidth}
+                  placeholderState={chatPlaceholderState}
                   ref={chatViewportRef}
+                  onRetryTranscriptLoad={handleRetryTranscriptLoad}
                   serviceEndpoint={displayServiceEndpoint}
                   sessionKey={sessionKey}
                 />
@@ -2220,11 +2245,20 @@ const AgentChatSessionViewport = React.forwardRef<
   {
     allMessages: readonly ChatMessage[];
     dividerWidth: number;
+    onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
+    placeholderState: ChatTranscriptPlaceholderState;
     serviceEndpoint: ServiceEndpoint;
     sessionKey: string;
   }
 >(function AgentChatSessionViewport(
-  { allMessages, dividerWidth, serviceEndpoint, sessionKey },
+  {
+    allMessages,
+    dividerWidth,
+    onRetryTranscriptLoad,
+    placeholderState,
+    serviceEndpoint,
+    sessionKey,
+  },
   ref,
 ) {
   const liveChatTranscript = useMemo(
@@ -2395,7 +2429,9 @@ const AgentChatSessionViewport = React.forwardRef<
         messages={visibleMessages}
         onContentSizeChange={handleChatContentSizeChange}
         onLayout={handleChatLayout}
+        onRetryTranscriptLoad={onRetryTranscriptLoad}
         onScroll={handleChatScroll}
+        placeholderState={placeholderState}
         ref={chatScrollRef}
         serviceEndpoint={serviceEndpoint}
         dividerWidth={dividerWidth}
@@ -2409,17 +2445,33 @@ type AgentChatTranscriptProps = {
   messages: readonly ChatMessage[];
   onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
   onLayout: (event: LayoutChangeEvent) => void;
+  onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
 };
 
 const AgentChatTranscript = React.memo(
   React.forwardRef<ChatScrollHandle, AgentChatTranscriptProps>(function AgentChatTranscript(
-    { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
+    {
+      dividerWidth,
+      messages,
+      onContentSizeChange,
+      onLayout,
+      onRetryTranscriptLoad,
+      onScroll,
+      placeholderState,
+      serviceEndpoint,
+    },
     ref,
   ) {
     const content =
-      messages.length === 0 ? null : (
+      messages.length === 0 ? (
+        <ChatTranscriptPlaceholder
+          state={placeholderState}
+          onRetryTranscriptLoad={onRetryTranscriptLoad}
+        />
+      ) : (
         <View className="w-full gap-1">
           {messages.map((message, index) => (
             <View
@@ -2482,6 +2534,41 @@ const AgentChatTranscript = React.memo(
   }),
 );
 AgentChatTranscript.displayName = "AgentChatTranscript";
+
+function ChatTranscriptPlaceholder({
+  onRetryTranscriptLoad,
+  state,
+}: {
+  onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
+  state: ChatTranscriptPlaceholderState;
+}) {
+  if (state.kind === "none") return null;
+  const retryable = state.kind === "timed-out" || state.kind === "error";
+  return (
+    <View className="flex-1 items-center justify-center px-5 py-10">
+      <View className="w-full max-w-md items-center rounded-lg border border-border bg-card px-5 py-5">
+        {state.kind === "loading" ? (
+          <ActivityIndicator size="small" color="#a1a1aa" />
+        ) : state.kind === "error" ? (
+          <CircleAlert size={18} color="#f87171" />
+        ) : null}
+        <Text className="mt-3 text-center text-sm font-semibold text-foreground">
+          {state.title}
+        </Text>
+        <Text className="mt-2 text-center text-xs text-muted-foreground">{state.message}</Text>
+        {retryable ? (
+          <Button
+            className="mt-4"
+            size="sm"
+            variant="outline"
+            label={state.retryLabel}
+            onPress={() => onRetryTranscriptLoad(state.kind === "timed-out" ? "initial" : "poll")}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
 
 function ComposerFocusShell({
   children,

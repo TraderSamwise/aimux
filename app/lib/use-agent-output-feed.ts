@@ -8,7 +8,7 @@ import {
   type InitialAgentOutputFeedStatus,
 } from "@/lib/agent-output-feed-state";
 import { getLivePaneOutput, type AgentOutputResponse } from "@/lib/api";
-import { paneOutputSnapshotHasVisibleTranscript } from "@/lib/chat-loading";
+import { paneOutputSnapshotSettlesInitialTranscript } from "@/lib/chat-loading";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { AgentOutputEvent, StreamEvent } from "@/lib/events";
 import { startHeartbeat } from "@/lib/heartbeat";
@@ -19,6 +19,9 @@ import type { LivePaneOutputInput } from "../../src/project-api-contract";
 
 export type AgentOutputFeedMode = "full" | "chat";
 export type AgentOutputFeedPurpose = NonNullable<LivePaneOutputInput["purpose"]>;
+export type AgentOutputFeedRefreshOptions = {
+  surfaceError?: boolean;
+};
 
 const INITIAL_OUTPUT_TIMEOUT_MS = 12_000;
 const STREAM_OUTPUT_INTERVAL_MS = 500;
@@ -37,7 +40,10 @@ export type AgentOutputFeedInput = {
 
 export type AgentOutputFeed = {
   initialStatus: InitialAgentOutputFeedStatus;
-  refreshOutputSnapshot: (purpose?: AgentOutputFeedPurpose) => Promise<boolean>;
+  refreshOutputSnapshot: (
+    purpose?: AgentOutputFeedPurpose,
+    options?: AgentOutputFeedRefreshOptions,
+  ) => Promise<boolean>;
 };
 
 function outputFeedKey(input: {
@@ -96,7 +102,7 @@ export function useAgentOutputFeed({
         activityText: result.activityText,
         attention: result.attention,
       });
-      return paneOutputSnapshotHasVisibleTranscript(result);
+      return paneOutputSnapshotSettlesInitialTranscript(result);
     },
     [applyOutputSnapshot, sessionId, setLastError],
   );
@@ -113,23 +119,49 @@ export function useAgentOutputFeed({
       lastStreamOutputAtRef.current = Date.now();
       streamFailedRef.current = false;
       applyOutputEvent(event);
-      return paneOutputSnapshotHasVisibleTranscript(event);
+      return paneOutputSnapshotSettlesInitialTranscript(event);
     },
     [applyOutputEvent, sessionId, setLastError],
   );
 
   const refreshOutputSnapshot = useCallback(
-    async (purpose: AgentOutputFeedPurpose = "poll"): Promise<boolean> => {
+    async (
+      purpose: AgentOutputFeedPurpose = "poll",
+      options: AgentOutputFeedRefreshOptions = {},
+    ): Promise<boolean> => {
       if (!enabled || !stableEndpoint || !sessionId) return false;
-      const result = await getLivePaneOutput(stableEndpoint, sessionId, startLine, {
-        token,
-        mode,
-        purpose,
-      });
-      lastHttpOutputAtRef.current = Date.now();
-      return applySnapshotResult(result);
+      if (options.surfaceError) {
+        setLastError(null);
+        setInitialStatusState({ key: feedKey, status: "loading" });
+      }
+      try {
+        const result = await getLivePaneOutput(stableEndpoint, sessionId, startLine, {
+          token,
+          mode,
+          purpose,
+        });
+        lastHttpOutputAtRef.current = Date.now();
+        const loaded = applySnapshotResult(result);
+        if (loaded) {
+          setInitialStatusState((current) => initialAgentOutputFeedLoadedState(current, feedKey));
+        }
+        return loaded;
+      } catch (error) {
+        if (options.surfaceError) setLastError(getErrorMessage(error));
+        throw error;
+      }
     },
-    [applySnapshotResult, enabled, mode, sessionId, stableEndpoint, startLine, token],
+    [
+      applySnapshotResult,
+      enabled,
+      feedKey,
+      mode,
+      sessionId,
+      setLastError,
+      stableEndpoint,
+      startLine,
+      token,
+    ],
   );
 
   useEffect(() => {
@@ -160,8 +192,9 @@ export function useAgentOutputFeed({
       try {
         const hasVisibleTranscript = await refreshOutputSnapshot(purpose);
         if (hasVisibleTranscript) markLoaded();
-      } catch (error) {
-        if (streamFailedRef.current) setLastError(getErrorMessage(error));
+      } catch {
+        // Background HTTP fallback must not replace the transcript state with
+        // poll noise. Stream callbacks and explicit Retry own visible errors.
       } finally {
         inFlightFallback = false;
       }
