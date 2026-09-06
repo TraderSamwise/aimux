@@ -33,6 +33,13 @@ Priority fixture groups:
   reset, inverse, multiline, unsupported-code, and malformed-escape inputs,
   captured by running the TypeScript `app/lib/ansi.ts` parser.
 
+## App Display
+
+- `app-display/status-activity.json`: app status-tone and activity-label
+  mapping, status urgency, native colors, command-token, stale spinner, and
+  shimmer behavior captured by running TypeScript `app/lib/status-tone` and
+  `app/lib/activity-label` helpers.
+
 ## Agent Output
 
 - `agent-display/labels.json`: app generated-label detection, tool-name

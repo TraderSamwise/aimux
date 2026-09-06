@@ -5,6 +5,7 @@ pub mod agent_restore_state_contract;
 pub mod agent_status_contract;
 pub mod alert_display_contract;
 pub mod ansi_sgr_spans;
+pub mod app_display_helpers_contract;
 pub mod atomic_write;
 pub mod attachment_store_contract;
 pub mod attachment_text_contract;

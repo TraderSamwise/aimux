@@ -96,6 +96,13 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
     })
 }
 
+pub fn render_dashboard_footer_hints_contract(
+    input: &DashboardRenderInput<'_>,
+    preview_source: &str,
+) -> serde_json::Value {
+    footer::dashboard_footer_hint_values_for_contract(input, preview_source)
+}
+
 fn render_dashboard_content(input: &DashboardRenderInput<'_>) -> Vec<String> {
     if input.snapshot.sessions.is_empty() && input.snapshot.worktree_groups.is_empty() {
         return vec![truncate_ansi(
