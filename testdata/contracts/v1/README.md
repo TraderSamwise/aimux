@@ -73,6 +73,13 @@ Priority fixture groups:
 - `agent-status/chip.json`: status chip mapping and ANSI rendering contracts
   captured by running TypeScript `tui/render/agent-status` helpers.
 
+## Agent Prompt Delivery
+
+- `agent-prompt-delivery/delivery.json`: prompt normalization, visible draft
+  detection, pasted-content checks, idle/force/no-draft polling, and submit
+  delivery contracts captured by running TypeScript `agent-prompt-delivery`
+  helpers.
+
 ## Attachments
 
 - `attachments/text.json`: wrapped attachment text recovery cases captured by
@@ -91,6 +98,14 @@ Priority fixture groups:
 - `coordination/model.json`: coordination inbox, worklist, stale-notification,
   reachability, sorting, and view composition cases captured by running the
   TypeScript coordination model functions.
+
+## Context
+
+- `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
+  append behavior, and raw-history preservation captured by running TypeScript
+  `context/compactor`.
+- `context/bridge.json`: tmux pane live snapshot, bounding, UI-chrome filtering,
+  and response-mining behavior captured by running TypeScript `ContextWatcher`.
 
 ## Expose
 
