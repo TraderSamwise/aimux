@@ -57,6 +57,13 @@ Priority fixture groups:
   online-agent filtering captured by running TypeScript `app/lib/initial-main-route`,
   `app/lib/main-tabs`, and `app/lib/project-picker` helpers.
 
+## App State
+
+- `app-state/helpers.json`: chat transcript loading visibility, native pinned
+  offset, terminal output hydration, visible-pane output mode, and active
+  shared-session mapping/equality/merge/hydration behavior captured by running
+  TypeScript app state helpers.
+
 ## Agent Output
 
 - `agent-display/labels.json`: app generated-label detection, tool-name
