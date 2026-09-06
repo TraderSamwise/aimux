@@ -85,13 +85,14 @@ pub fn execute_dashboard_action(
         "GET" => DaemonHttpMethod::Get,
         other => return Err(anyhow!("unsupported dashboard action method: {other}")),
     };
-    let response = execute_loopback_json_request(&build_project_service_json_request(
+    let mut request = build_project_service_json_request(
         endpoint,
         method,
         action.path,
         Some(action.body.clone()),
-    )?)
-    .map_err(map_transport_error)?;
+    )?;
+    request.timeout_ms = Some(dashboard_action_timeout_ms(action.path));
+    let response = execute_loopback_json_request(&request).map_err(map_transport_error)?;
     if !(200..300).contains(&response.status)
         || response.json.get("ok").and_then(Value::as_bool) == Some(false)
     {
@@ -164,6 +165,19 @@ pub fn build_project_service_json_request(
 
 fn map_transport_error(error: CoreCommandTransportError) -> anyhow::Error {
     anyhow!(error.to_string())
+}
+
+fn dashboard_action_timeout_ms(path: &str) -> u64 {
+    match path {
+        routes::worktree_actions::CREATE
+        | routes::worktree_actions::CACHE_CLEANUP
+        | routes::worktree_actions::REMOVE
+        | routes::worktree_actions::GRAVEYARD => 180_000,
+        routes::graveyard_actions::RESURRECT_AGENT
+        | routes::graveyard_actions::RESURRECT_WORKTREE
+        | routes::graveyard_actions::DELETE_WORKTREE => 10_000,
+        _ => 2_000,
+    }
 }
 
 fn string_field(value: &Value, field: &str) -> Option<String> {
