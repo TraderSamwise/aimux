@@ -7,10 +7,6 @@ use crate::runtime_topology::list_topology_worktree_states;
 use super::switchable_agents::SwitchableAgentItem;
 use super::usage::parse_recency_timestamp;
 
-const ACTIVE_WORKTREE_STATUSES: &[&str] = &[
-    "planned", "creating", "active", "removing", "missing", "error",
-];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExposeSublabel {
     None,
@@ -184,7 +180,7 @@ pub fn group_items_by_worktree(
 
 pub fn dashboard_worktree_order_paths(project_root: &str, topology: &Value) -> Vec<String> {
     let root = clean_path_string(project_root);
-    let mut secondary = list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES))
+    let mut secondary = list_topology_worktree_states(topology, None)
         .into_iter()
         .filter(|worktree| {
             worktree.get("isBare").and_then(Value::as_bool) != Some(true)

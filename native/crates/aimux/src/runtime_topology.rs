@@ -358,6 +358,7 @@ pub fn topology_worktree_to_worktree_state(worktree: &Value) -> Value {
         "branch",
         "head",
         "basePath",
+        "isBare",
         "createdAt",
         "removedAt",
         "operationFailure",
