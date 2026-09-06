@@ -563,6 +563,10 @@ Priority fixture groups:
   protection, dry-run/apply behavior, cleanup-name allowlist, and summarized
   report rendering captured by running TypeScript `worktree-cache-cleanup`
   helpers.
+- `worktree/state.json`: worktree path resolution, git worktree-add argv
+  selection, internal scratch-worktree classification, graveyard topology
+  projection, and graveyard view-model ordering captured by running TypeScript
+  worktree and multiplexer helpers.
 
 ## Work Outline
 
