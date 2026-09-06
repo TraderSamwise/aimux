@@ -688,6 +688,10 @@ Priority fixture groups:
   selection from topology sessions, statusline fallback paths, metadata
   fallback paths, service rows, duplicate filtering, and missing-path filtering
   captured by running TypeScript `collectGithubPrTargets`.
+- `default-plugins/transcript-length.json`: default transcript-length plugin
+  statusline writes, compaction-checkpoint reset behavior, empty-history
+  rendering, external transcript-path byte counts, and stale-session clearing
+  captured by running TypeScript `createTranscriptLengthPlugin`.
 - `plugin/runtime.json`: plugin alert derivation, bundled default wrapper
   seeding/deletion behavior, failed-start cleanup status, and invalid module
   shape reporting captured by running TypeScript `plugin-runtime`; wrapper and

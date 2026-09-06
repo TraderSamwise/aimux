@@ -59,6 +59,7 @@ pub mod dashboard_tui_visibility;
 pub mod dashboard_ui_state;
 pub mod debug_state;
 pub mod default_plugin_gh_pr_context_contract;
+pub mod default_plugin_transcript_length_contract;
 pub mod desktop_notifier;
 pub mod desktop_notifier_contract;
 pub mod error_display_contract;

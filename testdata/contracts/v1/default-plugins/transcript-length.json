@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "source": "src/default-plugins/transcript-length.test.ts",
+  "generatedBy": "scripts/capture-transcript-length-contract.mjs",
+  "description": "Default transcript-length plugin statusline writes, checkpoint reset, external transcript-path size, empty history, and stale-session clearing captured by running TypeScript createTranscriptLengthPlugin.",
+  "cases": [
+    {
+      "id": "transcript-length-001",
+      "name": "resets transcript length after compaction checkpoints",
+      "source": "src/default-plugins/transcript-length.test.ts",
+      "api": "createTranscriptLengthPlugin",
+      "input": {
+        "api": "createTranscriptLengthPlugin",
+        "name": "resets transcript length after compaction checkpoints",
+        "projectRoot": "/tmp/aimux-transcript-length-contract-project-checkpoint",
+        "line": "top",
+        "initialSessions": ["codex-1"],
+        "beforeStart": {
+          "history": [
+            {
+              "sessionId": "codex-1",
+              "line": "{\"ts\":\"2026-04-17T00:00:00.000Z\",\"type\":\"prompt\",\"content\":\"hello\"}"
+            }
+          ]
+        },
+        "afterStart": [
+          {
+            "setup": {
+              "checkpoints": [{ "sessionId": "codex-1", "line": "{\"lastTurnTs\":\"2026-04-17T00:00:00.000Z\"}" }]
+            },
+            "delayMs": 2100
+          }
+        ]
+      },
+      "output": {
+        "projectStateDir": "/tmp/aimux-transcript-length-contract-home/projects/aimux-transcript-length-contract-project-checkpoint-d47a3a1646b7",
+        "writes": [
+          {
+            "session": "codex-1",
+            "line": "top",
+            "segment": { "id": "transcript-length", "text": "68b", "tone": "neutral" }
+          },
+          {
+            "session": "codex-1",
+            "line": "top",
+            "segment": { "id": "transcript-length", "text": "0b", "tone": "neutral" }
+          }
+        ],
+        "clears": []
+      },
+      "inputSha256": "6000ab5a57b5165c6192701ac0db6fd5112db2983dfa2a1d9b9c365b3f25592d"
+    },
+    {
+      "id": "transcript-length-002",
+      "name": "renders 0b when a session has no transcript history",
+      "source": "src/default-plugins/transcript-length.test.ts",
+      "api": "createTranscriptLengthPlugin",
+      "input": {
+        "api": "createTranscriptLengthPlugin",
+        "name": "renders 0b when a session has no transcript history",
+        "projectRoot": "/tmp/aimux-transcript-length-contract-project-empty",
+        "line": "top",
+        "initialSessions": ["codex-empty"]
+      },
+      "output": {
+        "projectStateDir": "/tmp/aimux-transcript-length-contract-home/projects/aimux-transcript-length-contract-project-empty-a8ca58d4845f",
+        "writes": [
+          {
+            "session": "codex-empty",
+            "line": "top",
+            "segment": { "id": "transcript-length", "text": "0b", "tone": "neutral" }
+          }
+        ],
+        "clears": []
+      },
+      "inputSha256": "666595d5d62893f51d419fd5f61269f68d9b01bcec060475adcc48bf0433b2fb"
+    },
+    {
+      "id": "transcript-length-003",
+      "name": "uses Claude transcript files when hook metadata provides a transcript path",
+      "source": "src/default-plugins/transcript-length.test.ts",
+      "api": "createTranscriptLengthPlugin",
+      "input": {
+        "api": "createTranscriptLengthPlugin",
+        "name": "uses Claude transcript files when hook metadata provides a transcript path",
+        "projectRoot": "/tmp/aimux-transcript-length-contract-project-external",
+        "line": "top",
+        "initialSessions": ["claude-1"],
+        "beforeStart": {
+          "externalTranscripts": [
+            {
+              "sessionId": "claude-1",
+              "path": "/tmp/aimux-transcript-length-contract-project-external/claude-transcript.jsonl",
+              "bytes": 2048
+            }
+          ]
+        }
+      },
+      "output": {
+        "projectStateDir": "/tmp/aimux-transcript-length-contract-home/projects/aimux-transcript-length-contract-project-external-3f8ece9bd362",
+        "writes": [
+          {
+            "session": "claude-1",
+            "line": "top",
+            "segment": { "id": "transcript-length", "text": "2kb", "tone": "neutral" }
+          }
+        ],
+        "clears": []
+      },
+      "inputSha256": "da0377f49a1836eeacfd0197053ca619258e6ae8cf2057b0b59c474eb9defcac"
+    },
+    {
+      "id": "transcript-length-004",
+      "name": "clears stale rendered sessions when they disappear",
+      "source": "src/default-plugins/transcript-length.test.ts",
+      "api": "createTranscriptLengthPlugin",
+      "input": {
+        "api": "createTranscriptLengthPlugin",
+        "name": "clears stale rendered sessions when they disappear",
+        "projectRoot": "/tmp/aimux-transcript-length-contract-project-stale",
+        "line": "bottom",
+        "initialSessions": ["codex-stale"],
+        "beforeStart": {
+          "history": [
+            {
+              "sessionId": "codex-stale",
+              "line": "{\"ts\":\"2026-04-17T00:00:00.000Z\",\"type\":\"response\",\"content\":\"still here\"}"
+            }
+          ]
+        },
+        "afterStart": [{ "sessions": [], "delayMs": 2100 }]
+      },
+      "output": {
+        "projectStateDir": "/tmp/aimux-transcript-length-contract-home/projects/aimux-transcript-length-contract-project-stale-d5e5d7c72712",
+        "writes": [
+          {
+            "session": "codex-stale",
+            "line": "bottom",
+            "segment": { "id": "transcript-length", "text": "75b", "tone": "neutral" }
+          }
+        ],
+        "clears": [{ "session": "codex-stale", "segmentId": "transcript-length" }]
+      },
+      "inputSha256": "d3b3b22b23812e746a8e972bd3c2c9732c4409f7d0a74814651a472922557189"
+    }
+  ]
+}
