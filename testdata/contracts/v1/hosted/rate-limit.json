@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "source": "src/full/hosted-rate-limit.test.ts",
+  "generatedBy": "scripts/capture-hosted-runtime-contract.mjs",
+  "description": "Hosted per-principal request, concurrency, idle-prune, and byte-budget limiter behavior captured by running TypeScript HostedRateLimiter.",
+  "cases": [
+    {
+      "id": "hosted-rate-limit-001",
+      "name": "allows up to the per-minute budget then refuses",
+      "source": "src/full/hosted-rate-limit.test.ts",
+      "api": "HostedRateLimiter.acquire",
+      "input": { "scenario": "per-minute-budget", "options": { "requestsPerMinute": 3, "maxConcurrent": 10 } },
+      "output": [{ "ok": true }, { "ok": true }, { "ok": true }, { "ok": false, "reason": "rate" }],
+      "inputSha256": "afa30f6c0d66a0ac0eec73c6a5838748e275c4ff7a7bef92c3e1de5490bd6fee"
+    },
+    {
+      "id": "hosted-rate-limit-002",
+      "name": "refills over time",
+      "source": "src/full/hosted-rate-limit.test.ts",
+      "api": "HostedRateLimiter.acquire",
+      "input": {
+        "scenario": "refill-over-time",
+        "options": { "requestsPerMinute": 60, "maxConcurrent": 10 },
+        "advanceMs": 1000
+      },
+      "output": { "before": { "ok": false, "reason": "rate" }, "after": { "ok": true } },
+      "inputSha256": "24a034af96f2544aa6fe8251e9a3c1c932d8c21a8682196a6af9979edcca5192"
+    },
+    {
+      "id": "hosted-rate-limit-003",
+      "name": "caps concurrency independently of the rate budget",
+      "source": "src/full/hosted-rate-limit.test.ts",
+      "api": "HostedRateLimiter.acquire",
+      "input": { "scenario": "concurrency", "options": { "requestsPerMinute": 100, "maxConcurrent": 2 } },
+      "output": {
+        "first": { "ok": true },
+        "second": { "ok": true },
+        "third": { "ok": false, "reason": "concurrency" },
+        "afterRelease": { "ok": true }
+      },
+      "inputSha256": "bd09360a0cfb18d0d07c7ec494e3f48eb1990d3b8e969fb0938dfcd32c92f16f"
+    },
+    {
+      "id": "hosted-rate-limit-004",
+      "name": "keeps principals independent",
+      "source": "src/full/hosted-rate-limit.test.ts",
+      "api": "HostedRateLimiter.acquire",
+      "input": { "scenario": "independent-principals", "options": { "requestsPerMinute": 1, "maxConcurrent": 1 } },
+      "output": { "a": { "ok": true }, "aAgain": { "ok": false, "reason": "concurrency" }, "b": { "ok": true } },
+      "inputSha256": "5a088fecc3c2d966054bcc24c5d63fb7c1f2e7fe70656ca8c20bd8d7710a998a"
+    },
+    {
+      "id": "hosted-rate-limit-005",
+      "name": "ignores a double release",
+      "source": "src/full/hosted-rate-limit.test.ts",
+      "api": "HostedRateLimiter.acquire",
+      "input": { "scenario": "double-release", "options": { "requestsPerMinute": 100, "maxConcurrent": 1 } },
+      "output": {
+        "initial": { "ok": true },
+        "afterDoubleRelease": { "ok": true },
+        "next": { "ok": false, "reason": "concurrency" }
+      },
+      "inputSha256": "c18a2271f8a5c0f915f3e30d22f3fba7f2e09ff6ed2249a9f2c12045a6b238a1"
+    },
+    {
+      "id": "hosted-rate-limit-006",
+      "name": "prunes idle principals but keeps in-flight ones",
+      "source": "src/full/hosted-rate-limit.test.ts",
+      "api": "HostedRateLimiter.prune",
+      "input": {
+        "scenario": "prune-idle",
+        "options": { "requestsPerMinute": 1, "maxConcurrent": 2 },
+        "advanceMs": 400000
+      },
+      "output": { "held": { "ok": true }, "idleAfterPrune": { "ok": true } },
+      "inputSha256": "aa9e08d9a30dd2cc8a73d27a9005082789ac95cdb22f6fde67a4fa146c05d811"
+    },
+    {
+      "id": "hosted-rate-limit-007",
+      "name": "charges and refills per-principal byte budgets",
+      "source": "src/full/hosted-rate-limit.ts",
+      "api": "HostedRateLimiter.charge",
+      "input": {
+        "scenario": "byte-budget",
+        "options": { "requestsPerMinute": 10, "maxConcurrent": 2, "bytesPerMinute": 100 },
+        "charges": [60, 50, 50, 0],
+        "advanceBeforeThirdMs": 30000
+      },
+      "output": [true, false, true, true],
+      "inputSha256": "18845293515b01b8b523844c02d36f17b2bceee48f4e0f9a4c3102c54c81a269"
+    }
+  ]
+}

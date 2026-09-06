@@ -1,0 +1,526 @@
+{
+  "version": 1,
+  "source": "src/full/hosted-config.test.ts",
+  "generatedBy": "scripts/capture-hosted-runtime-contract.mjs",
+  "description": "Hosted configuration normalization, global/project config loading boundaries, startup validation, forwarded-header allowlist, and retention behavior captured by running TypeScript hosted-config helpers.",
+  "cases": [
+    {
+      "id": "hosted-config-001",
+      "name": "accepts loopback forms",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "isLoopbackBindAddress",
+      "input": { "values": ["127.0.0.1", "127.1.2.3", "localhost", "::1", "[::1]", "::ffff:127.0.0.1"] },
+      "output": [true, true, true, true, true, true],
+      "inputSha256": "1e217ae2f70b67d5f06f6bae15d717ec6639fca2312977e3b699fc3023a96400"
+    },
+    {
+      "id": "hosted-config-002",
+      "name": "rejects routable addresses",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "isLoopbackBindAddress",
+      "input": { "values": ["0.0.0.0", "192.168.1.10", "10.0.0.1", "::", "example.com", "1270.0.1"] },
+      "output": [false, false, false, false, false, false],
+      "inputSha256": "21b987ab3c0f78574d0f98847c75763aafdec8bc22f8a88e767aa1e7ffe502eb"
+    },
+    {
+      "id": "hosted-config-003",
+      "name": "returns defaults for absent or non-object input",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": { "values": [null, "nope"] },
+      "output": [
+        {
+          "enabled": false,
+          "bindAddress": "127.0.0.1",
+          "port": 43195,
+          "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+          "maxPromptBytes": 16384,
+          "maxResponseBytes": 1048576,
+          "maxAttachmentBytes": 14680064,
+          "maxContextBytes": 8192,
+          "auditPromptBodies": true,
+          "webhookUrl": null,
+          "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+          "trustedForwardedHeader": null,
+          "retentionDays": 30
+        },
+        {
+          "enabled": false,
+          "bindAddress": "127.0.0.1",
+          "port": 43195,
+          "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+          "maxPromptBytes": 16384,
+          "maxResponseBytes": 1048576,
+          "maxAttachmentBytes": 14680064,
+          "maxContextBytes": 8192,
+          "auditPromptBodies": true,
+          "webhookUrl": null,
+          "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+          "trustedForwardedHeader": null,
+          "retentionDays": 30
+        }
+      ],
+      "inputSha256": "972fb10b15e34327b348f1263782caf98deaef68b942ca1e4b702436f372135d"
+    },
+    {
+      "id": "hosted-config-004",
+      "name": "floors the context cap at the envelope a full-size context needs",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": { "values": [{ "maxContextBytes": 512 }, { "maxContextBytes": 16384 }] },
+      "output": [{ "value": 8192 }, { "value": 16384 }],
+      "inputSha256": "c2650cac5d4ed04f13cd77219cbca4b2c68246c7c2275ff6c1f6b900fa90f07e"
+    },
+    {
+      "id": "hosted-config-005",
+      "name": "does not share nested state with the default object",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": { "mutateNormalizedRateLimit": 1 },
+      "output": { "defaultRequestsPerMinute": 60 },
+      "inputSha256": "78f931beac04bf7050c144b3f25d9061973a08f320b6001baf99fe60abc8ec8f"
+    },
+    {
+      "id": "hosted-config-006",
+      "name": "clamps out-of-range and wrongly typed values back to defaults",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": {
+        "value": {
+          "enabled": "yes",
+          "bindAddress": "   ",
+          "port": 0,
+          "rateLimit": { "requestsPerMinute": -5, "maxConcurrent": 9999999 },
+          "maxPromptBytes": null,
+          "maxResponseBytes": 512,
+          "auditPromptBodies": 0,
+          "webhookUrl": "   ",
+          "webhookSecretEnv": ""
+        }
+      },
+      "output": {
+        "enabled": false,
+        "bindAddress": "127.0.0.1",
+        "port": 43195,
+        "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+        "maxPromptBytes": 16384,
+        "maxAttachmentBytes": 14680064,
+        "maxContextBytes": 8192,
+        "maxResponseBytes": 1048576,
+        "auditPromptBodies": true,
+        "webhookUrl": null,
+        "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+        "trustedForwardedHeader": null,
+        "retentionDays": 30
+      },
+      "inputSha256": "0cc5dc4eb1e17534fbbbe4114d13067496f6d617213fd8f797d79dd37859adbc"
+    },
+    {
+      "id": "hosted-config-007",
+      "name": "keeps valid overrides",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": { "value": { "enabled": true, "port": 44000, "bindAddress": "0.0.0.0" } },
+      "output": {
+        "enabled": true,
+        "bindAddress": "0.0.0.0",
+        "port": 44000,
+        "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+        "maxPromptBytes": 16384,
+        "maxAttachmentBytes": 14680064,
+        "maxContextBytes": 8192,
+        "maxResponseBytes": 1048576,
+        "auditPromptBodies": true,
+        "webhookUrl": null,
+        "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+        "trustedForwardedHeader": null,
+        "retentionDays": 30
+      },
+      "inputSha256": "1d8834c5e5774bab2761c1f27ec5234ddfb43ada44b91db893a116f9f5ac9f57"
+    },
+    {
+      "id": "hosted-config-008",
+      "name": "defaults when there is no global config",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "loadHostedConfig",
+      "input": { "scenario": "no-global-config" },
+      "output": {
+        "enabled": false,
+        "bindAddress": "127.0.0.1",
+        "port": 43195,
+        "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+        "maxPromptBytes": 16384,
+        "maxResponseBytes": 1048576,
+        "maxAttachmentBytes": 14680064,
+        "maxContextBytes": 8192,
+        "auditPromptBodies": true,
+        "webhookUrl": null,
+        "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+        "trustedForwardedHeader": null,
+        "retentionDays": 30
+      },
+      "inputSha256": "4725e0f513a968345aaed7133e2906db77991f37a485491da07d78cf2dbfc4a0"
+    },
+    {
+      "id": "hosted-config-009",
+      "name": "reads the hosted block from the global config",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "loadHostedConfig",
+      "input": { "globalConfig": { "hosted": { "enabled": true, "port": 44100 } } },
+      "output": {
+        "enabled": true,
+        "bindAddress": "127.0.0.1",
+        "port": 44100,
+        "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+        "maxPromptBytes": 16384,
+        "maxAttachmentBytes": 14680064,
+        "maxContextBytes": 8192,
+        "maxResponseBytes": 1048576,
+        "auditPromptBodies": true,
+        "webhookUrl": null,
+        "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+        "trustedForwardedHeader": null,
+        "retentionDays": 30
+      },
+      "inputSha256": "12ef13e2f917f5eea1096b5f4da9a0233e877f94606bbf792cd832e67e405f88"
+    },
+    {
+      "id": "hosted-config-010",
+      "name": "quarantines a corrupt global config instead of throwing",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "loadHostedConfig",
+      "input": { "globalConfigText": "{ not json" },
+      "output": {
+        "config": {
+          "enabled": false,
+          "bindAddress": "127.0.0.1",
+          "port": 43195,
+          "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+          "maxPromptBytes": 16384,
+          "maxResponseBytes": 1048576,
+          "maxAttachmentBytes": 14680064,
+          "maxContextBytes": 8192,
+          "auditPromptBodies": true,
+          "webhookUrl": null,
+          "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+          "trustedForwardedHeader": null,
+          "retentionDays": 30
+        },
+        "quarantined": true
+      },
+      "inputSha256": "227fb9be755859c30ca92368ff4d608632221cc092341af94be6cbd038cb0c43"
+    },
+    {
+      "id": "hosted-config-011",
+      "name": "ignores a hosted block in project config",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "loadHostedConfig/loadConfig",
+      "input": { "projectConfig": { "hosted": { "enabled": true, "bindAddress": "0.0.0.0" } } },
+      "output": {
+        "hostedConfig": {
+          "enabled": false,
+          "bindAddress": "127.0.0.1",
+          "port": 43195,
+          "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+          "maxPromptBytes": 16384,
+          "maxResponseBytes": 1048576,
+          "maxAttachmentBytes": 14680064,
+          "maxContextBytes": 8192,
+          "auditPromptBodies": true,
+          "webhookUrl": null,
+          "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+          "trustedForwardedHeader": null,
+          "retentionDays": 30
+        },
+        "projectHosted": null
+      },
+      "inputSha256": "250d414106aab97c558c623161acf833ca2735665d57ade3fce74f91d63a5518"
+    },
+    {
+      "id": "hosted-config-012",
+      "name": "keeps a global hosted block through a config load",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "loadConfig",
+      "input": { "globalConfig": { "hosted": { "enabled": true, "port": 44200 } } },
+      "output": { "enabled": true, "port": 44200 },
+      "inputSha256": "36d5cd7b5214cd705e5757337efeec6fa126e59dcbe5e1e00450132fd2cc962a"
+    },
+    {
+      "id": "hosted-config-013",
+      "name": "validates hosted startup branches",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "validateHostedStartup",
+      "input": {
+        "cases": [
+          {
+            "config": {
+              "enabled": false,
+              "bindAddress": "0.0.0.0",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": null,
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 0
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "0.0.0.0",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": null,
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 0
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "0.0.0.0",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": null,
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 1
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "127.0.0.1",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": null,
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 0
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "127.0.0.1",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": "http://example.com/hook",
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 1
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "127.0.0.1",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": "http://127.0.0.1:9000/h",
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 1
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "127.0.0.1",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": "https://example.com/h",
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 1
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "127.0.0.1",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": "not-a-url",
+              "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 1
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "127.0.0.1",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": null,
+              "webhookSecretEnv": "PATH",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 1
+          },
+          {
+            "config": {
+              "enabled": true,
+              "bindAddress": "127.0.0.1",
+              "port": 43195,
+              "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+              "maxPromptBytes": 16384,
+              "maxResponseBytes": 1048576,
+              "maxAttachmentBytes": 14680064,
+              "maxContextBytes": 8192,
+              "auditPromptBodies": true,
+              "webhookUrl": null,
+              "webhookSecretEnv": "AIMUX_OTHER",
+              "trustedForwardedHeader": null,
+              "retentionDays": 30
+            },
+            "activePrincipalCount": 1
+          }
+        ]
+      },
+      "output": [
+        { "ok": true },
+        {
+          "ok": false,
+          "error": "hosted mode refuses to bind 0.0.0.0 with no principals — run \"aimux hosted token create\" first"
+        },
+        { "ok": true },
+        { "ok": true },
+        { "ok": false, "error": "hosted webhookUrl must be https unless it targets loopback" },
+        { "ok": true },
+        { "ok": true },
+        { "ok": false, "error": "hosted webhookUrl is not a valid URL" },
+        { "ok": false, "error": "hosted webhookSecretEnv must name an AIMUX_* variable, not PATH" },
+        { "ok": true }
+      ],
+      "inputSha256": "f2bcfaeeafa75e360bdcbdf3cb84549fb95256e05e93ee4352ab7d0211860618"
+    },
+    {
+      "id": "hosted-config-014",
+      "name": "never echoes the webhook url in an error",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "validateHostedStartup",
+      "input": {
+        "config": {
+          "enabled": true,
+          "bindAddress": "127.0.0.1",
+          "port": 43195,
+          "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
+          "maxPromptBytes": 16384,
+          "maxResponseBytes": 1048576,
+          "maxAttachmentBytes": 14680064,
+          "maxContextBytes": 8192,
+          "auditPromptBodies": true,
+          "webhookUrl": "not-a-url-secret-token",
+          "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+          "trustedForwardedHeader": null,
+          "retentionDays": 30
+        },
+        "activePrincipalCount": 1
+      },
+      "output": { "ok": false, "error": "hosted webhookUrl is not a valid URL" },
+      "inputSha256": "33e9f54ce1c21e5a0ef33ab7035abfe3cbfc1745fc3d3fbe3254b8e6ffcdcb64"
+    },
+    {
+      "id": "hosted-config-015",
+      "name": "normalizes trustedForwardedHeader to lower case, defaulting to null",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": {
+        "values": [
+          {},
+          { "trustedForwardedHeader": "  X-Forwarded-For " },
+          { "trustedForwardedHeader": "   " },
+          { "trustedForwardedHeader": 42 }
+        ]
+      },
+      "output": [{ "value": null }, { "value": "x-forwarded-for" }, { "value": null }, { "value": null }],
+      "inputSha256": "bbd698a94acee780db1da7a018fbefbea90629da871c55e0331ad1d3ed01ffdf"
+    },
+    {
+      "id": "hosted-config-016",
+      "name": "ignores a forwarded header the tunnel does not set",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": {
+        "values": ["x-real-ip", "forwarded", "x-client-ip", "cf-connecting-ip", "x-forwarded-for", "true-client-ip"]
+      },
+      "output": [null, null, null, "cf-connecting-ip", "x-forwarded-for", "true-client-ip"],
+      "inputSha256": "3365599e1fd22fa15bcdb5cb9db65f7cae9f1721dbed142a8422d9020bae1b76"
+    },
+    {
+      "id": "hosted-config-017",
+      "name": "does not refuse startup over an unusable forwarded header",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "validateHostedStartup",
+      "input": { "config": { "enabled": true, "trustedForwardedHeader": "x-real-ip" }, "activePrincipalCount": 1 },
+      "output": { "ok": true },
+      "inputSha256": "75632d6e522d1aa478aaf9d9e45c6cc4855cdd80269ca1dab7e6ed071324a369"
+    },
+    {
+      "id": "hosted-config-018",
+      "name": "clamps retentionDays",
+      "source": "src/full/hosted-config.test.ts",
+      "api": "normalizeHostedConfig",
+      "input": { "values": [{}, { "retentionDays": 7 }, { "retentionDays": 0 }, { "retentionDays": 99999 }] },
+      "output": [{ "value": 30 }, { "value": 7 }, { "value": 30 }, { "value": 30 }],
+      "inputSha256": "214e271c15da36a6a379cc7ecd6bedd3d0b792b8daf9641e0451789c53c3dc06"
+    }
+  ]
+}

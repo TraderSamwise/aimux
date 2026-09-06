@@ -325,6 +325,15 @@ Priority fixture groups:
   parsing captured by running TypeScript `claude-hooks` and `codex-hooks`
   helpers.
 
+## Hosted
+
+- `hosted/config.json`: hosted configuration normalization, global/project
+  config loading boundaries, startup validation, forwarded-header allowlist,
+  and retention behavior captured by running TypeScript hosted-config helpers.
+- `hosted/rate-limit.json`: hosted per-principal request, concurrency,
+  idle-prune, and byte-budget limiter behavior captured by running TypeScript
+  `HostedRateLimiter`.
+
 ## Install Cleanup
 
 - `install-cleanup/cleanup.json`: install retention planning, reference
@@ -355,6 +364,9 @@ Priority fixture groups:
   pending-start retry, expiry, compaction, lost-ownership, and tmux failure
   cases captured by running TypeScript `ExposePaneOutputTap` with mocked tmux
   calls and temporary tap files.
+- `expose/preview-crop.json`: expose preview footer crop thresholds and
+  line-window behavior captured by running TypeScript expose-preview-crop
+  helpers.
 
 ## Metadata Server
 
