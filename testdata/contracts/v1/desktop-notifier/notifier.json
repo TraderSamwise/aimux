@@ -1,0 +1,391 @@
+{
+  "version": 1,
+  "source": "src/desktop-notifier.test.ts",
+  "generatedBy": "scripts/capture-desktop-notifier-contract.mjs",
+  "description": "Desktop notification helper candidate selection, transport routing, diagnostic delivery, doctor-report construction, rendering, and side-effect calls captured by running TypeScript desktop-notifier helpers with mocked dependencies.",
+  "cases": [
+    {
+      "name": "derives bundled macOS helper candidates",
+      "input": { "api": "macNotifierCandidates", "deps": { "moduleDir": "/tmp/aimux/dist", "arch": "x64", "env": {} } },
+      "id": "desktop-notifier-001",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "macNotifierCandidates",
+      "output": {
+        "result": [
+          "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+          "/tmp/aimux/native/darwin-x64/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+        ],
+        "calls": { "exists": [], "execFile": [], "nodeNotify": [] }
+      },
+      "inputSha256": "e211b547d309974a9b3f2ffdde5b4b8d19d991d5ab99a85f44f01c4eb7e5531c"
+    },
+    {
+      "name": "keeps only app-bundled helper overrides",
+      "input": {
+        "api": "macNotifierCandidates",
+        "deps": {
+          "moduleDir": "/tmp/aimux/dist",
+          "arch": "arm64",
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier" }
+        }
+      },
+      "id": "desktop-notifier-002",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "macNotifierCandidates",
+      "output": {
+        "result": [
+          "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+          "/tmp/aimux/native/darwin-arm64/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+        ],
+        "calls": { "exists": [], "execFile": [], "nodeNotify": [] }
+      },
+      "inputSha256": "311ad4e857a2f6945f77c1f68ab9d3e7305ad1a47c42bf11110f95c02938087a"
+    },
+    {
+      "name": "resolves existing macOS helper override",
+      "input": {
+        "api": "findMacNotifierHelper",
+        "deps": {
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"]
+        }
+      },
+      "id": "desktop-notifier-003",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "findMacNotifierHelper",
+      "output": {
+        "result": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+        "calls": {
+          "exists": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execFile": [],
+          "nodeNotify": []
+        }
+      },
+      "inputSha256": "417347c858239115f53d3e0778b87cb1ebbe1f358ed2f206f9884d318e92643a"
+    },
+    {
+      "name": "ignores missing helper candidates",
+      "input": { "api": "findMacNotifierHelper", "deps": { "moduleDir": "/tmp/aimux/dist", "arch": "x64", "env": {} } },
+      "id": "desktop-notifier-004",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "findMacNotifierHelper",
+      "output": {
+        "result": null,
+        "calls": {
+          "exists": [
+            "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+            "/tmp/aimux/native/darwin-x64/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+          ],
+          "execFile": [],
+          "nodeNotify": []
+        }
+      },
+      "inputSha256": "a3f59bd3fc0809852b23d1d9c5eeb291fdd8e26cdbc6e5d43540742cb0645c9c"
+    },
+    {
+      "name": "uses the macOS helper when available",
+      "input": {
+        "api": "sendDesktopNotification",
+        "payload": { "title": "aimux", "message": "agent waiting", "sound": true },
+        "deps": {
+          "platform": "darwin",
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"]
+        }
+      },
+      "id": "desktop-notifier-005",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "sendDesktopNotification",
+      "output": {
+        "result": { "transport": "mac-helper", "helperPath": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        "calls": {
+          "exists": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execFile": [
+            {
+              "file": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+              "args": ["--title", "aimux", "--message", "agent waiting", "--sound"],
+              "options": null
+            }
+          ],
+          "nodeNotify": []
+        }
+      },
+      "inputSha256": "5b5b935a820f81717f7a9e4c8d26b45be521153d4733c4f1327a28057c609d3b"
+    },
+    {
+      "name": "falls back to node-notifier when no macOS helper is installed",
+      "input": {
+        "api": "sendDesktopNotification",
+        "payload": { "title": "aimux", "message": "agent waiting", "sound": true },
+        "deps": { "platform": "darwin", "env": {} }
+      },
+      "id": "desktop-notifier-006",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "sendDesktopNotification",
+      "output": {
+        "result": { "transport": "node-notifier" },
+        "calls": {
+          "exists": [
+            "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+            "/tmp/aimux/native/darwin-arm64/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+          ],
+          "execFile": [],
+          "nodeNotify": [{ "title": "aimux", "message": "agent waiting", "sound": true }]
+        }
+      },
+      "inputSha256": "8db6556ff632204f5abf78703c8c9c380eba28e22d964fe4e3c68dcf7885e110"
+    },
+    {
+      "name": "uses node-notifier directly on non-macOS platforms",
+      "input": {
+        "api": "sendDesktopNotification",
+        "payload": { "title": "aimux", "message": "agent waiting", "sound": false },
+        "deps": {
+          "platform": "linux",
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"]
+        }
+      },
+      "id": "desktop-notifier-007",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "sendDesktopNotification",
+      "output": {
+        "result": { "transport": "node-notifier" },
+        "calls": {
+          "exists": [],
+          "execFile": [],
+          "nodeNotify": [{ "title": "aimux", "message": "agent waiting", "sound": false }]
+        }
+      },
+      "inputSha256": "9090c28da9e9cb8aa77ec61a52ffd8f155866844cce6c58a39a9803eaa60aa53"
+    },
+    {
+      "name": "does not use an external transport when notifications are disabled",
+      "input": {
+        "api": "sendDesktopNotification",
+        "payload": { "title": "aimux", "message": "agent waiting", "sound": true },
+        "deps": {
+          "platform": "darwin",
+          "env": { "AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS": "1" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"]
+        }
+      },
+      "id": "desktop-notifier-008",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "sendDesktopNotification",
+      "output": { "result": { "transport": "disabled" }, "calls": { "exists": [], "execFile": [], "nodeNotify": [] } },
+      "inputSha256": "01b2b1c6b0e13fa69e6733ca89d61673408f7833f93f7ebd3623a86998716818"
+    },
+    {
+      "name": "awaits macOS helper delivery for diagnostic sends",
+      "input": {
+        "api": "sendDesktopNotificationAndWait",
+        "payload": { "title": "aimux", "message": "agent waiting", "sound": true },
+        "deps": {
+          "platform": "darwin",
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execResult": { "stdout": "delivered\n", "stderr": "" }
+        }
+      },
+      "id": "desktop-notifier-009",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "sendDesktopNotificationAndWait",
+      "output": {
+        "result": {
+          "transport": "mac-helper",
+          "helperPath": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+          "ok": true,
+          "exitCode": 0,
+          "stdout": "delivered",
+          "stderr": ""
+        },
+        "calls": {
+          "exists": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execFile": [
+            {
+              "file": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+              "args": ["--title", "aimux", "--message", "agent waiting", "--sound"],
+              "options": { "timeout": 10000 }
+            }
+          ],
+          "nodeNotify": []
+        }
+      },
+      "inputSha256": "8b3d3f40686c12b2645f46b73b11a3dc557115a099f3fdec9aaad5c86eb9a40d"
+    },
+    {
+      "name": "reports macOS helper delivery failures for diagnostic sends",
+      "input": {
+        "api": "sendDesktopNotificationAndWait",
+        "payload": { "title": "aimux", "message": "agent waiting", "sound": true },
+        "deps": {
+          "platform": "darwin",
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execResult": {
+            "stdout": "authorization=denied\n",
+            "stderr": "",
+            "error": { "message": "Command failed: notifications are denied", "code": 77 }
+          }
+        }
+      },
+      "id": "desktop-notifier-010",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "sendDesktopNotificationAndWait",
+      "output": {
+        "result": {
+          "transport": "mac-helper",
+          "helperPath": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+          "ok": false,
+          "exitCode": 77,
+          "stdout": "authorization=denied",
+          "stderr": "",
+          "error": "Command failed: notifications are denied"
+        },
+        "calls": {
+          "exists": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execFile": [
+            {
+              "file": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+              "args": ["--title", "aimux", "--message", "agent waiting", "--sound"],
+              "options": { "timeout": 10000 }
+            }
+          ],
+          "nodeNotify": []
+        }
+      },
+      "inputSha256": "f6f6b1389b05bb0352fbcaaf3e64a163d30e11ec8f02f4b743233c9461d95b0d"
+    },
+    {
+      "name": "builds a macOS doctor report with helper check output",
+      "input": {
+        "api": "buildDesktopNotifierDoctorReport",
+        "deps": {
+          "platform": "darwin",
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execResult": { "stdout": "Aimux notifier ready (app.aimux.notifier)\n", "stderr": "" }
+        }
+      },
+      "id": "desktop-notifier-011",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "buildDesktopNotifierDoctorReport",
+      "output": {
+        "result": {
+          "platform": "darwin",
+          "transport": "mac-helper",
+          "helperPath": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+          "helperCandidates": [
+            "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+            "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+            "/tmp/aimux/native/darwin-arm64/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+          ],
+          "helperCheck": {
+            "ok": true,
+            "exitCode": 0,
+            "stdout": "Aimux notifier ready (app.aimux.notifier)",
+            "stderr": ""
+          }
+        },
+        "calls": {
+          "exists": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execFile": [
+            {
+              "file": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+              "args": ["--check"],
+              "options": { "timeout": 10000 }
+            }
+          ],
+          "nodeNotify": []
+        }
+      },
+      "inputSha256": "11cfab200d4a2fbea74f1d274c2016499dd789dd15bf4429eafe891e70fb2fd9"
+    },
+    {
+      "name": "builds a macOS doctor report for denied helper authorization",
+      "input": {
+        "api": "buildDesktopNotifierDoctorReport",
+        "deps": {
+          "platform": "darwin",
+          "env": { "AIMUX_NOTIFIER_HELPER": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+          "existingPaths": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execResult": {
+            "stdout": "Aimux notifier ready (app.aimux.notifier); authorization=denied\n",
+            "stderr": "",
+            "error": { "message": "Command failed: notifications are denied", "code": 77 }
+          }
+        }
+      },
+      "id": "desktop-notifier-012",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "buildDesktopNotifierDoctorReport",
+      "output": {
+        "result": {
+          "platform": "darwin",
+          "transport": "mac-helper",
+          "helperPath": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+          "helperCandidates": [
+            "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+            "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+            "/tmp/aimux/native/darwin-arm64/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+          ],
+          "helperCheck": {
+            "ok": false,
+            "exitCode": 77,
+            "stdout": "Aimux notifier ready (app.aimux.notifier); authorization=denied",
+            "stderr": "",
+            "error": "Command failed: notifications are denied"
+          }
+        },
+        "calls": {
+          "exists": ["/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"],
+          "execFile": [
+            {
+              "file": "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+              "args": ["--check"],
+              "options": { "timeout": 10000 }
+            }
+          ],
+          "nodeNotify": []
+        }
+      },
+      "inputSha256": "c1256ddb8559b920b8294671657dd48efc1279544614e00879ab431217ce1a6e"
+    },
+    {
+      "name": "renders missing helper candidates in the doctor report",
+      "input": {
+        "api": "renderDesktopNotifierDoctorReport",
+        "report": {
+          "platform": "darwin",
+          "transport": "node-notifier",
+          "helperPath": null,
+          "helperCandidates": ["/tmp/one", "/tmp/two"]
+        }
+      },
+      "id": "desktop-notifier-013",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "renderDesktopNotifierDoctorReport",
+      "output": {
+        "result": "Desktop notifications\nPlatform: darwin\nTransport: node-notifier\nHelper: not found\nChecked:\n  /tmp/one\n  /tmp/two",
+        "calls": { "exists": [], "execFile": [], "nodeNotify": [] }
+      },
+      "inputSha256": "75d8e5c3178fbb3736905ddf0db3c289ab11b8deaa629fa1393063e20c756d0a"
+    },
+    {
+      "name": "renders non-macOS doctor reports without helper details",
+      "input": {
+        "api": "renderDesktopNotifierDoctorReport",
+        "report": { "platform": "linux", "transport": "node-notifier", "helperPath": null, "helperCandidates": [] }
+      },
+      "id": "desktop-notifier-014",
+      "source": "src/desktop-notifier.test.ts",
+      "api": "renderDesktopNotifierDoctorReport",
+      "output": {
+        "result": "Desktop notifications\nPlatform: linux\nTransport: node-notifier\nmacOS helper: not used on this platform",
+        "calls": { "exists": [], "execFile": [], "nodeNotify": [] }
+      },
+      "inputSha256": "84eae6ebf43b73a98d1521e08940c5250afef1fb3d6545f1340d1eb9ff99f022"
+    }
+  ]
+}

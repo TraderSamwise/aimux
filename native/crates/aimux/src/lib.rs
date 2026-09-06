@@ -50,6 +50,7 @@ pub mod dashboard_terminal;
 pub mod dashboard_tool_picker;
 pub mod debug_state;
 pub mod desktop_notifier;
+pub mod desktop_notifier_contract;
 pub mod error_display_contract;
 pub mod event_loop_budget;
 pub mod exchange_alert_routing;

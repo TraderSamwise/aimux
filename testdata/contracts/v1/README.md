@@ -132,6 +132,13 @@ Priority fixture groups:
   host/port environment contracts captured by running TypeScript `daemon-state`
   helpers.
 
+## Desktop Notifier
+
+- `desktop-notifier/notifier.json`: macOS helper candidate selection, transport
+  routing, diagnostic delivery, doctor-report construction and rendering, and
+  side-effect call records captured by running TypeScript `desktop-notifier`
+  helpers with mocked dependencies.
+
 ## Notifications
 
 - `notifications/osc.json`: OSC 9, OSC 99, OSC 777, chunk buffering, ST
