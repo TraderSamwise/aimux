@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-startup-interstitials-contract.mjs",
+  "source": "src/tmux/startup-interstitials.test.ts",
+  "subject": "src/tmux/startup-interstitials.ts",
+  "description": "Startup interstitial matching and once-only dismissal captured by running TypeScript.",
+  "caseCount": 8,
+  "cases": [
+    {
+      "id": "tmux-startup-interstitials-001",
+      "name": "chooses Skip on the real codex update screen",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": {
+        "name": "chooses Skip on the real codex update screen",
+        "screen": "REAL_UPDATE_SCREEN",
+        "interstitial": {
+          "id": "codex-update-available",
+          "when": ["Update available!", "Press enter to continue"],
+          "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+        }
+      },
+      "output": { "key": "2" },
+      "inputSha256": "7dedd3159ac8bbc8b2e98168871245e8a0bfa5c5b2e90bd6b5e057479c241df9"
+    },
+    {
+      "id": "tmux-startup-interstitials-002",
+      "name": "prefers plain Skip over Skip until next version",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": {
+        "name": "prefers plain Skip over Skip until next version",
+        "screen": "REORDERED_UPDATE_SCREEN",
+        "interstitial": {
+          "id": "codex-update-available",
+          "when": ["Update available!", "Press enter to continue"],
+          "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+        }
+      },
+      "output": { "key": "3" },
+      "inputSha256": "17751144ca362188894dbb123b02de5c8e42936b3d03b58fa8fcf175633062c9"
+    },
+    {
+      "id": "tmux-startup-interstitials-003",
+      "name": "reads the number off the menu",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": {
+        "name": "reads the number off the menu",
+        "screen": "RENUMBERED_UPDATE_SCREEN",
+        "interstitial": {
+          "id": "codex-update-available",
+          "when": ["Update available!", "Press enter to continue"],
+          "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+        }
+      },
+      "output": { "key": "7" },
+      "inputSha256": "248f2e9b0c77f5ea41adb860f2c309e0c849790716f36802ba943d48d263c3c0"
+    },
+    {
+      "id": "tmux-startup-interstitials-004",
+      "name": "finds Skip when selected",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": {
+        "name": "finds Skip when selected",
+        "screen": "SKIP_SELECTED_UPDATE_SCREEN",
+        "interstitial": {
+          "id": "codex-update-available",
+          "when": ["Update available!", "Press enter to continue"],
+          "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+        }
+      },
+      "output": { "key": "2" },
+      "inputSha256": "3779f778f41f3e3c7d9b045042a32407332ca1f043a2ec731b0b4ad92d84e563"
+    },
+    {
+      "id": "tmux-startup-interstitials-005",
+      "name": "returns null when not showing or option missing",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": {
+        "name": "returns null when not showing or option missing",
+        "interstitial": {
+          "id": "codex-update-available",
+          "when": ["Update available!", "Press enter to continue"],
+          "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+        }
+      },
+      "output": { "trust": null, "empty": null, "withoutSkip": null, "chatter": null },
+      "inputSha256": "934499c3f7b09225621e20198c3e899e46e5c72c162005ce57224e801ef641df"
+    },
+    {
+      "id": "tmux-startup-interstitials-006",
+      "name": "findStartupInterstitial returns matching interstitial and skips earlier misses",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": { "name": "findStartupInterstitial returns matching interstitial and skips earlier misses" },
+      "output": {
+        "direct": {
+          "interstitial": {
+            "id": "codex-update-available",
+            "when": ["Update available!", "Press enter to continue"],
+            "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+          },
+          "key": "2"
+        },
+        "none": null,
+        "later": {
+          "interstitial": {
+            "id": "codex-update-available",
+            "when": ["Update available!", "Press enter to continue"],
+            "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+          },
+          "key": "2"
+        }
+      },
+      "inputSha256": "15977859fe159d6954c1cf0050b762cd12cd54a48046c845cc9cd79432ebb59a"
+    },
+    {
+      "id": "tmux-startup-interstitials-007",
+      "name": "dismisser answers each prompt once",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": { "name": "dismisser answers each prompt once" },
+      "output": {
+        "first": {
+          "interstitial": {
+            "id": "codex-update-available",
+            "when": ["Update available!", "Press enter to continue"],
+            "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+          },
+          "key": "2"
+        },
+        "lingering": null,
+        "second": {
+          "interstitial": {
+            "id": "codex-trust-directory",
+            "when": ["Do you trust the contents of this directory?"],
+            "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Yes, continue\\s*$"
+          },
+          "key": "1"
+        },
+        "repeatedSecond": null,
+        "done": true
+      },
+      "inputSha256": "3da9fa0ddd4a9f0720301551cc68411c5d7c86ae0bd278e4ff5031f47f65c372"
+    },
+    {
+      "id": "tmux-startup-interstitials-008",
+      "name": "dismisser ignores ordinary sessions without completing",
+      "source": "src/tmux/startup-interstitials.test.ts",
+      "api": "startup-interstitials",
+      "input": { "name": "dismisser ignores ordinary sessions without completing" },
+      "output": { "next": null, "done": false },
+      "inputSha256": "351bcc7fc2c220f765bd3d1331752fe885d0aa9362bb3313b1c34200ff73e6b8"
+    }
+  ]
+}

@@ -99,6 +99,7 @@ pub mod tmux_expose_hot_snapshot_worker;
 pub mod tmux_query_memo;
 pub mod tmux_runtime_stop;
 pub mod tmux_session_transport;
+pub mod tmux_startup_interstitials;
 pub mod tool_hooks;
 pub mod tool_hooks_contract;
 pub mod transcript_turn_state;
