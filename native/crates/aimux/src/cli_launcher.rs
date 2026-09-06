@@ -154,7 +154,7 @@ fn dashboard_launch_args(env: &BTreeMap<String, String>) -> Vec<String> {
 fn dashboard_implementation_is_native(env: &BTreeMap<String, String>) -> bool {
     env.get("AIMUX_DASHBOARD_IMPLEMENTATION")
         .map(|value| value.trim())
-        == Some("native")
+        != Some("node")
 }
 
 struct ResolveInstalledNativeInput<'a> {
