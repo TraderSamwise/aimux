@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "source": "app/lib/project-connection-display.test.ts",
+  "generatedBy": "scripts/capture-project-connection-display-contract.mjs",
+  "description": "App project connection endpoint labels, project-state error copy, relay discovery gates, and relay-unavailable copy captured by running TypeScript project-connection-display helpers.",
+  "cases": [
+    {
+      "id": "project-connection-001",
+      "name": "hides loopback endpoint labels in relay mode",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "formatProjectEndpointLabel",
+      "input": {
+        "name": "hides loopback endpoint labels in relay mode",
+        "api": "formatProjectEndpointLabel",
+        "endpoint": { "host": "127.0.0.1", "port": 46975 },
+        "connectionMode": "relay"
+      },
+      "output": "via relay",
+      "inputSha256": "aa8aa1c7cb73aecb0cd733a2e708a914e8c3f1386b1f325d3db461e22deae937"
+    },
+    {
+      "id": "project-connection-002",
+      "name": "shows direct endpoints in local mode",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "formatProjectEndpointLabel",
+      "input": {
+        "name": "shows direct endpoints in local mode",
+        "api": "formatProjectEndpointLabel",
+        "endpoint": { "host": "127.0.0.1", "port": 46975 },
+        "connectionMode": "local"
+      },
+      "output": "127.0.0.1:46975",
+      "inputSha256": "6c5c0265c6d0c195751bd8c70afeff1c62fbba600e44d7c7412701513a0b0445"
+    },
+    {
+      "id": "project-connection-003",
+      "name": "shows offline endpoint labels",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "formatProjectEndpointLabel",
+      "input": {
+        "name": "shows offline endpoint labels",
+        "api": "formatProjectEndpointLabel",
+        "endpoint": null,
+        "connectionMode": "relay"
+      },
+      "output": "host offline",
+      "inputSha256": "e8e81c6058edc98a9df3d3b6f2a48f23f346d4fed9d3072fb85e504f523e5de4"
+    },
+    {
+      "id": "project-connection-004",
+      "name": "returns live project endpoints",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "getProjectServiceEndpoint",
+      "input": {
+        "name": "returns live project endpoints",
+        "api": "getProjectServiceEndpoint",
+        "project": {
+          "id": "project_1",
+          "name": "app",
+          "path": "/repo",
+          "dashboardSessionName": "aimux-app",
+          "service": null,
+          "serviceAlive": true,
+          "serviceEndpoint": { "host": "127.0.0.1", "port": 46975 }
+        }
+      },
+      "output": { "host": "127.0.0.1", "port": 46975 },
+      "inputSha256": "905d080cd1af596ea2260c1f1548ce6be99e6ef696b5d88b1cf35d1bc56c2ef5"
+    },
+    {
+      "id": "project-connection-005",
+      "name": "ignores stale offline project endpoints",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "getProjectServiceEndpoint",
+      "input": {
+        "name": "ignores stale offline project endpoints",
+        "api": "getProjectServiceEndpoint",
+        "project": {
+          "id": "project_1",
+          "name": "app",
+          "path": "/repo",
+          "dashboardSessionName": "aimux-app",
+          "service": null,
+          "serviceAlive": false,
+          "serviceEndpoint": { "host": "127.0.0.1", "port": 46975 }
+        }
+      },
+      "output": null,
+      "inputSha256": "67091b8f9edc404d21477068d1a5388c301bf851b3b4df23a20da5d1557c355f"
+    },
+    {
+      "id": "project-connection-006",
+      "name": "turns refused metadata connections into offline host copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "projectStateErrorCopy",
+      "input": {
+        "name": "turns refused metadata connections into offline host copy",
+        "api": "projectStateErrorCopy",
+        "error": "connect ECONNREFUSED 127.0.0.1:51513"
+      },
+      "output": {
+        "title": "Project host not running.",
+        "detail": "Start the host to see worktrees, agents, and services for this project."
+      },
+      "inputSha256": "6d75b96ac1ae42a57d9bee0b37e8f80c81dd086c7f4783500f65cea9346f2ac5"
+    },
+    {
+      "id": "project-connection-007",
+      "name": "turns browser fetch failures into offline host copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "projectStateErrorCopy",
+      "input": {
+        "name": "turns browser fetch failures into offline host copy",
+        "api": "projectStateErrorCopy",
+        "error": "Failed to fetch"
+      },
+      "output": {
+        "title": "Project host not running.",
+        "detail": "Start the host to see worktrees, agents, and services for this project."
+      },
+      "inputSha256": "07fb66aaea6d013defc0cd3e15d6814e3ab71b2b5b9e263a10b13f6cb69ccf45"
+    },
+    {
+      "id": "project-connection-008",
+      "name": "turns pending security approval into actionable copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "projectStateErrorCopy",
+      "input": {
+        "name": "turns pending security approval into actionable copy",
+        "api": "projectStateErrorCopy",
+        "error": "Remote client pending security approval"
+      },
+      "output": {
+        "title": "Remote client pending approval.",
+        "detail": "Run `aimux security device approve`, match the code, then refresh project state."
+      },
+      "inputSha256": "fcf1ff5d9aced2ad990cb8b2063a12ee711db5ff485f7d8678e21f62b63c1fd0"
+    },
+    {
+      "id": "project-connection-009",
+      "name": "surfaces pending security approval codes",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "projectStateErrorCopy",
+      "input": {
+        "name": "surfaces pending security approval codes",
+        "api": "projectStateErrorCopy",
+        "error": "Remote client pending security approval. Code abc-234."
+      },
+      "output": {
+        "title": "Remote client pending approval.",
+        "detail": "Run `aimux security device approve`, match code ABC-234, then refresh project state."
+      },
+      "inputSha256": "e72541361f84f3b2614d424826cd5fbe4ab221b8bd9bef71b84fccf868ddd5cc"
+    },
+    {
+      "id": "project-connection-010",
+      "name": "turns relay disconnection into reconnect guidance",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "projectStateErrorCopy",
+      "input": {
+        "name": "turns relay disconnection into reconnect guidance",
+        "api": "projectStateErrorCopy",
+        "error": "Relay not connected"
+      },
+      "output": {
+        "title": "Remote unavailable.",
+        "detail": "Aimux could not reach the remote control plane. Try again after it reconnects."
+      },
+      "inputSha256": "eee8e3b732ba4a2345bafe2a4c9a0b2b5fbe743e3858bfac40a8152d7ee0289d"
+    },
+    {
+      "id": "project-connection-011",
+      "name": "falls back to generic project-state error copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "projectStateErrorCopy",
+      "input": {
+        "name": "falls back to generic project-state error copy",
+        "api": "projectStateErrorCopy",
+        "error": "Unexpected daemon timeout"
+      },
+      "output": { "title": "Could not load project state.", "detail": "Unexpected daemon timeout" },
+      "inputSha256": "a5df136561095ec01b1423acd790ab811e5d8daf3506ecc4e5841e35d4657c61"
+    },
+    {
+      "id": "project-connection-012",
+      "name": "detects terminal relay discovery states",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "isRelayUnavailableForProjectDiscovery",
+      "input": {
+        "name": "detects terminal relay discovery states",
+        "api": "isRelayUnavailableForProjectDiscovery",
+        "status": "daemon_offline"
+      },
+      "output": true,
+      "inputSha256": "7e2327e3e0bd88ae4820ecf32b009328496ce6e79fdd5a143a5ac3be399a744a"
+    },
+    {
+      "id": "project-connection-013",
+      "name": "does not treat connecting relay state as discovery unavailable",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "isRelayUnavailableForProjectDiscovery",
+      "input": {
+        "name": "does not treat connecting relay state as discovery unavailable",
+        "api": "isRelayUnavailableForProjectDiscovery",
+        "status": "connecting"
+      },
+      "output": false,
+      "inputSha256": "5e8610226011cb4c374cf20e6a3413783a064ca1db8278802c510ac7a37ec904"
+    },
+    {
+      "id": "project-connection-014",
+      "name": "detects pending device approval errors",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "isDevicePendingApprovalError",
+      "input": {
+        "name": "detects pending device approval errors",
+        "api": "isDevicePendingApprovalError",
+        "error": "Remote client pending security approval"
+      },
+      "output": true,
+      "inputSha256": "a2d10b92fb33a278a5739970c00d9e3a5dda14f9d995b5d444186861b72ecac3"
+    },
+    {
+      "id": "project-connection-015",
+      "name": "detects project host offline errors",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "isProjectHostOfflineError",
+      "input": {
+        "name": "detects project host offline errors",
+        "api": "isProjectHostOfflineError",
+        "error": "Network request failed"
+      },
+      "output": true,
+      "inputSha256": "9f9c429df17737a74a589ec7011da31dd6c413634dfca7b01bda1d0cfd721747"
+    },
+    {
+      "id": "project-connection-016",
+      "name": "renders device pending relay unavailable copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "relayUnavailableProjectCopy",
+      "input": {
+        "name": "renders device pending relay unavailable copy",
+        "api": "relayUnavailableProjectCopy",
+        "status": "device_pending"
+      },
+      "output": {
+        "title": "Remote approval required.",
+        "detail": "Run `aimux security device approve`, match the code, then refresh."
+      },
+      "inputSha256": "22ffa9ac506d4e56c3d2c7b9bcde2f796fe0ad81b3c6d5bcd9f16dfc170352c4"
+    },
+    {
+      "id": "project-connection-017",
+      "name": "renders daemon offline relay unavailable copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "relayUnavailableProjectCopy",
+      "input": {
+        "name": "renders daemon offline relay unavailable copy",
+        "api": "relayUnavailableProjectCopy",
+        "status": "daemon_offline"
+      },
+      "output": { "title": "Host offline.", "detail": "Start the Aimux host to see projects and sessions." },
+      "inputSha256": "921a710ef8cf539008b5f53da4b3ce29796c3712244064d37909caa8a0b589ee"
+    },
+    {
+      "id": "project-connection-018",
+      "name": "renders auth failed relay unavailable copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "relayUnavailableProjectCopy",
+      "input": {
+        "name": "renders auth failed relay unavailable copy",
+        "api": "relayUnavailableProjectCopy",
+        "status": "auth_failed"
+      },
+      "output": { "title": "Remote access blocked.", "detail": "Open Inbox and approve this device, then refresh." },
+      "inputSha256": "1abe8a5539a6e9627845712e7c3a616688309e77c0a228962664febd4f76f58f"
+    },
+    {
+      "id": "project-connection-019",
+      "name": "renders generic relay unavailable copy",
+      "source": "app/lib/project-connection-display.test.ts",
+      "api": "relayUnavailableProjectCopy",
+      "input": {
+        "name": "renders generic relay unavailable copy",
+        "api": "relayUnavailableProjectCopy",
+        "status": "relay_unavailable"
+      },
+      "output": {
+        "title": "Remote unavailable.",
+        "detail": "Aimux could not reach the remote control plane. Try again after it reconnects."
+      },
+      "inputSha256": "ee3fdcca1cc2ca759b5a298d8ee804d4bc18bcc8cf3b7d323a84c234f547933b"
+    }
+  ]
+}

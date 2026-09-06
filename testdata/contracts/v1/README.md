@@ -170,6 +170,12 @@ Priority fixture groups:
   because there is no public scanner API outside the daemon/project catalog
   implementation.
 
+## Project Connection
+
+- `project-connection/display.json`: app project endpoint labels,
+  project-state error copy, relay discovery gates, and relay-unavailable copy
+  captured by running TypeScript `app/lib/project-connection-display` helpers.
+
 ## Process
 
 - `process/inspector.json`: process args, process-list, cwd, exited-state, and
