@@ -1,0 +1,441 @@
+{
+  "version": 1,
+  "source": "src/metadata-store.ts",
+  "generatedBy": "scripts/capture-metadata-store-contract.mjs",
+  "description": "Metadata store persistence, authority-field scrubbing, loop/control flags, statusline segment, and malformed-shape contracts captured by running TypeScript.",
+  "constants": { "MAX_SEGMENT_DATA_BYTES": 4096, "MAX_SEGMENT_TTL_SECONDS": 86400 },
+  "cases": [
+    {
+      "id": "metadata-store-001",
+      "name": "loads malformed sessions while scrubbing topology-owned fields",
+      "source": "src/metadata-store.ts",
+      "api": "loadMetadataState",
+      "input": {
+        "state": {
+          "version": 1,
+          "sessions": {
+            "malformed": null,
+            "valid": {
+              "backendSessionId": "backend-1",
+              "label": "stale-label",
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      "output": {
+        "version": 1,
+        "sessions": { "malformed": null, "valid": { "updatedAt": "2026-01-01T00:00:00.000Z" } }
+      },
+      "inputSha256": "b51cb0ce2a5ffdc704cd5753425bf486a50a821da2b1c6d25b2272b6c9c81ae8"
+    },
+    {
+      "id": "metadata-store-002",
+      "name": "saves malformed sessions while scrubbing topology-owned fields",
+      "source": "src/metadata-store.ts",
+      "api": "saveMetadataState",
+      "input": {
+        "state": {
+          "version": 1,
+          "sessions": { "malformed": null, "valid": { "updatedAt": "2026-01-01T00:00:00.000Z" } }
+        }
+      },
+      "output": {
+        "version": 1,
+        "sessions": { "malformed": null, "valid": { "updatedAt": "2026-01-01T00:00:00.000Z" } }
+      },
+      "inputSha256": "b579d1657623c08b8759fe6983131d49537f5898035eafeb0546531758811c9b"
+    },
+    {
+      "id": "metadata-store-003",
+      "name": "round-trips loop and overseer flags",
+      "source": "src/metadata-store.ts",
+      "api": "setSessionLoop/clearSessionLoop/setSessionOverseer",
+      "input": {
+        "loop": {
+          "active": true,
+          "goal": "ship the feature",
+          "since": "2026-06-13T00:00:00.000Z",
+          "source": "dashboard",
+          "updatedBy": "dashboard"
+        },
+        "clearAction": {
+          "action": "remove",
+          "at": "2026-06-13T01:00:00.000Z",
+          "source": "overseer",
+          "updatedBySessionId": "boss"
+        }
+      },
+      "output": {
+        "afterSet": {
+          "state": {
+            "version": 1,
+            "sessions": {
+              "worker-1": {
+                "updatedAt": "2026-06-13T00:00:05.000Z",
+                "loop": {
+                  "active": true,
+                  "goal": "ship the feature",
+                  "since": "2026-06-13T00:00:00.000Z",
+                  "source": "dashboard",
+                  "updatedBy": "dashboard"
+                },
+                "loopLastAction": {
+                  "action": "add",
+                  "at": "2026-06-13T00:00:00.000Z",
+                  "goal": "ship the feature",
+                  "source": "dashboard",
+                  "updatedBy": "dashboard"
+                }
+              },
+              "boss": { "updatedAt": "2026-06-13T00:00:05.000Z", "overseer": true }
+            }
+          },
+          "overseer": "boss"
+        },
+        "afterClear": {
+          "state": {
+            "version": 1,
+            "sessions": {
+              "worker-1": {
+                "updatedAt": "2026-06-13T01:00:05.000Z",
+                "loopLastAction": {
+                  "action": "remove",
+                  "at": "2026-06-13T01:00:00.000Z",
+                  "source": "overseer",
+                  "updatedBySessionId": "boss"
+                }
+              },
+              "boss": { "updatedAt": "2026-06-13T01:00:05.000Z" }
+            }
+          },
+          "overseer": null
+        }
+      },
+      "inputSha256": "645a4d7018dbe6994a689df85d6c28ab306dc73b8f51e14e6352e47bf33ab834"
+    },
+    {
+      "id": "metadata-store-004",
+      "name": "skips writes for unchanged session metadata payloads",
+      "source": "src/metadata-store.ts",
+      "api": "updateSessionMetadata",
+      "input": { "sessionId": "worker-1", "status": { "text": "ready", "tone": "info" } },
+      "output": {
+        "fileUnchanged": true,
+        "state": {
+          "version": 1,
+          "sessions": {
+            "worker-1": { "updatedAt": "2026-02-03T04:05:06.000Z", "status": { "text": "ready", "tone": "info" } }
+          }
+        }
+      },
+      "inputSha256": "cbdc77d160f6bee69d8d124329b0e82e990c9adc5aba640e685f8d7029e0f2f7"
+    },
+    {
+      "id": "metadata-store-005",
+      "name": "enforces a single overseer",
+      "source": "src/metadata-store.ts",
+      "api": "setSessionOverseer",
+      "input": { "sequence": ["boss-1=true", "boss-2=true"] },
+      "output": {
+        "state": {
+          "version": 1,
+          "sessions": {
+            "boss-1": { "updatedAt": "2026-02-03T04:05:06.000Z" },
+            "boss-2": { "updatedAt": "2026-02-03T04:05:06.000Z", "overseer": true }
+          }
+        },
+        "overseer": "boss-2"
+      },
+      "inputSha256": "1d956f80b8b2323e0e2a400f9f536ff219da15365cb982e7ec81b65d3a5a7e51"
+    },
+    {
+      "id": "metadata-store-006",
+      "name": "enforces a single scribe",
+      "source": "src/metadata-store.ts",
+      "api": "setSessionScribe",
+      "input": { "sequence": ["scribe-1=true", "scribe-2=true"] },
+      "output": {
+        "state": {
+          "version": 1,
+          "sessions": {
+            "scribe-1": { "updatedAt": "2026-02-03T04:05:06.000Z" },
+            "scribe-2": { "updatedAt": "2026-02-03T04:05:06.000Z", "scribe": true }
+          }
+        },
+        "scribe": "scribe-2"
+      },
+      "inputSha256": "4b7fcf8f6c4f3588b11017b3c6eb0857f89a1e85d0c1e45c2849e6194a0dd026"
+    },
+    {
+      "id": "metadata-store-007",
+      "name": "records explicit scribe demotion",
+      "source": "src/metadata-store.ts",
+      "api": "setSessionScribe",
+      "input": { "sequence": ["scribe-1=true", "scribe-1=false"] },
+      "output": {
+        "state": {
+          "version": 1,
+          "sessions": { "scribe-1": { "updatedAt": "2026-02-03T04:05:06.000Z", "scribe": false } }
+        },
+        "scribe": null
+      },
+      "inputSha256": "ab4d0cca94b87d30690aa471ed804c391f14982ea0bbb75d7e568b33912c6672"
+    },
+    {
+      "id": "metadata-store-008",
+      "name": "puts segment on rail and replaces by id",
+      "source": "src/metadata-store.ts",
+      "api": "putStatuslineSegment",
+      "input": {
+        "sessionId": "s1",
+        "operations": [
+          { "line": "bottom", "segment": { "id": "a", "text": "first" } },
+          { "line": "bottom", "segment": { "id": "b", "text": "other" } },
+          { "line": "bottom", "segment": { "id": "a", "text": "second" } }
+        ]
+      },
+      "output": {
+        "version": 1,
+        "sessions": {
+          "s1": {
+            "updatedAt": "2026-02-03T04:05:06.000Z",
+            "statusline": {
+              "bottom": [
+                { "id": "b", "text": "other" },
+                { "id": "a", "text": "second" }
+              ]
+            }
+          }
+        }
+      },
+      "inputSha256": "12f2d6292ab5a5a326662da69b19f9b7cf3262a878c90eda845442d701dd00ce"
+    },
+    {
+      "id": "metadata-store-009",
+      "name": "carries opaque segment payload verbatim",
+      "source": "src/metadata-store.ts",
+      "api": "putStatuslineSegment",
+      "input": {
+        "sessionId": "s1",
+        "line": "top",
+        "segment": { "id": "a", "text": "x", "data": { "anything": [1, { "nested": true }], "at": "all" } }
+      },
+      "output": {
+        "version": 1,
+        "sessions": {
+          "s1": {
+            "updatedAt": "2026-02-03T04:05:06.000Z",
+            "statusline": {
+              "top": [{ "id": "a", "text": "x", "data": { "anything": [1, { "nested": true }], "at": "all" } }]
+            }
+          }
+        }
+      },
+      "inputSha256": "c0e5b7b40308f6075c4eaa5adec4a81a4cad26550eb000ac0a867084e4bbdefe"
+    },
+    {
+      "id": "metadata-store-010",
+      "name": "hides expired segments and keeps live ones",
+      "source": "src/metadata-store.ts",
+      "api": "loadMetadataState",
+      "input": {
+        "now": "2026-02-03T04:05:06.000Z",
+        "operations": [
+          { "line": "bottom", "segment": { "id": "gone", "text": "stale", "expiresAt": "2026-02-03T04:04:06.000Z" } },
+          { "line": "bottom", "segment": { "id": "here", "text": "live", "expiresAt": "2026-02-03T04:15:06.000Z" } },
+          { "line": "bottom", "segment": { "id": "forever", "text": "no ttl" } }
+        ]
+      },
+      "output": {
+        "version": 1,
+        "sessions": {
+          "s1": {
+            "updatedAt": "2026-02-03T04:05:06.000Z",
+            "statusline": {
+              "bottom": [
+                { "id": "here", "text": "live", "expiresAt": "2026-02-03T04:15:06.000Z" },
+                { "id": "forever", "text": "no ttl" }
+              ]
+            }
+          }
+        }
+      },
+      "inputSha256": "2345b3aa0c05d32624ace92e962ef15459f2fa58cd1f65e008735f6d37946831"
+    },
+    {
+      "id": "metadata-store-011",
+      "name": "removes rail when every segment expired",
+      "source": "src/metadata-store.ts",
+      "api": "loadMetadataState",
+      "input": {
+        "now": "2026-02-03T04:05:06.000Z",
+        "segment": { "id": "a", "text": "x", "expiresAt": "2026-02-03T04:05:05.000Z" }
+      },
+      "output": { "version": 1, "sessions": { "s1": { "updatedAt": "2026-02-03T04:05:06.000Z" } } },
+      "inputSha256": "30f60942a48ed03fe26ac8bf5a406f45748003bb4065f18cd2a8cf29d81e0e56"
+    },
+    {
+      "id": "metadata-store-012",
+      "name": "keeps segment whose expiry is not a date",
+      "source": "src/metadata-store.ts",
+      "api": "loadMetadataState",
+      "input": { "sessionId": "s1", "line": "top", "segment": { "id": "a", "text": "x", "expiresAt": "not a date" } },
+      "output": {
+        "version": 1,
+        "sessions": {
+          "s1": {
+            "updatedAt": "2026-02-03T04:05:06.000Z",
+            "statusline": { "top": [{ "id": "a", "text": "x", "expiresAt": "not a date" }] }
+          }
+        }
+      },
+      "inputSha256": "680ad9ca75b5c482be6318b001d0ed845857ab6923f2299147c980c68f9b8cd9"
+    },
+    {
+      "id": "metadata-store-013",
+      "name": "drops segment from one rail or both",
+      "source": "src/metadata-store.ts",
+      "api": "dropStatuslineSegment",
+      "input": {
+        "before": [
+          { "line": "top", "segment": { "id": "a", "text": "t" } },
+          { "line": "bottom", "segment": { "id": "a", "text": "b" } },
+          { "line": "bottom", "segment": { "id": "keep", "text": "k" } }
+        ],
+        "drops": [{ "id": "a", "line": "top" }, { "id": "a" }]
+      },
+      "output": {
+        "afterTopOnly": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-02-03T04:05:06.000Z",
+              "statusline": {
+                "bottom": [
+                  { "id": "a", "text": "b" },
+                  { "id": "keep", "text": "k" }
+                ]
+              }
+            }
+          }
+        },
+        "afterBoth": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-02-03T04:05:06.000Z",
+              "statusline": { "bottom": [{ "id": "keep", "text": "k" }] }
+            }
+          }
+        }
+      },
+      "inputSha256": "a05a2a0ac8ca3db0365bd1749567dab10c6d5d0dd859b5c44b387c545d152fa7"
+    },
+    {
+      "id": "metadata-store-014",
+      "name": "segment rejection for {\"text\":\"no id\"}",
+      "source": "src/metadata-store.ts",
+      "api": "segmentRejection",
+      "input": { "segment": { "text": "no id" } },
+      "output": "a segment needs an id to be replaceable",
+      "inputSha256": "bdd97275151d0b3bb908574fbbb3107e7e0d3333f624072ea8054cf1ed51637a"
+    },
+    {
+      "id": "metadata-store-015",
+      "name": "segment rejection for {\"id\":\"a\",\"text\":\"fine\"}",
+      "source": "src/metadata-store.ts",
+      "api": "segmentRejection",
+      "input": { "segment": { "id": "a", "text": "fine" } },
+      "output": null,
+      "inputSha256": "1e03826b8871ab624a0582670e1f6f8ef8d5cb8618b2d5d7036a35abf18c14a8"
+    },
+    {
+      "id": "metadata-store-016",
+      "name": "segment rejection for {\"id\":\"a\",\"text\":\"x\",\"expiresAt\":\"soon\"}",
+      "source": "src/metadata-store.ts",
+      "api": "segmentRejection",
+      "input": { "segment": { "id": "a", "text": "x", "expiresAt": "soon" } },
+      "output": "expiresAt is not a date",
+      "inputSha256": "165f951b2cbe27fe4b6f1b610ebb37ed26fbb29baab28a265f45ec9af72b7af0"
+    },
+    {
+      "id": "metadata-store-017",
+      "name": "segment rejection for {\"id\":\"a\",\"text\":\"x\",\"data\":{\"big\":\"xxxxxxxxxxxxxxxxxxxxxxxx",
+      "source": "src/metadata-store.ts",
+      "api": "segmentRejection",
+      "input": {
+        "segment": {
+          "id": "a",
+          "text": "x",
+          "data": {
+            "big": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        }
+      },
+      "output": "data is 4106 bytes; the limit is 4096",
+      "inputSha256": "f8f1b49f0357cbf40e8533079c490f8f6a4f37a051d3b6e09a324a0f3a4473c0"
+    },
+    {
+      "id": "metadata-store-018",
+      "name": "segment rejection for {\"id\":\"a\",\"text\":\"x\",\"data\":{\"small\":true}}",
+      "source": "src/metadata-store.ts",
+      "api": "segmentRejection",
+      "input": { "segment": { "id": "a", "text": "x", "data": { "small": true } } },
+      "output": null,
+      "inputSha256": "ccef8863893eee478ea1da925bed33b8d3dadeded6cd3ba8f50781993496fd1d"
+    },
+    {
+      "id": "metadata-store-019",
+      "name": "segment rejection for {\"id\":7,\"text\":\"x\"}",
+      "source": "src/metadata-store.ts",
+      "api": "segmentRejection",
+      "input": { "segment": { "id": 7, "text": "x" } },
+      "output": "a segment needs an id to be replaceable",
+      "inputSha256": "e4910d2aa0c7a3accb6e70e76aae7a1d162cbd84497082fe7e1aacda2cb77e31"
+    },
+    {
+      "id": "metadata-store-020",
+      "name": "statusline segment ttl constant",
+      "source": "src/metadata-store.ts",
+      "api": "MAX_SEGMENT_TTL_SECONDS",
+      "input": {},
+      "output": { "MAX_SEGMENT_TTL_SECONDS": 86400, "soonRejection": null },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "metadata-store-021",
+      "name": "survives malformed statusline shapes on read",
+      "source": "src/metadata-store.ts",
+      "api": "loadMetadataState",
+      "input": {
+        "state": {
+          "version": 1,
+          "sessions": {
+            "nullSession": null,
+            "stringSession": "nonsense",
+            "railIsAString": { "statusline": { "top": "x" }, "updatedAt": "2026-01-01T00:00:00.000Z" },
+            "railHoldsNull": { "statusline": { "top": [null] }, "updatedAt": "2026-01-01T00:00:00.000Z" },
+            "statuslineIsAnArray": { "statusline": [], "updatedAt": "2026-01-01T00:00:00.000Z" },
+            "fine": {
+              "statusline": { "top": [{ "id": "a", "text": "keep" }] },
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      "output": {
+        "version": 1,
+        "sessions": {
+          "nullSession": null,
+          "stringSession": "nonsense",
+          "railIsAString": { "statusline": { "top": "x" }, "updatedAt": "2026-01-01T00:00:00.000Z" },
+          "railHoldsNull": { "statusline": { "top": [null] }, "updatedAt": "2026-01-01T00:00:00.000Z" },
+          "statuslineIsAnArray": { "updatedAt": "2026-01-01T00:00:00.000Z" },
+          "fine": { "statusline": { "top": [{ "id": "a", "text": "keep" }] }, "updatedAt": "2026-01-01T00:00:00.000Z" }
+        }
+      },
+      "inputSha256": "7db3e8663b9543e3f1d85a9f2e343d4612444eaf23ef2a27d16a5aff380fb4c1"
+    }
+  ]
+}
