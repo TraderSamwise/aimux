@@ -176,6 +176,12 @@ Priority fixture groups:
   project-service identity contracts captured by running TypeScript
   `process-inspector` helpers against fake `ps`/`lsof` commands.
 
+## Request Errors
+
+- `request-errors/classification.json`: app request-error message extraction and
+  transient disconnect classification captured by running TypeScript
+  `app/lib/request-errors` helpers.
+
 ## Project Topology
 
 - `project-topology/topology.json`: project topology health, rollup, worktree
