@@ -259,6 +259,52 @@ fn stable_shim_uses_install_artifacts_and_keeps_stable_environment() {
     assert_eq!(source_changed, native_changed);
 }
 
+#[cfg(unix)]
+#[test]
+fn stable_native_dashboard_stamp_does_not_require_installed_js_artifacts() {
+    use std::os::unix::fs::symlink;
+
+    let test_dir = TestDir::new();
+    let install_root = create_install(&test_dir.0, "native-only", "native-one");
+    fs::remove_file(install_root.join("dist/launcher-bin.js")).expect("remove launcher");
+    fs::remove_file(install_root.join("dist/main.js")).expect("remove main");
+    let shim = test_dir.0.join("stable/bin/aimux");
+    fs::create_dir_all(shim.parent().expect("shim parent")).expect("create shim parent");
+    symlink(install_root.join("bin/aimux"), &shim).expect("link stable shim");
+    let options = source_options(
+        &test_dir,
+        BTreeMap::from([
+            ("AIMUX_CLI_BIN".into(), shim.to_string_lossy().into_owned()),
+            ("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into()),
+            (
+                "AIMUX_INSTALL_ROOT".into(),
+                test_dir.0.join("src").to_string_lossy().into_owned(),
+            ),
+        ]),
+    );
+
+    let first = get_dashboard_command_spec_with_options("/tmp/repo", options.clone())
+        .expect("native-only stable spec");
+    assert!(command_text(&first).contains("__dashboard-internal-native"));
+    assert!(!command_text(&first).contains("--tmux-dashboard-internal"));
+
+    fs::write(
+        install_root.join("native/test-platform-test-arch/aimux"),
+        "native-two",
+    )
+    .expect("change native binary");
+    let native_changed = get_dashboard_command_spec_with_options("/tmp/repo", options.clone())
+        .expect("changed native spec")
+        .dashboard_build_stamp;
+    assert_ne!(native_changed, first.dashboard_build_stamp);
+
+    fs::write(&options.implementation_path, "source-main-two").expect("change source main");
+    let source_changed = get_dashboard_command_spec_with_options("/tmp/repo", options)
+        .expect("source-changed native stable spec")
+        .dashboard_build_stamp;
+    assert_eq!(source_changed, native_changed);
+}
+
 fn create_install(root: &Path, label: &str, native_contents: &str) -> PathBuf {
     let install_root = root.join("installs").join(label);
     fs::create_dir_all(install_root.join("bin")).expect("create install bin");

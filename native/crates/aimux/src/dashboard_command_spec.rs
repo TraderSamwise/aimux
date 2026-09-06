@@ -72,18 +72,34 @@ pub fn get_dashboard_command_spec_with_options(
         current_entry_path: Some(script_path.clone()),
         home_dir: Some(options.home_dir.clone()),
     });
+    let native_dashboard = dashboard_implementation_is_native(&options.env);
     let artifact_paths = if launch.source == AimuxCliLaunchSource::StableShim {
-        resolve_stable_shim_artifact_paths(
-            Path::new(&launch.stable_shim_path),
-            &options.platform,
-            &options.arch,
-        )
-        .unwrap_or_else(|| {
-            vec![
-                options.script_path.clone(),
-                options.implementation_path.clone(),
-            ]
-        })
+        if native_dashboard {
+            resolve_stable_shim_native_artifact_path(
+                Path::new(&launch.stable_shim_path),
+                &options.platform,
+                &options.arch,
+            )
+            .map(|path| vec![path])
+            .unwrap_or_else(|| {
+                vec![
+                    options.script_path.clone(),
+                    options.implementation_path.clone(),
+                ]
+            })
+        } else {
+            resolve_stable_shim_artifact_paths(
+                Path::new(&launch.stable_shim_path),
+                &options.platform,
+                &options.arch,
+            )
+            .unwrap_or_else(|| {
+                vec![
+                    options.script_path.clone(),
+                    options.implementation_path.clone(),
+                ]
+            })
+        }
     } else {
         vec![
             options.script_path.clone(),
@@ -125,6 +141,12 @@ pub fn get_dashboard_command_spec_with_options(
     })
 }
 
+fn dashboard_implementation_is_native(env: &BTreeMap<String, String>) -> bool {
+    env.get("AIMUX_DASHBOARD_IMPLEMENTATION")
+        .map(|value| value.trim())
+        == Some("native")
+}
+
 fn resolve_stable_shim_artifact_paths(
     stable_shim_path: &Path,
     platform: &str,
@@ -152,6 +174,28 @@ fn resolve_stable_shim_artifact_paths(
         artifact_paths.push(native_artifact_path);
     }
     Some(artifact_paths)
+}
+
+fn resolve_stable_shim_native_artifact_path(
+    stable_shim_path: &Path,
+    platform: &str,
+    arch: &str,
+) -> Option<PathBuf> {
+    let real_shim_path = stable_shim_path.canonicalize().ok()?;
+    if real_shim_path.file_name()?.to_str()? != "aimux"
+        || real_shim_path.parent()?.file_name()?.to_str()? != "bin"
+    {
+        return None;
+    }
+    let native_artifact_path = real_shim_path
+        .parent()?
+        .parent()?
+        .join("native")
+        .join(format!("{platform}-{arch}"))
+        .join("aimux");
+    native_artifact_path
+        .exists()
+        .then_some(native_artifact_path)
 }
 
 fn build_dashboard_env_command_prefix(
