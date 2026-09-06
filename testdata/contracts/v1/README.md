@@ -748,6 +748,9 @@ Priority fixture groups:
   metadata projection, and service-label derivation captured by running
   TypeScript `multiplexer/services` helpers; tmux-backed mutation flows are
   fenced out.
+- `multiplexer/worktrees.json`: dashboard worktree settle-poll backoff table
+  captured by running TypeScript `worktreeSettlePollDelay` over the tested
+  attempt ranges.
 - `runtime-state/guard-repair-history.json`: dashboard runtime-guard repair
   attempt persistence, project-key normalization, window pruning, clearing, and
   corrupt-history recovery captured by running TypeScript
