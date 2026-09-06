@@ -21,6 +21,7 @@ pub struct DashboardController {
     pub tool_picker: Option<DashboardToolPickerState>,
     pub service_input: Option<DashboardServiceInputState>,
     pub launch_options: Option<DashboardLaunchOptionsState>,
+    pub details_sidebar_visible: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +41,7 @@ impl DashboardController {
             tool_picker: None,
             service_input: None,
             launch_options: None,
+            details_sidebar_visible: true,
         }
     }
 
@@ -87,6 +89,10 @@ impl DashboardController {
                 DashboardNavigationOutcome::Back => DashboardControllerEffect::Render,
                 _ => DashboardControllerEffect::Ignored,
             },
+            DashboardKey::Tab => {
+                self.details_sidebar_visible = !self.details_sidebar_visible;
+                DashboardControllerEffect::Render
+            }
             DashboardKey::Enter => self.handle_enter(snapshot),
             DashboardKey::Stop => self.handle_action(snapshot, DashboardActionKind::Stop),
             DashboardKey::ClearFailures => self.handle_clear_failures(snapshot),
@@ -119,7 +125,6 @@ impl DashboardController {
                 DashboardControllerEffect::Ignored
             }
             DashboardKey::LaunchOptions
-            | DashboardKey::Tab
             | DashboardKey::Left
             | DashboardKey::Right
             | DashboardKey::Home

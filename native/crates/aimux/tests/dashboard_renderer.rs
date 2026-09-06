@@ -31,6 +31,7 @@ fn renders_empty_dashboard_with_create_hint() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        details_sidebar_visible: false,
     });
     let plain = strip_ansi(&result.frame);
 
@@ -61,6 +62,7 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
         hidden_offline_agent_count: 7,
         scroll_offset: 0,
         footer_message: None,
+        details_sidebar_visible: false,
     });
     let plain = strip_ansi(&result.frame);
 
@@ -101,12 +103,46 @@ fn renders_state_aware_footer_hints_for_session_actions() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        details_sidebar_visible: false,
     });
     let plain = strip_ansi(&result.frame);
 
     assert!(plain.contains("Enter/→/l focus"));
     assert!(plain.contains("x stop"));
     assert!(result.frame.contains("\x1b[1;38;5;203mx\x1b[0m"));
+}
+
+#[test]
+fn renders_selected_session_details_sidebar_when_visible() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_light;
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("Details"));
+    assert!(plain.contains("Aimux ID"));
+    assert!(plain.contains("claude-0"));
+    for line in result.frame.split("\r\n") {
+        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    }
 }
 
 #[test]
@@ -135,6 +171,7 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        details_sidebar_visible: false,
     });
     let plain = strip_ansi(&result.frame);
 
@@ -168,6 +205,7 @@ fn renders_service_and_failure_footer_hints() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        details_sidebar_visible: false,
     });
     let plain = strip_ansi(&result.frame);
 

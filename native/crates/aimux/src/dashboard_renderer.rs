@@ -4,8 +4,10 @@ mod rows;
 use crate::dashboard_model::DesktopStateSnapshot;
 use crate::dashboard_renderer::footer::render_dashboard_footer;
 use crate::dashboard_renderer::rows::{render_service_row, render_session_row, worktree_summary};
+use crate::dashboard_session_details::render_session_details;
 use crate::tui_render::screen_frame::{
     ScreenFrameInput, ScreenFrameResult, compose_screen_frame, screen_content_width,
+    screen_left_width,
 };
 use crate::tui_render::text::{center, truncate_ansi};
 use crate::tui_render::theme::{Tone, pad_visible, style, visible_width};
@@ -32,6 +34,7 @@ pub struct DashboardRenderInput<'a> {
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
     pub footer_message: Option<&'a str>,
+    pub details_sidebar_visible: bool,
 }
 
 pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameResult {
@@ -82,6 +85,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
     let content = render_dashboard_content(input);
     let footer_lines = render_dashboard_footer(input);
     let focus_line = find_focus_line(&content);
+    let right_panel = render_dashboard_right_panel(input, header.len(), footer_lines.len() + 1);
 
     compose_screen_frame(&ScreenFrameInput {
         cols: input.cols,
@@ -91,8 +95,8 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         footer_lines: &footer_lines,
         focus_line,
         scroll_offset: input.scroll_offset,
-        two_pane: false,
-        right_panel: None,
+        two_pane: right_panel.is_some(),
+        right_panel: right_panel.as_deref(),
     })
 }
 
@@ -132,6 +136,50 @@ fn render_dashboard_content(input: &DashboardRenderInput<'_>) -> Vec<String> {
             )
         })
         .collect()
+}
+
+fn render_dashboard_right_panel(
+    input: &DashboardRenderInput<'_>,
+    header_len: usize,
+    footer_len: usize,
+) -> Option<Vec<String>> {
+    if !input.details_sidebar_visible {
+        return None;
+    }
+    let session = selected_session(input)?;
+    let content_width = screen_content_width(input.cols);
+    let separator_width = 3;
+    let right_width = 20.max(
+        content_width
+            .saturating_sub(screen_left_width(input.cols))
+            .saturating_sub(separator_width)
+            .saturating_sub(1),
+    );
+    let panel_height = 1.max(input.rows.saturating_sub(header_len + footer_len));
+    let session_value = serde_json::to_value(session).ok()?;
+    Some(render_session_details(
+        Some(&session_value),
+        right_width,
+        panel_height,
+    ))
+}
+
+fn selected_session<'a>(
+    input: &DashboardRenderInput<'a>,
+) -> Option<&'a crate::dashboard_model::DashboardSession> {
+    let session_id = input.selected_session_id?;
+    input
+        .snapshot
+        .sessions
+        .iter()
+        .chain(
+            input
+                .snapshot
+                .worktree_groups
+                .iter()
+                .flat_map(|group| group.sessions.iter()),
+        )
+        .find(|session| session.id == session_id)
 }
 
 fn render_worktree_groups(input: &DashboardRenderInput<'_>) -> Vec<String> {

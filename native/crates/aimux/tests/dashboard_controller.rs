@@ -308,6 +308,24 @@ fn printable_navigation_keys_still_drive_dashboard_commands() {
 }
 
 #[test]
+fn tab_toggles_session_details_sidebar() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert!(controller.details_sidebar_visible);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Tab),
+        DashboardControllerEffect::Render
+    );
+    assert!(!controller.details_sidebar_visible);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Tab),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.details_sidebar_visible);
+}
+
+#[test]
 fn service_input_collects_printable_text_and_dispatches_create() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());

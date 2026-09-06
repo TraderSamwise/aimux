@@ -67,6 +67,7 @@ fn run_case(case: &Value) -> Value {
             hidden_offline_agent_count: 0,
             scroll_offset: 0,
             footer_message: None,
+            details_sidebar_visible: false,
         },
         preview_source,
     )

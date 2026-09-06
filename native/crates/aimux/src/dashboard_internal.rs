@@ -318,6 +318,7 @@ fn render_dashboard_snapshot(
         hidden_offline_agent_count: 0,
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
+        details_sidebar_visible: controller.details_sidebar_visible,
     });
     if let Some(launch_options) = controller.launch_options.as_ref() {
         let mut output = frame.frame;
