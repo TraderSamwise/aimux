@@ -122,6 +122,79 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
 }
 
 #[test]
+fn tool_picker_options_create_launch_override_request() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec!["--base".into()],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        DashboardToolPickerMode::Create,
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('o')),
+        DashboardControllerEffect::Render
+    );
+    for key in parse_dashboard_keys(b"--model gpt") {
+        controller.handle_key(&snapshot, key);
+    }
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected request");
+    };
+
+    assert_eq!(
+        request.body,
+        json!({
+            "tool": "codex",
+            "launchOverride": {
+                "command": "codex",
+                "args": ["--base", "--model", "gpt"]
+            },
+            "open": false
+        })
+    );
+}
+
+#[test]
+fn tool_picker_options_surface_parse_errors_without_request() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec![],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        DashboardToolPickerMode::Create,
+    );
+    controller.handle_key(&snapshot, DashboardKey::Printable('o'));
+    for key in parse_dashboard_keys(b"\"unterminated") {
+        controller.handle_key(&snapshot, key);
+    }
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .launch_options
+            .as_ref()
+            .and_then(|state| state.error.as_deref()),
+        Some("unterminated double quote")
+    );
+}
+
+#[test]
 fn fork_key_opens_picker_for_selected_live_session() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
@@ -274,15 +347,16 @@ fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"\x1b[A"), DashboardKey::Up);
     assert_eq!(parse_dashboard_key(b"\r"), DashboardKey::Enter);
     assert_eq!(parse_dashboard_key(b"l"), DashboardKey::Printable('l'));
-    assert_eq!(parse_dashboard_key(b"\x1b[C"), DashboardKey::Enter);
+    assert_eq!(parse_dashboard_key(b"\x1b[C"), DashboardKey::Right);
     assert_eq!(parse_dashboard_key(b"h"), DashboardKey::Printable('h'));
-    assert_eq!(parse_dashboard_key(b"\x1b[D"), DashboardKey::Back);
+    assert_eq!(parse_dashboard_key(b"\x1b[D"), DashboardKey::Left);
     assert_eq!(parse_dashboard_key(b"x"), DashboardKey::Printable('x'));
     assert_eq!(parse_dashboard_key(b"q"), DashboardKey::Printable('q'));
     assert_eq!(parse_dashboard_key(b"n"), DashboardKey::Printable('n'));
     assert_eq!(parse_dashboard_key(b"v"), DashboardKey::Printable('v'));
     assert_eq!(parse_dashboard_key(b"f"), DashboardKey::Printable('f'));
     assert_eq!(parse_dashboard_key(b"S"), DashboardKey::Printable('S'));
+    assert_eq!(parse_dashboard_key(b"\t"), DashboardKey::Tab);
     assert_eq!(parse_dashboard_key(b"\x7f"), DashboardKey::Backspace);
     assert_eq!(parse_dashboard_key(b"4"), DashboardKey::Printable('4'));
 }

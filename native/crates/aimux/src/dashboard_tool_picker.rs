@@ -2,6 +2,7 @@ use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_create::{
     DashboardAgentCreateIntent, DashboardCreateIntent, DashboardCreatePlan, plan_dashboard_create,
 };
+use crate::dashboard_launch_options::LaunchOverride;
 use crate::project_api_contract::routes;
 use crate::tui_render::theme::{Tone, footer_hints, pad_visible, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
@@ -84,7 +85,34 @@ impl DashboardToolPickerState {
         let Some(tool) = self.tools.get(self.index) else {
             return DashboardToolPickerEffect::Render;
         };
-        let launch_override = default_launch_override(tool);
+        self.create_with_tool(tool, worktree_path, default_launch_override(tool))
+    }
+
+    pub fn create_selected_with_override(
+        &self,
+        worktree_path: Option<&str>,
+        launch_override: LaunchOverride,
+    ) -> DashboardToolPickerEffect {
+        let Some(tool) = self.tools.get(self.index) else {
+            return DashboardToolPickerEffect::Render;
+        };
+        self.create_with_tool(
+            tool,
+            worktree_path,
+            Some(launch_override_value(launch_override)),
+        )
+    }
+
+    pub fn selected_tool(&self) -> Option<&DashboardToolEntry> {
+        self.tools.get(self.index)
+    }
+
+    fn create_with_tool(
+        &self,
+        tool: &DashboardToolEntry,
+        worktree_path: Option<&str>,
+        launch_override: Option<Value>,
+    ) -> DashboardToolPickerEffect {
         match &self.mode {
             DashboardToolPickerMode::Create => DashboardToolPickerEffect::Create(
                 plan_dashboard_create(&DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
@@ -259,6 +287,25 @@ fn default_launch_override(tool: &DashboardToolEntry) -> Option<Value> {
         body.insert("env".into(), Value::Object(tool.default_env.clone()));
     }
     Some(Value::Object(body))
+}
+
+fn launch_override_value(launch_override: LaunchOverride) -> Value {
+    let mut body = Map::new();
+    body.insert("command".into(), Value::String(launch_override.command));
+    body.insert(
+        "args".into(),
+        Value::Array(
+            launch_override
+                .args
+                .into_iter()
+                .map(Value::String)
+                .collect(),
+        ),
+    );
+    if !launch_override.env.is_empty() {
+        body.insert("env".into(), Value::Object(launch_override.env));
+    }
+    Value::Object(body)
 }
 
 fn string_field(value: &Value, field: &str) -> Option<String> {

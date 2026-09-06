@@ -8,6 +8,7 @@ use crate::dashboard_event_stream::{
     DashboardEventStreamHandle, DashboardEventStreamMessage, spawn_dashboard_project_event_stream,
 };
 use crate::dashboard_focus::DashboardFocusState;
+use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use crate::dashboard_navigation::DashboardEntryRef;
 use crate::dashboard_project_events::DashboardProjectRefreshState;
@@ -269,6 +270,23 @@ fn render_dashboard_snapshot(
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
     });
+    if let Some(launch_options) = controller.launch_options.as_ref() {
+        let mut output = frame.frame;
+        let selected_tool = controller
+            .tool_picker
+            .as_ref()
+            .and_then(|picker| picker.selected_tool());
+        output.push_str(&render_launch_options_overlay(
+            launch_options,
+            selected_tool,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
     if let Some(tool_picker) = controller.tool_picker.as_ref() {
         let mut output = frame.frame;
         output.push_str(&render_tool_picker_overlay(

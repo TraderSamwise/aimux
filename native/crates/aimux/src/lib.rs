@@ -22,6 +22,7 @@ pub mod dashboard_create;
 pub mod dashboard_event_stream;
 pub mod dashboard_focus;
 pub mod dashboard_internal;
+pub mod dashboard_launch_options;
 pub mod dashboard_model;
 pub mod dashboard_navigation;
 pub mod dashboard_processes;

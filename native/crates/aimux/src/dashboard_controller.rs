@@ -2,6 +2,7 @@ use crate::dashboard_actions::{
     DashboardActionKind, DashboardActionPlan, DashboardActionRequest, plan_dashboard_action,
 };
 use crate::dashboard_create::{DashboardCreateBlocked, DashboardCreatePlan};
+use crate::dashboard_launch_options::DashboardLaunchOptionsState;
 use crate::dashboard_model::{DashboardSession, DesktopStateSnapshot, SessionStatus};
 use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationOutcome, DashboardNavigationState,
@@ -19,6 +20,7 @@ pub struct DashboardController {
     pub footer_message: Option<String>,
     pub tool_picker: Option<DashboardToolPickerState>,
     pub service_input: Option<DashboardServiceInputState>,
+    pub launch_options: Option<DashboardLaunchOptionsState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +39,7 @@ impl DashboardController {
             footer_message: None,
             tool_picker: None,
             service_input: None,
+            launch_options: None,
         }
     }
 
@@ -55,6 +58,9 @@ impl DashboardController {
     ) -> DashboardControllerEffect {
         self.navigation.clamp(snapshot);
         self.footer_message = None;
+        if self.launch_options.is_some() {
+            return self.handle_launch_options_key(snapshot, key);
+        }
         if self.service_input.is_some() {
             return self.handle_service_input_key(snapshot, key);
         }
@@ -111,6 +117,14 @@ impl DashboardController {
                 self.navigation.clear_quick_jump();
                 DashboardControllerEffect::Ignored
             }
+            DashboardKey::LaunchOptions
+            | DashboardKey::Tab
+            | DashboardKey::Left
+            | DashboardKey::Right
+            | DashboardKey::Home
+            | DashboardKey::End
+            | DashboardKey::Delete
+            | DashboardKey::Ctrl(_) => DashboardControllerEffect::Ignored,
         }
     }
 
@@ -125,6 +139,12 @@ impl DashboardController {
         };
         let effect = match key {
             DashboardKey::Back => DashboardToolPickerEffect::Close,
+            DashboardKey::LaunchOptions | DashboardKey::Printable('o') => {
+                if let Some(tool) = tool_picker.selected_tool() {
+                    self.launch_options = Some(DashboardLaunchOptionsState::new(tool));
+                }
+                DashboardToolPickerEffect::Render
+            }
             DashboardKey::Up | DashboardKey::Printable('k') => {
                 tool_picker.move_prev();
                 DashboardToolPickerEffect::Render
@@ -147,6 +167,13 @@ impl DashboardController {
             | DashboardKey::SwitchTool
             | DashboardKey::Backspace
             | DashboardKey::Digit(_)
+            | DashboardKey::Tab
+            | DashboardKey::Left
+            | DashboardKey::Right
+            | DashboardKey::Home
+            | DashboardKey::End
+            | DashboardKey::Delete
+            | DashboardKey::Ctrl(_)
             | DashboardKey::Printable(_)
             | DashboardKey::Other => DashboardToolPickerEffect::Render,
         };
@@ -172,6 +199,66 @@ impl DashboardController {
         }
     }
 
+    fn handle_launch_options_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        if matches!(key, DashboardKey::Back) {
+            self.launch_options = None;
+            return DashboardControllerEffect::Render;
+        }
+        if matches!(
+            key,
+            DashboardKey::Tab | DashboardKey::Up | DashboardKey::Down
+        ) {
+            if let Some(launch_options) = self.launch_options.as_mut() {
+                launch_options.toggle_field();
+            }
+            return DashboardControllerEffect::Render;
+        }
+        if matches!(key, DashboardKey::Enter) {
+            let worktree_path = self.navigation.focused_worktree_path(snapshot);
+            let Some(tool_picker) = self.tool_picker.as_ref() else {
+                self.launch_options = None;
+                return DashboardControllerEffect::Render;
+            };
+            let Some(tool) = tool_picker.selected_tool() else {
+                self.launch_options = None;
+                return DashboardControllerEffect::Render;
+            };
+            let Some(launch_options) = self.launch_options.as_mut() else {
+                return DashboardControllerEffect::Render;
+            };
+            match launch_options.launch_override(tool) {
+                Ok(launch_override) => {
+                    let effect =
+                        tool_picker.create_selected_with_override(worktree_path, launch_override);
+                    self.launch_options = None;
+                    self.tool_picker = None;
+                    match effect {
+                        DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(
+                            request,
+                        )) => DashboardControllerEffect::Request(request),
+                        _ => DashboardControllerEffect::Render,
+                    }
+                }
+                Err(error) => {
+                    launch_options.error = Some(error);
+                    DashboardControllerEffect::Render
+                }
+            }
+        } else if let Some(launch_options) = self.launch_options.as_mut() {
+            if launch_options.apply_edit_key(key) {
+                DashboardControllerEffect::Render
+            } else {
+                DashboardControllerEffect::Ignored
+            }
+        } else {
+            DashboardControllerEffect::Ignored
+        }
+    }
+
     fn handle_service_input_key(
         &mut self,
         snapshot: &DesktopStateSnapshot,
@@ -193,14 +280,23 @@ impl DashboardController {
             | DashboardKey::NewService
             | DashboardKey::ForkAgent
             | DashboardKey::SwitchTool
+            | DashboardKey::LaunchOptions
             | DashboardKey::Quit
             | DashboardKey::Digit(_)
+            | DashboardKey::Tab
+            | DashboardKey::Left
+            | DashboardKey::Right
+            | DashboardKey::Home
+            | DashboardKey::End
+            | DashboardKey::Delete
+            | DashboardKey::Ctrl(_)
             | DashboardKey::Other => DashboardServiceInputEffect::Render,
         };
         match effect {
             DashboardServiceInputEffect::Render => DashboardControllerEffect::Render,
             DashboardServiceInputEffect::Close => {
                 self.service_input = None;
+                self.launch_options = None;
                 DashboardControllerEffect::Render
             }
             DashboardServiceInputEffect::Create(DashboardCreatePlan::Request(request)) => {
@@ -310,9 +406,17 @@ pub enum DashboardKey {
     NewService,
     ForkAgent,
     SwitchTool,
+    LaunchOptions,
     Quit,
     Digit(char),
     Backspace,
+    Tab,
+    Left,
+    Right,
+    Home,
+    End,
+    Delete,
+    Ctrl(char),
     Printable(char),
     Other,
 }
@@ -336,15 +440,36 @@ pub fn parse_dashboard_keys(bytes: &[u8]) -> Vec<DashboardKey> {
             keys.push(DashboardKey::Down);
             index += 3;
         } else if remaining.starts_with(b"\x1b[C") {
-            keys.push(DashboardKey::Enter);
+            keys.push(DashboardKey::Right);
             index += 3;
         } else if remaining.starts_with(b"\x1b[D") {
-            keys.push(DashboardKey::Back);
+            keys.push(DashboardKey::Left);
             index += 3;
+        } else if remaining.starts_with(b"\x1b[H") {
+            keys.push(DashboardKey::Home);
+            index += 3;
+        } else if remaining.starts_with(b"\x1b[1~") {
+            keys.push(DashboardKey::Home);
+            index += 4;
+        } else if remaining.starts_with(b"\x1b[F") {
+            keys.push(DashboardKey::End);
+            index += 3;
+        } else if remaining.starts_with(b"\x1b[4~") {
+            keys.push(DashboardKey::End);
+            index += 4;
+        } else if remaining.starts_with(b"\x1b[3~") {
+            keys.push(DashboardKey::Delete);
+            index += 4;
         } else {
             keys.push(match bytes[index] {
                 b'\r' | b'\n' => DashboardKey::Enter,
                 b'\x1b' => DashboardKey::Back,
+                b'\t' => DashboardKey::Tab,
+                1 => DashboardKey::Ctrl('a'),
+                5 => DashboardKey::Ctrl('e'),
+                11 => DashboardKey::Ctrl('k'),
+                21 => DashboardKey::Ctrl('u'),
+                23 => DashboardKey::Ctrl('w'),
                 b'\x7f' | b'\x08' => DashboardKey::Backspace,
                 byte if byte.is_ascii_graphic() || byte == b' ' => {
                     DashboardKey::Printable(byte as char)
@@ -362,13 +487,16 @@ fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
         DashboardKey::Printable('\r')
         | DashboardKey::Printable('\n')
         | DashboardKey::Printable('l') => DashboardKey::Enter,
+        DashboardKey::Right => DashboardKey::Enter,
         DashboardKey::Printable('h') => DashboardKey::Back,
+        DashboardKey::Left => DashboardKey::Back,
         DashboardKey::Printable('q') => DashboardKey::Quit,
         DashboardKey::Printable('x') => DashboardKey::Stop,
         DashboardKey::Printable('n') => DashboardKey::NewAgent,
         DashboardKey::Printable('v') => DashboardKey::NewService,
         DashboardKey::Printable('f') => DashboardKey::ForkAgent,
         DashboardKey::Printable('S') => DashboardKey::SwitchTool,
+        DashboardKey::Printable('o') => DashboardKey::LaunchOptions,
         DashboardKey::Printable('j') => DashboardKey::Down,
         DashboardKey::Printable('k') => DashboardKey::Up,
         DashboardKey::Printable(digit) if digit.is_ascii_digit() => DashboardKey::Digit(digit),
