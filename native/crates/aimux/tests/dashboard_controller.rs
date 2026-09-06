@@ -352,6 +352,57 @@ fn a_toggles_offline_agent_visibility() {
 }
 
 #[test]
+fn subscreen_navigation_wraps_and_digits_select_visible_rows() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('L'));
+    controller.set_subscreen_item_count(3);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('k')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.subscreen_index, 2);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('j')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.subscreen_index, 0);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('3')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.subscreen_index, 2);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('9')),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(controller.subscreen_index, 2);
+}
+
+#[test]
+fn subscreen_dismiss_and_hotkeys_follow_typescript_screen_map() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('p')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.screen.as_str(), "project");
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('L')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.screen.as_str(), "library");
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('d')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.screen.as_str(), "dashboard");
+}
+
+#[test]
 fn service_input_collects_printable_text_and_dispatches_create() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());

@@ -107,6 +107,7 @@ pub struct DashboardSubscreenRenderInput<'a> {
     pub screen: DashboardScreen,
     pub resource: Option<&'a Value>,
     pub error: Option<&'a str>,
+    pub selected_index: usize,
     pub cols: usize,
     pub rows: usize,
     pub scroll_offset: usize,
@@ -133,11 +134,15 @@ pub fn render_dashboard_subscreen_frame(
     let mut content = match input.screen {
         DashboardScreen::Dashboard => Vec::new(),
         DashboardScreen::Help => render_help_content(),
-        DashboardScreen::Coordination => render_coordination_content(input.resource),
-        DashboardScreen::Project => render_project_content(input.resource),
-        DashboardScreen::Library => render_library_content(input.resource),
-        DashboardScreen::Topology => render_topology_content(input.resource),
-        DashboardScreen::Graveyard => render_graveyard_content(input.resource),
+        DashboardScreen::Coordination => {
+            render_coordination_content(input.resource, input.selected_index)
+        }
+        DashboardScreen::Project => render_project_content(input.resource, input.selected_index),
+        DashboardScreen::Library => render_library_content(input.resource, input.selected_index),
+        DashboardScreen::Topology => render_topology_content(input.resource, input.selected_index),
+        DashboardScreen::Graveyard => {
+            render_graveyard_content(input.resource, input.selected_index)
+        }
     };
     if let Some(error) = input.error {
         content.insert(0, format!("  {}", style(error, Tone::Danger)));
@@ -160,7 +165,7 @@ pub fn render_dashboard_subscreen_frame(
         header: &header,
         content: &content,
         footer_lines: &footer,
-        focus_line: -1,
+        focus_line: find_focus_line(&content),
         scroll_offset: input.scroll_offset,
         two_pane: right_panel.is_some(),
         right_panel: right_panel.as_deref(),
@@ -195,7 +200,7 @@ fn render_help_content() -> Vec<String> {
     ]
 }
 
-fn render_coordination_content(resource: Option<&Value>) -> Vec<String> {
+fn render_coordination_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
     let Some(resource) = resource else {
         return loading_lines("coordination");
     };
@@ -210,11 +215,13 @@ fn render_coordination_content(resource: Option<&Value>) -> Vec<String> {
         return lines;
     }
     for (index, item) in items.iter().take(30).enumerate() {
+        let selected = index == selected_index;
         let title = string_at(item, &["title"]).unwrap_or("untitled");
         let kind = string_at(item, &["kind"]).unwrap_or("item");
         let bucket = string_at(item, &["bucket"]).unwrap_or("");
         lines.push(format!(
-            "  {} {} {} {}",
+            "{} {} {} {} {}",
+            selector(selected),
             style(&format!("[{}]", index + 1), Tone::Muted),
             style(kind, Tone::Work),
             truncate_plain(title, 52),
@@ -224,7 +231,7 @@ fn render_coordination_content(resource: Option<&Value>) -> Vec<String> {
     lines
 }
 
-fn render_project_content(resource: Option<&Value>) -> Vec<String> {
+fn render_project_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
     let Some(project) = resource.and_then(|resource| resource.get("project")) else {
         return loading_lines("project");
     };
@@ -258,11 +265,13 @@ fn render_project_content(resource: Option<&Value>) -> Vec<String> {
     } else {
         lines.push(format!("  {}", style("Story", Tone::Strong)));
         for (index, item) in story.iter().take(30).enumerate() {
+            let selected = index == selected_index;
             let kind = string_at(item, &["kind"]).unwrap_or("item");
             let title = string_at(item, &["title"]).unwrap_or("untitled");
             let meta = string_at(item, &["meta"]).unwrap_or("");
             lines.push(format!(
-                "  {} {} {} {}",
+                "{} {} {} {} {}",
+                selector(selected),
                 style(&format!("[{}]", index + 1), Tone::Muted),
                 style(kind, Tone::Work),
                 truncate_plain(title, 52),
@@ -273,7 +282,7 @@ fn render_project_content(resource: Option<&Value>) -> Vec<String> {
     lines
 }
 
-fn render_library_content(resource: Option<&Value>) -> Vec<String> {
+fn render_library_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
     let Some(resource) = resource else {
         return loading_lines("library");
     };
@@ -288,11 +297,13 @@ fn render_library_content(resource: Option<&Value>) -> Vec<String> {
         return lines;
     }
     for (index, entry) in entries.iter().take(30).enumerate() {
+        let selected = index == selected_index;
         let kind = string_at(entry, &["kind"]).unwrap_or("doc");
         let title = string_at(entry, &["title"]).unwrap_or("untitled");
         let path = string_at(entry, &["path"]).unwrap_or("");
         lines.push(format!(
-            "  {} {} {} {}",
+            "{} {} {} {} {}",
+            selector(selected),
             style(&format!("[{}]", index + 1), Tone::Muted),
             style(kind, Tone::Work),
             truncate_plain(title, 42),
@@ -302,7 +313,7 @@ fn render_library_content(resource: Option<&Value>) -> Vec<String> {
     lines
 }
 
-fn render_topology_content(resource: Option<&Value>) -> Vec<String> {
+fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
     let Some(topology) = resource.and_then(|resource| resource.get("topology")) else {
         return loading_lines("topology");
     };
@@ -329,12 +340,14 @@ fn render_topology_content(resource: Option<&Value>) -> Vec<String> {
         String::new(),
     ];
     for (index, row) in rows.iter().take(40).enumerate() {
+        let selected = index == selected_index;
         let depth = number_at(row, &["depth"]) as usize;
         let label = string_at(row, &["label"]).unwrap_or("");
         let kind = string_at(row, &["kind"]).unwrap_or("");
         let health = string_at(row, &["health"]).unwrap_or("");
         lines.push(format!(
-            "  {}{} {} {}",
+            "{}{}{} {} {}",
+            selector(selected),
             "  ".repeat(depth),
             style(&format!("[{}]", index + 1), Tone::Muted),
             truncate_plain(label, 48),
@@ -344,7 +357,7 @@ fn render_topology_content(resource: Option<&Value>) -> Vec<String> {
     lines
 }
 
-fn render_graveyard_content(resource: Option<&Value>) -> Vec<String> {
+fn render_graveyard_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
     let Some(resource) = resource else {
         return loading_lines("graveyard");
     };
@@ -359,6 +372,7 @@ fn render_graveyard_content(resource: Option<&Value>) -> Vec<String> {
         return lines;
     }
     for (index, row) in rows.iter().take(40).enumerate() {
+        let selected = index == selected_index;
         let kind = string_at(row, &["kind"]).unwrap_or("entry");
         let label = string_at(row, &["label"])
             .or_else(|| string_at(row, &["entry", "label"]))
@@ -366,13 +380,22 @@ fn render_graveyard_content(resource: Option<&Value>) -> Vec<String> {
             .or_else(|| string_at(row, &["entry", "path"]))
             .unwrap_or("");
         lines.push(format!(
-            "  {} {} {}",
+            "{} {} {} {}",
+            selector(selected),
             style(&format!("[{}]", index + 1), Tone::Muted),
             style(kind, Tone::Work),
             truncate_plain(label, 64),
         ));
     }
     lines
+}
+
+fn selector(selected: bool) -> String {
+    if selected {
+        format!("  {}", style("▸", Tone::Accent))
+    } else {
+        "   ".into()
+    }
 }
 
 fn loading_lines(screen: &str) -> Vec<String> {

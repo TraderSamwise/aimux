@@ -24,6 +24,8 @@ pub struct DashboardController {
     pub launch_options: Option<DashboardLaunchOptionsState>,
     pub details_sidebar_visible: bool,
     pub hide_offline_agents: bool,
+    pub subscreen_index: usize,
+    pub subscreen_item_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +48,8 @@ impl DashboardController {
             launch_options: None,
             details_sidebar_visible: true,
             hide_offline_agents: false,
+            subscreen_index: 0,
+            subscreen_item_count: 0,
         }
     }
 
@@ -180,6 +184,14 @@ impl DashboardController {
                 self.details_sidebar_visible = !self.details_sidebar_visible;
                 DashboardControllerEffect::Render
             }
+            DashboardKey::Up | DashboardKey::Printable('k') => self.move_subscreen_prev(),
+            DashboardKey::Down | DashboardKey::Printable('j') => self.move_subscreen_next(),
+            DashboardKey::Digit(digit) | DashboardKey::Printable(digit)
+                if digit.is_ascii_digit() =>
+            {
+                self.select_subscreen_digit(digit)
+            }
+            DashboardKey::Printable('r') => DashboardControllerEffect::Render,
             DashboardKey::Printable('?') => {
                 if self.screen == DashboardScreen::Help {
                     self.switch_screen(DashboardScreen::Dashboard)
@@ -208,8 +220,48 @@ impl DashboardController {
 
     fn switch_screen(&mut self, screen: DashboardScreen) -> DashboardControllerEffect {
         self.screen = screen;
+        self.subscreen_index = 0;
+        self.subscreen_item_count = 0;
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
+    }
+
+    pub fn set_subscreen_item_count(&mut self, count: usize) {
+        self.subscreen_item_count = count;
+        if self.subscreen_index >= count {
+            self.subscreen_index = count.saturating_sub(1);
+        }
+    }
+
+    fn move_subscreen_next(&mut self) -> DashboardControllerEffect {
+        if self.subscreen_item_count > 1 {
+            self.subscreen_index = (self.subscreen_index + 1) % self.subscreen_item_count;
+            return DashboardControllerEffect::Render;
+        }
+        DashboardControllerEffect::Ignored
+    }
+
+    fn move_subscreen_prev(&mut self) -> DashboardControllerEffect {
+        if self.subscreen_item_count > 1 {
+            self.subscreen_index =
+                (self.subscreen_index + self.subscreen_item_count - 1) % self.subscreen_item_count;
+            return DashboardControllerEffect::Render;
+        }
+        DashboardControllerEffect::Ignored
+    }
+
+    fn select_subscreen_digit(&mut self, digit: char) -> DashboardControllerEffect {
+        let Some(index) = digit
+            .to_digit(10)
+            .map(|digit| digit.saturating_sub(1) as usize)
+        else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if index < self.subscreen_item_count {
+            self.subscreen_index = index;
+            return DashboardControllerEffect::Render;
+        }
+        DashboardControllerEffect::Ignored
     }
 
     fn handle_tool_picker_key(

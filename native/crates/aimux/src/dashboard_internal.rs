@@ -411,7 +411,7 @@ fn render_dashboard_snapshot(
 
 fn render_dashboard_subscreen_snapshot(
     options: &NativeDashboardOptions,
-    controller: &DashboardController,
+    controller: &mut DashboardController,
     endpoint: Option<&ProjectServiceEndpoint>,
     scroll_offset: usize,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
@@ -425,16 +425,46 @@ fn render_dashboard_subscreen_snapshot(
         },
         None => (None, None),
     };
+    controller.set_subscreen_item_count(dashboard_screen_item_count(
+        controller.screen,
+        resource.as_ref(),
+    ));
     render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
         screen: controller.screen,
         resource: resource.as_ref(),
         error: error.as_deref(),
+        selected_index: controller.subscreen_index,
         cols: options.cols,
         rows: options.rows,
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
     })
+}
+
+fn dashboard_screen_item_count(
+    screen: DashboardScreen,
+    resource: Option<&serde_json::Value>,
+) -> usize {
+    let Some(resource) = resource else {
+        return 0;
+    };
+    match screen {
+        DashboardScreen::Dashboard | DashboardScreen::Help => 0,
+        DashboardScreen::Coordination => json_array_len(resource, &["worklist"]),
+        DashboardScreen::Project => json_array_len(resource, &["project", "story"]),
+        DashboardScreen::Library => json_array_len(resource, &["entries"]),
+        DashboardScreen::Topology => json_array_len(resource, &["topology", "rows"]),
+        DashboardScreen::Graveyard => json_array_len(resource, &["viewModel", "rows"]),
+    }
+}
+
+fn json_array_len(value: &serde_json::Value, path: &[&str]) -> usize {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key).unwrap_or(&serde_json::Value::Null);
+    }
+    current.as_array().map_or(0, Vec::len)
 }
 
 fn dashboard_screen_resource_path(screen: DashboardScreen) -> Option<&'static str> {
