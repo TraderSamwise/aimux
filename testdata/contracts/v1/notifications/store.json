@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "source": "src/notifications.test.ts",
+  "generatedBy": "scripts/capture-notifications-store-contract.mjs",
+  "description": "Notification store listing, filtering, unread counts, mark-read, and clear contracts captured by running TypeScript notifications helpers over a seeded runtime exchange.",
+  "cases": [
+    {
+      "id": "notifications-store-001",
+      "name": "lists notification threads from latest message metadata",
+      "source": "src/notifications.test.ts, native/crates/aimux/tests/project_service_notifications.rs",
+      "input": { "scenario": "list" },
+      "output": {
+        "notifications": [
+          {
+            "id": "record-2",
+            "title": "Build done",
+            "body": "new body",
+            "sessionId": "codex-2",
+            "targetKey": "session:codex-2",
+            "targetKind": "session",
+            "kind": "needs_input",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "updatedAt": "2026-01-01T00:00:04.000Z",
+            "interaction": { "id": "interact-2", "type": "permission", "summary": "Allow command", "telemetry": true }
+          },
+          {
+            "id": "record-1",
+            "title": "Needs input",
+            "body": "old body",
+            "sessionId": "codex-1",
+            "targetKey": "session:codex-1",
+            "targetKind": "session",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "updatedAt": "2026-01-01T00:00:03.000Z"
+          }
+        ],
+        "total": 2,
+        "unreadCount": 1,
+        "limit": 10,
+        "truncated": false
+      },
+      "inputSha256": "5cca5ddedb381cdc61131c9eb75eab12857441b9857263651a22513f831857c3"
+    },
+    {
+      "id": "notifications-store-002",
+      "name": "filters unread notifications by session and limit",
+      "source": "src/notifications.test.ts, native/crates/aimux/tests/project_service_notifications.rs",
+      "input": { "scenario": "filter-unread-session-limit" },
+      "output": {
+        "notifications": [
+          {
+            "id": "record-2",
+            "title": "Build done",
+            "body": "new body",
+            "sessionId": "codex-2",
+            "targetKey": "session:codex-2",
+            "targetKind": "session",
+            "kind": "needs_input",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "updatedAt": "2026-01-01T00:00:04.000Z",
+            "interaction": { "id": "interact-2", "type": "permission", "summary": "Allow command", "telemetry": true }
+          }
+        ],
+        "total": 1,
+        "unreadCount": 1,
+        "limit": 1,
+        "truncated": false
+      },
+      "inputSha256": "b2500c14286afdf9920c107ec6423499c2a5d6eb1e46101f6dbf72c13a0f665c"
+    },
+    {
+      "id": "notifications-store-003",
+      "name": "marks matching notification inbox entries read",
+      "source": "src/notifications.test.ts, native/crates/aimux/tests/project_service_notifications.rs",
+      "input": { "scenario": "mark-read" },
+      "output": {
+        "updated": 1,
+        "inbox": [
+          {
+            "id": "inbox:codex-1:thread:thread-1",
+            "participantId": "codex-1",
+            "subjectKind": "thread",
+            "subjectId": "thread-1",
+            "state": "done",
+            "urgency": 0,
+            "updatedAt": "2026-01-01T00:00:03.000Z"
+          },
+          {
+            "id": "inbox:codex-2:thread:thread-2",
+            "participantId": "codex-2",
+            "subjectKind": "thread",
+            "subjectId": "thread-2",
+            "state": "done",
+            "urgency": 3,
+            "updatedAt": "2026-01-01T00:00:04.000Z"
+          }
+        ],
+        "snapshot": {
+          "notifications": [
+            {
+              "id": "record-2",
+              "title": "Build done",
+              "body": "new body",
+              "sessionId": "codex-2",
+              "targetKey": "session:codex-2",
+              "targetKind": "session",
+              "kind": "needs_input",
+              "unread": false,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:02.000Z",
+              "updatedAt": "2026-01-01T00:00:04.000Z",
+              "interaction": { "id": "interact-2", "type": "permission", "summary": "Allow command", "telemetry": true }
+            },
+            {
+              "id": "record-1",
+              "title": "Needs input",
+              "body": "old body",
+              "sessionId": "codex-1",
+              "targetKey": "session:codex-1",
+              "targetKind": "session",
+              "unread": false,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:01.000Z",
+              "updatedAt": "2026-01-01T00:00:03.000Z"
+            }
+          ],
+          "total": 2,
+          "unreadCount": 0,
+          "truncated": false
+        }
+      },
+      "inputSha256": "d4a597316cc14747d7a1d643a667b01105bc1b2f526b04e8d00d8395536976d3"
+    },
+    {
+      "id": "notifications-store-004",
+      "name": "clears matching notification messages and inbox entries",
+      "source": "src/notifications.test.ts, native/crates/aimux/tests/project_service_notifications.rs",
+      "input": { "scenario": "clear" },
+      "output": {
+        "cleared": 2,
+        "messages": [
+          {
+            "id": "message-1",
+            "threadId": "thread-1",
+            "ts": "2026-01-01T00:00:01.000Z",
+            "from": "aimux",
+            "to": ["codex-1"],
+            "kind": "note",
+            "body": "old body",
+            "metadata": {
+              "notificationRecordId": "record-1",
+              "notificationSessionId": "codex-1",
+              "notificationTargetKey": "session:codex-1",
+              "notificationTargetKind": "session",
+              "notificationCleared": true
+            }
+          },
+          {
+            "id": "message-2",
+            "threadId": "thread-2",
+            "ts": "2026-01-01T00:00:04.000Z",
+            "from": "aimux",
+            "to": ["codex-2"],
+            "kind": "note",
+            "body": "new body",
+            "metadata": {
+              "notificationRecordId": "record-2",
+              "notificationSessionId": "codex-2",
+              "notificationTargetKey": "session:codex-2",
+              "notificationTargetKind": "session",
+              "notificationKind": "needs_input",
+              "notificationInteractionId": "interact-2",
+              "notificationInteractionType": "permission",
+              "notificationInteractionSummary": "Allow command",
+              "notificationInteractionTelemetry": true,
+              "notificationCleared": true
+            }
+          },
+          {
+            "id": "message-other",
+            "threadId": "thread-other",
+            "ts": "2026-01-01T00:00:05.000Z",
+            "from": "user",
+            "to": ["codex-1"],
+            "kind": "request",
+            "body": "not a notification"
+          }
+        ],
+        "snapshot": { "notifications": [], "total": 0, "unreadCount": 0, "truncated": false },
+        "includeCleared": {
+          "notifications": [
+            {
+              "id": "record-2",
+              "title": "Build done",
+              "body": "new body",
+              "sessionId": "codex-2",
+              "targetKey": "session:codex-2",
+              "targetKind": "session",
+              "kind": "needs_input",
+              "unread": false,
+              "cleared": true,
+              "createdAt": "2026-01-01T00:00:02.000Z",
+              "updatedAt": "2026-01-01T00:00:04.000Z",
+              "interaction": { "id": "interact-2", "type": "permission", "summary": "Allow command", "telemetry": true }
+            },
+            {
+              "id": "record-1",
+              "title": "Needs input",
+              "body": "old body",
+              "sessionId": "codex-1",
+              "targetKey": "session:codex-1",
+              "targetKind": "session",
+              "unread": false,
+              "cleared": true,
+              "createdAt": "2026-01-01T00:00:01.000Z",
+              "updatedAt": "2026-01-01T00:00:03.000Z"
+            }
+          ],
+          "total": 2,
+          "unreadCount": 0,
+          "truncated": false
+        }
+      },
+      "inputSha256": "b68ee5ae20c3b6d56467fa065fd8f560428395066c47be67f59aac361d92358a"
+    },
+    {
+      "id": "notifications-store-005",
+      "name": "counts unread notifications by session",
+      "source": "src/notifications.test.ts, native/crates/aimux/tests/project_service_notifications.rs",
+      "input": { "scenario": "unread-count" },
+      "output": { "all": 1, "codex1": 0, "codex2": 1 },
+      "inputSha256": "48a2137429fa81ad7e39d25fc5f63b2fdb6033ea9bd77adb7418fa9d798a5cf0"
+    }
+  ]
+}
