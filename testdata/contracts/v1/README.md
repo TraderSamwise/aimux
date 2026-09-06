@@ -841,6 +841,10 @@ Priority fixture groups:
 
 ## Transport
 
+- `transport/core-command.json`: core command transport envelope posting,
+  timeout forwarding, daemon error propagation, and mismatched response
+  validation captured by running TypeScript `sendCoreCommand` with a mocked
+  daemon client.
 - `remote-access/access.json`: hosted remote-access operator/guest route
   allowlists, session binding, header actor parsing, attachment route
   hardening, and operator stream gates captured by running TypeScript
