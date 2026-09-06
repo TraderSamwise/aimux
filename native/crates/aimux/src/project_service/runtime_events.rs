@@ -129,7 +129,8 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
         .unwrap_or_default()
         .to_lowercase();
     let tone = event_string(event, "tone");
-    let mut activity = event_string(current, "activity");
+    let previous_activity = event_string(current, "activity");
+    let mut activity = previous_activity.clone();
     let mut attention = event_string(current, "attention").or_else(|| Some("normal".to_owned()));
     let mut unseen_count = current
         .get("unseenCount")
@@ -205,7 +206,7 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
 
     if activity.as_deref() == Some("running") {
         became_idle_at = None;
-    } else if activity.is_some() && became_idle_at.is_none() {
+    } else if previous_activity.as_deref() == Some("running") && activity.is_some() {
         became_idle_at = event_string(event, "ts").or_else(|| Some(now_iso()));
     }
 

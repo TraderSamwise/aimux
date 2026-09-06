@@ -1,9 +1,12 @@
 use aimux::daemon_state::load_metadata_state;
+use aimux::project_api_contract::routes;
+use aimux::project_service::metadata::route_runtime_metadata_request;
 use aimux::project_service::metadata::update_session_metadata;
 use aimux::project_service::notification_context::{
     NotificationContextPatch, NotificationContextSource, update_notification_context,
 };
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
+use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::runtime_events::route_runtime_event;
 use serde_json::Value;
 use serde_json::json;
@@ -376,7 +379,7 @@ fn runtime_event_maps_completion_failure_thread_and_alert_state() {
 }
 
 #[test]
-fn runtime_event_stamps_cold_non_running_states() {
+fn runtime_event_only_stamps_idle_transition_from_running() {
     let project = temp_project("cold-non-running");
     let state_dir = project.join("state");
 
@@ -397,7 +400,7 @@ fn runtime_event_stamps_cold_non_running_states() {
     assert_eq!(derived["activity"], "idle");
     assert_eq!(derived["attention"], "normal");
     assert_eq!(derived["unseenCount"], 1);
-    assert_eq!(derived["becameIdleAt"], "2026-01-01T00:00:10.000Z");
+    assert!(derived["becameIdleAt"].is_null());
 
     let response = route_runtime_event(
         &state_dir,
@@ -416,7 +419,80 @@ fn runtime_event_stamps_cold_non_running_states() {
     assert_eq!(derived["activity"], "error");
     assert_eq!(derived["attention"], "error");
     assert_eq!(derived["unseenCount"], 1);
-    assert_eq!(derived["becameIdleAt"], "2026-01-01T00:00:20.000Z");
+    assert!(derived["becameIdleAt"].is_null());
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_dispatcher_updates_history_alerts_and_focused_unread_state() {
+    let project = temp_project("dispatcher-event");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "running",
+                "attention": "normal",
+                "unseenCount": 7
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+    update_notification_context(
+        &state_dir,
+        NotificationContextSource::Desktop,
+        NotificationContextPatch {
+            focused: Some(true),
+            screen: Some(Some("session".into())),
+            session_id: Some(Some("codex-1".into())),
+            panel_open: Some(false),
+        },
+    );
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "needs_input",
+                "message": "Approve the command",
+                "ts": "2026-01-01T00:00:30.000Z"
+            }
+        })),
+    )
+    .expect("runtime event route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, json!({ "ok": true }));
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-1"]["derived"];
+    assert_eq!(derived["activity"], "waiting");
+    assert_eq!(derived["attention"], "needs_input");
+    assert_eq!(derived["unseenCount"], 7);
+    assert_eq!(derived["becameIdleAt"], "2026-01-01T00:00:30.000Z");
+    assert_eq!(derived["lastOutputAt"], "2026-01-01T00:00:30.000Z");
+    assert_eq!(derived["lastEvent"]["kind"], "needs_input");
+    assert_eq!(derived["events"].as_array().unwrap().len(), 1);
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 0);
+    assert_eq!(snapshot.notifications[0]["kind"], "needs_input");
+    assert_eq!(snapshot.notifications[0]["unread"], false);
+    assert_eq!(snapshot.notifications[0]["body"], "Approve the command");
     cleanup(project);
 }
 
