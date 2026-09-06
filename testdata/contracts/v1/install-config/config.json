@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "source": "src/install-config.test.ts",
+  "generatedBy": "scripts/capture-config-contract.mjs",
+  "description": "Global install cleanup config normalization, lane detection, and corrupt-config side effects captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "install-config-001",
+      "name": "returns defaults when no global config exists",
+      "source": "src/install-config.test.ts",
+      "api": "loadInstallsConfig",
+      "input": { "globalConfigText": null },
+      "output": {
+        "config": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+        "globalConfigExistsAfter": false,
+        "quarantineFileCountAfter": 0
+      },
+      "inputSha256": "ef8b4841028c6a1f5089e3836941b3117e6de04d5e8b9c3d396c0ca8d4a3ca20"
+    },
+    {
+      "id": "install-config-002",
+      "name": "returns defaults when the config exists but declares no installs block",
+      "source": "src/install-config.test.ts",
+      "api": "loadInstallsConfig",
+      "input": { "globalConfigText": "{\"defaultTool\":\"claude\"}" },
+      "output": {
+        "config": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+        "globalConfigExistsAfter": true,
+        "quarantineFileCountAfter": 0
+      },
+      "inputSha256": "79c3a2d8db61f7f0499d9efdb4f65129dd62d1d534e59a27c48929bf0db10e0d"
+    },
+    {
+      "id": "install-config-003",
+      "name": "reads the installs block from the global config",
+      "source": "src/install-config.test.ts",
+      "api": "loadInstallsConfig",
+      "input": { "globalConfigText": "{\"installs\":{\"cleanupEnabled\":false,\"keepRecent\":3}}" },
+      "output": {
+        "config": { "cleanupEnabled": false, "retentionDays": 30, "keepRecent": 3, "cleanupIntervalMs": 86400000 },
+        "globalConfigExistsAfter": true,
+        "quarantineFileCountAfter": 0
+      },
+      "inputSha256": "3a1a177196d76ff3995fe77a71939ac973efe95b8d78e6a64e783bf3c1c85db6"
+    },
+    {
+      "id": "install-config-004",
+      "name": "quarantines a corrupt global config rather than throwing",
+      "source": "src/install-config.test.ts",
+      "api": "loadInstallsConfig",
+      "input": { "globalConfigText": "{ not json" },
+      "output": {
+        "config": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+        "globalConfigExistsAfter": false,
+        "quarantineFileCountAfter": 1
+      },
+      "inputSha256": "227fb9be755859c30ca92368ff4d608632221cc092341af94be6cbd038cb0c43"
+    },
+    {
+      "id": "install-config-005",
+      "name": "sweeps when AIMUX_HOME is the default home",
+      "source": "src/install-config.test.ts",
+      "api": "isPrimaryInstallLane",
+      "input": { "home": "/Users/sam", "env": { "AIMUX_HOME": "/Users/sam/.aimux" } },
+      "output": true,
+      "inputSha256": "d1ef3fcaa1af0d44f9bcf98fbd062df2876e93587bde1ae59ee6e942645d12d7"
+    },
+    {
+      "id": "install-config-006",
+      "name": "sweeps when AIMUX_HOME is the default home with trailing slash",
+      "source": "src/install-config.test.ts",
+      "api": "isPrimaryInstallLane",
+      "input": { "home": "/Users/sam", "env": { "AIMUX_HOME": "/Users/sam/.aimux/" } },
+      "output": true,
+      "inputSha256": "043c16ae66e981544aeeb02173e55cc412a68e9e7fd68d82d1ace341e18cd47e"
+    },
+    {
+      "id": "install-config-007",
+      "name": "sweeps when AIMUX_HOME is tilde default",
+      "source": "src/install-config.test.ts",
+      "api": "isPrimaryInstallLane",
+      "input": { "home": "/Users/sam", "env": { "AIMUX_HOME": "~/.aimux" } },
+      "output": true,
+      "inputSha256": "2a878b2a2496078b4503524552b9203b76738d672493f29d23a5f0a98dfaa55b"
+    },
+    {
+      "id": "install-config-008",
+      "name": "sweeps when AIMUX_HOME is unset",
+      "source": "src/install-config.test.ts",
+      "api": "isPrimaryInstallLane",
+      "input": { "home": "/Users/sam", "env": {} },
+      "output": true,
+      "inputSha256": "c2659e4b5d7b618acf2077feb002b0073dc0fa747263d290d9711daac2176d71"
+    },
+    {
+      "id": "install-config-009",
+      "name": "sweeps when AIMUX_HOME is blank",
+      "source": "src/install-config.test.ts",
+      "api": "isPrimaryInstallLane",
+      "input": { "home": "/Users/sam", "env": { "AIMUX_HOME": "   " } },
+      "output": true,
+      "inputSha256": "8c0c39e115b3b24f50c86f09834946badd96b071f4e2cc6f42a4865c040a3afb"
+    },
+    {
+      "id": "install-config-010",
+      "name": "does not sweep from a lane pointed at another home",
+      "source": "src/install-config.test.ts",
+      "api": "isPrimaryInstallLane",
+      "input": { "home": "/Users/sam", "env": { "AIMUX_HOME": "/tmp/aimux-lane" } },
+      "output": false,
+      "inputSha256": "33b36e0411615be1b5b60e2d2b7e713ab42b2141c166028185a004096e5ac33b"
+    },
+    {
+      "id": "install-config-011",
+      "name": "does not sweep from a dev home next to the default home",
+      "source": "src/install-config.test.ts",
+      "api": "isPrimaryInstallLane",
+      "input": { "home": "/Users/sam", "env": { "AIMUX_HOME": "/Users/sam/.aimux-dev" } },
+      "output": false,
+      "inputSha256": "bc8ee20b81e33679c0bb6224b63b0dbce23f05aeb95a016c00dd8f3de13a500c"
+    },
+    {
+      "id": "install-config-012",
+      "name": "falls back to defaults when the block is null",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": null },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "4e7e0c0c18fe788f0441b65e3224c56322bb2271f351f3b20ea40166c6e6cf5f"
+    },
+    {
+      "id": "install-config-013",
+      "name": "falls back to defaults when the block is malformed",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "retentionDays": "soon", "keepRecent": null } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "41f6e006c42c0ba161a3ba50b59989196eeea12258636e76d835b0572fab4be4"
+    },
+    {
+      "id": "install-config-014",
+      "name": "sweeps by default",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": {} },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "ad3f43b1488a38f5ff965630a3d7b709be7f7e8823b54c5adebe0acaeee3d40d"
+    },
+    {
+      "id": "install-config-015",
+      "name": "lets the sweep be turned off",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "cleanupEnabled": false } },
+      "output": { "cleanupEnabled": false, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "9a34110978a7cc67590710504330bb344fd999c1063808de466e9637d3d8a160"
+    },
+    {
+      "id": "install-config-016",
+      "name": "refuses retention below the floor",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "retentionDays": 0 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "2dea293c1b7d04994bd4f24f62a7eaa977086e205b55ecb42046b6ec650bc091"
+    },
+    {
+      "id": "install-config-017",
+      "name": "accepts retention at the floor",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "retentionDays": 1 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 1, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "5d87037b330b179861f62e9eb59b03406fb52a326e0ff0f46a87f7261865f263"
+    },
+    {
+      "id": "install-config-018",
+      "name": "refuses a sweep interval faster than the floor",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "cleanupIntervalMs": 1000 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "6fbf740e48fd816b91a50982ebeb9b806ea48dafa005f249d01cc082d7abe874"
+    },
+    {
+      "id": "install-config-019",
+      "name": "accepts a sweep interval at the floor",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "cleanupIntervalMs": 3600000 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 3600000 },
+      "inputSha256": "c79f7b247263d58f34c3660aaca0164cec456487f029f6a0d470e8c81117f72b"
+    },
+    {
+      "id": "install-config-020",
+      "name": "accepts a keepRecent of zero",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "keepRecent": 0 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 0, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "8a6fe7cb03de2aac09db4ec6002340f20e4ef2c520337ebc98d9b65e7d6ad85a"
+    },
+    {
+      "id": "install-config-021",
+      "name": "rejects a negative keepRecent",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "keepRecent": -1 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "4f256495e028cc879b27dcccf28214ee6ae8febe03e102eeeeb378de250e96f6"
+    },
+    {
+      "id": "install-config-022",
+      "name": "truncates fractional values",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "retentionDays": 45.9 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 45, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "87f5d94352bdb77cbcd3e986213a06424f750d19cfafd45faada8707e38edb04"
+    },
+    {
+      "id": "install-config-023",
+      "name": "treats a non-object block as absent",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": "enabled" },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "2e0c72e3ee56a395e90be95e219e5e04acb525430dc3e42803bafb7b2c32c9c0"
+    },
+    {
+      "id": "install-config-024",
+      "name": "treats an array block as absent",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": [1, 2, 3] },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "7620c079968a13da24b8c49b1b9c6d00bdf42a10cc8f7eca83f624f4d84f5dcd"
+    },
+    {
+      "id": "install-config-025",
+      "name": "treats a numeric block as absent",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": 42 },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "dfe452acfa3231811abb2eb6948e9e00564bf4d580188fa8b77d53f8befee13f"
+    },
+    {
+      "id": "install-config-026",
+      "name": "ignores an out-of-range retention instead of clamping it",
+      "source": "src/install-config.test.ts",
+      "api": "normalizeInstallsConfig",
+      "input": { "raw": { "retentionDays": 99999 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "a6485d69fd3f97e9fe542ee9194986fb5226fb3b40efe93a880d1e558cb8ae1f"
+    },
+    {
+      "id": "install-config-027",
+      "name": "records default installs constants",
+      "source": "src/install-config.test.ts",
+      "api": "defaultInstallsConfig",
+      "input": {},
+      "output": { "cleanupEnabled": true, "retentionDays": 30, "keepRecent": 10, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ]
+}

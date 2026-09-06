@@ -260,6 +260,15 @@ Priority fixture groups:
   launcher core/main/expose entry routing captured by running TypeScript
   `launcher-env`.
 
+## Config
+
+- `config/behavior.json`: config layer merging, global/project override rules,
+  scribe launch config normalization, expose/worktree defaults, and built-in
+  exact-resume migration captured by running TypeScript `config`.
+- `install-config/config.json`: global install cleanup config normalization,
+  primary-lane detection, and corrupt global config quarantine side effects
+  captured by running TypeScript `install-config`.
+
 ## Proxy
 
 - `proxy/project-binding.json`: proxy path parsing and project-service target

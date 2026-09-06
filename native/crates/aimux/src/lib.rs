@@ -54,6 +54,7 @@ pub mod expose_pane_output_tap;
 pub mod expose_socket;
 pub mod inbox_cleanup;
 pub mod install_cleanup;
+pub mod install_config;
 pub mod launcher_env;
 pub mod local_ui_server;
 pub mod logs;
