@@ -1,0 +1,512 @@
+{
+  "version": 1,
+  "source": "src/dashboard-orphans.test.ts",
+  "sources": ["src/dashboard-orphans.test.ts", "src/dashboard-orphans.ts"],
+  "generatedBy": "scripts/capture-dashboard-orphans-contract.mjs",
+  "description": "Dashboard stale/orphan process selection captured by running the TypeScript dashboard-orphans helpers.",
+  "cases": [
+    {
+      "id": "dashboard-orphans-001",
+      "name": "reads the install directory out of argv",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "reads the install directory out of argv",
+        "api": "dashboardBuildOf",
+        "args": [
+          "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal"
+        ]
+      },
+      "output": [
+        {
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal",
+          "build": "local-490049e4"
+        }
+      ],
+      "inputSha256": "bc6db70f482f642532a0279ff241cbb78045f06f34bfcd6e8ba9976a440f88e1"
+    },
+    {
+      "id": "dashboard-orphans-002",
+      "name": "returns nothing when the path is not a native install",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "returns nothing when the path is not a native install",
+        "api": "dashboardBuildOf",
+        "args": ["node /usr/local/bin/aimux --tmux-dashboard-internal"]
+      },
+      "output": [{ "args": "node /usr/local/bin/aimux --tmux-dashboard-internal", "build": null }],
+      "inputSha256": "a7952c5f2b523455f28c6b565e2943696ff7ed8a6d244f0c61ef90f5ba6ade39"
+    },
+    {
+      "id": "dashboard-orphans-003",
+      "name": "matches only the internal dashboard entrypoint",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "matches only the internal dashboard entrypoint",
+        "api": "isDashboardProcessArgs",
+        "args": [
+          "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal",
+          "/Users/sam/.aimux/native/local-a/bin/aimux __dashboard-internal-native",
+          "node launcher-bin.js daemon run"
+        ]
+      },
+      "output": [
+        {
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal",
+          "dashboard": true
+        },
+        { "args": "/Users/sam/.aimux/native/local-a/bin/aimux __dashboard-internal-native", "dashboard": true },
+        { "args": "node launcher-bin.js daemon run", "dashboard": false }
+      ],
+      "inputSha256": "23c998f9c21415ceb14d7f72d60bfb74f780dc86c2b3e56c23cad728ec443136"
+    },
+    {
+      "id": "dashboard-orphans-004",
+      "name": "selects dashboards from builds that are no longer installed",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "selects dashboards from builds that are no longer installed",
+        "api": "selectStaleDashboards",
+        "processes": [
+          {
+            "pid": 1,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-94088499/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          { "pid": 2, "args": "/Users/sam/.aimux/native/local-06ce8ffe/bin/aimux __dashboard-internal-native" },
+          {
+            "pid": 3,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "currentBuild": "local-490049e4"
+      },
+      "output": [
+        {
+          "pid": 1,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-94088499/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        { "pid": 2, "args": "/Users/sam/.aimux/native/local-06ce8ffe/bin/aimux __dashboard-internal-native" }
+      ],
+      "inputSha256": "5e5d3f0bd93d822ad0c1de673acd37dcb70c4a87bb33a0d6865d7fe930676709"
+    },
+    {
+      "id": "dashboard-orphans-005",
+      "name": "never selects the current build, however many are running",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "never selects the current build, however many are running",
+        "api": "selectStaleDashboards",
+        "processes": [
+          {
+            "pid": 1,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 2,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 3,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "currentBuild": "local-490049e4"
+      },
+      "output": [],
+      "inputSha256": "818ebd1985129ace18e587f9ee4ac93ae44b865d49a9fe4748688e5aeab14866"
+    },
+    {
+      "id": "dashboard-orphans-006",
+      "name": "never selects a process whose build cannot be read, since unknown is not evidence",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "never selects a process whose build cannot be read, since unknown is not evidence",
+        "api": "selectStaleDashboards",
+        "processes": [{ "pid": 9, "args": "node /usr/local/bin/aimux --tmux-dashboard-internal" }],
+        "currentBuild": "local-490049e4"
+      },
+      "output": [],
+      "inputSha256": "3a7b49842b6fdfb14d955862f90dbcc15fd72ca1cbbdab278b6a4def7fe0cd9d"
+    },
+    {
+      "id": "dashboard-orphans-007",
+      "name": "ignores processes that are not dashboards at all",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "ignores processes that are not dashboards at all",
+        "api": "selectStaleDashboards",
+        "processes": [{ "pid": 5, "args": "node /Users/sam/.aimux/native/local-old/dist/launcher-bin.js daemon run" }],
+        "currentBuild": "local-490049e4"
+      },
+      "output": [],
+      "inputSha256": "34f1bab0672ba23ec05a52adba2e70d9995305d998af4346cabf5e133767efb2"
+    },
+    {
+      "id": "dashboard-orphans-008",
+      "name": "never selects itself",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "never selects itself",
+        "api": "selectStaleDashboards",
+        "processes": [
+          {
+            "pid": 42,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-old/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "currentBuild": "local-490049e4",
+        "currentPid": 42
+      },
+      "output": [],
+      "inputSha256": "687941f0d11fd06c659146424f736cb009d1da240f24d3d36aeecedf9bb1bfc5"
+    },
+    {
+      "id": "dashboard-orphans-009",
+      "name": "does nothing when the current build is unknown, rather than killing everything",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "does nothing when the current build is unknown, rather than killing everything",
+        "api": "selectStaleDashboards",
+        "processes": [
+          {
+            "pid": 1,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 2,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-b/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "currentBuild": ""
+      },
+      "output": [],
+      "inputSha256": "ddf6b1fca58a7c030abd0d57464194db79c077fb65bbc8307a43b8b1330ffed4"
+    },
+    {
+      "id": "dashboard-orphans-010",
+      "name": "matches the real fleet that caused this",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "matches the real fleet that caused this",
+        "api": "selectStaleDashboards",
+        "processes": [
+          {
+            "pid": 1,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-94088499/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 2,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-06ce8ffe/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 3,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-4175298b/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 4,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-30e6a58c/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 5,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-d04d3ef0/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 6,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-589acac9/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 7,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-c9064baa/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 8,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-0613c57a/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 100,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 101,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-490049e4/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "currentBuild": "local-490049e4"
+      },
+      "output": [
+        {
+          "pid": 1,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-94088499/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        {
+          "pid": 2,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-06ce8ffe/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        {
+          "pid": 3,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-4175298b/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        {
+          "pid": 4,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-30e6a58c/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        {
+          "pid": 5,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-d04d3ef0/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        {
+          "pid": 6,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-589acac9/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        {
+          "pid": 7,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-c9064baa/dist/launcher-bin.js --tmux-dashboard-internal"
+        },
+        {
+          "pid": 8,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-0613c57a/dist/launcher-bin.js --tmux-dashboard-internal"
+        }
+      ],
+      "inputSha256": "768febabeae8e6d559286fb838c523aa357893ba5fd6dfa25a4d36c2da2f37dc"
+    },
+    {
+      "id": "dashboard-orphans-011",
+      "name": "selects a dashboard whose shell was reparented to init",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "selects a dashboard whose shell was reparented to init",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [
+          [1, 0],
+          [10, 110],
+          [110, 1]
+        ],
+        "currentPid": 999
+      },
+      "output": [
+        {
+          "pid": 10,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+        }
+      ],
+      "inputSha256": "574d98f3d226ae122543df1302ef65725915cbf32ce6819c02b7944b35f34e01"
+    },
+    {
+      "id": "dashboard-orphans-012",
+      "name": "selects a native dashboard whose shell was reparented to init",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "selects a native dashboard whose shell was reparented to init",
+        "api": "selectOrphanedDashboards",
+        "processes": [{ "pid": 10, "args": "/Users/sam/.aimux/native/local-a/bin/aimux __dashboard-internal-native" }],
+        "parents": [
+          [1, 0],
+          [10, 110],
+          [110, 1]
+        ],
+        "currentPid": 999
+      },
+      "output": [{ "pid": 10, "args": "/Users/sam/.aimux/native/local-a/bin/aimux __dashboard-internal-native" }],
+      "inputSha256": "a5ee4872bdcb7eb0679b1b1294a4877b35067ff209ce00783cc06ea264f30460"
+    },
+    {
+      "id": "dashboard-orphans-013",
+      "name": "leaves a dashboard whose shell still descends from tmux",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "leaves a dashboard whose shell still descends from tmux",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [
+          [10, 110],
+          [110, 900],
+          [900, 1]
+        ],
+        "currentPid": 999
+      },
+      "output": [],
+      "inputSha256": "99c078d6175d0faf659aa6c40b9ca569e98fe0c48d9fcb17ee1995dbe10de145"
+    },
+    {
+      "id": "dashboard-orphans-014",
+      "name": "selects a dashboard whose shell is no longer a live tmux pane",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "selects a dashboard whose shell is no longer a live tmux pane",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          },
+          {
+            "pid": 20,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [
+          [10, 110],
+          [110, 900],
+          [20, 120],
+          [120, 900],
+          [900, 1]
+        ],
+        "currentPid": 999,
+        "livePanePids": [120]
+      },
+      "output": [
+        {
+          "pid": 10,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+        }
+      ],
+      "inputSha256": "98efc7a309bf7d8095e6284e7800adc8dc7ac630b291e79b6ad767768cfe9114"
+    },
+    {
+      "id": "dashboard-orphans-015",
+      "name": "leaves a dashboard whose shell is still a live tmux pane",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "leaves a dashboard whose shell is still a live tmux pane",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [
+          [10, 110],
+          [110, 900],
+          [900, 1]
+        ],
+        "currentPid": 999,
+        "livePanePids": [110]
+      },
+      "output": [],
+      "inputSha256": "86feb5562d12f5514046778919b68de3c47e9d4395ad66ecad263010be7374ac"
+    },
+    {
+      "id": "dashboard-orphans-016",
+      "name": "leaves a dashboard whose shell descends from a live tmux pane through a wrapper",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "leaves a dashboard whose shell descends from a live tmux pane through a wrapper",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [
+          [10, 110],
+          [110, 120],
+          [120, 900],
+          [900, 1]
+        ],
+        "currentPid": 999,
+        "livePanePids": [120]
+      },
+      "output": [],
+      "inputSha256": "de42030d8719b70bc393505a0c5029697358eb31f8c2b2ef6e4d26b3ef33acc0"
+    },
+    {
+      "id": "dashboard-orphans-017",
+      "name": "handles parent cycles without treating them as live panes",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "handles parent cycles without treating them as live panes",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [
+          [10, 110],
+          [110, 120],
+          [120, 110]
+        ],
+        "currentPid": 999,
+        "livePanePids": [900]
+      },
+      "output": [
+        {
+          "pid": 10,
+          "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+        }
+      ],
+      "inputSha256": "327b78b0fb190a70c7a436537a1b40009990e1d8c9fe30a7a0f3cf1175001e3b"
+    },
+    {
+      "id": "dashboard-orphans-018",
+      "name": "treats an unknown parent as unknown, not orphaned",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "treats an unknown parent as unknown, not orphaned",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [],
+        "currentPid": 999
+      },
+      "output": [],
+      "inputSha256": "d585f2816bd78cf9086c9d126d6bc762636eb5583b340d0422b0d41ee0a4c16f"
+    },
+    {
+      "id": "dashboard-orphans-019",
+      "name": "selectOrphanedDashboards never selects itself",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "selectOrphanedDashboards never selects itself",
+        "api": "selectOrphanedDashboards",
+        "processes": [
+          {
+            "pid": 10,
+            "args": "/Users/sam/.volta/bin/node /Users/sam/.aimux/native/local-a/dist/launcher-bin.js --tmux-dashboard-internal"
+          }
+        ],
+        "parents": [
+          [10, 110],
+          [110, 1]
+        ],
+        "currentPid": 10
+      },
+      "output": [],
+      "inputSha256": "5fc6dfa7d0e4bcf35ed2894fc5a2a8f10333874ff16924732c8fe3b48928cf75"
+    },
+    {
+      "id": "dashboard-orphans-020",
+      "name": "selectOrphanedDashboards ignores processes that are not dashboards",
+      "source": "src/dashboard-orphans.test.ts",
+      "input": {
+        "name": "selectOrphanedDashboards ignores processes that are not dashboards",
+        "api": "selectOrphanedDashboards",
+        "processes": [{ "pid": 10, "args": "/Users/sam/.aimux/native/local-a/dist/launcher-bin.js daemon run" }],
+        "parents": [
+          [10, 110],
+          [110, 1]
+        ],
+        "currentPid": 999
+      },
+      "output": [],
+      "inputSha256": "ba5a0909261a4072b0a7576c3a1e1305ec1504c9f981f4621038c77c09038d04"
+    }
+  ]
+}

@@ -614,6 +614,10 @@ Priority fixture groups:
 
 ## Dashboard
 
+- `dashboard/orphans.json`: stale dashboard build detection, dashboard
+  entrypoint recognition, orphan parent-chain detection, current-process
+  exclusion, and live-pane ancestry captured by running TypeScript
+  `dashboard-orphans` helpers.
 - `dashboard/order.json`: dashboard saved-order keying, stale-id
   normalization, movement, and per-worktree session/service ordering captured
   by running TypeScript `dashboard/order` helpers.
