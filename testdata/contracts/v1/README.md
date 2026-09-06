@@ -265,6 +265,12 @@ Priority fixture groups:
   timeout behavior captured by running TypeScript `InteractionRegistry` with
   generated IDs and timestamps normalized.
 
+## Monitor
+
+- `monitor/capture.json`: app monitor capture filename, base64 stripping,
+  decoded-size estimation, and sample text formatting behavior captured by
+  running TypeScript `app/lib/monitor-capture` helpers.
+
 ## Expose
 
 - `expose/pane-output-tap.json`: pane output tap ownership, adoption, renewal,

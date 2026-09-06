@@ -66,6 +66,7 @@ pub mod launcher_env;
 pub mod local_ui_server;
 pub mod logs;
 pub mod managed_launch_env;
+pub mod monitor_capture_contract;
 pub mod notification_policy_contract;
 pub mod paths;
 pub mod plugin_runtime_contract;
