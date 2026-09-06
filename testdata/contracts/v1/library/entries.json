@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "source": "src/library.test.ts",
+  "generatedBy": "scripts/capture-library-contract.mjs",
+  "description": "Library stub-plan detection, document allowlist, non-stub plans, label projection, recency sorting, frontmatter stripping, CRLF parsing, and mtime fallback captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "library-entries-001",
+      "name": "detects the untouched auto-generated stub",
+      "source": "src/library.test.ts",
+      "api": "isStubPlan",
+      "input": {
+        "content": "---\nsessionId: claude-1\ntool: claude\nworktree: main\nupdatedAt: 2026-06-17T00:00:00.000Z\n---\n\n# Goal\n\nTBD\n\n# Current Status\n\nTBD\n\n# Steps\n\n- [ ] TBD\n\n# Notes\n\n- None yet.\n"
+      },
+      "output": true,
+      "inputSha256": "c922c7e8c29143086561cfe3a837c4f15af3bde24a6019ad339c02dc387d14a2"
+    },
+    {
+      "id": "library-entries-002",
+      "name": "treats a filled-in plan as non-stub",
+      "source": "src/library.test.ts",
+      "api": "isStubPlan",
+      "input": {
+        "content": "---\nsessionId: claude-2\ntool: claude\nworktree: main\nupdatedAt: 2026-06-17T05:00:00.000Z\n---\n\n# Goal\n\nShip the library screen\n\n# Steps\n\n- [x] write loader\n"
+      },
+      "output": false,
+      "inputSha256": "fb3753afa76f76bad997be0ab2f8a940480dcc33e05bb39f526ca6780e0a82d9"
+    },
+    {
+      "id": "library-entries-003",
+      "name": "includes allowlisted project docs and non-stub plans, skips stubs",
+      "source": "src/library.test.ts",
+      "api": "loadLibraryEntries",
+      "input": {
+        "files": [
+          { "path": "README.md", "content": "# Project\nhello", "mtime": "2026-06-16T01:00:00.000Z" },
+          { "path": "AGENTS.md", "content": "# Agents", "mtime": "2026-06-16T02:00:00.000Z" },
+          { "path": "NOTALLOWED.md", "content": "# nope", "mtime": "2026-06-16T03:00:00.000Z" },
+          {
+            "path": ".aimux/plans/claude-1.md",
+            "content": "---\nsessionId: claude-1\ntool: claude\nworktree: main\nupdatedAt: 2026-06-17T00:00:00.000Z\n---\n\n# Goal\n\nTBD\n\n# Current Status\n\nTBD\n\n# Steps\n\n- [ ] TBD\n\n# Notes\n\n- None yet.\n",
+            "mtime": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "path": ".aimux/plans/claude-2.md",
+            "content": "---\nsessionId: claude-2\ntool: claude\nworktree: main\nupdatedAt: 2026-06-17T05:00:00.000Z\n---\n\n# Goal\n\nShip the library screen\n\n# Steps\n\n- [x] write loader\n",
+            "mtime": "2026-06-17T05:00:00.000Z"
+          }
+        ],
+        "labels": { "claude-2": "library agent" }
+      },
+      "output": [
+        {
+          "id": "plan:claude-2",
+          "kind": "plan",
+          "title": "library agent",
+          "path": "<repoRoot>/.aimux/plans/claude-2.md",
+          "sessionId": "claude-2",
+          "label": "library agent",
+          "updatedAt": "2026-06-17T05:00:00.000Z",
+          "preview": "# Goal\n\nShip the library screen\n\n# Steps\n\n- [x] write loader"
+        },
+        {
+          "id": "doc:AGENTS.md",
+          "kind": "doc",
+          "title": "AGENTS.md",
+          "path": "<repoRoot>/AGENTS.md",
+          "updatedAt": "2026-06-16T02:00:00.000Z",
+          "preview": "# Agents"
+        },
+        {
+          "id": "doc:README.md",
+          "kind": "doc",
+          "title": "README.md",
+          "path": "<repoRoot>/README.md",
+          "updatedAt": "2026-06-16T01:00:00.000Z",
+          "preview": "# Project\nhello"
+        }
+      ],
+      "inputSha256": "55be1edd3055a81e1319040ae0053935f96ee1c0be759b985283cccbab422d42"
+    },
+    {
+      "id": "library-entries-004",
+      "name": "sorts entries newest-first by updatedAt",
+      "source": "src/library.test.ts",
+      "api": "loadLibraryEntries",
+      "input": {
+        "files": [
+          { "path": "README.md", "content": "# old", "mtime": "2026-06-16T00:00:00.000Z" },
+          {
+            "path": ".aimux/plans/claude-2.md",
+            "content": "---\nsessionId: claude-2\ntool: claude\nworktree: main\nupdatedAt: 2026-06-17T05:00:00.000Z\n---\n\n# Goal\n\nShip the library screen\n\n# Steps\n\n- [x] write loader\n",
+            "mtime": "2026-06-17T05:00:00.000Z"
+          }
+        ]
+      },
+      "output": [
+        {
+          "id": "plan:claude-2",
+          "kind": "plan",
+          "title": "claude-2",
+          "path": "<repoRoot>/.aimux/plans/claude-2.md",
+          "sessionId": "claude-2",
+          "updatedAt": "2026-06-17T05:00:00.000Z",
+          "preview": "# Goal\n\nShip the library screen\n\n# Steps\n\n- [x] write loader"
+        },
+        {
+          "id": "doc:README.md",
+          "kind": "doc",
+          "title": "README.md",
+          "path": "<repoRoot>/README.md",
+          "updatedAt": "2026-06-16T00:00:00.000Z",
+          "preview": "# old"
+        }
+      ],
+      "inputSha256": "fee722340cead0b39639c06e821666daf931d762d22b86d9b4beb0f546629fad"
+    },
+    {
+      "id": "library-entries-005",
+      "name": "falls back to mtime when a plan has no frontmatter updatedAt",
+      "source": "src/library.test.ts",
+      "api": "loadLibraryEntries",
+      "input": {
+        "files": [
+          {
+            "path": ".aimux/plans/claude-3.md",
+            "content": "# Goal\n\nreal work, no frontmatter\n",
+            "mtime": "2026-06-18T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": [
+        {
+          "id": "plan:claude-3",
+          "kind": "plan",
+          "title": "claude-3",
+          "path": "<repoRoot>/.aimux/plans/claude-3.md",
+          "sessionId": "claude-3",
+          "updatedAt": "2026-06-18T00:00:00.000Z",
+          "preview": "# Goal\n\nreal work, no frontmatter"
+        }
+      ],
+      "inputSha256": "aa6903fd97f09002124dc19a6909d7fca5b4380ada19dd54f44342a69e065ba4"
+    },
+    {
+      "id": "library-entries-006",
+      "name": "returns empty when nothing exists",
+      "source": "src/library.test.ts",
+      "api": "loadLibraryEntries",
+      "input": { "files": [] },
+      "output": [],
+      "inputSha256": "602e35a92eec4bc0a2ec6ae113f07bfc6933322fb69fe8dee416e5a67217e2a2"
+    },
+    {
+      "id": "library-entries-007",
+      "name": "parses CRLF-authored plan frontmatter and skips CRLF stubs",
+      "source": "src/library.test.ts",
+      "api": "loadLibraryEntries",
+      "input": {
+        "files": [
+          { "path": ".aimux/plans/claude-crlf.md", "content": "<REAL_PLAN_CRLF>", "mtime": "2026-06-17T05:00:00.000Z" },
+          { "path": ".aimux/plans/claude-crlf-stub.md", "content": "<STUB_CRLF>", "mtime": "2026-06-17T00:00:00.000Z" }
+        ]
+      },
+      "output": [
+        {
+          "id": "plan:claude-crlf",
+          "kind": "plan",
+          "title": "claude-crlf",
+          "path": "<repoRoot>/.aimux/plans/claude-crlf.md",
+          "sessionId": "claude-crlf",
+          "updatedAt": "2026-06-17T05:00:00.000Z",
+          "preview": "# Goal\r\n\r\nShip the library screen\r\n\r\n# Steps\r\n\r\n- [x] write loader"
+        }
+      ],
+      "inputSha256": "410134b67cebb46aa14f82558403a0661b5d5b3bcbc8be753cd6a47480dfedf7"
+    },
+    {
+      "id": "library-entries-008",
+      "name": "ignores a malformed frontmatter updatedAt and falls back to mtime",
+      "source": "src/library.test.ts",
+      "api": "loadLibraryEntries",
+      "input": {
+        "files": [
+          {
+            "path": ".aimux/plans/claude-bad.md",
+            "content": "<REAL_PLAN_BAD_DATE>",
+            "mtime": "2026-06-19T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": [
+        {
+          "id": "plan:claude-bad",
+          "kind": "plan",
+          "title": "claude-bad",
+          "path": "<repoRoot>/.aimux/plans/claude-bad.md",
+          "sessionId": "claude-bad",
+          "updatedAt": "2026-06-19T00:00:00.000Z",
+          "preview": "# Goal\n\nShip the library screen\n\n# Steps\n\n- [x] write loader"
+        }
+      ],
+      "inputSha256": "fd914127ac7e6dd3bdb446610f738c4eeb3b7339aa2732f4de844dd207078c45"
+    }
+  ]
+}

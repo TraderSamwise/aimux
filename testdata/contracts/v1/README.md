@@ -239,6 +239,13 @@ Priority fixture groups:
   running TypeScript `logLifecycleAlways`; the Rust fixture is an ignored
   checklist until the logging subsystem is ported.
 
+## Library
+
+- `library/entries.json`: library stub-plan detection, allowlisted project
+  docs, non-stub plans, label projection, recency sorting, frontmatter
+  stripping, CRLF parsing, and mtime fallback captured by running TypeScript
+  `library`.
+
 ## Graveyard
 
 - `graveyard/cleanup.json`: graveyard cleanup plan cutoffs, retention
