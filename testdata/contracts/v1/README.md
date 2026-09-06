@@ -72,6 +72,10 @@ Priority fixture groups:
 - `app-state/project-views.json`: app project API view registry, refresh
   dependency expansion, and update-channel routing captured by running
   TypeScript project view helpers.
+- `app-state/project-store.json`: app project store empty observability model,
+  plan key shape, request-scope matching, and request-key construction captured
+  by running TypeScript project store helpers, with random request scope
+  normalized after execution.
 - `app-state/settings.json`: durable app settings defaults, persisted-settings
   normalization, monitor viewport clamping, share normalization, and desktop
   zoom helpers captured by running TypeScript settings helpers.
