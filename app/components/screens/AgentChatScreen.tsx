@@ -53,6 +53,7 @@ import { AgentActions } from "@/components/agent-actions";
 import { AgentManagementPanel } from "@/components/agent-management-panel";
 import { TeammatePanel } from "@/components/teammate-panel";
 import { ChatChromeMotion } from "@/components/ChatChromeMotion";
+import { ChatNewMessagesBadge } from "@/components/ChatNewMessagesBadge";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
@@ -119,6 +120,7 @@ import {
   chatVisibleTranscriptMessages,
   type ChatVisibleTranscript,
 } from "@/lib/chat-visible-transcript";
+import { chatFrozenNewMessageCount } from "@/lib/chat-new-message-badge";
 import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import {
@@ -192,6 +194,8 @@ const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
 const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
 const CHAT_COMPOSER_RESERVE_GAP = 8;
 const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
+const CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS = 180;
+const CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS = 3200;
 const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
 /** How much of the label the travelling highlight covers, as a fraction of its width. */
 const FOOTER_LABEL_SHIMMER_BAND = 0.3;
@@ -2473,6 +2477,10 @@ const AgentChatSessionViewport = React.forwardRef<
   const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
   const visibleChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
   const chatInitialLayoutKeyRef = useRef<string | null>(null);
+  const newMessageBadgeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const newMessageBadgeFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const newMessageBadgeAnnouncedCountRef = useRef(0);
+  const [newMessageBadge, setNewMessageBadge] = useState({ count: 0, visible: false });
 
   const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
     liveMessages: allMessages,
@@ -2491,6 +2499,35 @@ const AgentChatSessionViewport = React.forwardRef<
     if (live.sessionKey !== sessionKey) return;
     applyVisibleChatTranscript(live);
   }, [applyVisibleChatTranscript, sessionKey]);
+
+  const clearNewMessageBadgeTimers = useCallback(() => {
+    if (newMessageBadgeDebounceRef.current !== null) {
+      clearTimeout(newMessageBadgeDebounceRef.current);
+      newMessageBadgeDebounceRef.current = null;
+    }
+    if (newMessageBadgeFadeRef.current !== null) {
+      clearTimeout(newMessageBadgeFadeRef.current);
+      newMessageBadgeFadeRef.current = null;
+    }
+  }, []);
+
+  const resetNewMessageBadge = useCallback(() => {
+    clearNewMessageBadgeTimers();
+    newMessageBadgeAnnouncedCountRef.current = 0;
+    setNewMessageBadge((current) =>
+      current.count === 0 && !current.visible ? current : { count: 0, visible: false },
+    );
+  }, [clearNewMessageBadgeTimers]);
+
+  const fadeNewMessageBadgeLater = useCallback(() => {
+    if (newMessageBadgeFadeRef.current !== null) {
+      clearTimeout(newMessageBadgeFadeRef.current);
+    }
+    newMessageBadgeFadeRef.current = setTimeout(() => {
+      newMessageBadgeFadeRef.current = null;
+      setNewMessageBadge((current) => ({ ...current, visible: false }));
+    }, CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS);
+  }, []);
 
   const cancelPendingChatScroll = useCallback(() => {
     if (chatScrollFrameRef.current === null) return;
@@ -2531,6 +2568,7 @@ const AgentChatSessionViewport = React.forwardRef<
     liveChatTranscriptRef.current = live;
     chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
     chatScrollChromeRef.current = createChatScrollChromeState();
+    resetNewMessageBadge();
     onChromeVisibleChange(true);
     applyVisibleChatTranscript(live);
     executeChatScrollCommand(chatCommandForNavigationFocus());
@@ -2539,6 +2577,7 @@ const AgentChatSessionViewport = React.forwardRef<
     applyVisibleChatTranscript,
     executeChatScrollCommand,
     onChromeVisibleChange,
+    resetNewMessageBadge,
     sessionKey,
   ]);
 
@@ -2546,11 +2585,14 @@ const AgentChatSessionViewport = React.forwardRef<
 
   useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
 
+  useEffect(() => clearNewMessageBadgeTimers, [clearNewMessageBadgeTimers]);
+
   useFocusEffect(
     useCallback(() => {
       chatInitialLayoutKeyRef.current = sessionKey || null;
       chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
       chatScrollChromeRef.current = createChatScrollChromeState();
+      resetNewMessageBadge();
       onChromeVisibleChange(true);
       showLiveChatTranscript();
       const interaction = InteractionManager.runAfterInteractions(() => {
@@ -2564,6 +2606,7 @@ const AgentChatSessionViewport = React.forwardRef<
       cancelPendingChatScroll,
       executeChatScrollCommand,
       onChromeVisibleChange,
+      resetNewMessageBadge,
       sessionKey,
       showLiveChatTranscript,
     ]),
@@ -2621,10 +2664,11 @@ const AgentChatSessionViewport = React.forwardRef<
         onChromeVisibleChange(nextChrome.visible);
       }
       if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+        resetNewMessageBadge();
         showLiveChatTranscript();
       }
     },
-    [cancelPendingChatScroll, onChromeVisibleChange, showLiveChatTranscript],
+    [cancelPendingChatScroll, onChromeVisibleChange, resetNewMessageBadge, showLiveChatTranscript],
   );
 
   useEffect(() => {
@@ -2636,6 +2680,38 @@ const AgentChatSessionViewport = React.forwardRef<
     });
     applyVisibleChatTranscript(next);
   }, [allMessages, applyVisibleChatTranscript, liveChatTranscript, sessionKey]);
+
+  useEffect(() => {
+    if (chatScrollPolicyRef.current.intent !== "reading") return;
+    const count = chatFrozenNewMessageCount({
+      frozenMessages: visibleChatTranscriptRef.current.messages,
+      liveMessages: allMessages,
+    });
+    if (count < newMessageBadgeAnnouncedCountRef.current) {
+      newMessageBadgeAnnouncedCountRef.current = count;
+    }
+    if (count <= newMessageBadgeAnnouncedCountRef.current) return;
+    if (count <= 0) return;
+    if (newMessageBadgeDebounceRef.current !== null) {
+      clearTimeout(newMessageBadgeDebounceRef.current);
+    }
+    newMessageBadgeDebounceRef.current = setTimeout(() => {
+      newMessageBadgeDebounceRef.current = null;
+      if (chatScrollPolicyRef.current.intent !== "reading") return;
+      const nextCount = chatFrozenNewMessageCount({
+        frozenMessages: visibleChatTranscriptRef.current.messages,
+        liveMessages: liveChatTranscriptRef.current.messages,
+      });
+      if (nextCount < newMessageBadgeAnnouncedCountRef.current) {
+        newMessageBadgeAnnouncedCountRef.current = nextCount;
+      }
+      if (nextCount <= newMessageBadgeAnnouncedCountRef.current) return;
+      if (nextCount <= 0) return;
+      newMessageBadgeAnnouncedCountRef.current = nextCount;
+      setNewMessageBadge({ count: nextCount, visible: true });
+      fadeNewMessageBadgeLater();
+    }, CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS);
+  }, [allMessages, fadeNewMessageBadgeLater]);
 
   return (
     <View className="flex-1 bg-background">
@@ -2651,6 +2727,19 @@ const AgentChatSessionViewport = React.forwardRef<
         dividerWidth={dividerWidth}
         bottomContentInset={bottomContentInset}
         topContentInset={topContentInset}
+      />
+      <ChatNewMessagesBadge
+        count={newMessageBadge.count}
+        onPress={showNewest}
+        visible={newMessageBadge.visible && newMessageBadge.count > 0}
+        style={{
+          bottom: bottomContentInset + 10,
+          alignItems: "center",
+          left: 0,
+          position: "absolute",
+          right: 0,
+          zIndex: 20,
+        }}
       />
     </View>
   );
