@@ -143,6 +143,13 @@ Priority fixture groups:
   and bounded message snapshots captured by running TypeScript `tasks` and
   `threads` helpers.
 
+## Composer
+
+- `composer/protocol.json`: app composer draft normalization, key submission,
+  send gating, failure copy, ack text normalization, long prompt fragment
+  matching, baseline handling, and attachment acknowledgement behavior captured
+  by running TypeScript `app/lib/composer-protocol` helpers.
+
 ## Daemon State
 
 - `daemon-state/state.json`: daemon state filtering, fallback, and daemon

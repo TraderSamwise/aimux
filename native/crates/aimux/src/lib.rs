@@ -16,6 +16,7 @@ pub mod backend_session_ids_contract;
 pub mod build_info;
 pub mod builtin_metadata_watchers_contract;
 pub mod cli_launcher;
+pub mod composer_protocol_contract;
 pub mod config;
 pub mod connection_targets_contract;
 pub mod context_bridge_contract;
