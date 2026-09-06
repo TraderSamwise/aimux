@@ -68,6 +68,7 @@ pub mod remote_credentials;
 pub mod remote_login;
 pub mod root_session_launch;
 pub mod runtime_coherence;
+pub mod runtime_exchange_import;
 pub mod runtime_migration;
 pub mod runtime_topology;
 pub mod runtime_topology_services;

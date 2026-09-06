@@ -206,6 +206,9 @@ Priority fixture groups:
 - `runtime-exchange/alert-routing.json`: message, task assignment, task
   outcome, and review outcome alert recipient routing captured by running
   TypeScript `runtime-core/exchange-alert-routing`.
+- `runtime-exchange/import.json`: legacy thread/message/task/file attachment
+  conversion, derived handoff/review/wait/inbox references, and absent optional
+  directory behavior captured by running TypeScript `runtime-core/exchange-import`.
 
 ## Runtime Migration
 
