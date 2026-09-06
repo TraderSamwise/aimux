@@ -26,6 +26,7 @@ pub struct DashboardController {
     pub hide_offline_agents: bool,
     pub subscreen_index: usize,
     pub subscreen_item_count: usize,
+    pub subscreen_actions: Vec<DashboardSubscreenAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +51,7 @@ impl DashboardController {
             hide_offline_agents: false,
             subscreen_index: 0,
             subscreen_item_count: 0,
+            subscreen_actions: Vec::new(),
         }
     }
 
@@ -77,7 +79,7 @@ impl DashboardController {
         if self.tool_picker.is_some() {
             return self.handle_tool_picker_key(snapshot, key);
         }
-        if let Some(effect) = self.handle_screen_command_key(key) {
+        if let Some(effect) = self.handle_screen_command_key(snapshot, key) {
             return effect;
         }
         let key = normalize_dashboard_command_key(key);
@@ -158,10 +160,11 @@ impl DashboardController {
 
     fn handle_screen_command_key(
         &mut self,
+        snapshot: &DesktopStateSnapshot,
         key: DashboardKey,
     ) -> Option<DashboardControllerEffect> {
         if self.screen != DashboardScreen::Dashboard {
-            return Some(self.handle_subscreen_key(key));
+            return Some(self.handle_subscreen_key(snapshot, key));
         }
         match key {
             DashboardKey::Printable('?') => Some(self.switch_screen(DashboardScreen::Help)),
@@ -174,7 +177,11 @@ impl DashboardController {
         }
     }
 
-    fn handle_subscreen_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+    fn handle_subscreen_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
         match key {
             DashboardKey::Printable('q') => DashboardControllerEffect::Quit,
             DashboardKey::Back | DashboardKey::Printable('d') => {
@@ -192,6 +199,7 @@ impl DashboardController {
                 self.select_subscreen_digit(digit)
             }
             DashboardKey::Printable('r') => DashboardControllerEffect::Render,
+            DashboardKey::Enter => self.handle_subscreen_enter(snapshot),
             DashboardKey::Printable('?') => {
                 if self.screen == DashboardScreen::Help {
                     self.switch_screen(DashboardScreen::Dashboard)
@@ -222,14 +230,16 @@ impl DashboardController {
         self.screen = screen;
         self.subscreen_index = 0;
         self.subscreen_item_count = 0;
+        self.subscreen_actions.clear();
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
     }
 
-    pub fn set_subscreen_item_count(&mut self, count: usize) {
-        self.subscreen_item_count = count;
-        if self.subscreen_index >= count {
-            self.subscreen_index = count.saturating_sub(1);
+    pub fn set_subscreen_actions(&mut self, actions: Vec<DashboardSubscreenAction>) {
+        self.subscreen_item_count = actions.len();
+        self.subscreen_actions = actions;
+        if self.subscreen_index >= self.subscreen_item_count {
+            self.subscreen_index = self.subscreen_item_count.saturating_sub(1);
         }
     }
 
@@ -262,6 +272,60 @@ impl DashboardController {
             return DashboardControllerEffect::Render;
         }
         DashboardControllerEffect::Ignored
+    }
+
+    fn handle_subscreen_enter(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let action = self
+            .subscreen_actions
+            .get(self.subscreen_index)
+            .cloned()
+            .unwrap_or(DashboardSubscreenAction::None);
+        match action {
+            DashboardSubscreenAction::Session(session_id) => {
+                let Some(session) = find_session(snapshot, &session_id) else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                match plan_dashboard_action(
+                    Some(DashboardEntryRef::Session(session)),
+                    DashboardActionKind::Enter,
+                ) {
+                    DashboardActionPlan::Request(request) => {
+                        DashboardControllerEffect::Request(request)
+                    }
+                    DashboardActionPlan::Blocked(message) => {
+                        self.footer_message = Some(message);
+                        DashboardControllerEffect::Render
+                    }
+                    DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+                }
+            }
+            DashboardSubscreenAction::Service(service_id) => {
+                let Some(service) = find_service(snapshot, &service_id) else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                match plan_dashboard_action(
+                    Some(DashboardEntryRef::Service(service)),
+                    DashboardActionKind::Enter,
+                ) {
+                    DashboardActionPlan::Request(request) => {
+                        DashboardControllerEffect::Request(request)
+                    }
+                    DashboardActionPlan::Blocked(message) => {
+                        self.footer_message = Some(message);
+                        DashboardControllerEffect::Render
+                    }
+                    DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+                }
+            }
+            DashboardSubscreenAction::Path(path) => {
+                self.footer_message = Some(path);
+                DashboardControllerEffect::Render
+            }
+            DashboardSubscreenAction::None => DashboardControllerEffect::Ignored,
+        }
     }
 
     fn handle_tool_picker_key(
@@ -554,6 +618,14 @@ impl DashboardController {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DashboardSubscreenAction {
+    None,
+    Session(String),
+    Service(String),
+    Path(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardScreen {
     Dashboard,
@@ -711,4 +783,36 @@ fn is_live_session(session: &DashboardSession) -> bool {
 
 fn session_label(session: &DashboardSession) -> &str {
     session.label.as_deref().unwrap_or(session.command.as_str())
+}
+
+fn find_session<'a>(
+    snapshot: &'a DesktopStateSnapshot,
+    session_id: &str,
+) -> Option<&'a DashboardSession> {
+    snapshot
+        .sessions
+        .iter()
+        .chain(
+            snapshot
+                .worktree_groups
+                .iter()
+                .flat_map(|group| group.sessions.iter()),
+        )
+        .find(|session| session.id == session_id)
+}
+
+fn find_service<'a>(
+    snapshot: &'a DesktopStateSnapshot,
+    service_id: &str,
+) -> Option<&'a crate::dashboard_model::DashboardService> {
+    snapshot
+        .services
+        .iter()
+        .chain(
+            snapshot
+                .worktree_groups
+                .iter()
+                .flat_map(|group| group.services.iter()),
+        )
+        .find(|service| service.id == service_id)
 }

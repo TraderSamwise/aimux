@@ -4,7 +4,7 @@ use crate::dashboard_client::{
     fetch_desktop_state, resolve_project_service_endpoint,
 };
 use crate::dashboard_controller::{
-    DashboardController, DashboardControllerEffect, DashboardScreen,
+    DashboardController, DashboardControllerEffect, DashboardScreen, DashboardSubscreenAction,
 };
 use crate::dashboard_event_stream::{
     DashboardEventStreamHandle, DashboardEventStreamMessage, spawn_dashboard_project_event_stream,
@@ -425,7 +425,7 @@ fn render_dashboard_subscreen_snapshot(
         },
         None => (None, None),
     };
-    controller.set_subscreen_item_count(dashboard_screen_item_count(
+    controller.set_subscreen_actions(dashboard_screen_actions(
         controller.screen,
         resource.as_ref(),
     ));
@@ -442,29 +442,65 @@ fn render_dashboard_subscreen_snapshot(
     })
 }
 
-fn dashboard_screen_item_count(
+fn dashboard_screen_actions(
     screen: DashboardScreen,
     resource: Option<&serde_json::Value>,
-) -> usize {
+) -> Vec<DashboardSubscreenAction> {
     let Some(resource) = resource else {
-        return 0;
+        return Vec::new();
     };
+    let rows = match screen {
+        DashboardScreen::Dashboard | DashboardScreen::Help => return Vec::new(),
+        DashboardScreen::Coordination => json_array(resource, &["worklist"]),
+        DashboardScreen::Project => json_array(resource, &["project", "story"]),
+        DashboardScreen::Library => json_array(resource, &["entries"]),
+        DashboardScreen::Topology => json_array(resource, &["topology", "rows"]),
+        DashboardScreen::Graveyard => json_array(resource, &["viewModel", "rows"]),
+    };
+    rows.iter()
+        .map(|row| dashboard_screen_action(screen, row))
+        .collect()
+}
+
+fn dashboard_screen_action(
+    screen: DashboardScreen,
+    row: &serde_json::Value,
+) -> DashboardSubscreenAction {
     match screen {
-        DashboardScreen::Dashboard | DashboardScreen::Help => 0,
-        DashboardScreen::Coordination => json_array_len(resource, &["worklist"]),
-        DashboardScreen::Project => json_array_len(resource, &["project", "story"]),
-        DashboardScreen::Library => json_array_len(resource, &["entries"]),
-        DashboardScreen::Topology => json_array_len(resource, &["topology", "rows"]),
-        DashboardScreen::Graveyard => json_array_len(resource, &["viewModel", "rows"]),
+        DashboardScreen::Coordination => json_string(row, &["sessionId"])
+            .map(DashboardSubscreenAction::Session)
+            .unwrap_or(DashboardSubscreenAction::None),
+        DashboardScreen::Library => json_string(row, &["path"])
+            .map(DashboardSubscreenAction::Path)
+            .unwrap_or(DashboardSubscreenAction::None),
+        DashboardScreen::Topology => json_string(row, &["sessionId"])
+            .map(DashboardSubscreenAction::Session)
+            .or_else(|| json_string(row, &["serviceId"]).map(DashboardSubscreenAction::Service))
+            .unwrap_or(DashboardSubscreenAction::None),
+        DashboardScreen::Project
+        | DashboardScreen::Graveyard
+        | DashboardScreen::Dashboard
+        | DashboardScreen::Help => DashboardSubscreenAction::None,
     }
 }
 
-fn json_array_len(value: &serde_json::Value, path: &[&str]) -> usize {
+fn json_array<'a>(value: &'a serde_json::Value, path: &[&str]) -> &'a [serde_json::Value] {
     let mut current = value;
     for key in path {
         current = current.get(*key).unwrap_or(&serde_json::Value::Null);
     }
-    current.as_array().map_or(0, Vec::len)
+    current.as_array().map(Vec::as_slice).unwrap_or(&[])
+}
+
+fn json_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn dashboard_screen_resource_path(screen: DashboardScreen) -> Option<&'static str> {

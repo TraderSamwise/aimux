@@ -1,6 +1,6 @@
 use aimux::dashboard_controller::{
-    DashboardController, DashboardControllerEffect, DashboardKey, parse_dashboard_key,
-    parse_dashboard_keys,
+    DashboardController, DashboardControllerEffect, DashboardKey, DashboardSubscreenAction,
+    parse_dashboard_key, parse_dashboard_keys,
 };
 use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use aimux::dashboard_renderer::DashboardNavLevel;
@@ -356,7 +356,11 @@ fn subscreen_navigation_wraps_and_digits_select_visible_rows() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
     controller.handle_key(&snapshot, DashboardKey::Printable('L'));
-    controller.set_subscreen_item_count(3);
+    controller.set_subscreen_actions(vec![
+        DashboardSubscreenAction::Path("one.md".into()),
+        DashboardSubscreenAction::Path("two.md".into()),
+        DashboardSubscreenAction::Path("three.md".into()),
+    ]);
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('k')),
@@ -400,6 +404,48 @@ fn subscreen_dismiss_and_hotkeys_follow_typescript_screen_map() {
         DashboardControllerEffect::Render
     );
     assert_eq!(controller.screen.as_str(), "dashboard");
+}
+
+#[test]
+fn library_enter_flashes_selected_path() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('L'));
+    controller.set_subscreen_actions(vec![DashboardSubscreenAction::Path(
+        "/repo/AGENTS.md".into(),
+    )]);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("/repo/AGENTS.md")
+    );
+}
+
+#[test]
+fn topology_enter_dispatches_selected_session_activation() {
+    let mut snapshot = snapshot();
+    snapshot.sessions[0].tmux_window_id = Some("@1".into());
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('t'));
+    controller.set_subscreen_actions(vec![DashboardSubscreenAction::Session("claude-0".into())]);
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected topology session request");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(
+        request.body,
+        json!({
+            "windowId": "@1",
+            "focus": true
+        })
+    );
 }
 
 #[test]
