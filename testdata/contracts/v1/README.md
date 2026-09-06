@@ -270,6 +270,10 @@ Priority fixture groups:
 - `monitor/capture.json`: app monitor capture filename, base64 stripping,
   decoded-size estimation, and sample text formatting behavior captured by
   running TypeScript `app/lib/monitor-capture` helpers.
+- `monitor/targets.json`: app monitor project/shared target filtering,
+  generated-label presentation, persisted settings matching, target labels, and
+  stable target id behavior captured by running TypeScript
+  `app/lib/monitor-targets` helpers.
 
 ## Expose
 

@@ -1,0 +1,357 @@
+{
+  "version": 1,
+  "source": "app/lib/monitor-targets.test.ts",
+  "generatedBy": "scripts/capture-monitor-targets-contract.mjs",
+  "description": "App monitor project/shared target filtering, generated-label presentation, persisted settings matching, target labels, and stable target id behavior captured by running TypeScript monitor-targets helpers.",
+  "cases": [
+    {
+      "id": "monitor-targets-001",
+      "name": "lists only active non-control project sessions",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorSessionTargetsForProject",
+      "input": {
+        "name": "lists only active non-control project sessions",
+        "api": "monitorSessionTargetsForProject",
+        "project": {
+          "id": "project-1",
+          "name": "aimux",
+          "path": "/repo/aimux",
+          "dashboardSessionName": "aimux",
+          "service": null,
+          "serviceAlive": true,
+          "serviceEndpoint": { "host": "127.0.0.1", "port": 43192 }
+        },
+        "state": {
+          "ok": true,
+          "sessions": [
+            { "id": "claude-1", "status": "running", "label": "Claude" },
+            { "id": "overseer-1", "status": "running", "label": "Overseer", "overseer": true },
+            { "id": "scribe-1", "status": "running", "label": "Scribe", "scribe": true },
+            { "id": "dead-1", "status": "exited", "label": "Dead" }
+          ],
+          "services": [],
+          "worktrees": []
+        }
+      },
+      "output": [
+        {
+          "kind": "project-agent",
+          "id": "project:/repo/aimux:claude-1",
+          "projectPath": "/repo/aimux",
+          "projectName": "aimux",
+          "sessionId": "claude-1",
+          "sessionLabel": "Claude",
+          "status": "running",
+          "endpoint": { "host": "127.0.0.1", "port": 43192 }
+        }
+      ],
+      "inputSha256": "1edea1b68cd07f4856dd28cf79dbcae377e88ed17ecc41d399186e49a4665ed5"
+    },
+    {
+      "id": "monitor-targets-002",
+      "name": "collapses generated agent labels in monitor presentation labels",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorSessionTargetsForProject",
+      "input": {
+        "name": "collapses generated agent labels in monitor presentation labels",
+        "api": "monitorSessionTargetsForProject",
+        "project": {
+          "id": "project-1",
+          "name": "aimux",
+          "path": "/repo/aimux",
+          "dashboardSessionName": "aimux",
+          "service": null,
+          "serviceAlive": true,
+          "serviceEndpoint": { "host": "127.0.0.1", "port": 43192 }
+        },
+        "state": {
+          "ok": true,
+          "sessions": [
+            {
+              "id": "codex-o6o4kf",
+              "status": "running",
+              "label": "codex-o6o4kf",
+              "command": "codex --model gpt-5.5",
+              "role": "coder"
+            }
+          ],
+          "services": [],
+          "worktrees": []
+        }
+      },
+      "output": [
+        {
+          "kind": "project-agent",
+          "id": "project:/repo/aimux:codex-o6o4kf",
+          "projectPath": "/repo/aimux",
+          "projectName": "aimux",
+          "sessionId": "codex-o6o4kf",
+          "sessionLabel": "codex (coder)",
+          "status": "running",
+          "endpoint": { "host": "127.0.0.1", "port": 43192 }
+        }
+      ],
+      "inputSha256": "b73ae6428ccef34d04b12da4a637e2c48494ea2d556845681905f3d556508385"
+    },
+    {
+      "id": "monitor-targets-003",
+      "name": "does not expose project sessions while host service is unavailable",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorSessionTargetsForProject",
+      "input": {
+        "name": "does not expose project sessions while host service is unavailable",
+        "api": "monitorSessionTargetsForProject",
+        "project": {
+          "id": "project-1",
+          "name": "aimux",
+          "path": "/repo/aimux",
+          "dashboardSessionName": "aimux",
+          "service": null,
+          "serviceAlive": false,
+          "serviceEndpoint": { "host": "127.0.0.1", "port": 43192 }
+        },
+        "state": {
+          "ok": true,
+          "sessions": [
+            { "id": "claude-1", "status": "running", "label": "Claude" },
+            { "id": "overseer-1", "status": "running", "label": "Overseer", "overseer": true },
+            { "id": "scribe-1", "status": "running", "label": "Scribe", "scribe": true },
+            { "id": "dead-1", "status": "exited", "label": "Dead" }
+          ],
+          "services": [],
+          "worktrees": []
+        }
+      },
+      "output": [],
+      "inputSha256": "1b40c3f55563f88bb8f10c4a6977643cd6ef6afa01a0740f3dfcd301d70fcfcf"
+    },
+    {
+      "id": "monitor-targets-004",
+      "name": "maps shared chat sessions into monitor targets",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorSharedTargets",
+      "input": {
+        "name": "maps shared chat sessions into monitor targets",
+        "api": "monitorSharedTargets",
+        "shares": [
+          {
+            "shareId": "share-1",
+            "ownerUserId": "owner-1",
+            "projectRoot": "/repo/scratch",
+            "sessionId": "claude-2",
+            "serviceEndpoint": { "host": "relay", "port": 443 },
+            "acceptedAt": "2026-08-14T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": [
+        {
+          "kind": "shared-chat",
+          "id": "shared:owner-1:share-1",
+          "ownerUserId": "owner-1",
+          "shareId": "share-1",
+          "projectRoot": "/repo/scratch",
+          "projectName": "scratch",
+          "sessionId": "claude-2",
+          "sessionLabel": "claude-2",
+          "endpoint": { "host": "relay", "port": 443 }
+        }
+      ],
+      "inputSha256": "349bc204d3983c36ffff9df6c787b0a874d9e81c01cef2eff180b86f2abcb093"
+    },
+    {
+      "id": "monitor-targets-005",
+      "name": "matches persisted project target selections",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "targetMatchesSettings",
+      "input": {
+        "name": "matches persisted project target selections",
+        "api": "targetMatchesSettings",
+        "target": {
+          "kind": "project-agent",
+          "id": "project:/repo/aimux:claude-1",
+          "projectPath": "/repo/aimux",
+          "projectName": "aimux",
+          "sessionId": "claude-1",
+          "sessionLabel": "Claude",
+          "status": "running",
+          "endpoint": { "host": "127.0.0.1", "port": 43192 }
+        },
+        "settings": {
+          "intervalSeconds": 10,
+          "targetKind": "project-agent",
+          "captureMode": "camera",
+          "cameraViewport": { "centerX": 0.5, "centerY": 0.5, "zoom": 1 },
+          "speechToText": true,
+          "speechOnDeviceOnly": true,
+          "speechInterimResults": true,
+          "speechLanguage": "en-US",
+          "audioSampleRate": 16000,
+          "projectPath": "/repo/aimux",
+          "sessionId": "claude-1",
+          "shareOwnerUserId": null,
+          "shareId": null
+        }
+      },
+      "output": true,
+      "inputSha256": "a771cfdd826827e5479e39e26377139e25f37bdb72bd7f012ae723ea019ad876"
+    },
+    {
+      "id": "monitor-targets-006",
+      "name": "matches persisted shared target selections",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "targetMatchesSettings",
+      "input": {
+        "name": "matches persisted shared target selections",
+        "api": "targetMatchesSettings",
+        "target": {
+          "kind": "shared-chat",
+          "id": "shared:owner-1:share-1",
+          "ownerUserId": "owner-1",
+          "shareId": "share-1",
+          "projectRoot": "/repo/scratch",
+          "projectName": "scratch",
+          "sessionId": "claude-2",
+          "sessionLabel": "claude-2",
+          "endpoint": { "host": "relay", "port": 443 }
+        },
+        "settings": {
+          "intervalSeconds": 10,
+          "targetKind": "shared-chat",
+          "captureMode": "camera",
+          "cameraViewport": { "centerX": 0.5, "centerY": 0.5, "zoom": 1 },
+          "speechToText": true,
+          "speechOnDeviceOnly": true,
+          "speechInterimResults": true,
+          "speechLanguage": "en-US",
+          "audioSampleRate": 16000,
+          "projectPath": "/repo/scratch",
+          "sessionId": "claude-2",
+          "shareOwnerUserId": "owner-1",
+          "shareId": "share-1"
+        }
+      },
+      "output": true,
+      "inputSha256": "e69ce4ac4d060eeb34f8eb5ceaf6377d0eaef1d6ff66fe018a32c44a5bdefc49"
+    },
+    {
+      "id": "monitor-targets-007",
+      "name": "rejects project target selection mismatch",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "targetMatchesSettings",
+      "input": {
+        "name": "rejects project target selection mismatch",
+        "api": "targetMatchesSettings",
+        "target": {
+          "kind": "project-agent",
+          "id": "project:/repo/aimux:claude-1",
+          "projectPath": "/repo/aimux",
+          "projectName": "aimux",
+          "sessionId": "claude-1",
+          "sessionLabel": "Claude",
+          "status": "running",
+          "endpoint": { "host": "127.0.0.1", "port": 43192 }
+        },
+        "settings": {
+          "intervalSeconds": 10,
+          "targetKind": "project-agent",
+          "captureMode": "camera",
+          "cameraViewport": { "centerX": 0.5, "centerY": 0.5, "zoom": 1 },
+          "speechToText": true,
+          "speechOnDeviceOnly": true,
+          "speechInterimResults": true,
+          "speechLanguage": "en-US",
+          "audioSampleRate": 16000,
+          "projectPath": "/repo/aimux",
+          "sessionId": "other",
+          "shareOwnerUserId": null,
+          "shareId": null
+        }
+      },
+      "output": false,
+      "inputSha256": "664af5739955a8c3da988b2ef5a8c9f6e229c7ba8d5507390f1953e513ee269b"
+    },
+    {
+      "id": "monitor-targets-008",
+      "name": "labels project targets with project and session",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorTargetLabel",
+      "input": {
+        "name": "labels project targets with project and session",
+        "api": "monitorTargetLabel",
+        "target": {
+          "kind": "project-agent",
+          "id": "project:/repo/aimux:claude-1",
+          "projectPath": "/repo/aimux",
+          "projectName": "aimux",
+          "sessionId": "claude-1",
+          "sessionLabel": "Claude",
+          "status": "running",
+          "endpoint": { "host": "127.0.0.1", "port": 43192 }
+        }
+      },
+      "output": "aimux / Claude",
+      "inputSha256": "f19ee0b868373f4a552cb422124d9a938c78428ae5d68893125fa4282512cd7f"
+    },
+    {
+      "id": "monitor-targets-009",
+      "name": "labels shared targets as shared chat",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorTargetLabel",
+      "input": {
+        "name": "labels shared targets as shared chat",
+        "api": "monitorTargetLabel",
+        "target": {
+          "kind": "shared-chat",
+          "id": "shared:owner-1:share-1",
+          "ownerUserId": "owner-1",
+          "shareId": "share-1",
+          "projectRoot": "/repo/scratch",
+          "projectName": "scratch",
+          "sessionId": "claude-2",
+          "sessionLabel": "claude-2",
+          "endpoint": { "host": "relay", "port": 443 }
+        }
+      },
+      "output": "scratch shared chat",
+      "inputSha256": "3bc980160a424333e34a8d7b37e1042c60c25b03f0efd8d2e52f18dc05754bed"
+    },
+    {
+      "id": "monitor-targets-010",
+      "name": "labels missing targets with chooser copy",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorTargetLabel",
+      "input": { "name": "labels missing targets with chooser copy", "api": "monitorTargetLabel", "target": null },
+      "output": "Choose a destination before starting.",
+      "inputSha256": "f93f9f809c4b7bf471960619e41bbaeef72b784d2772d085e608a9a93ecc101b"
+    },
+    {
+      "id": "monitor-targets-011",
+      "name": "builds project target ids",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorProjectTargetId",
+      "input": {
+        "name": "builds project target ids",
+        "api": "monitorProjectTargetId",
+        "projectPath": "/repo/aimux",
+        "sessionId": "claude-1"
+      },
+      "output": "project:/repo/aimux:claude-1",
+      "inputSha256": "0bede34a6f8c3203b2f8e636b07f0d042279f68f63d8be38a9cd95c20e7a416a"
+    },
+    {
+      "id": "monitor-targets-012",
+      "name": "builds shared target ids",
+      "source": "app/lib/monitor-targets.test.ts",
+      "api": "monitorSharedTargetId",
+      "input": {
+        "name": "builds shared target ids",
+        "api": "monitorSharedTargetId",
+        "ownerUserId": "owner-1",
+        "shareId": "share-1"
+      },
+      "output": "shared:owner-1:share-1",
+      "inputSha256": "88c6dd7e123b9a080bc39a85bcf71e98149cd4d59ca503e7ffc1177be30b8474"
+    }
+  ]
+}
