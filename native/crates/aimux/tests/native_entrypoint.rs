@@ -34,6 +34,41 @@ fn build_info_stays_native_even_when_node_fallback_is_configured() {
 }
 
 #[test]
+fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-root-help-version");
+    fs::write(root.join("VERSION"), "9.8.7-test\n").expect("write version");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let version = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", &node)
+        .arg("--version")
+        .output()
+        .expect("run native aimux version");
+    assert!(version.status.success());
+    assert_eq!(String::from_utf8_lossy(&version.stdout), "9.8.7-test\n");
+    assert!(
+        !log.exists(),
+        "root --version should not invoke node fallback"
+    );
+
+    let help = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .arg("--help")
+        .output()
+        .expect("run native aimux help");
+    assert!(help.status.success());
+    let stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(stdout.contains("Native CLI agent multiplexer"));
+    assert!(stdout.contains("compact"));
+    assert!(stdout.contains("doctor"));
+    assert!(!log.exists(), "root --help should not invoke node fallback");
+    cleanup(root);
+}
+
+#[test]
 fn ui_command_stays_native_even_when_node_fallback_is_configured() {
     let root = temp_root("native-ui");
     let log = root.join("node.log");

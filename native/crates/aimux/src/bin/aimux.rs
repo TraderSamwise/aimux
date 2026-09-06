@@ -20,6 +20,7 @@ use aimux::root_session_launch::{parse_root_resume_args, resume_saved_sessions};
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::process::ExitCode;
@@ -108,6 +109,14 @@ enum RewriteCommand {
 fn main() -> Result<ExitCode> {
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     let stripped_args = core_command_args(&raw_args);
+    if is_root_version_request(&stripped_args) {
+        println!("{}", aimux_package_version());
+        return Ok(ExitCode::SUCCESS);
+    }
+    if is_root_help_request(&stripped_args) {
+        print_root_help();
+        return Ok(ExitCode::SUCCESS);
+    }
     let process_argv = std::iter::once("node".to_owned())
         .chain(std::iter::once("aimux".to_owned()))
         .chain(raw_args.clone())
@@ -212,6 +221,48 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "__dashboard-internal-native" => true,
         _ => false,
     }
+}
+
+fn is_root_version_request(args: &[String]) -> bool {
+    matches!(args, [flag] if flag == "--version" || flag == "-V")
+}
+
+fn is_root_help_request(args: &[String]) -> bool {
+    matches!(args, [flag] if flag == "--help" || flag == "-h")
+}
+
+fn aimux_package_version() -> String {
+    let root = std::env::var_os("AIMUX_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(PathBuf::from))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+    let version_path = root.join("VERSION");
+    if let Ok(version) = fs::read_to_string(&version_path) {
+        let version = version.trim();
+        if !version.is_empty() {
+            return version.to_owned();
+        }
+    }
+    let package_path = root.join("package.json");
+    fs::read_to_string(package_path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|pkg| {
+            pkg.get("version")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "0.0.0".into())
+}
+
+fn print_root_help() {
+    println!(
+        "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --tmux-dashboard-internal    Internal tmux dashboard entrypoint\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  ps                           List running agent sessions\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  notify                       Send a notification\n  list-notifications           List notifications\n  clear-notifications          Clear notifications\n  read-notifications           Mark notifications read\n"
+    );
 }
 
 fn run_root_dashboard_command() -> Result<ExitCode> {
