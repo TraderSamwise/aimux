@@ -116,6 +116,7 @@ pub mod runtime_topology_store_contract;
 pub mod runtime_topology_worktrees;
 pub mod runtime_topology_worktrees_services_contract;
 pub mod session_bootstrap;
+pub mod session_launch;
 pub mod session_recency;
 pub mod session_runtime;
 pub mod session_viewed;
