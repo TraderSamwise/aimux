@@ -105,6 +105,31 @@ fn builds_dashboard_action_post_request() {
     assert_eq!(request.body.as_deref(), Some(r#"{"sessionId":"codex-1"}"#));
 }
 
+#[test]
+fn builds_statusline_refresh_post_request_for_dashboard_client() {
+    let request = build_project_service_json_request(
+        &endpoint(),
+        DaemonHttpMethod::Post,
+        routes::STATUSLINE_REFRESH,
+        Some(json!({
+            "sessionId": "aimux-proj-client-1234abcd",
+            "force": true,
+        })),
+    )
+    .expect("request");
+
+    assert_eq!(request.url, "http://127.0.0.1:44191/statusline/refresh");
+    assert_eq!(request.method, DaemonHttpMethod::Post);
+    assert_eq!(
+        request.headers.get("content-type").unwrap(),
+        "application/json"
+    );
+    let body: serde_json::Value =
+        serde_json::from_str(request.body.as_deref().expect("body")).expect("json");
+    assert_eq!(body["force"], true);
+    assert_eq!(body["sessionId"], "aimux-proj-client-1234abcd");
+}
+
 fn endpoint() -> ProjectServiceEndpoint {
     ProjectServiceEndpoint {
         host: "127.0.0.1".into(),

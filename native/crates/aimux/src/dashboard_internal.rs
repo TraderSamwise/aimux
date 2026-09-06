@@ -1,7 +1,7 @@
 use crate::config::load_config_for_project;
 use crate::dashboard_client::{
     ProjectServiceEndpoint, execute_dashboard_action, fetch_dashboard_resource,
-    fetch_desktop_state, resolve_project_service_endpoint,
+    fetch_desktop_state, refresh_dashboard_statusline, resolve_project_service_endpoint,
 };
 use crate::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardScreen, DashboardSubscreenAction,
@@ -163,8 +163,17 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             );
             stdout.write_all(frame.frame.as_bytes())?;
             stdout.flush()?;
-            if let Some(ui_state) = ui_state.as_mut() {
-                let _ = ui_state.persist_screen(controller.screen);
+            let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
+                ui_state
+                    .persist_screen(controller.screen)
+                    .unwrap_or(false)
+                    .then(|| ui_state.client_session().to_owned())
+            });
+            if let (Some(endpoint), Some(client_session)) = (
+                loaded.endpoint.as_ref(),
+                statusline_client_session.as_deref(),
+            ) {
+                let _ = refresh_dashboard_statusline(endpoint, client_session);
             }
             scroll_offset = frame.scroll_offset;
             if !ready_marked {

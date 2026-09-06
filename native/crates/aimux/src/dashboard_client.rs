@@ -6,7 +6,7 @@ use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_model::DesktopStateSnapshot;
 use crate::project_api_contract::routes;
 use anyhow::{Context, Result, anyhow};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -96,6 +96,28 @@ pub fn execute_dashboard_action(
         || response.json.get("ok").and_then(Value::as_bool) == Some(false)
     {
         return Err(anyhow!("dashboard action failed: {}", response.status));
+    }
+    Ok(response.json)
+}
+
+pub fn refresh_dashboard_statusline(
+    endpoint: &ProjectServiceEndpoint,
+    client_session: &str,
+) -> Result<Value> {
+    let response = execute_loopback_json_request(&build_project_service_json_request(
+        endpoint,
+        DaemonHttpMethod::Post,
+        routes::STATUSLINE_REFRESH,
+        Some(json!({
+            "sessionId": client_session,
+            "force": true,
+        })),
+    )?)
+    .map_err(map_transport_error)?;
+    if !(200..300).contains(&response.status)
+        || response.json.get("ok").and_then(Value::as_bool) == Some(false)
+    {
+        return Err(anyhow!("statusline refresh failed: {}", response.status));
     }
     Ok(response.json)
 }

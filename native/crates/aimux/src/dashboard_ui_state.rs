@@ -10,6 +10,7 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct DashboardUiStatePersistence {
     path: PathBuf,
+    client_session: String,
     last_screen: Option<DashboardScreen>,
 }
 
@@ -30,16 +31,20 @@ impl DashboardUiStatePersistence {
             .as_ref()
             .join(format!("dashboard-ui-client-{client_key}.json"));
         let last_screen = read_dashboard_screen(&path);
-        Ok(Self { path, last_screen })
+        Ok(Self {
+            path,
+            client_session: client_session.to_owned(),
+            last_screen,
+        })
     }
 
     pub fn load_screen(&self) -> Option<DashboardScreen> {
         self.last_screen
     }
 
-    pub fn persist_screen(&mut self, screen: DashboardScreen) -> Result<()> {
+    pub fn persist_screen(&mut self, screen: DashboardScreen) -> Result<bool> {
         if self.last_screen == Some(screen) {
-            return Ok(());
+            return Ok(false);
         }
         let mut snapshot = fs::read_to_string(&self.path)
             .ok()
@@ -50,11 +55,15 @@ impl DashboardUiStatePersistence {
         write_json_atomic(&self.path, &snapshot)
             .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
         self.last_screen = Some(screen);
-        Ok(())
+        Ok(true)
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn client_session(&self) -> &str {
+        &self.client_session
     }
 }
 

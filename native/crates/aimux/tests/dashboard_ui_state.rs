@@ -30,15 +30,37 @@ fn reads_existing_screen_and_preserves_other_client_fields() {
     let mut state = DashboardUiStatePersistence::new(&root, "aimux-proj-client-1234abcd")
         .expect("create ui state");
     assert_eq!(state.load_screen(), Some(DashboardScreen::Library));
-    state
+    let changed = state
         .persist_screen(DashboardScreen::Topology)
         .expect("persist screen");
+    assert!(changed);
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).expect("read state")).expect("json");
     assert_eq!(saved["screen"], "topology");
     assert_eq!(saved["level"], "sessions");
     assert_eq!(saved["selectedEntryId"], "codex-1");
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn skips_write_when_screen_is_unchanged() {
+    let root = temp_dir("dashboard-ui-state-unchanged");
+    fs::create_dir_all(&root).expect("create temp dir");
+    let path = root.join("dashboard-ui-client-client.json");
+    fs::write(&path, r#"{"screen":"topology","level":"sessions"}"#).expect("seed state");
+
+    let mut state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+    assert!(
+        !state
+            .persist_screen(DashboardScreen::Topology)
+            .expect("persist screen")
+    );
+    assert_eq!(
+        fs::read_to_string(&path).expect("read state"),
+        r#"{"screen":"topology","level":"sessions"}"#
+    );
+    assert_eq!(state.client_session(), "client");
     fs::remove_dir_all(root).ok();
 }
 
