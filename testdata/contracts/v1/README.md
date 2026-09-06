@@ -14,3 +14,13 @@ Priority fixture groups:
 4. `ansi`: SGR spans and terminal display formatting.
 5. `tmux`: command argv, inventory rows, pane captures, statusline artifacts.
 6. `project-catalog`: registry, topology, desktop-state project summaries.
+
+## Agent Output
+
+- `agent-output/parser-adversarial.json`: golden `{ input, output }` cases
+  captured by running the TypeScript `parseAgentOutput` implementation against
+  the exported adversarial fixtures and `src/agent-output-parser.test.ts`
+  literals.
+- `agent-output/parser-fuzz.json`: frozen deterministic parser fuzz corpus
+  captured by running the TypeScript fuzz generator in
+  `src/agent-output-parser-fuzz.test.ts`.
