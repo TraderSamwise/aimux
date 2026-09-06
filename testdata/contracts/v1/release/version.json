@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "source": "src/version.test.ts",
+  "generatedBy": "scripts/capture-version-contract.mjs",
+  "description": "Installed artifact version and build-profile label precedence captured by running TypeScript version/build-profile helpers against temporary package roots.",
+  "cases": [
+    {
+      "id": "release-version-001",
+      "name": "prefers the installed artifact VERSION label",
+      "source": "src/version.test.ts",
+      "sourceName": "prefers the installed artifact VERSION label",
+      "api": "readAimuxVersionFromPackageRoot",
+      "input": {
+        "api": "readAimuxVersionFromPackageRoot",
+        "files": { "VERSION": "local-c8abfdc6\n", "package.json": "{\"version\":\"0.1.28\"}" }
+      },
+      "output": "local-c8abfdc6",
+      "inputSha256": "e84b3a51e5e34712e730eef037962c0f6a07b1f9d7941097ee8cfda03305de32"
+    },
+    {
+      "id": "release-version-002",
+      "name": "falls back to package.json for source checkouts",
+      "source": "src/version.test.ts",
+      "sourceName": "falls back to package.json for source checkouts",
+      "api": "readAimuxVersionFromPackageRoot",
+      "input": { "api": "readAimuxVersionFromPackageRoot", "files": { "package.json": "{\"version\":\"0.1.28\"}" } },
+      "output": "0.1.28",
+      "inputSha256": "cea3d5fadf68fe7a3d28836b3946e3bec8458e28f50bd10cf3680d3242d93e31"
+    },
+    {
+      "id": "release-version-003",
+      "name": "falls back to 0.0.0 when no version source is readable",
+      "source": "src/version.test.ts",
+      "sourceName": "falls back to 0.0.0 when no version source is readable",
+      "api": "readAimuxVersionFromPackageRoot",
+      "input": { "api": "readAimuxVersionFromPackageRoot", "files": {} },
+      "output": "0.0.0",
+      "inputSha256": "58b012c273b3ba55e23610435cbe748c134240821e19a76bfe15136a25fb55f0"
+    },
+    {
+      "id": "release-version-004",
+      "name": "prefers the installed artifact BUILD_PROFILE label",
+      "source": "src/version.test.ts",
+      "sourceName": "prefers the installed artifact BUILD_PROFILE label",
+      "api": "readAimuxBuildProfileFromPackageRoot",
+      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "BUILD_PROFILE": "local\n" } },
+      "output": "local",
+      "inputSha256": "eb9181b4705ab89d4aaf651ab544d1c23a5cba1535050396511b19d78a961f25"
+    },
+    {
+      "id": "release-version-005",
+      "name": "falls back to full for source checkouts and older installs",
+      "source": "src/version.test.ts",
+      "sourceName": "falls back to full for source checkouts and older installs",
+      "api": "readAimuxBuildProfileFromPackageRoot",
+      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "envBuildProfile": null, "files": {} },
+      "output": "full",
+      "inputSha256": "b0493657dc220747f7db282a09b621f468ebd6242b3c62d8f810c61e289c290b"
+    },
+    {
+      "id": "release-version-006",
+      "name": "ignores unknown artifact labels",
+      "source": "src/version.test.ts",
+      "sourceName": "ignores unknown artifact labels",
+      "api": "readAimuxBuildProfileFromPackageRoot",
+      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "BUILD_PROFILE": "enterprise\n" } },
+      "output": "full",
+      "inputSha256": "bdbf092606d5599548d87ddf595c5b2d1abe21b45ec9cba8ead3f1ec8602f59f"
+    }
+  ]
+}

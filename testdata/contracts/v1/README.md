@@ -321,6 +321,9 @@ Priority fixture groups:
 - `release/asset.json`: release asset shell packaging checks for Rust CLI
   build/copy/chmod, build-stamp native-artifact coherence, and Node payload
   exclusion captured by evaluating the TypeScript release-asset contract.
+- `release/version.json`: installed artifact `VERSION` and `BUILD_PROFILE`
+  label precedence plus source-checkout fallback behavior captured by running
+  TypeScript version/build-profile helpers.
 
 ## Relay
 
