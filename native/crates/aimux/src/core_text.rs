@@ -673,6 +673,38 @@ pub fn render_core_notification_clear_lines(payload: &Value) -> Vec<String> {
     )]
 }
 
+pub fn render_core_work_outline_entries_lines(entries: &[Value]) -> Vec<String> {
+    if entries.is_empty() {
+        return vec!["No scribe notes.".into()];
+    }
+    let mut lines = Vec::new();
+    for entry in entries {
+        let session_ids = array(entry, "sessionIds")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        let session_text = if session_ids.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", session_ids.join(","))
+        };
+        let worktree_text = field(entry, "worktreePath")
+            .and_then(Value::as_str)
+            .map(|value| format!(" · {value}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "{} [{}] {}{}{}",
+            js_string(field(entry, "entryId")),
+            js_string(field(entry, "status")),
+            js_string(field(entry, "title")),
+            session_text,
+            worktree_text
+        ));
+        lines.push(format!("  {}", js_string(field(entry, "summary"))));
+    }
+    lines
+}
+
 fn render_worktree_table_lines(
     worktrees: Vec<&serde_json::Map<String, Value>>,
     fallback: &str,

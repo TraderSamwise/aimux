@@ -41,6 +41,7 @@ use crate::daemon::text::operations::{
 };
 use crate::daemon::text::overseer::DaemonOverseerTextRuntime;
 use crate::daemon::text::params::ProjectServiceJsonResult;
+use crate::daemon::text::project_content::DaemonProjectContentTextRuntime;
 use crate::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use crate::daemon::text::team::DaemonTeamTextRuntime;
 use crate::daemon::text::worktrees::{CLI_PROJECT_MUTATION_TIMEOUT_MS, DaemonWorktreeTextRuntime};
@@ -1167,6 +1168,26 @@ impl DaemonWorktreeTextRuntime for RealDaemonRuntime {
 }
 
 impl DaemonCollaborationTextRuntime for RealDaemonRuntime {
+    fn get_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        self.request_project_service_json(project, route_path, None, None)
+    }
+
+    fn post_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Value,
+        timeout_ms: Option<u64>,
+    ) -> ProjectServiceJsonResult {
+        self.request_project_service_json(project, route_path, Some(body), timeout_ms)
+    }
+}
+
+impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
     fn get_project_service_json(
         &mut self,
         project: &str,

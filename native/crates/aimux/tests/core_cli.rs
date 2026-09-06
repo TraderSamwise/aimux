@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
     CoreCliContext {
+        current_working_dir: "/repo/subdir".into(),
         current_project_root: "/repo".into(),
         daemon_running,
         has_credentials,
@@ -366,6 +367,110 @@ fn notification_aliases_plan_native_text_routes_with_resolved_project() {
                 "id": null,
                 "ids": ["note-4", "note-5"],
                 "sessionId": null,
+            })),
+        }
+    );
+}
+
+#[test]
+fn outline_and_attachment_commands_plan_native_text_routes() {
+    let list = classify_core_cli_with_project_resolver(
+        &[
+            "outline",
+            "list",
+            "--project",
+            "./child",
+            "--session=codex-1",
+            "--worktree",
+            "feature",
+            "--status=active",
+            "--search=parser work",
+            "--limit",
+            "5",
+            "--json",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("outline list plan");
+    assert_eq!(list.operation, CoreCliOperation::OutlineList);
+    assert_eq!(
+        list.action,
+        CoreCliAction::TextRoute {
+            path: "/core/outline/list-text?project=%2Fresolved%2F.%2Fchild&session=codex-1&worktree=feature&status=active&search=parser%20work&limit=5&json=1".into(),
+            body: None,
+        }
+    );
+
+    let show = classify_core_cli(&["outline", "show", "outline-1"], &context(true, true))
+        .expect("outline show plan");
+    assert_eq!(show.operation, CoreCliOperation::OutlineShow);
+    assert_eq!(
+        show.action,
+        CoreCliAction::TextRoute {
+            path: "/core/outline/list-text?project=%2Frepo&entryId=outline-1".into(),
+            body: None,
+        }
+    );
+
+    let update = classify_core_cli(
+        &[
+            "outline",
+            "update",
+            "--title",
+            "Parser",
+            "--summary=Port it",
+            "--topic-key=parser",
+            "--session=codex-1",
+            "--worktree=feature",
+            "--status=done",
+            "--source=scribe",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("outline update plan");
+    assert_eq!(update.operation, CoreCliOperation::OutlineUpdate);
+    assert_eq!(
+        update.action,
+        CoreCliAction::TextRoute {
+            path: "/core/outline/update-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "title": "Parser",
+                "summary": "Port it",
+                "topicKey": "parser",
+                "sessionId": "codex-1",
+                "worktreePath": "feature",
+                "status": "done",
+                "source": "scribe",
+            })),
+        }
+    );
+
+    let attachment = classify_core_cli(
+        &[
+            "attachment",
+            "publish",
+            "notes/out.txt",
+            "--session=codex-1",
+            "--name=Output.txt",
+            "--mime=text/plain",
+        ],
+        &context(true, true),
+    )
+    .expect("attachment publish plan");
+    assert_eq!(attachment.operation, CoreCliOperation::AttachmentPublish);
+    assert_eq!(
+        attachment.action,
+        CoreCliAction::TextRoute {
+            path: "/core/attachment/publish-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "path": "/repo/subdir/notes/out.txt",
+                "sessionId": "codex-1",
+                "filename": "Output.txt",
+                "mimeType": "text/plain",
             })),
         }
     );

@@ -6,15 +6,16 @@ use aimux::core_cli_routing::{
     CoreWorktreeArgs, core_command_args, has_core_global_logging_args, is_core_cli_command,
     is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_collaboration_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
-    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_attachment_publish_args, parse_core_collaboration_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
+    parse_core_graveyard_args, parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
-    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
-    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
-    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_repair_args, parse_core_restart_args,
+    parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
+    parse_core_thread_args, parse_core_worktree_args,
 };
 
 #[test]
@@ -585,6 +586,87 @@ fn notification_parser_matches_cli_alias_forms() {
     assert!(parse_core_notification_args(&["notify", "--body", "Ready"]).is_none());
     assert!(parse_core_notification_args(&["list-notifications", "--title", "x"]).is_none());
     assert!(parse_core_notification_args(&["clear-notifications", "--project", "-repo"]).is_none());
+}
+
+#[test]
+fn outline_and_attachment_parsers_match_cli_forms() {
+    let list = parse_core_outline_args(&[
+        "outline",
+        "list",
+        "--project=/repo",
+        "--session",
+        "codex-1",
+        "--worktree=feature",
+        "--status=active",
+        "--search",
+        "parser",
+        "--limit=5",
+        "--json",
+    ])
+    .expect("outline list args");
+    assert_eq!(list.subcommand, "list");
+    assert_eq!(list.project.as_deref(), Some("/repo"));
+    assert_eq!(list.session.as_deref(), Some("codex-1"));
+    assert_eq!(list.worktree.as_deref(), Some("feature"));
+    assert_eq!(list.status.as_deref(), Some("active"));
+    assert_eq!(list.search.as_deref(), Some("parser"));
+    assert_eq!(list.limit.as_deref(), Some("5"));
+    assert!(list.json);
+
+    let show = parse_core_outline_args(&["outline", "show", "outline-1", "--project", "/repo"])
+        .expect("outline show args");
+    assert_eq!(show.entry_id.as_deref(), Some("outline-1"));
+    assert_eq!(show.project.as_deref(), Some("/repo"));
+
+    let update = parse_core_outline_args(&[
+        "outline",
+        "update",
+        "--title=Parser",
+        "--summary",
+        "Port it",
+        "--topic-key=parser",
+        "--session=codex-1",
+        "--worktree=feature",
+        "--source=scribe",
+    ])
+    .expect("outline update args");
+    assert_eq!(update.title.as_deref(), Some("Parser"));
+    assert_eq!(update.summary.as_deref(), Some("Port it"));
+    assert_eq!(update.topic_key.as_deref(), Some("parser"));
+    assert_eq!(update.source.as_deref(), Some("scribe"));
+
+    let attachment = parse_core_attachment_publish_args(&[
+        "attachment",
+        "publish",
+        "notes.txt",
+        "--session=codex-1",
+        "--project=/repo",
+        "--name",
+        "Notes.md",
+        "--mime=text/markdown",
+        "--json",
+    ])
+    .expect("attachment publish args");
+    assert_eq!(attachment.path, "notes.txt");
+    assert_eq!(attachment.session, "codex-1");
+    assert_eq!(attachment.project.as_deref(), Some("/repo"));
+    assert_eq!(attachment.name.as_deref(), Some("Notes.md"));
+    assert_eq!(attachment.mime.as_deref(), Some("text/markdown"));
+    assert!(attachment.json);
+
+    assert!(parse_core_outline_args(&["outline", "show"]).is_none());
+    assert!(parse_core_outline_args(&["outline", "update", "--title", "x"]).is_none());
+    assert!(parse_core_attachment_publish_args(&["attachment", "publish", "notes.txt"]).is_none());
+    assert!(
+        parse_core_attachment_publish_args(&[
+            "attachment",
+            "publish",
+            "notes.txt",
+            "--session",
+            "-bad"
+        ])
+        .is_none()
+    );
 }
 
 #[test]

@@ -268,8 +268,10 @@ pub fn run_core_cli_with(
     raw_args: &[String],
     runtime: &mut impl CoreCliRuntime,
 ) -> CoreCliExecution {
-    let current_project_root = runtime.resolve_project_root(&runtime.cwd());
+    let current_working_dir = runtime.cwd();
+    let current_project_root = runtime.resolve_project_root(&current_working_dir);
     let context = CoreCliContext {
+        current_working_dir,
         current_project_root,
         daemon_running: runtime.load_daemon_info().is_some(),
         has_credentials: runtime.has_remote_credentials(),

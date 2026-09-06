@@ -20,6 +20,7 @@ use aimux::daemon::text::operations::{
 };
 use aimux::daemon::text::overseer::DaemonOverseerTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
+use aimux::daemon::text::project_content::DaemonProjectContentTextRuntime;
 use aimux::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
@@ -69,6 +70,51 @@ impl FakeRouterRuntime {
             project_routes::live_pane::OUTPUT => {
                 ProjectServiceJsonResult::ok("/repo", json!({ "ok": true, "output": "pane" }))
             }
+            project_routes::work_outline::LIST => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "entries": [{
+                        "entryId": "outline-1",
+                        "status": "active",
+                        "title": "Parser",
+                        "summary": "Port it",
+                        "sessionIds": ["codex-1"],
+                        "worktreePath": "/repo/worktrees/feature"
+                    }]
+                }),
+            ),
+            _ if route_path.starts_with(project_routes::work_outline::LIST) => {
+                if route_path.contains("entryId=") {
+                    ProjectServiceJsonResult::ok(
+                        "/repo",
+                        json!({
+                            "ok": true,
+                            "entry": {
+                                "entryId": "outline-1",
+                                "status": "active",
+                                "title": "Parser",
+                                "summary": "Port it",
+                                "sessionIds": ["codex-1"]
+                            }
+                        }),
+                    )
+                } else {
+                    ProjectServiceJsonResult::ok(
+                        "/repo",
+                        json!({
+                            "ok": true,
+                            "entries": [{
+                                "entryId": "outline-1",
+                                "status": "active",
+                                "title": "Parser",
+                                "summary": "Port it",
+                                "sessionIds": ["codex-1"]
+                            }]
+                        }),
+                    )
+                }
+            }
             _ if route_path.starts_with(project_routes::live_pane::OUTPUT) => {
                 ProjectServiceJsonResult::ok("/repo", json!({ "ok": true, "output": "pane" }))
             }
@@ -84,7 +130,33 @@ impl FakeRouterRuntime {
     ) -> ProjectServiceJsonResult {
         self.calls
             .push(format!("post:{project}:{route_path}:{body}"));
-        ProjectServiceJsonResult::ok("/repo", json!({ "ok": true, "sessionId": "claude-1" }))
+        match route_path {
+            project_routes::work_outline::UPDATE => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "entry": {
+                        "entryId": "outline-1",
+                        "status": "active",
+                        "title": "Parser",
+                        "summary": "Port it",
+                        "sessionIds": ["codex-1"]
+                    }
+                }),
+            ),
+            project_routes::ATTACHMENTS_PUBLISH => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "referenceText": "Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt",
+                    "attachment": { "id": "att_1" }
+                }),
+            ),
+            _ => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({ "ok": true, "sessionId": "claude-1" }),
+            ),
+        }
     }
 }
 
@@ -512,6 +584,26 @@ impl DaemonCollaborationTextRuntime for FakeRouterRuntime {
     }
 }
 
+impl DaemonProjectContentTextRuntime for FakeRouterRuntime {
+    fn get_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        self.project_json_result(project, route_path)
+    }
+
+    fn post_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Value,
+        _timeout_ms: Option<u64>,
+    ) -> ProjectServiceJsonResult {
+        self.project_post_result(project, route_path, body)
+    }
+}
+
 impl DaemonAuthTextRuntime for FakeRouterRuntime {
     fn remote_status_text_payload(&self) -> Value {
         json!({ "credentials": null, "relay": { "status": "off" } })
@@ -723,6 +815,52 @@ fn unified_router_dispatches_status_command_and_split_text_modules() {
             .iter()
             .any(|call| call.starts_with("post:/repo:/set-activity:"))
     );
+
+    let outline = route_daemon_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?project=/repo&session=codex-1&search=parser",
+            CORE_API_ROUTES.outline_list_text
+        ),
+        None,
+        "issued",
+        &context,
+    );
+    assert_eq!(
+        text_body(outline),
+        "outline-1 [active] Parser · codex-1\n  Port it\n"
+    );
+    assert!(
+        runtime
+            .calls
+            .iter()
+            .any(|call| call == "get:/repo:/work-outline?sessionId=codex-1&q=parser")
+    );
+
+    let attachment = route_daemon_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.attachment_publish_text,
+        Some(&json!({
+            "project": "/repo",
+            "path": "/repo/notes.txt",
+            "sessionId": "codex-1",
+            "filename": "Notes.txt",
+            "mimeType": "text/plain"
+        })),
+        "issued",
+        &context,
+    );
+    assert_eq!(
+        text_body(attachment),
+        "Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt\n"
+    );
+    assert!(runtime.calls.iter().any(|call| {
+        call.starts_with("post:/repo:/attachments/publish:")
+            && call.contains("\"filename\":\"Notes.txt\"")
+            && call.contains("\"mimeType\":\"text/plain\"")
+    }));
 }
 
 #[test]

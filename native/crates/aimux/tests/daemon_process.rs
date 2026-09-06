@@ -18,6 +18,7 @@ use aimux::daemon::text::operations::{
 };
 use aimux::daemon::text::overseer::DaemonOverseerTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
+use aimux::daemon::text::project_content::DaemonProjectContentTextRuntime;
 use aimux::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
@@ -320,6 +321,26 @@ impl DaemonCollaborationTextRuntime for FakeRuntime {
 }
 
 impl DaemonNotificationTextRuntime for FakeRuntime {
+    fn get_project_service_json(
+        &mut self,
+        _project: &str,
+        _route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        Self::unsupported_json_result()
+    }
+
+    fn post_project_service_json(
+        &mut self,
+        _project: &str,
+        _route_path: &str,
+        _body: Value,
+        _timeout_ms: Option<u64>,
+    ) -> ProjectServiceJsonResult {
+        Self::unsupported_json_result()
+    }
+}
+
+impl DaemonProjectContentTextRuntime for FakeRuntime {
     fn get_project_service_json(
         &mut self,
         _project: &str,

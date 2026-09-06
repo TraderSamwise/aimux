@@ -165,6 +165,10 @@ impl CoreCliRuntime for FakeRuntime {
             "team ok\n".into()
         } else if path.starts_with("/core/notifications/") {
             "notifications ok\n".into()
+        } else if path.starts_with("/core/outline/") {
+            "outline ok\n".into()
+        } else if path.starts_with("/core/attachment/") {
+            "Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt\n".into()
         } else if path.starts_with("/core/task/")
             || path.starts_with("/core/review/")
             || path.starts_with("/core/message/")
@@ -1036,6 +1040,94 @@ fn notification_commands_execute_native_text_routes_without_core_command_fallbac
                     "id": null,
                     "ids": ["note-4", "note-5"],
                     "sessionId": null,
+                })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn outline_and_attachment_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime {
+        cwd: "/repo/subdir".into(),
+        ..FakeRuntime::default()
+    };
+
+    let list = run_core_cli_with(
+        &args(&[
+            "outline",
+            "list",
+            "--session=codex-1",
+            "--search=parser",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let show = run_core_cli_with(&args(&["outline", "show", "outline-1"]), &mut runtime);
+    let update = run_core_cli_with(
+        &args(&[
+            "outline",
+            "update",
+            "--title=Parser",
+            "--summary=Port it",
+            "--topic-key=parser",
+            "--session=codex-1",
+        ]),
+        &mut runtime,
+    );
+    let attachment = run_core_cli_with(
+        &args(&[
+            "attachment",
+            "publish",
+            "notes.txt",
+            "--session=codex-1",
+            "--name=Notes.txt",
+            "--mime=text/plain",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(list.stdout, ["outline ok"]);
+    assert_eq!(show.stdout, ["outline ok"]);
+    assert_eq!(update.stdout, ["outline ok"]);
+    assert_eq!(
+        attachment.stdout,
+        ["Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt"]
+    );
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/outline/list-text?project=%2Frepo&session=codex-1&search=parser&json=1"
+                    .into(),
+                None,
+            ),
+            (
+                "/core/outline/list-text?project=%2Frepo&entryId=outline-1".into(),
+                None,
+            ),
+            (
+                "/core/outline/update-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "title": "Parser",
+                    "summary": "Port it",
+                    "topicKey": "parser",
+                    "sessionId": "codex-1",
+                    "worktreePath": null,
+                    "status": null,
+                    "source": null,
+                })),
+            ),
+            (
+                "/core/attachment/publish-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "path": "/repo/subdir/notes.txt",
+                    "sessionId": "codex-1",
+                    "filename": "Notes.txt",
+                    "mimeType": "text/plain",
                 })),
             ),
         ]

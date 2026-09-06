@@ -17,6 +17,9 @@ use crate::daemon::text::notifications::{
 };
 use crate::daemon::text::operations::{DaemonOperationsTextRuntime, route_operations_text_request};
 use crate::daemon::text::overseer::{DaemonOverseerTextRuntime, route_overseer_text_request};
+use crate::daemon::text::project_content::{
+    DaemonProjectContentTextRuntime, route_project_content_text_request,
+};
 use crate::daemon::text::system::{DaemonSystemTextRuntime, route_system_text_request};
 use crate::daemon::text::team::{DaemonTeamTextRuntime, route_team_text_request};
 use crate::daemon::text::worktrees::{DaemonWorktreeTextRuntime, route_worktree_text_request};
@@ -37,6 +40,7 @@ pub trait DaemonRouteRuntime:
     + DaemonTeamTextRuntime
     + DaemonWorktreeTextRuntime
     + DaemonCollaborationTextRuntime
+    + DaemonProjectContentTextRuntime
     + DaemonAuthTextRuntime
     + DaemonJsonRouteRuntime
 {
@@ -55,6 +59,7 @@ impl<T> DaemonRouteRuntime for T where
         + DaemonTeamTextRuntime
         + DaemonWorktreeTextRuntime
         + DaemonCollaborationTextRuntime
+        + DaemonProjectContentTextRuntime
         + DaemonAuthTextRuntime
         + DaemonJsonRouteRuntime
 {
@@ -131,6 +136,9 @@ pub fn route_daemon_request(
         return response;
     }
     if let Some(response) = route_collaboration_text_request(runtime, method, path, body) {
+        return response;
+    }
+    if let Some(response) = route_project_content_text_request(runtime, method, path, body) {
         return response;
     }
     if let Some(response) = route_auth_text_request(runtime, method, path) {

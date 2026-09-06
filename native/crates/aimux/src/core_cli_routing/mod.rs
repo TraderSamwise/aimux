@@ -1107,6 +1107,249 @@ fn split_notification_ids(value: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn parse_core_outline_args<S: AsRef<str>>(args: &[S]) -> Option<CoreOutlineArgs> {
+    if args.first().map(AsRef::as_ref) != Some("outline") {
+        return None;
+    }
+    let subcommand = args.get(1).map(AsRef::as_ref)?;
+    if !matches!(subcommand, "list" | "show" | "update") {
+        return None;
+    }
+    let mut parsed = CoreOutlineArgs {
+        subcommand: subcommand.to_owned(),
+        entry_id: None,
+        project: None,
+        session: None,
+        worktree: None,
+        status: None,
+        search: None,
+        limit: None,
+        title: None,
+        summary: None,
+        topic_key: None,
+        source: None,
+        json: false,
+    };
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            parsed.project = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            parsed.project = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(subcommand, "list" | "update") && arg == "--session" {
+            parsed.session = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(subcommand, "list" | "update")
+            && let Some(value) = arg.strip_prefix("--session=")
+        {
+            parsed.session = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(subcommand, "list" | "update") && arg == "--worktree" {
+            parsed.worktree = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(subcommand, "list" | "update")
+            && let Some(value) = arg.strip_prefix("--worktree=")
+        {
+            parsed.worktree = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(subcommand, "list" | "update") && arg == "--status" {
+            parsed.status = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(subcommand, "list" | "update")
+            && let Some(value) = arg.strip_prefix("--status=")
+        {
+            parsed.status = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "list" && arg == "--search" {
+            parsed.search = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "list"
+            && let Some(value) = arg.strip_prefix("--search=")
+        {
+            parsed.search = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "list" && arg == "--limit" {
+            parsed.limit = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "list"
+            && let Some(value) = arg.strip_prefix("--limit=")
+        {
+            parsed.limit = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "update" && arg == "--title" {
+            parsed.title = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "update"
+            && let Some(value) = arg.strip_prefix("--title=")
+        {
+            parsed.title = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "update" && arg == "--summary" {
+            parsed.summary = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "update"
+            && let Some(value) = arg.strip_prefix("--summary=")
+        {
+            parsed.summary = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "update" && arg == "--topic-key" {
+            parsed.topic_key = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "update"
+            && let Some(value) = arg.strip_prefix("--topic-key=")
+        {
+            parsed.topic_key = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "update" && arg == "--source" {
+            parsed.source = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "update"
+            && let Some(value) = arg.strip_prefix("--source=")
+        {
+            parsed.source = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "show" && !arg.starts_with('-') && parsed.entry_id.is_none() {
+            parsed.entry_id = Some(arg.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    if subcommand == "show" && parsed.entry_id.is_none() {
+        return None;
+    }
+    if subcommand == "update" && (parsed.title.is_none() || parsed.summary.is_none()) {
+        return None;
+    }
+    Some(parsed)
+}
+
+pub fn parse_core_attachment_publish_args<S: AsRef<str>>(
+    args: &[S],
+) -> Option<CoreAttachmentPublishArgs> {
+    if args.first().map(AsRef::as_ref) != Some("attachment")
+        || args.get(1).map(AsRef::as_ref) != Some("publish")
+    {
+        return None;
+    }
+    let mut path = None;
+    let mut session = None;
+    let mut project = None;
+    let mut name = None;
+    let mut mime = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--session" {
+            session = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--session=") {
+            session = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            project = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            project = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--name" {
+            name = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--name=") {
+            name = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--mime" {
+            mime = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--mime=") {
+            mime = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || path.is_some() {
+            return None;
+        }
+        path = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreAttachmentPublishArgs {
+        path: path?,
+        session: session?,
+        project,
+        name,
+        mime,
+        json,
+    })
+}
+
 pub fn parse_core_collaboration_args<S: AsRef<str>>(args: &[S]) -> Option<CoreCollaborationArgs> {
     let command = args.first().map(AsRef::as_ref)?;
     let subcommand = args.get(1).map(AsRef::as_ref)?;
@@ -2653,6 +2896,10 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             Some("notify" | "list-notifications" | "read-notifications" | "clear-notifications"),
             _,
         ) => true,
+        (Some("outline"), Some("list" | "show" | "update")) => {
+            parse_core_outline_args(args).is_some()
+        }
+        (Some("attachment"), Some("publish")) => parse_core_attachment_publish_args(args).is_some(),
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,

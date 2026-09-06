@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    94,
+    97,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -49,6 +49,7 @@ define_string_contract!(
         agent_migrate_text => ("agentMigrateText", "/core/agents/migrate-text"),
         agent_ps_text => ("agentPsText", "/core/agents/ps-text"),
         agent_rename_text => ("agentRenameText", "/core/agents/rename-text"),
+        attachment_publish_text => ("attachmentPublishText", "/core/attachment/publish-text"),
         lifecycle_fork_text => ("lifecycleForkText", "/core/lifecycle/fork-text"),
         lifecycle_kill_text => ("lifecycleKillText", "/core/lifecycle/kill-text"),
         lifecycle_spawn_text => ("lifecycleSpawnText", "/core/lifecycle/spawn-text"),
@@ -65,6 +66,8 @@ define_string_contract!(
         notification_list_text => ("notificationListText", "/core/notifications/list-text"),
         notification_read_text => ("notificationReadText", "/core/notifications/read-text"),
         notification_send_text => ("notificationSendText", "/core/notifications/send-text"),
+        outline_list_text => ("outlineListText", "/core/outline/list-text"),
+        outline_update_text => ("outlineUpdateText", "/core/outline/update-text"),
         overseer_clear_text => ("overseerClearText", "/core/overseer/clear-text"),
         overseer_start_text => ("overseerStartText", "/core/overseer/start-text"),
         team_add_text => ("teamAddText", "/core/team/add-text"),

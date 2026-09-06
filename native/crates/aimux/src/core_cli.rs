@@ -2,15 +2,17 @@ use crate::core_cli_routing::{
     CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreHostRestartArgs, CoreLogsArgs,
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_collaboration_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
-    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
-    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_attachment_publish_args, parse_core_collaboration_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
+    parse_core_graveyard_args, parse_core_host_agent_read_args_result,
+    parse_core_host_agent_stream_args_result, parse_core_host_restart_args,
+    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
-    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
-    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
-    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_repair_args, parse_core_restart_args,
+    parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
+    parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -18,6 +20,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::path::{Path, PathBuf};
 
 pub const CORE_DIAGNOSTIC_TIMEOUT_MS: u64 = 1_000;
 
@@ -57,6 +60,10 @@ pub enum CoreCliOperation {
     NotificationList,
     NotificationRead,
     NotificationClear,
+    OutlineList,
+    OutlineShow,
+    OutlineUpdate,
+    AttachmentPublish,
     MessageSend,
     HandoffSend,
     HandoffAccept,
@@ -136,6 +143,7 @@ pub enum CoreCliFallback {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreCliContext {
+    pub current_working_dir: String,
     /// The caller resolves the current working directory through `findMainRepo`
     /// before planning. This module intentionally has no filesystem dependency.
     pub current_project_root: String,
@@ -601,6 +609,47 @@ fn notification_list_text_path(
     path
 }
 
+struct OutlineListTextPathArgs<'a> {
+    project: &'a str,
+    entry_id: Option<&'a str>,
+    session: Option<&'a str>,
+    worktree: Option<&'a str>,
+    status: Option<&'a str>,
+    search: Option<&'a str>,
+    limit: Option<&'a str>,
+    json: bool,
+}
+
+fn outline_list_text_path(args: OutlineListTextPathArgs<'_>) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.outline_list_text,
+        encode_query_component(args.project)
+    );
+    if let Some(entry_id) = args.entry_id {
+        push_text_query(&mut path, "entryId", entry_id);
+    }
+    if let Some(session) = args.session {
+        push_text_query(&mut path, "session", session);
+    }
+    if let Some(worktree) = args.worktree {
+        push_text_query(&mut path, "worktree", worktree);
+    }
+    if let Some(status) = args.status {
+        push_text_query(&mut path, "status", status);
+    }
+    if let Some(search) = args.search {
+        push_text_query(&mut path, "search", search);
+    }
+    if let Some(limit) = args.limit {
+        push_text_query(&mut path, "limit", limit);
+    }
+    if args.json {
+        push_text_query(&mut path, "json", "1");
+    }
+    path
+}
+
 fn task_list_text_path(
     project: &str,
     session: Option<&str>,
@@ -695,6 +744,32 @@ fn metadata_text_path(project: &str, args: &[String]) -> String {
         path.push_str(&encode_query_component(arg));
     }
     path
+}
+
+fn resolve_cwd_path(cwd: &str, path: &str) -> String {
+    let path = PathBuf::from(path);
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        Path::new(cwd).join(path)
+    };
+    normalize_path_syntax(resolved)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn normalize_path_syntax(path: PathBuf) -> PathBuf {
+    let mut output = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                output.pop();
+            }
+            _ => output.push(component.as_os_str()),
+        }
+    }
+    output
 }
 
 fn push_text_query(path: &mut String, name: &str, value: &str) {
@@ -1259,6 +1334,96 @@ where
             (
                 operation,
                 CoreCliAction::TextRoute { path, body },
+                CoreCliFallback::None,
+            )
+        }
+        ("outline", "list" | "show" | "update") => {
+            let parsed = parse_core_outline_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid outline arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, path, body) = match parsed.subcommand.as_str() {
+                "list" => (
+                    CoreCliOperation::OutlineList,
+                    outline_list_text_path(OutlineListTextPathArgs {
+                        project: &project_root,
+                        entry_id: None,
+                        session: parsed.session.as_deref(),
+                        worktree: parsed.worktree.as_deref(),
+                        status: parsed.status.as_deref(),
+                        search: parsed.search.as_deref(),
+                        limit: parsed.limit.as_deref(),
+                        json: parsed.json,
+                    }),
+                    None,
+                ),
+                "show" => (
+                    CoreCliOperation::OutlineShow,
+                    outline_list_text_path(OutlineListTextPathArgs {
+                        project: &project_root,
+                        entry_id: parsed.entry_id.as_deref(),
+                        session: None,
+                        worktree: None,
+                        status: None,
+                        search: None,
+                        limit: None,
+                        json: parsed.json,
+                    }),
+                    None,
+                ),
+                "update" => (
+                    CoreCliOperation::OutlineUpdate,
+                    text_route_path(CORE_API_ROUTES.outline_update_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "title": parsed.title,
+                        "summary": parsed.summary,
+                        "topicKey": parsed.topic_key,
+                        "sessionId": parsed.session,
+                        "worktreePath": parsed.worktree,
+                        "status": parsed.status,
+                        "source": parsed.source,
+                    })),
+                ),
+                _ => unreachable!("validated outline subcommand"),
+            };
+            (
+                operation,
+                CoreCliAction::TextRoute { path, body },
+                CoreCliFallback::None,
+            )
+        }
+        ("attachment", "publish") => {
+            let parsed = parse_core_attachment_publish_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid attachment publish arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::AttachmentPublish,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.attachment_publish_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "path": resolve_cwd_path(&context.current_working_dir, &parsed.path),
+                        "sessionId": parsed.session,
+                        "filename": parsed.name,
+                        "mimeType": parsed.mime,
+                    })),
+                },
                 CoreCliFallback::None,
             )
         }
