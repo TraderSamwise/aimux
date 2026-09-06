@@ -245,6 +245,15 @@ impl DaemonOperationsTextRuntime for FakeRouterRuntime {
         ))
     }
 
+    fn post_project_service_json(
+        &mut self,
+        project_root: &str,
+        route_path: &str,
+        body: Value,
+    ) -> aimux::daemon::text::params::ProjectServiceJsonResult {
+        self.project_post_result(project_root, route_path, body)
+    }
+
     fn restart_control_plane(
         &mut self,
         _issued_at: &str,

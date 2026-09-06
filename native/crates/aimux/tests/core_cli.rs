@@ -850,6 +850,60 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn metadata_and_repair_commands_plan_native_text_routes() {
+    let metadata = classify_core_cli(
+        &[
+            "metadata",
+            "event",
+            "claude-1",
+            "ready",
+            "--message",
+            "needs review",
+        ],
+        &context(true, true),
+    )
+    .expect("metadata plan");
+    assert_eq!(metadata.operation, CoreCliOperation::Metadata);
+    assert_eq!(
+        metadata.action,
+        CoreCliAction::TextRoute {
+            path: "/core/metadata-text?project=%2Frepo&arg=metadata&arg=event&arg=claude-1&arg=ready&arg=--message&arg=needs%20review".into(),
+            body: None,
+        }
+    );
+
+    let repair = classify_core_cli_with_project_resolver(
+        &["repair", "--project-root", "./child", "--open", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("repair plan");
+    assert_eq!(repair.operation, CoreCliOperation::Repair);
+    assert_eq!(
+        repair.action,
+        CoreCliAction::TextRoute {
+            path: "/core/repair-text?json=1".into(),
+            body: Some(json!({ "projectRoot": "/resolved/./child", "open": true })),
+        }
+    );
+
+    let exchange = classify_core_cli_with_project_resolver(
+        &["repair", "exchange", "--project=./child", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("repair exchange plan");
+    assert_eq!(exchange.operation, CoreCliOperation::RepairExchange);
+    assert_eq!(
+        exchange.action,
+        CoreCliAction::TextRoute {
+            path: "/core/repair-exchange-text?json=1".into(),
+            body: Some(json!({ "projectRoot": "/resolved/./child" })),
+        }
+    );
+}
+
+#[test]
 fn agent_ps_plans_native_text_route_with_project_resolution() {
     let plan = classify_core_cli_with_project_resolver(
         &["ps", "--project", "./child dir", "--json"],

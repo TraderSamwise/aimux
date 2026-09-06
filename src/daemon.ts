@@ -317,6 +317,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.projectRestartText,
   CORE_API_ROUTES.projectServeText,
   CORE_API_ROUTES.projectStopText,
+  CORE_API_ROUTES.repairExchangeText,
   CORE_API_ROUTES.repairText,
   CORE_API_ROUTES.restartText,
   CORE_API_ROUTES.runtimeRestartText,
@@ -3377,6 +3378,83 @@ export class AimuxDaemon {
     }
   }
 
+  private async repairExchangeTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectParam = this.stringParam(routeUrl, body, "projectRoot") ?? this.stringParam(routeUrl, body, "project");
+    if (!projectParam) {
+      return this.textError(400, "projectRoot query is required");
+    }
+    const projectRoot = this.resolveProjectRoot(pathResolve(projectParam));
+    const result = await this.postProjectServiceJson(projectRoot, PROJECT_API_ROUTES.runtime.compactExchange, {});
+    if (!result.ok) return result.response;
+    const compact = (result.json.result ?? {}) as any;
+    const lines = [
+      `Project: ${projectRoot}`,
+      `Path: ${compact.path ?? "unknown"}`,
+      `Bytes: ${compact.bytesBefore ?? 0} -> ${compact.bytesAfter ?? 0}`,
+      `Removed records: ${compact.removed?.totalRecords ?? 0}`,
+      `Removed text bytes: ${compact.byteCounts?.removed?.totalStoredTextBytes ?? 0}`,
+    ];
+    lines.push(...this.exchangeDiagnosticsLines({ ...result.json, projectRoot }));
+    return this.textOrJsonLines(routeUrl, result.json, lines);
+  }
+
+  private exchangeDiagnosticsLines(diagnostics: any): string[] {
+    const exchange = diagnostics.runtimeExchange ?? diagnostics;
+    const counts = exchange.counts ?? {};
+    const byteCounts = exchange.byteCounts ?? {};
+    const compactableByteCounts = exchange.compactableByteCounts ?? {};
+    const messageDelivery = exchange.messageDelivery ?? {};
+    const retainedCounts = exchange.retainedCounts ?? {};
+    const retainedByteCounts = exchange.retainedByteCounts ?? {};
+    const retainedMessageDelivery = exchange.retainedMessageDelivery ?? {};
+    const telemetry = exchange.telemetry ?? {};
+    const lines = [
+      `Project: ${diagnostics.projectRoot ?? "unknown"}`,
+      `Path: ${exchange.path ?? "unknown"}`,
+      `Bytes: ${exchange.bytes ?? 0}`,
+      `Records: total=${counts.totalRecords ?? 0} threads=${counts.threads ?? 0} messages=${counts.messages ?? 0} tasks=${
+        counts.tasks ?? 0
+      } inbox=${counts.inbox ?? 0}`,
+      `Text bytes: stored=${byteCounts.totalStoredTextBytes ?? 0} original=${
+        byteCounts.totalOriginalTextBytes ?? 0
+      } messages=${byteCounts.messageBodyBytes ?? 0} tasks=${
+        (byteCounts.taskPromptBytes ?? 0) + (byteCounts.taskResultBytes ?? 0) + (byteCounts.taskErrorBytes ?? 0)
+      } compactedMessages=${byteCounts.compactedMessageBodies ?? 0} compactedTasks=${byteCounts.compactedTasks ?? 0}`,
+      `Compactable text bytes: ${compactableByteCounts.totalStoredTextBytes ?? 0}`,
+      `Retained records after compaction: total=${retainedCounts.totalRecords ?? 0} threads=${
+        retainedCounts.threads ?? 0
+      } messages=${retainedCounts.messages ?? 0} tasks=${retainedCounts.tasks ?? 0}`,
+      `Retained text bytes after compaction: ${retainedByteCounts.totalStoredTextBytes ?? 0}`,
+      `Message delivery bytes: pending=${messageDelivery.pendingMessageBodyBytes ?? 0} delivered=${
+        messageDelivery.deliveredMessageBodyBytes ?? 0
+      } noRecipient=${messageDelivery.noRecipientMessageBodyBytes ?? 0}`,
+      `Retained message delivery bytes: pending=${retainedMessageDelivery.pendingMessageBodyBytes ?? 0} delivered=${
+        retainedMessageDelivery.deliveredMessageBodyBytes ?? 0
+      } noRecipient=${retainedMessageDelivery.noRecipientMessageBodyBytes ?? 0}`,
+    ];
+    for (const thread of Array.isArray(exchange.largestRetainedThreads)
+      ? exchange.largestRetainedThreads.slice(0, 5)
+      : []) {
+      lines.push(
+        `Large retained thread: ${thread.id} ${thread.kind}/${thread.status} messages=${thread.messageCount} bytes=${
+          thread.messageBodyBytes
+        } pendingBytes=${thread.pendingMessageBodyBytes} title=${thread.title}`,
+      );
+    }
+    lines.push(
+      `Store: reads=${telemetry.reads ?? 0} parses=${telemetry.parses ?? 0} compactions=${
+        telemetry.compactions ?? 0
+      } compactedRecords=${telemetry.compactedRecords ?? 0}`,
+    );
+    lines.push(
+      `Cache: hits=${telemetry.readCacheHits ?? 0} misses=${telemetry.readCacheMisses ?? 0} slowReads=${
+        telemetry.slowReads ?? 0
+      } suppressedSlowReadLogs=${telemetry.slowReadSuppressed ?? 0}`,
+    );
+    lines.push(`Writes: total=${telemetry.writes ?? 0} noops=${telemetry.writeNoops ?? 0}`);
+    return lines;
+  }
+
   private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {
     const envelope = body as CoreCommandEnvelope | undefined;
     const id =
@@ -3765,6 +3843,10 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.repairText) {
       return this.repairTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.repairExchangeText) {
+      return this.repairExchangeTextRoute(routeUrl, body);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {

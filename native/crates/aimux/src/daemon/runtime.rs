@@ -912,6 +912,15 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         system_tmux_repair_result(&mut self.resolver, project_root, open)
     }
 
+    fn post_project_service_json(
+        &mut self,
+        project_root: &str,
+        route_path: &str,
+        body: Value,
+    ) -> ProjectServiceJsonResult {
+        self.request_project_service_json(project_root, route_path, Some(body), None)
+    }
+
     fn restart_control_plane(
         &mut self,
         issued_at: &str,

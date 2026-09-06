@@ -60,6 +60,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("remoteDisableText", "/core/remote-disable-text"),
         ("remoteEnableText", "/core/remote-enable-text"),
         ("remoteStatusText", "/core/remote-status-text"),
+        ("repairExchangeText", "/core/repair-exchange-text"),
         ("repairText", "/core/repair-text"),
         ("restartText", "/core/restart-text"),
         ("runtimeRestartText", "/core/runtime-restart-text"),

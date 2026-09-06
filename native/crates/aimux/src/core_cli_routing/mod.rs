@@ -1960,6 +1960,82 @@ pub fn parse_core_logs_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLogsArgs> {
     Some(parsed)
 }
 
+pub fn parse_core_metadata_args<S: AsRef<str>>(args: &[S]) -> Option<CoreMetadataArgs> {
+    if args.first().map(AsRef::as_ref) != Some("metadata") {
+        return None;
+    }
+    match args.get(1).map(AsRef::as_ref) {
+        Some(
+            "endpoint" | "event" | "mark-seen" | "set-activity" | "set-attention" | "set-status"
+            | "set-progress" | "set-context" | "set-services" | "log" | "clear-log",
+        ) if !has_help(args) => Some(CoreMetadataArgs {
+            args: args.iter().map(|arg| arg.as_ref().to_owned()).collect(),
+        }),
+        _ => None,
+    }
+}
+
+pub fn parse_core_repair_args<S: AsRef<str>>(args: &[S]) -> Option<CoreRepairArgs> {
+    if args.first().map(AsRef::as_ref) != Some("repair") {
+        return None;
+    }
+    let mut parsed = CoreRepairArgs {
+        subcommand: "tmux".into(),
+        project: None,
+        project_root: None,
+        open: false,
+        json: false,
+    };
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "exchange" {
+            if parsed.subcommand != "tmux" || parsed.open || parsed.project_root.is_some() {
+                return None;
+            }
+            parsed.subcommand = "exchange".into();
+            index += 1;
+            continue;
+        }
+        if arg == "--json" {
+            parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "tmux" && arg == "--open" {
+            parsed.open = true;
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "tmux" && arg == "--project-root" {
+            parsed.project_root = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "tmux"
+            && let Some(value) = arg.strip_prefix("--project-root=")
+        {
+            parsed.project_root = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "exchange" && arg == "--project" {
+            parsed.project = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "exchange"
+            && let Some(value) = arg.strip_prefix("--project=")
+        {
+            parsed.project = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(parsed)
+}
+
 pub fn parse_core_project_ensure_args<S: AsRef<str>>(args: &[S]) -> Option<CoreProjectEnsureArgs> {
     if args.first().map(AsRef::as_ref) != Some("daemon")
         || args.get(1).map(AsRef::as_ref) != Some("project-ensure")
@@ -2499,6 +2575,8 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("daemon"), Some("restart")) => parse_core_daemon_restart_args(args).is_some(),
         (Some("daemon"), Some("project-ensure")) => true,
         (Some("doctor"), Some("versions")) => has_only_allowed_flags(&args[2..], &["--json"]),
+        (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),
+        (Some("repair"), _) => parse_core_repair_args(args).is_some(),
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),
         (Some("projects"), Some("list")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("remote"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),

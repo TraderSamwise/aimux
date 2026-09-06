@@ -4,6 +4,8 @@ use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, string_param, text_error,
     text_or_json_lines,
 };
+use crate::daemon::text::params::ProjectServiceJsonResult;
+use crate::project_api_contract::routes as project_routes;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -155,6 +157,12 @@ pub trait DaemonOperationsTextRuntime {
         project_root: &str,
         open: bool,
     ) -> Result<(Value, String), String>;
+    fn post_project_service_json(
+        &mut self,
+        project_root: &str,
+        route_path: &str,
+        body: Value,
+    ) -> ProjectServiceJsonResult;
     fn restart_control_plane(
         &mut self,
         issued_at: &str,
@@ -192,6 +200,9 @@ pub fn route_operations_text_request(
     }
     if method == "POST" && pathname == CORE_API_ROUTES.repair_text {
         return Some(repair_text_route(runtime, &route_url, body));
+    }
+    if method == "POST" && pathname == CORE_API_ROUTES.repair_exchange_text {
+        return Some(repair_exchange_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.restart_text {
         return Some(restart_text_route(runtime, &route_url));
@@ -296,6 +307,29 @@ pub fn repair_text_route(
     }
 }
 
+pub fn repair_exchange_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project_root = match explicit_project_root_text_param(runtime, route_url, body) {
+        Ok(project_root) => project_root,
+        Err(response) => return response,
+    };
+    match runtime.post_project_service_json(
+        &project_root,
+        project_routes::runtime::COMPACT_EXCHANGE,
+        json!({}),
+    ) {
+        ProjectServiceJsonResult::Ok { json, .. } => text_or_json_lines(
+            route_url,
+            json.clone(),
+            &render_repair_exchange_lines(&project_root, &json),
+        ),
+        ProjectServiceJsonResult::Err { response } => response,
+    }
+}
+
 pub fn restart_text_route(
     runtime: &mut impl DaemonOperationsTextRuntime,
     route_url: &DaemonRouteUrl,
@@ -397,6 +431,165 @@ fn trimmed_param(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -
 
 fn split_rendered_report_lines(text: &str) -> Vec<String> {
     text.split('\n').map(str::to_owned).collect()
+}
+
+fn render_repair_exchange_lines(project_root: &str, result: &Value) -> Vec<String> {
+    let compact = result.get("result").unwrap_or(&Value::Null);
+    let mut lines = vec![
+        format!("Project: {project_root}"),
+        format!("Path: {}", display_string(compact, "path", "unknown")),
+        format!(
+            "Bytes: {} -> {}",
+            display_i64(compact, "bytesBefore", 0),
+            display_i64(compact, "bytesAfter", 0)
+        ),
+        format!(
+            "Removed records: {}",
+            compact
+                .get("removed")
+                .and_then(|removed| removed.get("totalRecords"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+        ),
+        format!(
+            "Removed text bytes: {}",
+            compact
+                .get("byteCounts")
+                .and_then(|byte_counts| byte_counts.get("removed"))
+                .and_then(|removed| removed.get("totalStoredTextBytes"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+        ),
+    ];
+    let mut diagnostics = result.clone();
+    if let Value::Object(object) = &mut diagnostics {
+        object.insert("projectRoot".into(), Value::String(project_root.into()));
+    }
+    lines.extend(render_exchange_diagnostics_lines(&diagnostics));
+    lines
+}
+
+fn render_exchange_diagnostics_lines(diagnostics: &Value) -> Vec<String> {
+    let exchange = diagnostics.get("runtimeExchange").unwrap_or(diagnostics);
+    let counts = exchange.get("counts").unwrap_or(&Value::Null);
+    let byte_counts = exchange.get("byteCounts").unwrap_or(&Value::Null);
+    let compactable_byte_counts = exchange
+        .get("compactableByteCounts")
+        .unwrap_or(&Value::Null);
+    let message_delivery = exchange.get("messageDelivery").unwrap_or(&Value::Null);
+    let retained_counts = exchange.get("retainedCounts").unwrap_or(&Value::Null);
+    let retained_byte_counts = exchange.get("retainedByteCounts").unwrap_or(&Value::Null);
+    let retained_message_delivery = exchange
+        .get("retainedMessageDelivery")
+        .unwrap_or(&Value::Null);
+    let telemetry = exchange.get("telemetry").unwrap_or(&Value::Null);
+    let mut lines = vec![
+        format!(
+            "Project: {}",
+            diagnostics
+                .get("projectRoot")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ),
+        format!("Path: {}", display_string(exchange, "path", "unknown")),
+        format!("Bytes: {}", display_i64(exchange, "bytes", 0)),
+        format!(
+            "Records: total={} threads={} messages={} tasks={} inbox={}",
+            display_i64(counts, "totalRecords", 0),
+            display_i64(counts, "threads", 0),
+            display_i64(counts, "messages", 0),
+            display_i64(counts, "tasks", 0),
+            display_i64(counts, "inbox", 0)
+        ),
+        format!(
+            "Text bytes: stored={} original={} messages={} tasks={} compactedMessages={} compactedTasks={}",
+            display_i64(byte_counts, "totalStoredTextBytes", 0),
+            display_i64(byte_counts, "totalOriginalTextBytes", 0),
+            display_i64(byte_counts, "messageBodyBytes", 0),
+            display_i64(byte_counts, "taskPromptBytes", 0)
+                + display_i64(byte_counts, "taskResultBytes", 0)
+                + display_i64(byte_counts, "taskErrorBytes", 0),
+            display_i64(byte_counts, "compactedMessageBodies", 0),
+            display_i64(byte_counts, "compactedTasks", 0)
+        ),
+        format!(
+            "Compactable text bytes: {}",
+            display_i64(compactable_byte_counts, "totalStoredTextBytes", 0)
+        ),
+        format!(
+            "Retained records after compaction: total={} threads={} messages={} tasks={}",
+            display_i64(retained_counts, "totalRecords", 0),
+            display_i64(retained_counts, "threads", 0),
+            display_i64(retained_counts, "messages", 0),
+            display_i64(retained_counts, "tasks", 0)
+        ),
+        format!(
+            "Retained text bytes after compaction: {}",
+            display_i64(retained_byte_counts, "totalStoredTextBytes", 0)
+        ),
+        format!(
+            "Message delivery bytes: pending={} delivered={} noRecipient={}",
+            display_i64(message_delivery, "pendingMessageBodyBytes", 0),
+            display_i64(message_delivery, "deliveredMessageBodyBytes", 0),
+            display_i64(message_delivery, "noRecipientMessageBodyBytes", 0)
+        ),
+        format!(
+            "Retained message delivery bytes: pending={} delivered={} noRecipient={}",
+            display_i64(retained_message_delivery, "pendingMessageBodyBytes", 0),
+            display_i64(retained_message_delivery, "deliveredMessageBodyBytes", 0),
+            display_i64(retained_message_delivery, "noRecipientMessageBodyBytes", 0)
+        ),
+    ];
+    for thread in exchange
+        .get("largestRetainedThreads")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(5)
+    {
+        lines.push(format!(
+            "Large retained thread: {} {}/{} messages={} bytes={} pendingBytes={} title={}",
+            display_string(thread, "id", ""),
+            display_string(thread, "kind", ""),
+            display_string(thread, "status", ""),
+            display_i64(thread, "messageCount", 0),
+            display_i64(thread, "messageBodyBytes", 0),
+            display_i64(thread, "pendingMessageBodyBytes", 0),
+            display_string(thread, "title", "")
+        ));
+    }
+    lines.push(format!(
+        "Store: reads={} parses={} compactions={} compactedRecords={}",
+        display_i64(telemetry, "reads", 0),
+        display_i64(telemetry, "parses", 0),
+        display_i64(telemetry, "compactions", 0),
+        display_i64(telemetry, "compactedRecords", 0)
+    ));
+    lines.push(format!(
+        "Cache: hits={} misses={} slowReads={} suppressedSlowReadLogs={}",
+        display_i64(telemetry, "readCacheHits", 0),
+        display_i64(telemetry, "readCacheMisses", 0),
+        display_i64(telemetry, "slowReads", 0),
+        display_i64(telemetry, "slowReadSuppressed", 0)
+    ));
+    lines.push(format!(
+        "Writes: total={} noops={}",
+        display_i64(telemetry, "writes", 0),
+        display_i64(telemetry, "writeNoops", 0)
+    ));
+    lines
+}
+
+fn display_string(value: &Value, key: &str, fallback: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or(fallback)
+        .to_owned()
+}
+
+fn display_i64(value: &Value, key: &str, fallback: i64) -> i64 {
+    value.get(key).and_then(Value::as_i64).unwrap_or(fallback)
 }
 
 fn restart_failure_count(restart: &Value) -> Option<i64> {

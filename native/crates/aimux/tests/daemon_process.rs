@@ -450,6 +450,18 @@ impl DaemonOperationsTextRuntime for FakeRuntime {
         Ok((json!({ "ok": true }), "ok\n".into()))
     }
 
+    fn post_project_service_json(
+        &mut self,
+        project_root: &str,
+        _route_path: &str,
+        _body: Value,
+    ) -> aimux::daemon::text::params::ProjectServiceJsonResult {
+        aimux::daemon::text::params::ProjectServiceJsonResult::ok(
+            project_root,
+            json!({ "ok": true }),
+        )
+    }
+
     fn restart_control_plane(
         &mut self,
         _issued_at: &str,

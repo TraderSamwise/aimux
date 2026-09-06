@@ -7,10 +7,10 @@ use crate::core_cli_routing::{
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_notification_args, parse_core_overseer_clear_args,
-    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_restart_args,
-    parse_core_runtime_restart_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args, parse_core_worktree_args,
+    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
+    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
+    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,9 @@ pub enum CoreCliOperation {
     GraveyardSend,
     GraveyardResurrect,
     GraveyardCleanup,
+    Metadata,
+    Repair,
+    RepairExchange,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -671,6 +674,19 @@ fn text_route_path(path: &str, json: bool) -> String {
     } else {
         path.to_owned()
     }
+}
+
+fn metadata_text_path(project: &str, args: &[String]) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.metadata_text,
+        encode_query_component(project)
+    );
+    for arg in args {
+        path.push_str("&arg=");
+        path.push_str(&encode_query_component(arg));
+    }
+    path
 }
 
 fn loop_actor_payload(
@@ -1796,6 +1812,49 @@ where
             },
             CoreCliFallback::None,
         ),
+        ("metadata", _) => {
+            let parsed = parse_core_metadata_args(&args).expect("eligible metadata must parse");
+            (
+                CoreCliOperation::Metadata,
+                CoreCliAction::TextRoute {
+                    path: metadata_text_path(&context.current_project_root, &parsed.args),
+                    body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("repair", _) => {
+            let parsed = parse_core_repair_args(&args).expect("eligible repair must parse");
+            if parsed.subcommand == "exchange" {
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::RepairExchange,
+                    CoreCliAction::TextRoute {
+                        path: text_route_path(CORE_API_ROUTES.repair_exchange_text, parsed.json),
+                        body: Some(json!({ "projectRoot": project_root })),
+                    },
+                    CoreCliFallback::None,
+                )
+            } else {
+                let project_root = parsed
+                    .project_root
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::Repair,
+                    CoreCliAction::TextRoute {
+                        path: text_route_path(CORE_API_ROUTES.repair_text, parsed.json),
+                        body: Some(json!({ "projectRoot": project_root, "open": parsed.open })),
+                    },
+                    CoreCliFallback::None,
+                )
+            }
+        }
         ("logs", _) => {
             let parsed = parse_core_logs_args(&args).expect("eligible logs command must parse");
             let fallback = if parsed.subcommand == CoreLogsSubcommand::Tail {

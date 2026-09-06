@@ -5,6 +5,8 @@ use aimux::daemon::text::operations::{
     DaemonOperationsTextRuntime, DashboardOpenRequest, RestartControlPlaneTextResult,
     route_operations_text_request,
 };
+use aimux::daemon::text::params::ProjectServiceJsonResult;
+use aimux::project_api_contract::routes as project_routes;
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +145,85 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
             json!({ "ok": true, "backendReconcile": { "reconciled": [] } }),
             "Tmux Repair\n  ok".into(),
         ))
+    }
+
+    fn post_project_service_json(
+        &mut self,
+        project_root: &str,
+        route_path: &str,
+        body: Value,
+    ) -> ProjectServiceJsonResult {
+        self.calls.push(Call {
+            name: "post",
+            project_root: Some(project_root.into()),
+            ..Call::simple("post")
+        });
+        assert_eq!(route_path, project_routes::runtime::COMPACT_EXCHANGE);
+        assert_eq!(body, json!({}));
+        ProjectServiceJsonResult::ok(
+            project_root,
+            json!({
+                "ok": true,
+                "result": {
+                    "path": "/repo/.aimux/runtime-exchange.yaml",
+                    "bytesBefore": 1000,
+                    "bytesAfter": 600,
+                    "removed": { "totalRecords": 4 },
+                    "byteCounts": { "removed": { "totalStoredTextBytes": 300 } }
+                },
+                "runtimeExchange": {
+                    "path": "/repo/.aimux/runtime-exchange.yaml",
+                    "bytes": 600,
+                    "counts": { "totalRecords": 10, "threads": 2, "messages": 5, "tasks": 3, "inbox": 1 },
+                    "byteCounts": {
+                        "totalStoredTextBytes": 120,
+                        "totalOriginalTextBytes": 220,
+                        "messageBodyBytes": 70,
+                        "taskPromptBytes": 10,
+                        "taskResultBytes": 20,
+                        "taskErrorBytes": 30,
+                        "compactedMessageBodies": 1,
+                        "compactedTasks": 2
+                    },
+                    "compactableByteCounts": { "totalStoredTextBytes": 90 },
+                    "retainedCounts": { "totalRecords": 8, "threads": 2, "messages": 4, "tasks": 2 },
+                    "retainedByteCounts": { "totalStoredTextBytes": 100 },
+                    "messageDelivery": {
+                        "pendingMessageBodyBytes": 11,
+                        "deliveredMessageBodyBytes": 22,
+                        "noRecipientMessageBodyBytes": 33
+                    },
+                    "retainedMessageDelivery": {
+                        "pendingMessageBodyBytes": 1,
+                        "deliveredMessageBodyBytes": 2,
+                        "noRecipientMessageBodyBytes": 3
+                    },
+                    "largestRetainedThreads": [
+                        {
+                            "id": "thread-1",
+                            "kind": "task",
+                            "status": "waiting",
+                            "messageCount": 2,
+                            "messageBodyBytes": 44,
+                            "pendingMessageBodyBytes": 5,
+                            "title": "Review"
+                        }
+                    ],
+                    "telemetry": {
+                        "reads": 9,
+                        "parses": 8,
+                        "compactions": 7,
+                        "compactedRecords": 6,
+                        "readCacheHits": 5,
+                        "readCacheMisses": 4,
+                        "slowReads": 3,
+                        "slowReadSuppressed": 2,
+                        "writes": 1,
+                        "writeNoops": 0
+                    }
+                }
+            }),
+        )
     }
 
     fn restart_control_plane(
@@ -329,6 +410,46 @@ fn repair_route_accepts_form_body_and_open_flag() {
     assert_eq!(runtime.calls[0].name, "repair");
     assert_eq!(runtime.calls[0].project_root.as_deref(), Some("/repo"));
     assert!(runtime.calls[0].open.is_some());
+}
+
+#[test]
+fn repair_exchange_route_compacts_project_service_exchange_and_renders_diagnostics() {
+    let mut runtime = FakeOperationsRuntime::default();
+    let repair = route_operations_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.repair_exchange_text,
+        Some(&json!({ "projectRoot": "/repo" })),
+    )
+    .expect("repair exchange route");
+
+    assert_eq!(repair.status, 200);
+    assert_eq!(
+        text_body(repair),
+        concat!(
+            "Project: /repo\n",
+            "Path: /repo/.aimux/runtime-exchange.yaml\n",
+            "Bytes: 1000 -> 600\n",
+            "Removed records: 4\n",
+            "Removed text bytes: 300\n",
+            "Project: /repo\n",
+            "Path: /repo/.aimux/runtime-exchange.yaml\n",
+            "Bytes: 600\n",
+            "Records: total=10 threads=2 messages=5 tasks=3 inbox=1\n",
+            "Text bytes: stored=120 original=220 messages=70 tasks=60 compactedMessages=1 compactedTasks=2\n",
+            "Compactable text bytes: 90\n",
+            "Retained records after compaction: total=8 threads=2 messages=4 tasks=2\n",
+            "Retained text bytes after compaction: 100\n",
+            "Message delivery bytes: pending=11 delivered=22 noRecipient=33\n",
+            "Retained message delivery bytes: pending=1 delivered=2 noRecipient=3\n",
+            "Large retained thread: thread-1 task/waiting messages=2 bytes=44 pendingBytes=5 title=Review\n",
+            "Store: reads=9 parses=8 compactions=7 compactedRecords=6\n",
+            "Cache: hits=5 misses=4 slowReads=3 suppressedSlowReadLogs=2\n",
+            "Writes: total=1 noops=0\n",
+        )
+    );
+    assert_eq!(runtime.calls[0].name, "post");
+    assert_eq!(runtime.calls[0].project_root.as_deref(), Some("/repo"));
 }
 
 #[test]

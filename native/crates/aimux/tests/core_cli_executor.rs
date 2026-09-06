@@ -174,6 +174,12 @@ impl CoreCliRuntime for FakeRuntime {
             "task task-1\nthread thread-1\n".into()
         } else if path.starts_with("/core/worktree/") || path.starts_with("/core/graveyard/") {
             "worktree ok\n".into()
+        } else if path.starts_with("/core/metadata-text") {
+            "metadata ok\n".into()
+        } else if path.starts_with("/core/repair-text")
+            || path.starts_with("/core/repair-exchange-text")
+        {
+            "repair ok\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -1539,6 +1545,46 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
             (
                 "/core/graveyard/cleanup-text".into(),
                 Some(json!({ "project": "/repo", "dryRun": true })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn metadata_and_repair_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let metadata = run_core_cli_with(
+        &args(&["metadata", "set-status", "claude-1", "--", "-waiting"]),
+        &mut runtime,
+    );
+    let repair = run_core_cli_with(
+        &args(&["repair", "--project-root=.", "--open", "--json"]),
+        &mut runtime,
+    );
+    let exchange = run_core_cli_with(
+        &args(&["repair", "exchange", "--project=/repo"]),
+        &mut runtime,
+    );
+
+    assert_eq!(metadata.stdout, ["metadata ok"]);
+    assert_eq!(repair.stdout, ["repair ok"]);
+    assert_eq!(exchange.stdout, ["repair ok"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/metadata-text?project=%2Frepo&arg=metadata&arg=set-status&arg=claude-1&arg=--&arg=-waiting".into(),
+                None,
+            ),
+            (
+                "/core/repair-text?json=1".into(),
+                Some(json!({ "projectRoot": "/repo", "open": true })),
+            ),
+            (
+                "/core/repair-exchange-text".into(),
+                Some(json!({ "projectRoot": "/repo" })),
             ),
         ]
     );

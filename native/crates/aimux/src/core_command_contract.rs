@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    91,
+    92,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -87,6 +87,7 @@ define_string_contract!(
         remote_disable_text => ("remoteDisableText", "/core/remote-disable-text"),
         remote_enable_text => ("remoteEnableText", "/core/remote-enable-text"),
         remote_status_text => ("remoteStatusText", "/core/remote-status-text"),
+        repair_exchange_text => ("repairExchangeText", "/core/repair-exchange-text"),
         repair_text => ("repairText", "/core/repair-text"),
         restart_text => ("restartText", "/core/restart-text"),
         runtime_restart_text => ("runtimeRestartText", "/core/runtime-restart-text"),

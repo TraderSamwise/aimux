@@ -58,6 +58,7 @@ export const CORE_API_ROUTES = {
   remoteDisableText: "/core/remote-disable-text",
   remoteEnableText: "/core/remote-enable-text",
   remoteStatusText: "/core/remote-status-text",
+  repairExchangeText: "/core/repair-exchange-text",
   repairText: "/core/repair-text",
   restartText: "/core/restart-text",
   runtimeRestartText: "/core/runtime-restart-text",
