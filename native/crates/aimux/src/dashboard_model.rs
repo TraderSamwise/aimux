@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +23,9 @@ pub struct DesktopStateSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_restore_offer: Option<AgentRestoreOffer>,
     #[serde(default)]
-    pub operation_failures: Vec<serde_json::Value>,
+    pub operation_failures: Vec<Value>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -92,6 +96,8 @@ pub struct DashboardSession {
     pub pending: bool,
     #[serde(default)]
     pub optimistic: bool,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -125,6 +131,8 @@ pub struct SessionSemanticState {
     pub blocked_count: usize,
     #[serde(default)]
     pub family_count: usize,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -141,6 +149,8 @@ pub struct SessionNotificationState {
     pub unread_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_text: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -151,6 +161,8 @@ pub struct SessionPresentationState {
     pub compact_hint: Option<String>,
     #[serde(default)]
     pub attention_score: usize,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 fn default_attention() -> String {
@@ -180,6 +192,8 @@ pub struct DashboardService {
     pub pending: bool,
     #[serde(default)]
     pub optimistic: bool,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -206,6 +220,8 @@ pub struct WorktreeGroup {
     pub removing: bool,
     pub sessions: Vec<DashboardSession>,
     pub services: Vec<DashboardService>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -222,12 +238,16 @@ pub struct DesktopWorktree {
     pub path: String,
     pub branch: String,
     pub is_bare: bool,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MainCheckoutInfo {
     pub name: String,
     pub branch: String,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -241,6 +261,8 @@ pub struct SessionTeamMetadata {
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<usize>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -250,6 +272,8 @@ pub struct AgentRestoreOffer {
     pub updated_at: String,
     pub session_ids: Vec<String>,
     pub sessions: Vec<AgentRestoreSession>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -264,6 +288,8 @@ pub struct AgentRestoreSession {
     pub scribe: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_control: Option<bool>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 impl DesktopStateSnapshot {

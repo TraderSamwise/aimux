@@ -1,4 +1,5 @@
 use aimux::dashboard_model::{DesktopStateGoldenFixture, ServiceStatus, SessionStatus};
+use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
 
@@ -41,6 +42,66 @@ fn desktop_state_golden_preserves_dashboard_renderer_contract() {
     assert_eq!(active.thread_unread_count, 8);
     assert_eq!(active.notification_unread_count, 0);
     assert!(!active.notification_stale);
+}
+
+#[test]
+fn desktop_state_model_preserves_unmodeled_contract_fields() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = fixture.runtime_full;
+
+    let active = snapshot
+        .sessions
+        .iter()
+        .find(|session| session.id == "claude-0")
+        .unwrap();
+    assert_eq!(active.extra.get("pid"), Some(&json!(4242)));
+    assert_eq!(active.extra.get("foregroundCommand"), Some(&json!("node")));
+    assert_eq!(
+        active.extra.get("previewLine"),
+        Some(&json!("last line for @1"))
+    );
+    assert_eq!(active.extra.get("threadName"), Some(&json!("Thread 14")));
+    assert_eq!(
+        active.extra.get("workflowTopLabel"),
+        Some(&json!("Thread 12 (on me)"))
+    );
+    assert_eq!(
+        active.extra.get("workflowNextAction"),
+        Some(&json!("open thread"))
+    );
+    assert_eq!(active.extra.get("threadWaitingCount"), Some(&json!(5)));
+
+    let service = snapshot.services.first().unwrap();
+    assert_eq!(service.extra.get("pid"), Some(&json!(4243)));
+    assert_eq!(service.extra.get("cwd"), Some(&json!("node\t4243")));
+    assert_eq!(service.extra.get("foregroundCommand"), Some(&json!("node")));
+    assert_eq!(
+        service.extra.get("previewLine"),
+        Some(&json!("last line for @3"))
+    );
+    assert_eq!(
+        service.extra.get("createdAt"),
+        Some(&json!("2026-01-01T00:02:00.000Z"))
+    );
+
+    let group = snapshot.worktree_groups.first().unwrap();
+    assert_eq!(
+        group.extra.get("createdAt"),
+        Some(&json!("2026-01-01T00:00:00.000Z"))
+    );
+
+    let serialized = serde_json::to_value(snapshot).expect("serialize desktop-state");
+    assert_eq!(serialized["sessions"][0]["pid"], json!(4242));
+    assert_eq!(
+        serialized["sessions"][0]["workflowTopLabel"],
+        json!("Thread 12 (on me)")
+    );
+    assert_eq!(serialized["services"][0]["cwd"], json!("node\t4243"));
+    assert_eq!(
+        serialized["worktreeGroups"][0]["createdAt"],
+        json!("2026-01-01T00:00:00.000Z")
+    );
 }
 
 #[test]
