@@ -1,0 +1,408 @@
+{
+  "version": 1,
+  "source": "src/interaction-requests.test.ts",
+  "generatedBy": "scripts/capture-interaction-requests-contract.mjs",
+  "description": "InteractionRegistry registration, dedupe, pending filters, resolve/cancel, wait-immediate, and timeout behavior captured by running TypeScript with generated ids and timestamps normalized.",
+  "normalization": {
+    "ids": "Generated UUIDs are replaced with <id:n> in first-appearance order.",
+    "timestamps": "ISO timestamps are replaced with <ts:n> in first-appearance order."
+  },
+  "cases": [
+    {
+      "id": "interaction-requests-001",
+      "name": "registers generated and supplied ids",
+      "source": "src/interaction-requests.test.ts",
+      "api": "InteractionRegistry",
+      "input": {
+        "ops": [
+          {
+            "op": "register",
+            "saveAs": "generated",
+            "input": { "sessionId": "s1", "type": "permission", "payload": { "toolName": "Bash" } }
+          },
+          { "op": "get", "id": "generated" },
+          { "op": "register", "input": { "id": "fixed", "sessionId": "s1", "type": "input", "payload": {} } }
+        ]
+      },
+      "output": [
+        {
+          "op": "register",
+          "request": {
+            "id": "<id:1>",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "pending",
+            "createdAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "get",
+          "request": {
+            "id": "<id:1>",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "pending",
+            "createdAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "register",
+          "request": {
+            "id": "fixed",
+            "sessionId": "s1",
+            "type": "input",
+            "payload": {},
+            "status": "pending",
+            "createdAt": "<ts:1>"
+          }
+        }
+      ],
+      "inputSha256": "2fbeb6bdecb3360727bf37c3ee5e1c81582a4fc9d96f08504de4f4938c5a0eea"
+    },
+    {
+      "id": "interaction-requests-002",
+      "name": "dedupes pending requests by dedupe key",
+      "source": "src/interaction-requests.test.ts",
+      "api": "InteractionRegistry",
+      "input": {
+        "ops": [
+          {
+            "op": "register",
+            "saveAs": "first",
+            "input": {
+              "id": "first",
+              "sessionId": "s1",
+              "type": "question",
+              "dedupeKey": "same",
+              "payload": { "question": "?" }
+            }
+          },
+          {
+            "op": "register",
+            "sameAs": "first",
+            "input": {
+              "id": "second",
+              "sessionId": "s1",
+              "type": "question",
+              "dedupeKey": "same",
+              "payload": { "question": "different" }
+            }
+          }
+        ]
+      },
+      "output": [
+        {
+          "op": "register",
+          "request": {
+            "id": "first",
+            "sessionId": "s1",
+            "dedupeKey": "same",
+            "type": "question",
+            "payload": { "question": "?" },
+            "status": "pending",
+            "createdAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "register",
+          "request": {
+            "id": "first",
+            "sessionId": "s1",
+            "dedupeKey": "same",
+            "type": "question",
+            "payload": { "question": "?" },
+            "status": "pending",
+            "createdAt": "<ts:1>"
+          },
+          "sameAs": true
+        }
+      ],
+      "inputSha256": "da52b6ddecfda03c9158e72a8502248c30e351d5cdc3559e6b375f13f99fe1b4"
+    },
+    {
+      "id": "interaction-requests-003",
+      "name": "lists only pending requests filtered by session",
+      "source": "src/interaction-requests.test.ts",
+      "api": "InteractionRegistry",
+      "input": {
+        "ops": [
+          {
+            "op": "register",
+            "saveAs": "a",
+            "input": { "id": "a", "sessionId": "s1", "type": "permission", "payload": { "toolName": "Bash" } }
+          },
+          {
+            "op": "register",
+            "input": { "id": "b", "sessionId": "s2", "type": "permission", "payload": { "toolName": "Edit" } }
+          },
+          { "op": "resolve", "id": "a", "response": { "decision": "allow_once" } },
+          { "op": "listPending" },
+          { "op": "listPending", "sessionId": "s1" }
+        ]
+      },
+      "output": [
+        {
+          "op": "register",
+          "request": {
+            "id": "a",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "resolved",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>",
+            "response": { "decision": "allow_once" }
+          }
+        },
+        {
+          "op": "register",
+          "request": {
+            "id": "b",
+            "sessionId": "s2",
+            "type": "permission",
+            "payload": { "toolName": "Edit" },
+            "status": "pending",
+            "createdAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "resolve",
+          "request": {
+            "id": "a",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "resolved",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>",
+            "response": { "decision": "allow_once" }
+          }
+        },
+        {
+          "op": "listPending",
+          "requests": [
+            {
+              "id": "b",
+              "sessionId": "s2",
+              "type": "permission",
+              "payload": { "toolName": "Edit" },
+              "status": "pending",
+              "createdAt": "<ts:1>"
+            }
+          ]
+        },
+        { "op": "listPending", "requests": [] }
+      ],
+      "inputSha256": "f31c4b6bcc68763d2ba703deeaff9b9577accca5e33fc05cd50d4a597e0a7d84"
+    },
+    {
+      "id": "interaction-requests-004",
+      "name": "double resolve keeps the first decision",
+      "source": "src/interaction-requests.test.ts",
+      "api": "InteractionRegistry",
+      "input": {
+        "ops": [
+          {
+            "op": "register",
+            "saveAs": "req",
+            "input": { "id": "fixed", "sessionId": "s1", "type": "permission", "payload": { "toolName": "Bash" } }
+          },
+          { "op": "resolve", "id": "req", "response": { "decision": "allow_once" } },
+          { "op": "resolve", "id": "req", "response": { "decision": "deny" } },
+          { "op": "get", "id": "req" }
+        ]
+      },
+      "output": [
+        {
+          "op": "register",
+          "request": {
+            "id": "fixed",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "resolved",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>",
+            "response": { "decision": "allow_once" }
+          }
+        },
+        {
+          "op": "resolve",
+          "request": {
+            "id": "fixed",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "resolved",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>",
+            "response": { "decision": "allow_once" }
+          }
+        },
+        { "op": "resolve", "request": null },
+        {
+          "op": "get",
+          "request": {
+            "id": "fixed",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "resolved",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>",
+            "response": { "decision": "allow_once" }
+          }
+        }
+      ],
+      "inputSha256": "e5ea3dea205742624bf5f38f4fc8d7c927ed9d74389391ce9daa074e2d3f1f52"
+    },
+    {
+      "id": "interaction-requests-005",
+      "name": "cancel session cancels only matching pending requests",
+      "source": "src/interaction-requests.test.ts",
+      "api": "InteractionRegistry",
+      "input": {
+        "ops": [
+          {
+            "op": "register",
+            "input": { "id": "a", "sessionId": "s1", "type": "permission", "payload": { "toolName": "Bash" } }
+          },
+          { "op": "register", "input": { "id": "b", "sessionId": "s1", "type": "input", "payload": {} } },
+          { "op": "register", "input": { "id": "c", "sessionId": "s2", "type": "input", "payload": {} } },
+          { "op": "cancelSession", "sessionId": "s1" },
+          { "op": "listPending" }
+        ]
+      },
+      "output": [
+        {
+          "op": "register",
+          "request": {
+            "id": "a",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "cancelled",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "register",
+          "request": {
+            "id": "b",
+            "sessionId": "s1",
+            "type": "input",
+            "payload": {},
+            "status": "cancelled",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "register",
+          "request": {
+            "id": "c",
+            "sessionId": "s2",
+            "type": "input",
+            "payload": {},
+            "status": "pending",
+            "createdAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "cancelSession",
+          "pending": [
+            { "id": "c", "sessionId": "s2", "type": "input", "payload": {}, "status": "pending", "createdAt": "<ts:1>" }
+          ]
+        },
+        {
+          "op": "listPending",
+          "requests": [
+            { "id": "c", "sessionId": "s2", "type": "input", "payload": {}, "status": "pending", "createdAt": "<ts:1>" }
+          ]
+        }
+      ],
+      "inputSha256": "c5b460aece96a3002d1325846dba5f599aed27bc7974c31ac037ee3275e02984"
+    },
+    {
+      "id": "interaction-requests-006",
+      "name": "wait returns immediately when already resolved",
+      "source": "src/interaction-requests.test.ts",
+      "api": "InteractionRegistry",
+      "input": {
+        "ops": [
+          {
+            "op": "waitResolved",
+            "saveAs": "req",
+            "input": { "id": "resolved", "sessionId": "s1", "type": "permission", "payload": { "toolName": "Bash" } },
+            "response": { "decision": "allow_always" }
+          }
+        ]
+      },
+      "output": [
+        {
+          "op": "waitResolved",
+          "request": {
+            "id": "resolved",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "resolved",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>",
+            "response": { "decision": "allow_always" }
+          }
+        }
+      ],
+      "inputSha256": "09f78bc129118b50c859d686deb20a385a02b0baa97050fdd0b17f6a0ba88c24"
+    },
+    {
+      "id": "interaction-requests-007",
+      "name": "wait times out and marks the request timed out",
+      "source": "src/interaction-requests.test.ts",
+      "api": "InteractionRegistry",
+      "input": {
+        "ops": [
+          {
+            "op": "waitTimeout",
+            "saveAs": "req",
+            "timeoutMs": 1,
+            "input": { "id": "timeout", "sessionId": "s1", "type": "permission", "payload": { "toolName": "Bash" } }
+          },
+          { "op": "get", "id": "req" },
+          { "op": "listPending" }
+        ]
+      },
+      "output": [
+        {
+          "op": "waitTimeout",
+          "request": {
+            "id": "timeout",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "timed_out",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>"
+          }
+        },
+        {
+          "op": "get",
+          "request": {
+            "id": "timeout",
+            "sessionId": "s1",
+            "type": "permission",
+            "payload": { "toolName": "Bash" },
+            "status": "timed_out",
+            "createdAt": "<ts:1>",
+            "resolvedAt": "<ts:1>"
+          }
+        },
+        { "op": "listPending", "requests": [] }
+      ],
+      "inputSha256": "1b2b38314d0da83391451bdb71628d8f2d986d980d0c1b05a4bd4d0c28200174"
+    }
+  ]
+}

@@ -224,6 +224,13 @@ Priority fixture groups:
   handling, and conservative defaults captured by running TypeScript
   `install-cleanup` helpers.
 
+## Interaction Requests
+
+- `interaction-requests/registry.json`: in-memory interaction request
+  registration, dedupe, pending filters, resolve/cancel, immediate wait, and
+  timeout behavior captured by running TypeScript `InteractionRegistry` with
+  generated IDs and timestamps normalized.
+
 ## Expose
 
 - `expose/pane-output-tap.json`: pane output tap ownership, adoption, renewal,
