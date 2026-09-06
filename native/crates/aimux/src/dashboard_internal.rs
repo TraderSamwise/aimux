@@ -3,9 +3,13 @@ use crate::dashboard_client::{
     resolve_project_service_endpoint,
 };
 use crate::dashboard_controller::{DashboardController, DashboardControllerEffect};
+use crate::dashboard_event_stream::{
+    DashboardEventStreamHandle, DashboardEventStreamMessage, spawn_dashboard_project_event_stream,
+};
 use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use crate::dashboard_navigation::DashboardEntryRef;
+use crate::dashboard_project_events::DashboardProjectRefreshState;
 use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_key};
@@ -15,6 +19,10 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
+
+const DASHBOARD_KEY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+const DASHBOARD_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct NativeDashboardOptions {
@@ -37,6 +45,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut scroll_offset = 0;
     let mut latest_snapshot = None;
     let mut latest_endpoint = None;
+    let mut event_stream = None;
+    let mut event_stream_retry_at = None;
+    let mut refresh_state = DashboardProjectRefreshState::default();
     let mut render_now = true;
     let mut last_render = Instant::now();
     let mut stdout = io::stdout();
@@ -48,7 +59,23 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     };
 
     loop {
-        if render_now || last_render.elapsed() >= Duration::from_secs(1) {
+        drain_dashboard_event_stream(
+            &mut event_stream,
+            &mut event_stream_retry_at,
+            &mut refresh_state,
+            controller.as_mut(),
+        );
+        if refresh_state.take_refresh_request() {
+            render_now = true;
+        }
+        reconcile_dashboard_event_stream(
+            &mut event_stream,
+            &mut event_stream_retry_at,
+            latest_endpoint.as_ref(),
+            options.once || options.desktop_state_file.is_some(),
+        );
+
+        if render_now || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL {
             let loaded = load_dashboard_snapshot(&options)?;
             let controller =
                 controller.get_or_insert_with(|| DashboardController::new(&loaded.snapshot));
@@ -63,6 +90,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             }
             latest_snapshot = Some(loaded.snapshot);
             latest_endpoint = loaded.endpoint;
+            refresh_state.complete_refresh();
+            reconcile_dashboard_event_stream(
+                &mut event_stream,
+                &mut event_stream_retry_at,
+                latest_endpoint.as_ref(),
+                options.once || options.desktop_state_file.is_some(),
+            );
             let focus_render = if let (Some(snapshot), Some(endpoint)) =
                 (latest_snapshot.as_ref(), latest_endpoint.as_ref())
             {
@@ -80,7 +114,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         if let Some(key) = read_dashboard_key(&mut stdin).context("read dashboard key")? {
             let Some(snapshot) = latest_snapshot.as_ref() else {
                 render_now = true;
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
@@ -103,8 +137,73 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 DashboardControllerEffect::Ignored => {}
             }
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
     }
+}
+
+fn drain_dashboard_event_stream(
+    event_stream: &mut Option<DashboardEventStreamHandle>,
+    retry_at: &mut Option<Instant>,
+    refresh_state: &mut DashboardProjectRefreshState,
+    controller: Option<&mut DashboardController>,
+) {
+    let Some(stream) = event_stream.as_ref() else {
+        return;
+    };
+    let mut stream_closed = false;
+    let mut stream_error = None;
+    while let Ok(message) = stream.try_recv() {
+        match message {
+            DashboardEventStreamMessage::Event(event) => refresh_state.observe(&event),
+            DashboardEventStreamMessage::Error(error) => {
+                stream_closed = true;
+                stream_error = Some(error);
+                break;
+            }
+            DashboardEventStreamMessage::Ended => {
+                stream_closed = true;
+                break;
+            }
+        }
+    }
+    if let Some(error) = stream_error
+        && let Some(controller) = controller
+    {
+        controller.footer_message = Some(error);
+    }
+    if stream_closed {
+        *event_stream = None;
+        *retry_at = Some(Instant::now() + DASHBOARD_STREAM_RETRY_INTERVAL);
+    }
+}
+
+fn reconcile_dashboard_event_stream(
+    event_stream: &mut Option<DashboardEventStreamHandle>,
+    retry_at: &mut Option<Instant>,
+    endpoint: Option<&ProjectServiceEndpoint>,
+    disabled: bool,
+) {
+    if disabled {
+        *event_stream = None;
+        *retry_at = None;
+        return;
+    }
+    let Some(endpoint) = endpoint else {
+        return;
+    };
+    if event_stream
+        .as_ref()
+        .is_some_and(|stream| stream.endpoint() == endpoint)
+    {
+        return;
+    }
+    if let Some(retry_at) = retry_at.as_ref()
+        && Instant::now() < *retry_at
+    {
+        return;
+    }
+    *event_stream = Some(spawn_dashboard_project_event_stream(endpoint.clone()));
+    *retry_at = None;
 }
 
 fn sync_dashboard_focus(
