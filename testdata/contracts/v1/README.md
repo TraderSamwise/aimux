@@ -327,9 +327,17 @@ Priority fixture groups:
 
 ## Hosted
 
+- `hosted/auth.json`: hosted trusted-header stripping, bearer-token parsing,
+  and live/missing/unknown/revoked token authentication behavior captured by
+  running TypeScript hosted-auth helpers, with generated principal identities
+  normalized after execution.
 - `hosted/config.json`: hosted configuration normalization, global/project
   config loading boundaries, startup validation, forwarded-header allowlist,
   and retention behavior captured by running TypeScript hosted-config helpers.
+- `hosted/lockdown.json`: hosted lockdown marker/cache behavior and hosted
+  outbox drain/torn-line/CLI-audit side effects captured by running TypeScript
+  hosted-lockdown and hosted-outbox helpers, with lockdown timestamps normalized
+  after execution.
 - `hosted/rate-limit.json`: hosted per-principal request, concurrency,
   idle-prune, and byte-budget limiter behavior captured by running TypeScript
   `HostedRateLimiter`.
