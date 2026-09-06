@@ -134,11 +134,11 @@ fn dashboard_launch_args(env: &BTreeMap<String, String>) -> Vec<String> {
     if env
         .get("AIMUX_DASHBOARD_IMPLEMENTATION")
         .map(|value| value.trim())
-        == Some("native")
+        == Some("node")
     {
-        vec!["__dashboard-internal-native".into()]
-    } else {
         vec!["--tmux-dashboard-internal".into()]
+    } else {
+        vec!["__dashboard-internal-native".into()]
     }
 }
 
