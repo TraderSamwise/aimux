@@ -147,7 +147,7 @@ fn metadata_parser_matches_status_context_and_terminator_contracts() {
         ])),
         MetadataCliResult::Post {
             route_path: project_routes::runtime::SET_PROGRESS.into(),
-            body: json!({ "session": "claude-1", "current": 16, "total": 1000.0, "label": "boot" }),
+            body: json!({ "session": "claude-1", "current": 16, "total": 1000, "label": "boot" }),
         }
     );
     assert_eq!(
@@ -187,7 +187,7 @@ fn metadata_parser_matches_status_context_and_terminator_contracts() {
                 "context": {
                     "cwd": "/repo",
                     "branch": "feature",
-                    "pr": { "number": 42.0, "title": "Ship it" }
+                    "pr": { "number": 42, "title": "Ship it" }
                 }
             }),
         }

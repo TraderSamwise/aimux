@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "source": "src/metadata-cli-routing.test.ts",
+  "generatedBy": "scripts/capture-metadata-cli-routing-contract.mjs",
+  "description": "Runtime metadata CLI command parsing, option terminator handling, project-service route mapping, and malformed-command errors captured by running TypeScript parseRuntimeMetadataCliArgs.",
+  "cases": [
+    {
+      "id": "metadata-cli-routing-001",
+      "name": "parses endpoint commands",
+      "source": "src/metadata-cli-routing.test.ts",
+      "api": "parseRuntimeMetadataCliArgs",
+      "input": { "name": "parses endpoint commands", "args": ["metadata", "endpoint"] },
+      "output": { "ok": true, "command": "endpoint" },
+      "inputSha256": "cf86ce94c278b49b8518a2d21cbf7d52a76ae8e21d765dab0a71d3762a669d61"
+    },
+    {
+      "id": "metadata-cli-routing-002",
+      "name": "parses status mutations with option values",
+      "source": "src/metadata-cli-routing.test.ts",
+      "api": "parseRuntimeMetadataCliArgs",
+      "input": {
+        "name": "parses status mutations with option values",
+        "args": ["metadata", "set-status", "claude-1", "Ready", "--tone=success"]
+      },
+      "output": {
+        "ok": true,
+        "command": "post",
+        "routePath": "/set-status",
+        "body": { "session": "claude-1", "text": "Ready", "tone": "success" }
+      },
+      "inputSha256": "cbdaf11699a0467fb57f7e2fad20ccbaa2631f9006ab74cdd2e00d43bc364964"
+    },
+    {
+      "id": "metadata-cli-routing-003",
+      "name": "parses dash-prefixed status text after an option terminator",
+      "source": "src/metadata-cli-routing.test.ts",
+      "api": "parseRuntimeMetadataCliArgs",
+      "input": {
+        "name": "parses dash-prefixed status text after an option terminator",
+        "args": ["metadata", "set-status", "claude-1", "--", "-starting"]
+      },
+      "output": {
+        "ok": true,
+        "command": "post",
+        "routePath": "/set-status",
+        "body": { "session": "claude-1", "text": "-starting", "tone": "info" }
+      },
+      "inputSha256": "32940122d9cf003a579eaa49773c46303f974f92491a7e792fb89864286b67cf"
+    },
+    {
+      "id": "metadata-cli-routing-004",
+      "name": "parses dash-prefixed log messages after an option terminator",
+      "source": "src/metadata-cli-routing.test.ts",
+      "api": "parseRuntimeMetadataCliArgs",
+      "input": {
+        "name": "parses dash-prefixed log messages after an option terminator",
+        "args": ["metadata", "log", "claude-1", "--", "-message"]
+      },
+      "output": {
+        "ok": true,
+        "command": "post",
+        "routePath": "/log",
+        "body": { "session": "claude-1", "message": "-message" }
+      },
+      "inputSha256": "c1785355e1f7cc12750cf40520c3b3fe5142e19e82b046063e12eb67e5562730"
+    },
+    {
+      "id": "metadata-cli-routing-005",
+      "name": "parses context mutations with nested PR data",
+      "source": "src/metadata-cli-routing.test.ts",
+      "api": "parseRuntimeMetadataCliArgs",
+      "input": {
+        "name": "parses context mutations with nested PR data",
+        "args": [
+          "metadata",
+          "set-context",
+          "claude-1",
+          "--cwd",
+          "/repo",
+          "--branch",
+          "feature",
+          "--pr-number",
+          "42",
+          "--pr-title",
+          "Ship it"
+        ]
+      },
+      "output": {
+        "ok": true,
+        "command": "post",
+        "routePath": "/set-context",
+        "body": {
+          "session": "claude-1",
+          "context": { "cwd": "/repo", "branch": "feature", "pr": { "number": 42, "title": "Ship it" } }
+        }
+      },
+      "inputSha256": "9536f63e05ece98da3820ed9120b8d9978210e95a835061044adfcca310725b2"
+    },
+    {
+      "id": "metadata-cli-routing-006",
+      "name": "rejects malformed metadata commands",
+      "source": "src/metadata-cli-routing.test.ts",
+      "api": "parseRuntimeMetadataCliArgs",
+      "input": { "name": "rejects malformed metadata commands", "args": ["metadata", "set-status"] },
+      "output": { "ok": false, "error": "metadata set-status requires <session> and <text>" },
+      "inputSha256": "81f33f5d74973f42f7c52ad8f77946bc4e47609fa9787cdd6a1d8101945c7005"
+    }
+  ]
+}

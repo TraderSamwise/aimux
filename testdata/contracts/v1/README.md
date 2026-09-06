@@ -403,6 +403,12 @@ Priority fixture groups:
   line-window behavior captured by running TypeScript expose-preview-crop
   helpers.
 
+## Metadata CLI
+
+- `metadata-cli/routing.json`: runtime metadata CLI command parsing, option
+  terminator handling, project-service route mapping, and malformed-command
+  errors captured by running TypeScript `parseRuntimeMetadataCliArgs`.
+
 ## Metadata Server
 
 - `metadata-server/agent-input.json`: shared-chat actor parsing, safe actor

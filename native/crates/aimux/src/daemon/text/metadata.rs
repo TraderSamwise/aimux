@@ -487,6 +487,9 @@ fn parse_js_number(value: &str) -> Value {
     if !parsed.is_finite() {
         return Value::Null;
     }
+    if parsed.fract() == 0.0 && parsed >= i64::MIN as f64 && parsed <= i64::MAX as f64 {
+        return Value::Number(Number::from(parsed as i64));
+    }
     Number::from_f64(parsed)
         .map(Value::Number)
         .unwrap_or(Value::Null)
