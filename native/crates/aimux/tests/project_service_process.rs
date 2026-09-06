@@ -144,7 +144,7 @@ fn output_stream_writer_emits_native_chat_output_frames() {
         }),
         Default::default(),
     );
-    let mut writer = DisconnectAfterWrites::new(2);
+    let mut writer = DisconnectAfterWrites::new(3);
     let mut runtime = FakeStreamRuntime {
         output: "› Build it\n• Working (12s • esc to interrupt)\n• Built it.".into(),
         calls: Vec::new(),
@@ -170,6 +170,8 @@ fn output_stream_writer_emits_native_chat_output_frames() {
     assert!(output.contains("\"sessionId\":\"codex-1\""));
     assert!(output.contains("\"activityText\":\"Working (12s)\""));
     assert!(output.contains("\"messages\":["));
+    assert!(output.contains(": keepalive\n\n"));
+    assert_eq!(output.matches("event: output\n").count(), 1);
     assert!(!output.contains("\"parsed\""));
     assert!(!output.contains("\"outputAnsi\""));
     cleanup(project);

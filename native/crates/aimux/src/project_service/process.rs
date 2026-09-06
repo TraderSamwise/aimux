@@ -151,10 +151,16 @@ pub fn write_project_service_response_with_runtime(
     writer.flush()?;
     if let Some(stream) = response.stream.as_ref() {
         let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
+        let mut last_output_fingerprint = None;
         loop {
             thread::sleep(Duration::from_millis(interval_ms));
             if stream.kind == ProjectServiceStreamKind::AgentOutput {
-                writer.write_all(&encode_agent_output_stream_frame(stream, context, runtime))?;
+                writer.write_all(&encode_agent_output_stream_frame(
+                    stream,
+                    context,
+                    runtime,
+                    &mut last_output_fingerprint,
+                ))?;
             } else {
                 writer.write_all(&encode_sse_keepalive())?;
             }
@@ -168,6 +174,7 @@ fn encode_agent_output_stream_frame(
     stream: &super::dispatcher::ProjectServiceStreamPlan,
     context: Option<&ProjectServiceRequestContext>,
     runtime: &mut impl AgentOutputCaptureRuntime,
+    last_output_fingerprint: &mut Option<String>,
 ) -> Vec<u8> {
     let Some(context) = context else {
         return encode_sse_keepalive();
@@ -180,9 +187,31 @@ fn encode_agent_output_stream_frame(
         _ => AgentOutputResponseMode::Full,
     };
     match read_agent_output_payload(context, session_id, stream.start_line, mode, runtime) {
-        Ok(payload) => encode_sse_event("output", &payload),
+        Ok(payload) => {
+            let fingerprint = agent_output_stream_fingerprint(&payload);
+            if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+                return encode_sse_keepalive();
+            }
+            *last_output_fingerprint = Some(fingerprint);
+            encode_sse_event("output", &payload)
+        }
         Err(response) => encode_sse_event("error", &response.body),
     }
+}
+
+fn agent_output_stream_fingerprint(payload: &serde_json::Value) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "sessionId": payload.get("sessionId"),
+        "startLine": payload.get("startLine"),
+        "endLine": payload.get("endLine"),
+        "output": payload.get("output"),
+        "outputAnsi": payload.get("outputAnsi"),
+        "messages": payload.get("messages"),
+        "activity": payload.get("activity"),
+        "activityText": payload.get("activityText"),
+        "attention": payload.get("attention"),
+    }))
+    .unwrap_or_default()
 }
 
 fn serve_project_service_listener(listener: TcpListener, startup: ProjectServiceStartup) {
