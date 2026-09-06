@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -2376,4 +2376,87 @@ describe("installed aimux shim", () => {
     expect(result.stderr).toContain("release archive is missing BUILD_STAMP");
     expect(existsSync(join(installRoot, "old-local"))).toBe(false);
   });
+
+  it("installs a native archive without requiring node in PATH", () => {
+    const root = join(tmpdir(), `aimux-install-native-no-node-${process.pid}-${Date.now()}-${Math.random()}`);
+    const archive = createInstallArchive(root, { native: true });
+    const installRoot = join(root, "native");
+    const binDir = join(root, "bin");
+    const toolBin = createNoNodeToolBin(root);
+
+    const result = spawnSync("/bin/sh", [installPath, archive], {
+      encoding: "utf8",
+      env: {
+        PATH: toolBin,
+        HOME: join(root, "home"),
+        AIMUX_INSTALL_ROOT: installRoot,
+        AIMUX_BIN_DIR: binDir,
+        AIMUX_SKIP_POST_INSTALL_RESTART: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Installed aimux local-native");
+    const run = spawnSync(join(binDir, "aimux"), ["--version"], {
+      encoding: "utf8",
+      env: { PATH: toolBin, HOME: join(root, "home") },
+    });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("native --version\n");
+  });
+
+  it("requires node only when the release archive has no native binary", () => {
+    const root = join(tmpdir(), `aimux-install-node-fallback-${process.pid}-${Date.now()}-${Math.random()}`);
+    const archive = createInstallArchive(root, { native: false });
+
+    const result = spawnSync("/bin/sh", [installPath, archive], {
+      encoding: "utf8",
+      env: {
+        PATH: createNoNodeToolBin(root),
+        HOME: join(root, "home"),
+        AIMUX_INSTALL_ROOT: join(root, "native"),
+        AIMUX_BIN_DIR: join(root, "bin"),
+        AIMUX_SKIP_POST_INSTALL_RESTART: "1",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("missing required command: node");
+  });
 });
+
+function createInstallArchive(root: string, options: { native: boolean }): string {
+  const packageRoot = join(root, "pkg", "aimux");
+  mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+  writeFileSync(join(packageRoot, "VERSION"), "local-native\n");
+  writeFileSync(join(packageRoot, "BUILD_STAMP"), "build-native\n");
+  writeFileSync(join(packageRoot, "scripts", "installed-aimux-shim.sh"), "#!/bin/sh\nexit 88\n");
+  if (options.native) {
+    const nativeDir = join(packageRoot, "native", `${process.platform}-${process.arch}`);
+    mkdirSync(nativeDir, { recursive: true });
+    const nativeBin = join(nativeDir, "aimux");
+    writeFileSync(nativeBin, '#!/bin/sh\nprintf "native %s\\n" "$*"\n');
+    chmodSync(nativeBin, 0o755);
+  }
+  const archive = join(root, "aimux-native.tar.gz");
+  const tar = spawnSync("tar", ["-czf", archive, "-C", join(root, "pkg"), "aimux"], { encoding: "utf8" });
+  expect(tar.status).toBe(0);
+  return archive;
+}
+
+function createNoNodeToolBin(root: string): string {
+  const toolBin = join(root, "tools");
+  mkdirSync(toolBin, { recursive: true });
+  for (const name of ["cat", "chmod", "cp", "ln", "mkdir", "mktemp", "mv", "rm", "sed", "sh", "tar", "uname"]) {
+    symlinkSync(systemToolPath(name), join(toolBin, name));
+  }
+  return toolBin;
+}
+
+function systemToolPath(name: string): string {
+  for (const prefix of ["/bin", "/usr/bin"]) {
+    const path = join(prefix, name);
+    if (existsSync(path)) return path;
+  }
+  throw new Error(`missing test system tool: ${name}`);
+}

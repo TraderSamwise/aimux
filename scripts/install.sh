@@ -17,6 +17,18 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
+need_node_fallback() {
+  need node
+  NODE_VERSION="$(node -v 2>/dev/null || true)"
+  NODE_MAJOR="${NODE_VERSION#v}"
+  NODE_MAJOR="${NODE_MAJOR%%.*}"
+  case "$NODE_MAJOR" in
+    '' | *[!0-9]*) fail "Node.js >= 24 is required" ;;
+    *) [ "$NODE_MAJOR" -ge 24 ] || fail "Node.js >= 24 is required" ;;
+  esac
+  NODE_BIN="$(command -v node)"
+}
+
 detect_platform() {
   case "$(uname -s)" in
     Darwin) printf 'darwin' ;;
@@ -57,16 +69,7 @@ download_optional() {
   fi
 }
 
-need node
 need tar
-
-NODE_VERSION="$(node -v 2>/dev/null || true)"
-NODE_MAJOR="${NODE_VERSION#v}"
-NODE_MAJOR="${NODE_MAJOR%%.*}"
-case "$NODE_MAJOR" in
-  '' | *[!0-9]*) fail "Node.js >= 24 is required" ;;
-  *) [ "$NODE_MAJOR" -ge 24 ] || fail "Node.js >= 24 is required" ;;
-esac
 
 if [ -e "$BIN_DIR/aimux" ] || [ -L "$BIN_DIR/aimux" ]; then
   HAD_EXISTING_INSTALL=1
@@ -78,8 +81,6 @@ elif [ -d "$INSTALL_ROOT" ]; then
     fi
   done
 fi
-
-NODE_BIN="$(command -v node)"
 
 shell_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
@@ -138,10 +139,20 @@ tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 
 INSTALLED_VERSION="$(cat "$TMP_DIR/aimux/VERSION" 2>/dev/null || printf '%s' "$VERSION_LABEL")"
 DEST="$INSTALL_ROOT/$INSTALLED_VERSION"
+NATIVE_PAYLOAD="$TMP_DIR/aimux/native/$PLATFORM-$ARCH/aimux"
+if [ -f "$NATIVE_PAYLOAD" ]; then
+  chmod +x "$NATIVE_PAYLOAD" 2>/dev/null || true
+fi
+if [ -x "$NATIVE_PAYLOAD" ]; then
+  NODE_BIN="$(command -v node 2>/dev/null || printf 'node')"
+else
+  need_node_fallback
+fi
 
 mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
 rm -rf "$DEST"
 mv "$TMP_DIR/aimux" "$DEST"
+mkdir -p "$DEST/bin"
 NODE_BIN_QUOTED="$(shell_quote "$NODE_BIN")"
 DEST_QUOTED="$(shell_quote "$DEST")"
 BIN_SHIM_QUOTED="$(shell_quote "$BIN_DIR/aimux")"
