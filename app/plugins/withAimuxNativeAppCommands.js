@@ -71,14 +71,6 @@ function patchMenu(contents) {
       options: .displayInline,
       children: [
         UIKeyCommand(
-          title: "Send Message",
-          image: nil,
-          action: #selector(UIApplication.aimuxChatSend(_:)),
-          input: "\\r",
-          modifierFlags: [],
-          propertyList: nil
-        ),
-        UIKeyCommand(
           title: "Interrupt Agent",
           image: nil,
           action: #selector(UIApplication.aimuxChatInterrupt(_:)),

@@ -18,9 +18,15 @@ interface NativeCommandPayload {
   command?: unknown;
 }
 
+interface AimuxNativeCommandsModule {
+  addListener: (eventName: string) => void;
+  removeListeners: (count: number) => void;
+  setChatComposerFocused?: (focused: boolean) => void;
+}
+
 export function subscribeNativeAppCommands(handler: (command: NativeAppCommand) => void) {
   if (Platform.OS === "web") return () => {};
-  const module = NativeModules.AimuxNativeCommands;
+  const module = NativeModules.AimuxNativeCommands as AimuxNativeCommandsModule | undefined;
   if (!module) return () => {};
 
   const emitter = new NativeEventEmitter(module);
@@ -34,6 +40,12 @@ export function subscribeNativeAppCommands(handler: (command: NativeAppCommand) 
   );
 
   return () => subscription.remove();
+}
+
+export function setNativeChatComposerFocused(focused: boolean) {
+  if (Platform.OS === "web") return;
+  const module = NativeModules.AimuxNativeCommands as AimuxNativeCommandsModule | undefined;
+  module?.setChatComposerFocused?.(focused);
 }
 
 export function isNativeAppCommand(command: string): command is NativeAppCommand {

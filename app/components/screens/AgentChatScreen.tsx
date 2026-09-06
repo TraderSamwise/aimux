@@ -122,7 +122,10 @@ import {
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
-import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
+import {
+  setNativeChatComposerFocused,
+  subscribeNativeAppCommands,
+} from "@/lib/native-app-commands";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
@@ -958,7 +961,7 @@ export default function ChatScreen() {
 
   const handleSendMessage = useCallback(
     async (options?: { preserveFocus?: boolean }) => {
-      const preserveFocus = options?.preserveFocus === true && Platform.OS !== "web";
+      const preserveFocus = options?.preserveFocus === true;
       const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
       const attachments = [...pendingAttachments];
       if (
@@ -1120,7 +1123,7 @@ export default function ChatScreen() {
   );
 
   const handleSendPress = useCallback(() => {
-    void handleSendMessage({ preserveFocus: Platform.OS !== "web" });
+    void handleSendMessage({ preserveFocus: true });
   }, [handleSendMessage]);
 
   const appendPendingAttachments = useCallback(
@@ -1268,14 +1271,20 @@ export default function ChatScreen() {
       });
       return () => {
         composerFocusedRef.current = false;
+        setNativeChatComposerFocused(false);
         unsubscribe();
       };
     }, []),
   );
 
-  const handleComposerKeyPress = useCallback(
+  const handleComposerKeyboardEvent = useCallback(
     (event: {
-      nativeEvent: {
+      key?: string;
+      shiftKey?: boolean;
+      ctrlKey?: boolean;
+      metaKey?: boolean;
+      altKey?: boolean;
+      nativeEvent?: {
         key?: string;
         shiftKey?: boolean;
         ctrlKey?: boolean;
@@ -1285,12 +1294,24 @@ export default function ChatScreen() {
       preventDefault?: () => void;
     }) => {
       if (Platform.OS !== "web") return;
-      if (shouldSubmitComposerKey(event.nativeEvent)) {
+      const keyEvent = {
+        key: event.nativeEvent?.key ?? event.key,
+        shiftKey: event.nativeEvent?.shiftKey ?? event.shiftKey,
+        ctrlKey: event.nativeEvent?.ctrlKey ?? event.ctrlKey,
+        metaKey: event.nativeEvent?.metaKey ?? event.metaKey,
+        altKey: event.nativeEvent?.altKey ?? event.altKey,
+      };
+      if (keyEvent.key === "Escape") {
         event.preventDefault?.();
-        void handleSendMessage();
+        if (canUseOwnerControls) void handleInterrupt();
+        return;
+      }
+      if (shouldSubmitComposerKey(keyEvent)) {
+        event.preventDefault?.();
+        void handleSendMessage({ preserveFocus: true });
       }
     },
-    [handleSendMessage],
+    [canUseOwnerControls, handleInterrupt, handleSendMessage],
   );
 
   const handleDraftChange = useCallback(
@@ -1311,8 +1332,19 @@ export default function ChatScreen() {
     [handleComposerPaste],
   );
 
+  const composerKeyboardProps = useMemo(
+    () =>
+      Platform.OS === "web"
+        ? ({
+            onKeyDown: handleComposerKeyboardEvent,
+          } as unknown as Partial<React.ComponentProps<typeof TextInput>>)
+        : {},
+    [handleComposerKeyboardEvent],
+  );
+
   const setComposerNativeFocus = useCallback((focused: boolean, updateFocusShell: () => void) => {
     composerFocusedRef.current = focused;
+    setNativeChatComposerFocused(focused);
     updateFocusShell();
   }, []);
 
@@ -1564,7 +1596,7 @@ export default function ChatScreen() {
                     onBlur={() => setComposerNativeFocus(false, onBlur)}
                     value={draft}
                     onChangeText={handleDraftChange}
-                    onKeyPress={handleComposerKeyPress}
+                    {...composerKeyboardProps}
                     {...COMPOSER_WEB_INPUT_PROPS}
                     {...composerPasteProps}
                     placeholder="Ask the agent…"
@@ -1669,10 +1701,10 @@ export default function ChatScreen() {
       canSendMessage,
       composerAwaitingAck,
       composerFooterBottomPadding,
+      composerKeyboardProps,
       composerPasteProps,
       draft,
       handleAttachAttachment,
-      handleComposerKeyPress,
       handleDraftChange,
       handleDropAttachments,
       handleInterrupt,
