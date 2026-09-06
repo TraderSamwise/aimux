@@ -1,0 +1,475 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-client-dashboard-slot-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "TmuxRuntimeManager client dashboard slot link/swap/move behavior captured by running TypeScript.",
+  "caseCount": 10,
+  "cases": [
+    {
+      "id": "tmux-client-dashboard-slot-001",
+      "name": "replaces a client dashboard placeholder atomically",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "replaces a client dashboard placeholder atomically",
+        "input": {
+          "clientSessionMissing": true,
+          "clientWindows": "@placeholder\t0\tdashboard\t1\t100",
+          "clientWindowsAfterLink": "@placeholder\t0\tdashboard\t1\t100\n@10\t1\tdashboard\t0\t100",
+          "clientWindowsAfterSwap": "@10\t0\tdashboard\t1\t100\n@placeholder\t1\tdashboard\t0\t100"
+        },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "calls": [
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
+          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          {
+            "args": [
+              "swap-window",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c:@10",
+              "-t",
+              "aimux-mobile-abc-client-268eff9c:0"
+            ]
+          },
+          { "args": ["unlink-window", "-t", "aimux-mobile-abc-client-268eff9c:@placeholder"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
+        ],
+        "interactiveCalls": [{ "args": ["switch-client", "-t", "aimux-mobile-abc-client-268eff9c:0"] }]
+      },
+      "inputSha256": "9c85e37a6596ad25bc6cb77ec4debfe22422ce9c3bf1a68c92796ac79d41cbfc"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-002",
+      "name": "moves an already linked dashboard into the requested client slot",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "moves an already linked dashboard into the requested client slot",
+        "input": {
+          "clientWindows": "@placeholder\t0\tdashboard\t1\t100\n@10\t1\tdashboard\t0\t100",
+          "clientWindowsAfterSwap": "@10\t0\tdashboard\t0\t100\n@placeholder\t1\tdashboard\t1\t100"
+        },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "calls": [
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
+          {
+            "args": [
+              "swap-window",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c:@10",
+              "-t",
+              "aimux-mobile-abc-client-268eff9c:0"
+            ]
+          },
+          { "args": ["unlink-window", "-t", "aimux-mobile-abc-client-268eff9c:@placeholder"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
+        ],
+        "interactiveCalls": [{ "args": ["switch-client", "-t", "aimux-mobile-abc-client-268eff9c:0"] }]
+      },
+      "inputSha256": "d4fd1f04fab3eb75bcd63232288dcca848fbcb35f10cac303ffc9da6d85f3402"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-003",
+      "name": "moves an already linked dashboard into an empty requested slot",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "moves an already linked dashboard into an empty requested slot",
+        "input": {
+          "clientWindows": "@10\t1\tdashboard\t1\t100",
+          "clientWindowsAfterMove": "@10\t0\tdashboard\t1\t100"
+        },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "calls": [
+          { "args": ["move-window", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c:0"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          {
+            "args": [
+              "move-window",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c:@10",
+              "-t",
+              "aimux-mobile-abc-client-268eff9c:0"
+            ]
+          }
+        ],
+        "interactiveCalls": [{ "args": ["switch-client", "-t", "aimux-mobile-abc-client-268eff9c:0"] }]
+      },
+      "inputSha256": "b83c4f3e5adb61dbc3ae64c46b54969b76891060d873358c45f7c73ded94b035"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-004",
+      "name": "preserves a pre-existing dashboard link when moving fails",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "preserves a pre-existing dashboard link when moving fails",
+        "input": { "clientWindows": "@10\t1\tdashboard\t1\t100", "moveError": "move failed" },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": "move failed",
+        "result": null,
+        "calls": [
+          { "args": ["move-window", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c:0"] },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          {
+            "args": [
+              "move-window",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c:@10",
+              "-t",
+              "aimux-mobile-abc-client-268eff9c:0"
+            ]
+          }
+        ],
+        "interactiveCalls": []
+      },
+      "inputSha256": "6b9c338e3fe461fdc7dbea34bdd3b3df7bf22ef20fc8cf9e5a475c02507bc43c"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-005",
+      "name": "keeps the existing dashboard slot intact when linking fails",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "keeps the existing dashboard slot intact when linking fails",
+        "input": {
+          "clientWindows": "@placeholder\t0\tdashboard\t1\t100\n@codex\t1\tcodex\t0\t100",
+          "linkError": "link failed"
+        },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": "link failed",
+        "result": null,
+        "calls": [
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
+          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
+        ],
+        "interactiveCalls": []
+      },
+      "inputSha256": "785a1ad16eb3b3925c67e08fc2d7e00732188df19984f6fd102f079376c7436e"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-006",
+      "name": "unlinks a newly linked dashboard when slot verification fails",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "unlinks a newly linked dashboard when slot verification fails",
+        "input": {
+          "clientWindows": "@placeholder\t0\tdashboard\t1\t100",
+          "clientWindowsAfterLink": "@placeholder\t0\tdashboard\t1\t100\n@10\t1\tdashboard\t0\t100"
+        },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": "Failed to replace dashboard slot aimux-mobile-abc-client-268eff9c:0",
+        "result": null,
+        "calls": [
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
+          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          {
+            "args": [
+              "swap-window",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c:@10",
+              "-t",
+              "aimux-mobile-abc-client-268eff9c:0"
+            ]
+          },
+          { "args": ["unlink-window", "-t", "aimux-mobile-abc-client-268eff9c:@10"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
+        ],
+        "interactiveCalls": []
+      },
+      "inputSha256": "19d5e0a2b36995af13dc6e9cd75f4173628a8939c7e6d31e9c25797637368b77"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-007",
+      "name": "restores window renumbering when dashboard link fails",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "restores window renumbering when dashboard link fails",
+        "input": {
+          "clientSessionMissing": true,
+          "clientWindows": "@placeholder\t0\tdashboard\t1\t100",
+          "linkError": "link failed"
+        },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": "link failed",
+        "result": null,
+        "calls": [
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
+          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
+        ],
+        "interactiveCalls": []
+      },
+      "inputSha256": "6c02ccd7cf3d7ef96c54c1c50b416a4f3a78cd4e1e0b46e5fcf3864100157e12"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-008",
+      "name": "restores window renumbering when stale dashboard unlink fails",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "restores window renumbering when stale dashboard unlink fails",
+        "input": {
+          "clientSessionMissing": true,
+          "clientWindows": "@placeholder\t0\tdashboard\t1\t100",
+          "clientWindowsAfterLink": "@placeholder\t0\tdashboard\t1\t100\n@10\t1\tdashboard\t0\t100",
+          "clientWindowsAfterSwap": "@10\t0\tdashboard\t1\t100\n@placeholder\t1\tdashboard\t0\t100",
+          "unlinkPlaceholderError": "unlink failed"
+        },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@10", "windowIndex": 0, "windowName": "dashboard" },
+        "options": { "insideTmux": true, "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "calls": [
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
+          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          {
+            "args": [
+              "swap-window",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c:@10",
+              "-t",
+              "aimux-mobile-abc-client-268eff9c:0"
+            ]
+          },
+          { "args": ["unlink-window", "-t", "aimux-mobile-abc-client-268eff9c:@placeholder"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
+        ],
+        "interactiveCalls": [{ "args": ["switch-client", "-t", "aimux-mobile-abc-client-268eff9c:0"] }]
+      },
+      "inputSha256": "efd152f2b2e4ed05d0721bfb351b7c1d5213dc94cc602f9019249e8da002171b"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-009",
+      "name": "switches an explicit client tty and suffix for cross-project target",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "switches an explicit client tty and suffix for cross-project target",
+        "input": { "clientSessionMissing": true, "clientWindowsAfterLink": "@3\t3\tcodex\t0\t90\t0", "windowId": "@3" },
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+        "options": {
+          "insideTmux": true,
+          "clientTty": "/dev/ttys999",
+          "clientSuffix": "268eff9c",
+          "returnSessionName": "other-client"
+        }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "calls": [
+          {
+            "args": [
+              "new-session",
+              "-d",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null"
+            ],
+            "cwd": "/repo/mobile"
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["link-window", "-d", "-s", "@3", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-return-session", "other-client"] }
+        ],
+        "interactiveCalls": [
+          { "args": ["switch-client", "-c", "/dev/ttys999", "-t", "aimux-mobile-abc-client-268eff9c:3"] }
+        ]
+      },
+      "inputSha256": "e48fb4fdd044fcccf83ef2fb9fe3e0ddfdea5a2535e688ac515f5c62e42cdab6"
+    },
+    {
+      "id": "tmux-client-dashboard-slot-010",
+      "name": "links a host dashboard into the client dashboard slot",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "links a host dashboard into the client dashboard slot",
+        "input": {
+          "clientWindows": "@125\t0\tdashboard\t1\t100\t0",
+          "clientWindowsAfterLink": "@125\t0\tdashboard\t1\t100\t0\n@121\t1\tdashboard\t0\t100\t0",
+          "clientWindowsAfterSwap": "@121\t0\tdashboard\t1\t100\t0\n@125\t1\tdashboard\t0\t100\t0",
+          "currentRuntimeBuild": "",
+          "currentClientSession": "aimux-mobile-abc-client-268eff9c",
+          "windowId": "@121"
+        },
+        "target": {
+          "sessionName": "aimux-mobile-abc",
+          "windowId": "@121",
+          "windowIndex": 0,
+          "windowName": "dashboard"
+        },
+        "options": { "insideTmux": true, "clientTty": "/dev/ttys999", "clientSuffix": "268eff9c" }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "calls": [
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-host-session", "aimux-mobile-abc"]
+          },
+          {
+            "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
+          },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
+          { "args": ["link-window", "-d", "-s", "@121", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          {
+            "args": [
+              "swap-window",
+              "-s",
+              "aimux-mobile-abc-client-268eff9c:@121",
+              "-t",
+              "aimux-mobile-abc-client-268eff9c:0"
+            ]
+          },
+          { "args": ["unlink-window", "-t", "aimux-mobile-abc-client-268eff9c:@125"] },
+          { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
+        ],
+        "interactiveCalls": [
+          { "args": ["switch-client", "-c", "/dev/ttys999", "-t", "aimux-mobile-abc-client-268eff9c:0"] }
+        ]
+      },
+      "inputSha256": "c432536c5f240da209b29b182be89d342ad574dc76c672c670d39d5c9d574323"
+    }
+  ]
+}
