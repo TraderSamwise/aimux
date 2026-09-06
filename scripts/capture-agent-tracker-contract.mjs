@@ -38,7 +38,7 @@ const withClock = (iso, fn) => {
   }
 };
 
-const scenarios = [
+const baseScenarios = [
   {
     name: "prompt-to-task-done-increments-unseen-and-idle-time",
     actions: [
@@ -142,6 +142,93 @@ const scenarios = [
       },
     ],
   },
+];
+
+const eventTransitionCases = [
+  { kind: "prompt", message: "user asked for work" },
+  { kind: "response", message: "agent answered" },
+  { kind: "status", message: "Working on it" },
+  { kind: "task_assigned", message: "Task assigned" },
+  { kind: "task_done", message: "Task done" },
+  { kind: "task_failed", message: "Task failed", tone: "error" },
+  { kind: "needs_input", message: "Need your input" },
+  { kind: "blocked", message: "Blocked on deploy" },
+  { kind: "interrupted", message: "Conversation interrupted" },
+  { kind: "notify", message: "Notification" },
+  { kind: "notify", message: "Error notification", tone: "error" },
+];
+
+const statusTransitionCases = [
+  { name: "status-tone-error", event: { kind: "status", message: "Build exploded", tone: "error" } },
+  { name: "status-needs-input-message", event: { kind: "status", message: "waiting for you to confirm approval" } },
+  { name: "status-blocked-message", event: { kind: "status", message: "stuck waiting on deploy" } },
+  { name: "status-success-tone", event: { kind: "status", message: "Looks good", tone: "success" } },
+  { name: "status-done-word", event: { kind: "status", message: "work completed" } },
+  { name: "status-running-word", event: { kind: "status", message: "indexing repository" } },
+  { name: "status-neutral-no-state-change", event: { kind: "status", message: "FYI only" } },
+];
+
+const activityStates = ["idle", "running", "done", "error", "waiting", "interrupted"];
+const attentionStates = ["normal", "needs_input", "blocked", "error", "needs_response"];
+
+const scenarios = [
+  ...baseScenarios,
+  ...eventTransitionCases.map((event, index) => ({
+    name: `single-event-${event.kind}${event.tone ? `-${event.tone}` : ""}`,
+    actions: [
+      {
+        at: `2026-05-09T12:10:${String(index).padStart(2, "0")}.000Z`,
+        op: "emit",
+        session: "s1",
+        event: {
+          ...event,
+          ts: `2026-05-09T12:10:${String(index).padStart(2, "0")}.000Z`,
+        },
+      },
+    ],
+  })),
+  ...statusTransitionCases.map((entry, index) => ({
+    name: entry.name,
+    actions: [
+      {
+        at: `2026-05-09T12:11:${String(index).padStart(2, "0")}.000Z`,
+        op: "emit",
+        session: "s1",
+        event: {
+          ...entry.event,
+          ts: `2026-05-09T12:11:${String(index).padStart(2, "0")}.000Z`,
+        },
+      },
+    ],
+  })),
+  ...activityStates.map((activity, index) => ({
+    name: `set-activity-${activity}`,
+    actions: [
+      {
+        at: "2026-05-09T12:12:00.000Z",
+        op: "setActivity",
+        session: "s1",
+        activity: "running",
+      },
+      {
+        at: `2026-05-09T12:12:${String(index + 1).padStart(2, "0")}.000Z`,
+        op: "setActivity",
+        session: "s1",
+        activity,
+      },
+    ],
+  })),
+  ...attentionStates.map((attention, index) => ({
+    name: `set-attention-${attention}`,
+    actions: [
+      {
+        at: `2026-05-09T12:13:${String(index).padStart(2, "0")}.000Z`,
+        op: "setAttention",
+        session: "s1",
+        attention,
+      },
+    ],
+  })),
 ];
 
 const applyAction = (tracker, projectRoot, action) => {

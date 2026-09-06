@@ -25,17 +25,23 @@ Priority fixture groups:
 
 - `agent-output/parser-adversarial.json`: golden `{ input, output }` cases
   captured by running the TypeScript `parseAgentOutput` implementation against
-  the exported adversarial fixtures and `src/agent-output-parser.test.ts`
+  the exported adversarial fixtures, parser fixture tests, compact parser
+  tests, harness reads, activity-text inputs, and `src/agent-output-parser.test.ts`
   literals.
 - `agent-output/parser-fuzz.json`: frozen deterministic parser fuzz corpus
   captured by running the TypeScript fuzz generator in
   `src/agent-output-parser-fuzz.test.ts`.
+- `agent-output/parser-audit.json`: parser audit summaries captured by running
+  the TypeScript audit harness in `src/agent-output-parser-audit.test.ts`.
+- `agent-output/parser-activity-text.json`: progress/activity text extraction
+  cases captured by running TypeScript `activityTextFromParsedAgentOutput`.
 - `agent-output/transcript.json`: transcript projection and published
   attachment merge cases captured by running the TypeScript
   `agent-transcript` APIs against `src/agent-transcript.test.ts` inputs.
 - `agent-output/tracker.json`: `AgentTracker` event, `markSeen`,
   `setActivity`, `setAttention`, focus-suppression, and derived-count
-  transition snapshots captured from the TypeScript metadata store path.
+  transition snapshots captured from the TypeScript metadata store path,
+  including one-case-per-event and status-derivation branch coverage.
 - `agent-output/bounds.json`: capture-window clamping and end-line contracts
   captured from the TypeScript `agent-output-bounds` helpers.
 - `agent-output/stream.json`: SSE text handler output, tail notice, overlap,

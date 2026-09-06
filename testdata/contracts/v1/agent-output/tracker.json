@@ -738,6 +738,1669 @@
         }
       },
       "inputSha256": "db8cf93f8435fe26acd9472cac1386b376508c26a25c6a6118e224ba8cd3eb18"
+    },
+    {
+      "id": "agent-tracker-006",
+      "name": "single-event-prompt",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:00.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "prompt", "message": "user asked for work", "ts": "2026-05-09T12:10:00.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:00.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "prompt", "message": "user asked for work", "ts": "2026-05-09T12:10:00.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:00.000Z",
+                  "derived": {
+                    "activity": "running",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastEvent": {
+                      "kind": "prompt",
+                      "message": "user asked for work",
+                      "ts": "2026-05-09T12:10:00.000Z"
+                    },
+                    "events": [{ "kind": "prompt", "message": "user asked for work", "ts": "2026-05-09T12:10:00.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:00.000Z",
+              "derived": {
+                "activity": "running",
+                "attention": "normal",
+                "unseenCount": 0,
+                "lastEvent": { "kind": "prompt", "message": "user asked for work", "ts": "2026-05-09T12:10:00.000Z" },
+                "events": [{ "kind": "prompt", "message": "user asked for work", "ts": "2026-05-09T12:10:00.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "f307df16b779f825efc97d8059bc6bc74bded612c44bdde5a692c8bb4844b565"
+    },
+    {
+      "id": "agent-tracker-007",
+      "name": "single-event-response",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:01.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "response", "message": "agent answered", "ts": "2026-05-09T12:10:01.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:01.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "response", "message": "agent answered", "ts": "2026-05-09T12:10:01.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:01.000Z",
+                  "derived": {
+                    "activity": "idle",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:01.000Z",
+                    "lastEvent": { "kind": "response", "message": "agent answered", "ts": "2026-05-09T12:10:01.000Z" },
+                    "events": [{ "kind": "response", "message": "agent answered", "ts": "2026-05-09T12:10:01.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:01.000Z",
+              "derived": {
+                "activity": "idle",
+                "attention": "normal",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:01.000Z",
+                "lastEvent": { "kind": "response", "message": "agent answered", "ts": "2026-05-09T12:10:01.000Z" },
+                "events": [{ "kind": "response", "message": "agent answered", "ts": "2026-05-09T12:10:01.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "94998e68395f75c1b4f59087b8c68a602a605aab1c2eca121c5605b2e2b177f9"
+    },
+    {
+      "id": "agent-tracker-008",
+      "name": "single-event-status",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:02.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:10:02.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:02.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:10:02.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:02.000Z",
+                  "derived": {
+                    "activity": "running",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastOutputAt": "2026-05-09T12:10:02.000Z",
+                    "lastEvent": { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:10:02.000Z" },
+                    "events": [{ "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:10:02.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:02.000Z",
+              "derived": {
+                "activity": "running",
+                "attention": "normal",
+                "unseenCount": 0,
+                "lastOutputAt": "2026-05-09T12:10:02.000Z",
+                "lastEvent": { "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:10:02.000Z" },
+                "events": [{ "kind": "status", "message": "Working on it", "ts": "2026-05-09T12:10:02.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "7787732814db13ba3db4d97f0f981dd33496accb27dea517aaab27d3e7aa94b0"
+    },
+    {
+      "id": "agent-tracker-009",
+      "name": "single-event-task_assigned",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:03.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "task_assigned", "message": "Task assigned", "ts": "2026-05-09T12:10:03.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:03.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "task_assigned", "message": "Task assigned", "ts": "2026-05-09T12:10:03.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:03.000Z",
+                  "derived": {
+                    "activity": "running",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastEvent": {
+                      "kind": "task_assigned",
+                      "message": "Task assigned",
+                      "ts": "2026-05-09T12:10:03.000Z"
+                    },
+                    "events": [
+                      { "kind": "task_assigned", "message": "Task assigned", "ts": "2026-05-09T12:10:03.000Z" }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:03.000Z",
+              "derived": {
+                "activity": "running",
+                "attention": "normal",
+                "unseenCount": 0,
+                "lastEvent": { "kind": "task_assigned", "message": "Task assigned", "ts": "2026-05-09T12:10:03.000Z" },
+                "events": [{ "kind": "task_assigned", "message": "Task assigned", "ts": "2026-05-09T12:10:03.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "9c6cdce2378c5915504ccc64219e12845b3c3d9d426838b6d107316ed462ea72"
+    },
+    {
+      "id": "agent-tracker-010",
+      "name": "single-event-task_done",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:04.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "task_done", "message": "Task done", "ts": "2026-05-09T12:10:04.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:04.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "task_done", "message": "Task done", "ts": "2026-05-09T12:10:04.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:04.000Z",
+                  "derived": {
+                    "activity": "done",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:04.000Z",
+                    "lastEvent": { "kind": "task_done", "message": "Task done", "ts": "2026-05-09T12:10:04.000Z" },
+                    "events": [{ "kind": "task_done", "message": "Task done", "ts": "2026-05-09T12:10:04.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:04.000Z",
+              "derived": {
+                "activity": "done",
+                "attention": "normal",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:04.000Z",
+                "lastEvent": { "kind": "task_done", "message": "Task done", "ts": "2026-05-09T12:10:04.000Z" },
+                "events": [{ "kind": "task_done", "message": "Task done", "ts": "2026-05-09T12:10:04.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "165dbea0a4752b0dab0f2a07b2c63a11f167b5c522955423e788e698329474c9"
+    },
+    {
+      "id": "agent-tracker-011",
+      "name": "single-event-task_failed-error",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:05.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": {
+              "kind": "task_failed",
+              "message": "Task failed",
+              "tone": "error",
+              "ts": "2026-05-09T12:10:05.000Z"
+            }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:05.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "task_failed",
+                "message": "Task failed",
+                "tone": "error",
+                "ts": "2026-05-09T12:10:05.000Z"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:05.000Z",
+                  "derived": {
+                    "activity": "error",
+                    "attention": "error",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:05.000Z",
+                    "lastEvent": {
+                      "kind": "task_failed",
+                      "message": "Task failed",
+                      "tone": "error",
+                      "ts": "2026-05-09T12:10:05.000Z"
+                    },
+                    "events": [
+                      {
+                        "kind": "task_failed",
+                        "message": "Task failed",
+                        "tone": "error",
+                        "ts": "2026-05-09T12:10:05.000Z"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:05.000Z",
+              "derived": {
+                "activity": "error",
+                "attention": "error",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:05.000Z",
+                "lastEvent": {
+                  "kind": "task_failed",
+                  "message": "Task failed",
+                  "tone": "error",
+                  "ts": "2026-05-09T12:10:05.000Z"
+                },
+                "events": [
+                  { "kind": "task_failed", "message": "Task failed", "tone": "error", "ts": "2026-05-09T12:10:05.000Z" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "60af08910e733f22e7604631c209056e25624a36f4567de99cf2702ce839a16f"
+    },
+    {
+      "id": "agent-tracker-012",
+      "name": "single-event-needs_input",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:06.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "needs_input", "message": "Need your input", "ts": "2026-05-09T12:10:06.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:06.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "needs_input", "message": "Need your input", "ts": "2026-05-09T12:10:06.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:06.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "needs_input",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:06.000Z",
+                    "lastEvent": {
+                      "kind": "needs_input",
+                      "message": "Need your input",
+                      "ts": "2026-05-09T12:10:06.000Z"
+                    },
+                    "events": [
+                      { "kind": "needs_input", "message": "Need your input", "ts": "2026-05-09T12:10:06.000Z" }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:06.000Z",
+              "derived": {
+                "activity": "waiting",
+                "attention": "needs_input",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:06.000Z",
+                "lastEvent": { "kind": "needs_input", "message": "Need your input", "ts": "2026-05-09T12:10:06.000Z" },
+                "events": [{ "kind": "needs_input", "message": "Need your input", "ts": "2026-05-09T12:10:06.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "2d1c38e9a9b4223d30f324b700ecc564b4e7ce25cd8bb49be0318748df5ec95b"
+    },
+    {
+      "id": "agent-tracker-013",
+      "name": "single-event-blocked",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:07.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "blocked", "message": "Blocked on deploy", "ts": "2026-05-09T12:10:07.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:07.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "blocked", "message": "Blocked on deploy", "ts": "2026-05-09T12:10:07.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:07.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "blocked",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:07.000Z",
+                    "lastEvent": {
+                      "kind": "blocked",
+                      "message": "Blocked on deploy",
+                      "ts": "2026-05-09T12:10:07.000Z"
+                    },
+                    "events": [{ "kind": "blocked", "message": "Blocked on deploy", "ts": "2026-05-09T12:10:07.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:07.000Z",
+              "derived": {
+                "activity": "waiting",
+                "attention": "blocked",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:07.000Z",
+                "lastEvent": { "kind": "blocked", "message": "Blocked on deploy", "ts": "2026-05-09T12:10:07.000Z" },
+                "events": [{ "kind": "blocked", "message": "Blocked on deploy", "ts": "2026-05-09T12:10:07.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "e46d297a8bcdb0c59015d4db2aaa46d1aded1015787c0e43ac665b4dc36a29fa"
+    },
+    {
+      "id": "agent-tracker-014",
+      "name": "single-event-interrupted",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:08.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "interrupted", "message": "Conversation interrupted", "ts": "2026-05-09T12:10:08.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:08.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "interrupted",
+                "message": "Conversation interrupted",
+                "ts": "2026-05-09T12:10:08.000Z"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:08.000Z",
+                  "derived": {
+                    "activity": "interrupted",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:08.000Z",
+                    "lastEvent": {
+                      "kind": "interrupted",
+                      "message": "Conversation interrupted",
+                      "ts": "2026-05-09T12:10:08.000Z"
+                    },
+                    "events": [
+                      { "kind": "interrupted", "message": "Conversation interrupted", "ts": "2026-05-09T12:10:08.000Z" }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:08.000Z",
+              "derived": {
+                "activity": "interrupted",
+                "attention": "normal",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:08.000Z",
+                "lastEvent": {
+                  "kind": "interrupted",
+                  "message": "Conversation interrupted",
+                  "ts": "2026-05-09T12:10:08.000Z"
+                },
+                "events": [
+                  { "kind": "interrupted", "message": "Conversation interrupted", "ts": "2026-05-09T12:10:08.000Z" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "0c17a22981ec89d1010fe3e858bd0094074a6603a00955f4784d3cb5660e8144"
+    },
+    {
+      "id": "agent-tracker-015",
+      "name": "single-event-notify",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:09.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "notify", "message": "Notification", "ts": "2026-05-09T12:10:09.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:09.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "notify", "message": "Notification", "ts": "2026-05-09T12:10:09.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:09.000Z",
+                  "derived": {
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:09.000Z",
+                    "lastEvent": { "kind": "notify", "message": "Notification", "ts": "2026-05-09T12:10:09.000Z" },
+                    "events": [{ "kind": "notify", "message": "Notification", "ts": "2026-05-09T12:10:09.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:09.000Z",
+              "derived": {
+                "attention": "normal",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:09.000Z",
+                "lastEvent": { "kind": "notify", "message": "Notification", "ts": "2026-05-09T12:10:09.000Z" },
+                "events": [{ "kind": "notify", "message": "Notification", "ts": "2026-05-09T12:10:09.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "398f3b055115e86caee9dd5e239775e14d38e6134efd9844e750b924412644c3"
+    },
+    {
+      "id": "agent-tracker-016",
+      "name": "single-event-notify-error",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:10:10.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": {
+              "kind": "notify",
+              "message": "Error notification",
+              "tone": "error",
+              "ts": "2026-05-09T12:10:10.000Z"
+            }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:10:10.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "notify",
+                "message": "Error notification",
+                "tone": "error",
+                "ts": "2026-05-09T12:10:10.000Z"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:10:10.000Z",
+                  "derived": {
+                    "attention": "error",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:10:10.000Z",
+                    "lastEvent": {
+                      "kind": "notify",
+                      "message": "Error notification",
+                      "tone": "error",
+                      "ts": "2026-05-09T12:10:10.000Z"
+                    },
+                    "events": [
+                      {
+                        "kind": "notify",
+                        "message": "Error notification",
+                        "tone": "error",
+                        "ts": "2026-05-09T12:10:10.000Z"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:10:10.000Z",
+              "derived": {
+                "attention": "error",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:10:10.000Z",
+                "lastEvent": {
+                  "kind": "notify",
+                  "message": "Error notification",
+                  "tone": "error",
+                  "ts": "2026-05-09T12:10:10.000Z"
+                },
+                "events": [
+                  {
+                    "kind": "notify",
+                    "message": "Error notification",
+                    "tone": "error",
+                    "ts": "2026-05-09T12:10:10.000Z"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "9e28fd44cbe362650f4c0ea42af625cf58fea5265387dc77714b2d640038d017"
+    },
+    {
+      "id": "agent-tracker-017",
+      "name": "status-tone-error",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:11:00.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": {
+              "kind": "status",
+              "message": "Build exploded",
+              "tone": "error",
+              "ts": "2026-05-09T12:11:00.000Z"
+            }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:11:00.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "status",
+                "message": "Build exploded",
+                "tone": "error",
+                "ts": "2026-05-09T12:11:00.000Z"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:11:00.000Z",
+                  "derived": {
+                    "activity": "error",
+                    "attention": "error",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:11:00.000Z",
+                    "lastEvent": {
+                      "kind": "status",
+                      "message": "Build exploded",
+                      "tone": "error",
+                      "ts": "2026-05-09T12:11:00.000Z"
+                    },
+                    "events": [
+                      {
+                        "kind": "status",
+                        "message": "Build exploded",
+                        "tone": "error",
+                        "ts": "2026-05-09T12:11:00.000Z"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:11:00.000Z",
+              "derived": {
+                "activity": "error",
+                "attention": "error",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:11:00.000Z",
+                "lastEvent": {
+                  "kind": "status",
+                  "message": "Build exploded",
+                  "tone": "error",
+                  "ts": "2026-05-09T12:11:00.000Z"
+                },
+                "events": [
+                  { "kind": "status", "message": "Build exploded", "tone": "error", "ts": "2026-05-09T12:11:00.000Z" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "cda315e8b6a42eea343bed96b37c49002a6e1a0dfc1604b8edaacf2646d8e800"
+    },
+    {
+      "id": "agent-tracker-018",
+      "name": "status-needs-input-message",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:11:01.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": {
+              "kind": "status",
+              "message": "waiting for you to confirm approval",
+              "ts": "2026-05-09T12:11:01.000Z"
+            }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:11:01.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "status",
+                "message": "waiting for you to confirm approval",
+                "ts": "2026-05-09T12:11:01.000Z"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:11:01.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "needs_input",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:11:01.000Z",
+                    "lastEvent": {
+                      "kind": "status",
+                      "message": "waiting for you to confirm approval",
+                      "ts": "2026-05-09T12:11:01.000Z"
+                    },
+                    "events": [
+                      {
+                        "kind": "status",
+                        "message": "waiting for you to confirm approval",
+                        "ts": "2026-05-09T12:11:01.000Z"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:11:01.000Z",
+              "derived": {
+                "activity": "waiting",
+                "attention": "needs_input",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:11:01.000Z",
+                "lastEvent": {
+                  "kind": "status",
+                  "message": "waiting for you to confirm approval",
+                  "ts": "2026-05-09T12:11:01.000Z"
+                },
+                "events": [
+                  {
+                    "kind": "status",
+                    "message": "waiting for you to confirm approval",
+                    "ts": "2026-05-09T12:11:01.000Z"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "8846f62a64fc95494bd15e31ac07235ece7963fc02b0d4eb51cbc9f83e6d1682"
+    },
+    {
+      "id": "agent-tracker-019",
+      "name": "status-blocked-message",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:11:02.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "stuck waiting on deploy", "ts": "2026-05-09T12:11:02.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:11:02.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "stuck waiting on deploy", "ts": "2026-05-09T12:11:02.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:11:02.000Z",
+                  "derived": {
+                    "activity": "waiting",
+                    "attention": "blocked",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:11:02.000Z",
+                    "lastEvent": {
+                      "kind": "status",
+                      "message": "stuck waiting on deploy",
+                      "ts": "2026-05-09T12:11:02.000Z"
+                    },
+                    "events": [
+                      { "kind": "status", "message": "stuck waiting on deploy", "ts": "2026-05-09T12:11:02.000Z" }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:11:02.000Z",
+              "derived": {
+                "activity": "waiting",
+                "attention": "blocked",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:11:02.000Z",
+                "lastEvent": {
+                  "kind": "status",
+                  "message": "stuck waiting on deploy",
+                  "ts": "2026-05-09T12:11:02.000Z"
+                },
+                "events": [{ "kind": "status", "message": "stuck waiting on deploy", "ts": "2026-05-09T12:11:02.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "84315e1839a7a0d5c53f0cd0d69326421bd271eeb9148ef160654bd626cbb29a"
+    },
+    {
+      "id": "agent-tracker-020",
+      "name": "status-success-tone",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:11:03.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "Looks good", "tone": "success", "ts": "2026-05-09T12:11:03.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:11:03.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": {
+                "kind": "status",
+                "message": "Looks good",
+                "tone": "success",
+                "ts": "2026-05-09T12:11:03.000Z"
+              }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:11:03.000Z",
+                  "derived": {
+                    "activity": "done",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:11:03.000Z",
+                    "lastEvent": {
+                      "kind": "status",
+                      "message": "Looks good",
+                      "tone": "success",
+                      "ts": "2026-05-09T12:11:03.000Z"
+                    },
+                    "events": [
+                      { "kind": "status", "message": "Looks good", "tone": "success", "ts": "2026-05-09T12:11:03.000Z" }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:11:03.000Z",
+              "derived": {
+                "activity": "done",
+                "attention": "normal",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:11:03.000Z",
+                "lastEvent": {
+                  "kind": "status",
+                  "message": "Looks good",
+                  "tone": "success",
+                  "ts": "2026-05-09T12:11:03.000Z"
+                },
+                "events": [
+                  { "kind": "status", "message": "Looks good", "tone": "success", "ts": "2026-05-09T12:11:03.000Z" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "4f7fbc8ead495585090964877a97916ae8b8250e368be608ef09882b33281eae"
+    },
+    {
+      "id": "agent-tracker-021",
+      "name": "status-done-word",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:11:04.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "work completed", "ts": "2026-05-09T12:11:04.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:11:04.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "work completed", "ts": "2026-05-09T12:11:04.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:11:04.000Z",
+                  "derived": {
+                    "activity": "done",
+                    "attention": "normal",
+                    "unseenCount": 1,
+                    "lastOutputAt": "2026-05-09T12:11:04.000Z",
+                    "lastEvent": { "kind": "status", "message": "work completed", "ts": "2026-05-09T12:11:04.000Z" },
+                    "events": [{ "kind": "status", "message": "work completed", "ts": "2026-05-09T12:11:04.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:11:04.000Z",
+              "derived": {
+                "activity": "done",
+                "attention": "normal",
+                "unseenCount": 1,
+                "lastOutputAt": "2026-05-09T12:11:04.000Z",
+                "lastEvent": { "kind": "status", "message": "work completed", "ts": "2026-05-09T12:11:04.000Z" },
+                "events": [{ "kind": "status", "message": "work completed", "ts": "2026-05-09T12:11:04.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "624f32366a1d6c9a01c14dd1898baa04fe994f383ab1e7c768169179d6909c84"
+    },
+    {
+      "id": "agent-tracker-022",
+      "name": "status-running-word",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:11:05.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "indexing repository", "ts": "2026-05-09T12:11:05.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:11:05.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "indexing repository", "ts": "2026-05-09T12:11:05.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:11:05.000Z",
+                  "derived": {
+                    "activity": "running",
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastOutputAt": "2026-05-09T12:11:05.000Z",
+                    "lastEvent": {
+                      "kind": "status",
+                      "message": "indexing repository",
+                      "ts": "2026-05-09T12:11:05.000Z"
+                    },
+                    "events": [{ "kind": "status", "message": "indexing repository", "ts": "2026-05-09T12:11:05.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:11:05.000Z",
+              "derived": {
+                "activity": "running",
+                "attention": "normal",
+                "unseenCount": 0,
+                "lastOutputAt": "2026-05-09T12:11:05.000Z",
+                "lastEvent": { "kind": "status", "message": "indexing repository", "ts": "2026-05-09T12:11:05.000Z" },
+                "events": [{ "kind": "status", "message": "indexing repository", "ts": "2026-05-09T12:11:05.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "9664c5a29f8a89ae0129b8b168202b64dddc06fb3679cab1367eb50d619874e6"
+    },
+    {
+      "id": "agent-tracker-023",
+      "name": "status-neutral-no-state-change",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          {
+            "at": "2026-05-09T12:11:06.000Z",
+            "op": "emit",
+            "session": "s1",
+            "event": { "kind": "status", "message": "FYI only", "ts": "2026-05-09T12:11:06.000Z" }
+          }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:11:06.000Z",
+              "op": "emit",
+              "session": "s1",
+              "event": { "kind": "status", "message": "FYI only", "ts": "2026-05-09T12:11:06.000Z" }
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:11:06.000Z",
+                  "derived": {
+                    "attention": "normal",
+                    "unseenCount": 0,
+                    "lastOutputAt": "2026-05-09T12:11:06.000Z",
+                    "lastEvent": { "kind": "status", "message": "FYI only", "ts": "2026-05-09T12:11:06.000Z" },
+                    "events": [{ "kind": "status", "message": "FYI only", "ts": "2026-05-09T12:11:06.000Z" }]
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:11:06.000Z",
+              "derived": {
+                "attention": "normal",
+                "unseenCount": 0,
+                "lastOutputAt": "2026-05-09T12:11:06.000Z",
+                "lastEvent": { "kind": "status", "message": "FYI only", "ts": "2026-05-09T12:11:06.000Z" },
+                "events": [{ "kind": "status", "message": "FYI only", "ts": "2026-05-09T12:11:06.000Z" }]
+              }
+            }
+          }
+        }
+      },
+      "inputSha256": "604b4af81760f4a0462af396798ee128f1bd4a59535bbc71336a610919cd6f37"
+    },
+    {
+      "id": "agent-tracker-024",
+      "name": "set-activity-idle",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+          { "at": "2026-05-09T12:12:01.000Z", "op": "setActivity", "session": "s1", "activity": "idle" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:12:01.000Z", "op": "setActivity", "session": "s1", "activity": "idle" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:12:01.000Z",
+                  "derived": { "activity": "idle", "becameIdleAt": "2026-05-09T12:12:01.000Z" }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:12:01.000Z",
+              "derived": { "activity": "idle", "becameIdleAt": "2026-05-09T12:12:01.000Z" }
+            }
+          }
+        }
+      },
+      "inputSha256": "d4b79c81b723681956c55b2cfe025071351ce353c14361e6cd3e5d7a7d7797e1"
+    },
+    {
+      "id": "agent-tracker-025",
+      "name": "set-activity-running",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+          { "at": "2026-05-09T12:12:02.000Z", "op": "setActivity", "session": "s1", "activity": "running" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:12:02.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+        }
+      },
+      "inputSha256": "cb127d581aa7795fabc68a14b887ff591c4faacd7eb2f6a02e2210b9087c4741"
+    },
+    {
+      "id": "agent-tracker-026",
+      "name": "set-activity-done",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+          { "at": "2026-05-09T12:12:03.000Z", "op": "setActivity", "session": "s1", "activity": "done" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:12:03.000Z", "op": "setActivity", "session": "s1", "activity": "done" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:12:03.000Z",
+                  "derived": { "activity": "done", "becameIdleAt": "2026-05-09T12:12:03.000Z" }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:12:03.000Z",
+              "derived": { "activity": "done", "becameIdleAt": "2026-05-09T12:12:03.000Z" }
+            }
+          }
+        }
+      },
+      "inputSha256": "b1ca32f09500d984cdce7107cf6e200afc1ce32350ca831181897308e755bb53"
+    },
+    {
+      "id": "agent-tracker-027",
+      "name": "set-activity-error",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+          { "at": "2026-05-09T12:12:04.000Z", "op": "setActivity", "session": "s1", "activity": "error" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:12:04.000Z", "op": "setActivity", "session": "s1", "activity": "error" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:12:04.000Z",
+                  "derived": { "activity": "error", "becameIdleAt": "2026-05-09T12:12:04.000Z" }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:12:04.000Z",
+              "derived": { "activity": "error", "becameIdleAt": "2026-05-09T12:12:04.000Z" }
+            }
+          }
+        }
+      },
+      "inputSha256": "f084bd8d3db03df1fcf3aa9317797f94479c41f04734cbcaca65fb24bacb3134"
+    },
+    {
+      "id": "agent-tracker-028",
+      "name": "set-activity-waiting",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+          { "at": "2026-05-09T12:12:05.000Z", "op": "setActivity", "session": "s1", "activity": "waiting" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+            }
+          },
+          {
+            "after": { "at": "2026-05-09T12:12:05.000Z", "op": "setActivity", "session": "s1", "activity": "waiting" },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:12:05.000Z",
+                  "derived": { "activity": "waiting", "becameIdleAt": "2026-05-09T12:12:05.000Z" }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:12:05.000Z",
+              "derived": { "activity": "waiting", "becameIdleAt": "2026-05-09T12:12:05.000Z" }
+            }
+          }
+        }
+      },
+      "inputSha256": "137ec1f8c3383656c09fd62e1640b07c69159f301f8a35e7d01097b1b4a54e07"
+    },
+    {
+      "id": "agent-tracker-029",
+      "name": "set-activity-interrupted",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+          { "at": "2026-05-09T12:12:06.000Z", "op": "setActivity", "session": "s1", "activity": "interrupted" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:12:00.000Z", "op": "setActivity", "session": "s1", "activity": "running" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:12:00.000Z", "derived": { "activity": "running" } } }
+            }
+          },
+          {
+            "after": {
+              "at": "2026-05-09T12:12:06.000Z",
+              "op": "setActivity",
+              "session": "s1",
+              "activity": "interrupted"
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": {
+                  "updatedAt": "2026-05-09T12:12:06.000Z",
+                  "derived": { "activity": "interrupted", "becameIdleAt": "2026-05-09T12:12:06.000Z" }
+                }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": {
+              "updatedAt": "2026-05-09T12:12:06.000Z",
+              "derived": { "activity": "interrupted", "becameIdleAt": "2026-05-09T12:12:06.000Z" }
+            }
+          }
+        }
+      },
+      "inputSha256": "8c8ba91ec8c65f781dc63eb46a0c5a6d0f35f12450d3cc3ea8a9456da6f0f8f2"
+    },
+    {
+      "id": "agent-tracker-030",
+      "name": "set-attention-normal",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [{ "at": "2026-05-09T12:13:00.000Z", "op": "setAttention", "session": "s1", "attention": "normal" }]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:13:00.000Z", "op": "setAttention", "session": "s1", "attention": "normal" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:13:00.000Z", "derived": { "attention": "normal" } } }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": { "s1": { "updatedAt": "2026-05-09T12:13:00.000Z", "derived": { "attention": "normal" } } }
+        }
+      },
+      "inputSha256": "8a80093219c8ed96527a2067a2068547c915ff44d334b5b671005b684bca578a"
+    },
+    {
+      "id": "agent-tracker-031",
+      "name": "set-attention-needs_input",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:13:01.000Z", "op": "setAttention", "session": "s1", "attention": "needs_input" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:13:01.000Z",
+              "op": "setAttention",
+              "session": "s1",
+              "attention": "needs_input"
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": { "updatedAt": "2026-05-09T12:13:01.000Z", "derived": { "attention": "needs_input" } }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": { "s1": { "updatedAt": "2026-05-09T12:13:01.000Z", "derived": { "attention": "needs_input" } } }
+        }
+      },
+      "inputSha256": "92d839fff3d8803c4e1fba9ec72d78a6afbf2d2864f83dd45b2929d7cb2e9047"
+    },
+    {
+      "id": "agent-tracker-032",
+      "name": "set-attention-blocked",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [{ "at": "2026-05-09T12:13:02.000Z", "op": "setAttention", "session": "s1", "attention": "blocked" }]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:13:02.000Z",
+              "op": "setAttention",
+              "session": "s1",
+              "attention": "blocked"
+            },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:13:02.000Z", "derived": { "attention": "blocked" } } }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": { "s1": { "updatedAt": "2026-05-09T12:13:02.000Z", "derived": { "attention": "blocked" } } }
+        }
+      },
+      "inputSha256": "4bc6cfc47c3f3758f8e07d471ddcba2271d2d8d454734e03c698f6cb096099a9"
+    },
+    {
+      "id": "agent-tracker-033",
+      "name": "set-attention-error",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [{ "at": "2026-05-09T12:13:03.000Z", "op": "setAttention", "session": "s1", "attention": "error" }]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": { "at": "2026-05-09T12:13:03.000Z", "op": "setAttention", "session": "s1", "attention": "error" },
+            "state": {
+              "version": 1,
+              "sessions": { "s1": { "updatedAt": "2026-05-09T12:13:03.000Z", "derived": { "attention": "error" } } }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": { "s1": { "updatedAt": "2026-05-09T12:13:03.000Z", "derived": { "attention": "error" } } }
+        }
+      },
+      "inputSha256": "aa7a82bc500ca187cd226149cb60214d3636a4ad959730d499f5f1c8b304eb44"
+    },
+    {
+      "id": "agent-tracker-034",
+      "name": "set-attention-needs_response",
+      "source": "scripts/capture-agent-tracker-contract.mjs",
+      "input": {
+        "actions": [
+          { "at": "2026-05-09T12:13:04.000Z", "op": "setAttention", "session": "s1", "attention": "needs_response" }
+        ]
+      },
+      "output": {
+        "snapshots": [
+          {
+            "after": {
+              "at": "2026-05-09T12:13:04.000Z",
+              "op": "setAttention",
+              "session": "s1",
+              "attention": "needs_response"
+            },
+            "state": {
+              "version": 1,
+              "sessions": {
+                "s1": { "updatedAt": "2026-05-09T12:13:04.000Z", "derived": { "attention": "needs_response" } }
+              }
+            }
+          }
+        ],
+        "finalState": {
+          "version": 1,
+          "sessions": {
+            "s1": { "updatedAt": "2026-05-09T12:13:04.000Z", "derived": { "attention": "needs_response" } }
+          }
+        }
+      },
+      "inputSha256": "33afa74c17a3cce05d54222912293de00fed4d5cf4fe1622d8711b450d47abac"
     }
   ]
 }
