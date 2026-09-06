@@ -20,7 +20,6 @@ const DASHBOARD_ENV_KEYS: &[&str] = &[
     "AIMUX_WEB_APP_URL",
     "AIMUX_CLI_BIN",
     "AIMUX_INSTALL_ROOT",
-    "AIMUX_DASHBOARD_IMPLEMENTATION",
 ];
 const STABLE_SHIM_ENV_KEYS: &[&str] = &["AIMUX_CLI_BIN", "AIMUX_INSTALL_ROOT"];
 
@@ -72,37 +71,20 @@ pub fn get_dashboard_command_spec_with_options(
         current_entry_path: Some(script_path.clone()),
         home_dir: Some(options.home_dir.clone()),
     });
-    let native_dashboard = dashboard_implementation_is_native(&options.env);
     let artifact_paths = match launch.source {
         AimuxCliLaunchSource::NativeBinary => vec![PathBuf::from(&launch.command)],
-        AimuxCliLaunchSource::StableShim => {
-            if native_dashboard {
-                resolve_stable_shim_native_artifact_path(
-                    Path::new(&launch.stable_shim_path),
-                    &options.platform,
-                    &options.arch,
-                )
-                .map(|path| vec![path])
-                .unwrap_or_else(|| {
-                    vec![
-                        options.script_path.clone(),
-                        options.implementation_path.clone(),
-                    ]
-                })
-            } else {
-                resolve_stable_shim_artifact_paths(
-                    Path::new(&launch.stable_shim_path),
-                    &options.platform,
-                    &options.arch,
-                )
-                .unwrap_or_else(|| {
-                    vec![
-                        options.script_path.clone(),
-                        options.implementation_path.clone(),
-                    ]
-                })
-            }
-        }
+        AimuxCliLaunchSource::StableShim => resolve_stable_shim_native_artifact_path(
+            Path::new(&launch.stable_shim_path),
+            &options.platform,
+            &options.arch,
+        )
+        .map(|path| vec![path])
+        .unwrap_or_else(|| {
+            vec![
+                options.script_path.clone(),
+                options.implementation_path.clone(),
+            ]
+        }),
         AimuxCliLaunchSource::CurrentEntry => vec![
             options.script_path.clone(),
             options.implementation_path.clone(),
@@ -141,41 +123,6 @@ pub fn get_dashboard_command_spec_with_options(
             args: vec!["-lc".to_owned(), wrapped_dashboard_command],
         },
     })
-}
-
-fn dashboard_implementation_is_native(env: &BTreeMap<String, String>) -> bool {
-    env.get("AIMUX_DASHBOARD_IMPLEMENTATION")
-        .map(|value| value.trim())
-        != Some("node")
-}
-
-fn resolve_stable_shim_artifact_paths(
-    stable_shim_path: &Path,
-    platform: &str,
-    arch: &str,
-) -> Option<Vec<PathBuf>> {
-    let real_shim_path = stable_shim_path.canonicalize().ok()?;
-    if real_shim_path.file_name()?.to_str()? != "aimux"
-        || real_shim_path.parent()?.file_name()?.to_str()? != "bin"
-    {
-        return None;
-    }
-    let install_root = real_shim_path.parent()?.parent()?;
-    let mut artifact_paths = vec![
-        install_root.join("dist/launcher-bin.js"),
-        install_root.join("dist/main.js"),
-    ];
-    if !artifact_paths.iter().all(|path| path.exists()) {
-        return None;
-    }
-    let native_artifact_path = install_root
-        .join("native")
-        .join(format!("{platform}-{arch}"))
-        .join("aimux");
-    if native_artifact_path.exists() {
-        artifact_paths.push(native_artifact_path);
-    }
-    Some(artifact_paths)
 }
 
 fn resolve_stable_shim_native_artifact_path(

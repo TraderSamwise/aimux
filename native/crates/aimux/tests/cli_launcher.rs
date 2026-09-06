@@ -164,7 +164,7 @@ fn daemon_launch_uses_explicit_native_binary_when_available() {
 }
 
 #[test]
-fn dashboard_launch_uses_native_default_with_explicit_node_opt_out() {
+fn dashboard_launch_ignores_legacy_node_opt_out() {
     let test_dir = TestDir::new();
     let default_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
@@ -178,7 +178,7 @@ fn dashboard_launch_uses_native_default_with_explicit_node_opt_out() {
         BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into())]),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
     ));
-    assert_eq!(node_command.args, vec!["--tmux-dashboard-internal"]);
+    assert_eq!(node_command.args, vec!["__dashboard-internal-native"]);
 
     let native_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
@@ -314,7 +314,7 @@ fn daemon_and_identity_launch_use_native_binary_from_stable_shim_symlink() {
 }
 
 #[test]
-fn default_dashboard_prefers_native_binary_with_node_stable_shim_opt_out() {
+fn default_dashboard_prefers_native_binary_even_with_legacy_node_selector() {
     let test_dir = TestDir::new();
     let stable = test_dir.0.join("bin/aimux");
     let install_root = test_dir.0.join("native/old-build");
@@ -369,8 +369,12 @@ fn default_dashboard_prefers_native_binary_with_node_stable_shim_opt_out() {
         node_env,
         Some(native_entry.to_string_lossy().into_owned()),
     ));
-    assert_eq!(node_dashboard.source, AimuxCliLaunchSource::StableShim);
-    assert_eq!(node_dashboard.args, vec!["--tmux-dashboard-internal"]);
+    assert_eq!(node_dashboard.source, AimuxCliLaunchSource::NativeBinary);
+    assert_eq!(
+        node_dashboard.command,
+        native_binary.canonicalize().unwrap().to_string_lossy()
+    );
+    assert_eq!(node_dashboard.args, vec!["__dashboard-internal-native"]);
 }
 
 fn platform_native_binary_path(install_root: &std::path::Path) -> PathBuf {
