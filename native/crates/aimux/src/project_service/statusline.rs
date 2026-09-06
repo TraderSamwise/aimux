@@ -865,6 +865,17 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_keeps_fresh_snapshots_ok() {
+        assert_eq!(
+            render_control_plane(&json!({
+                "updatedAt": now_iso(),
+                "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+            })),
+            "ctl ok"
+        );
+    }
+
+    #[test]
     fn name_only_exact_resolution_prefers_visible_sessions_before_teammates() {
         let snapshot = json!({
             "sessions": [
