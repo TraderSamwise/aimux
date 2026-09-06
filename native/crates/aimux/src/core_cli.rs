@@ -1,7 +1,8 @@
 use crate::core_cli_routing::{
     CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand, core_command_args, is_core_cli_command,
-    parse_core_daemon_restart_args, parse_core_host_restart_args, parse_core_logs_args,
-    parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_host_restart_args,
+    parse_core_logs_args, parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,8 @@ pub enum CoreCliOutputMode {
 #[serde(rename_all = "kebab-case")]
 pub enum CoreCliOperation {
     HostStatus,
+    DashboardReload,
+    RuntimeRestart,
     ProjectServe,
     HostStop,
     HostKill,
@@ -253,6 +256,7 @@ pub enum CoreCliAction {
     },
     TextRoute {
         path: String,
+        body: Option<Value>,
     },
     RestartControlPlane {
         project_root: Option<String>,
@@ -363,6 +367,79 @@ fn project_restart_payload(project_root: String, options: CoreHostRestartArgs) -
     json!({ "projectRoot": project_root, "serve": options.serve })
 }
 
+fn dashboard_reload_payload(
+    project_root: String,
+    args: &[String],
+) -> Result<Value, CoreCliPlanError> {
+    let parsed = parse_core_dashboard_reload_args(args).ok_or_else(|| {
+        CoreCliPlanError::InvalidArguments {
+            args: args.to_vec(),
+            message: "error: invalid dashboard-reload arguments",
+        }
+    })?;
+    Ok(dashboard_text_payload(
+        project_root,
+        parsed.open,
+        parsed.client_tty,
+        parsed.current_client_session,
+    ))
+}
+
+fn runtime_restart_payload(
+    current_project_root: String,
+    args: &[String],
+    resolve_project_root: impl Fn(&str) -> String,
+) -> Result<(Value, bool), CoreCliPlanError> {
+    let parsed = parse_core_runtime_restart_args(args).ok_or_else(|| {
+        CoreCliPlanError::InvalidArguments {
+            args: args.to_vec(),
+            message: "error: invalid restart-runtime arguments",
+        }
+    })?;
+    if parsed.open && parsed.json {
+        return Err(CoreCliPlanError::InvalidArguments {
+            args: args.to_vec(),
+            message: "Error: restart-runtime --open cannot be combined with --json",
+        });
+    }
+    let project_root = parsed
+        .project_root
+        .as_deref()
+        .map(resolve_project_root)
+        .unwrap_or(current_project_root);
+    Ok((
+        dashboard_text_payload(
+            project_root,
+            parsed.open,
+            parsed.client_tty,
+            parsed.current_client_session,
+        ),
+        parsed.json,
+    ))
+}
+
+fn dashboard_text_payload(
+    project_root: String,
+    open: bool,
+    client_tty: Option<String>,
+    current_client_session: Option<String>,
+) -> Value {
+    let mut payload = serde_json::Map::from_iter([("projectRoot".to_owned(), json!(project_root))]);
+    if open {
+        payload.insert("open".into(), Value::Bool(true));
+    }
+    if let Some(client_tty) = client_tty {
+        payload.insert("clientTty".into(), Value::String(client_tty));
+    }
+    if let Some(current_client_session) = current_client_session {
+        payload.insert(
+            "currentClientSession".into(),
+            Value::String(current_client_session),
+        );
+    }
+    Value::Object(payload)
+}
+
 /// Produces the high-level execution decision made by `runCoreCli` while
 /// leaving filesystem access, credential mutation, tmux opening, and HTTP I/O
 /// to the caller. Explicit project arguments are passed through unchanged.
@@ -399,6 +476,36 @@ where
             (
                 CoreCliOperation::Restart,
                 CoreCliAction::RestartControlPlane { project_root },
+                CoreCliFallback::None,
+            )
+        }
+        ("dashboard-reload", _) => (
+            CoreCliOperation::DashboardReload,
+            CoreCliAction::TextRoute {
+                path: CORE_API_ROUTES.dashboard_reload_text.to_owned(),
+                body: Some(dashboard_reload_payload(
+                    context.current_project_root.clone(),
+                    &args,
+                )?),
+            },
+            CoreCliFallback::None,
+        ),
+        ("restart-runtime", _) => {
+            let (payload, json) = runtime_restart_payload(
+                context.current_project_root.clone(),
+                &args,
+                &resolve_project_root,
+            )?;
+            (
+                CoreCliOperation::RuntimeRestart,
+                CoreCliAction::TextRoute {
+                    path: if json {
+                        format!("{}?json=1", CORE_API_ROUTES.runtime_restart_text)
+                    } else {
+                        CORE_API_ROUTES.runtime_restart_text.to_owned()
+                    },
+                    body: Some(payload),
+                },
                 CoreCliFallback::None,
             )
         }
@@ -501,6 +608,7 @@ where
                 } else {
                     CORE_API_ROUTES.doctor_versions_text.to_owned()
                 },
+                body: None,
             },
             CoreCliFallback::None,
         ),

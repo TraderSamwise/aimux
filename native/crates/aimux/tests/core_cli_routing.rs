@@ -2,8 +2,9 @@ use aimux::core_cli_routing::{
     CoreDaemonRestartArgs, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
     CoreProjectEnsureArgs, CoreRestartArgs, core_command_args, has_core_global_logging_args,
     is_core_cli_command, is_core_project_ensure_command, is_valid_core_project_ensure_args,
-    parse_core_daemon_restart_args, parse_core_host_restart_args, parse_core_logs_args,
-    parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_host_restart_args,
+    parse_core_logs_args, parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -154,10 +155,54 @@ fn host_restart_parser_accepts_only_open_and_serve() {
 }
 
 #[test]
+fn dashboard_and_runtime_restart_parsers_match_shell_shim_forms() {
+    let reload = parse_core_dashboard_reload_args(&[
+        "dashboard-reload",
+        "--open",
+        "--client-tty=/dev/ttys001",
+        "--current-client-session",
+        "aimux-repo-client-abc12345",
+    ])
+    .expect("reload args");
+    assert!(reload.open);
+    assert_eq!(reload.client_tty.as_deref(), Some("/dev/ttys001"));
+    assert_eq!(
+        reload.current_client_session.as_deref(),
+        Some("aimux-repo-client-abc12345")
+    );
+
+    let restart = parse_core_runtime_restart_args(&[
+        "restart-runtime",
+        "--project-root",
+        "/repo",
+        "--json",
+        "--client-tty=/dev/ttys001",
+    ])
+    .expect("runtime restart args");
+    assert_eq!(restart.project_root.as_deref(), Some("/repo"));
+    assert!(restart.json);
+    assert_eq!(restart.client_tty.as_deref(), Some("/dev/ttys001"));
+
+    assert!(parse_core_dashboard_reload_args(&["dashboard-reload", "--json"]).is_none());
+    assert!(parse_core_dashboard_reload_args(&["dashboard-reload", "--client-tty=-x"]).is_none());
+    assert!(parse_core_runtime_restart_args(&["restart-runtime", "--project-root=-x"]).is_none());
+}
+
+#[test]
 fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
     let accepted = [
         vec!["restart"],
         vec!["restart", "--project=/repo", "--json"],
+        vec!["dashboard-reload"],
+        vec!["dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
+        vec![
+            "dashboard-reload",
+            "--open",
+            "--current-client-session=aimux-repo-client-1234abcd",
+        ],
+        vec!["restart-runtime"],
+        vec!["restart-runtime", "--project-root=/repo", "--json"],
+        vec!["restart-runtime", "--open", "--client-tty", "/dev/ttys001"],
         vec!["serve"],
         vec!["host", "status", "--json"],
         vec!["host", "stop"],
@@ -186,8 +231,10 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
     }
 
     let rejected = [
-        vec!["restart-runtime"],
-        vec!["dashboard-reload"],
+        vec!["restart-runtime", "--open", "--json"],
+        vec!["dashboard-reload", "--json"],
+        vec!["dashboard-reload", "--client-tty=-x"],
+        vec!["restart-runtime", "--project-root=-x"],
         vec!["serve", "--json"],
         vec!["host", "stop", "--open"],
         vec!["daemon", "restart", "--project", "/repo"],

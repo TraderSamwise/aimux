@@ -45,7 +45,7 @@ fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
     let status = Command::new(env!("CARGO_BIN_EXE_aimux"))
         .env("AIMUX_ROOT", &root)
         .env("AIMUX_NODE_BIN", node)
-        .args(["dashboard-reload", "--client-tty", "/dev/ttys001"])
+        .args(["task", "list", "--json"])
         .status()
         .expect("run native aimux");
 
@@ -54,7 +54,7 @@ fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
     assert_eq!(
         recorded,
         format!(
-            "{}\ndashboard-reload\n--client-tty\n/dev/ttys001\n",
+            "{}\ntask\nlist\n--json\n",
             root.join("dist/launcher-bin.js").display()
         )
     );

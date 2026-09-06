@@ -47,6 +47,29 @@ pub struct CoreHostRestartArgs {
     pub serve: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreDashboardReloadArgs {
+    pub open: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_tty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_client_session: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreRuntimeRestartArgs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
+    pub open: bool,
+    pub json: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_tty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_client_session: Option<String>,
+}
+
 fn is_process_argv<S: AsRef<str>>(args: &[S]) -> bool {
     if args.len() < 2 {
         return false;
@@ -300,6 +323,120 @@ pub fn parse_core_host_restart_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHos
     Some(parsed)
 }
 
+pub fn parse_core_dashboard_reload_args<S: AsRef<str>>(
+    args: &[S],
+) -> Option<CoreDashboardReloadArgs> {
+    if args.first().map(AsRef::as_ref) != Some("dashboard-reload") {
+        return None;
+    }
+    let mut parsed = CoreDashboardReloadArgs {
+        open: false,
+        client_tty: None,
+        current_client_session: None,
+    };
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--open" {
+            parsed.open = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--client-tty" {
+            parsed.client_tty = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--client-tty=") {
+            parsed.client_tty = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--current-client-session" {
+            parsed.current_client_session = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--current-client-session=") {
+            parsed.current_client_session = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(parsed)
+}
+
+pub fn parse_core_runtime_restart_args<S: AsRef<str>>(
+    args: &[S],
+) -> Option<CoreRuntimeRestartArgs> {
+    if args.first().map(AsRef::as_ref) != Some("restart-runtime") {
+        return None;
+    }
+    let mut parsed = CoreRuntimeRestartArgs {
+        project_root: None,
+        open: false,
+        json: false,
+        client_tty: None,
+        current_client_session: None,
+    };
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--project-root" {
+            parsed.project_root = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project-root=") {
+            parsed.project_root = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--open" {
+            parsed.open = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--json" {
+            parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--client-tty" {
+            parsed.client_tty = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--client-tty=") {
+            parsed.client_tty = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--current-client-session" {
+            parsed.current_client_session = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--current-client-session=") {
+            parsed.current_client_session = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(parsed)
+}
+
+fn required_non_flag_value<S: AsRef<str>>(args: &[S], index: usize) -> Option<&str> {
+    let value = required_value(args, index)?;
+    non_flag_inline_value(value)
+}
+
+fn non_flag_inline_value(value: &str) -> Option<&str> {
+    (!value.is_empty() && !value.starts_with('-')).then_some(value)
+}
+
 pub fn is_valid_core_project_ensure_args<S: AsRef<str>>(args: &[S]) -> bool {
     parse_core_project_ensure_args(args).is_some()
 }
@@ -317,6 +454,9 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     let subcommand = args.get(1).map(AsRef::as_ref);
     match (command, subcommand) {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
+        (Some("dashboard-reload"), _) => parse_core_dashboard_reload_args(args).is_some(),
+        (Some("restart-runtime"), _) => parse_core_runtime_restart_args(args)
+            .is_some_and(|parsed| !(parsed.open && parsed.json)),
         (Some("serve"), _) => args.len() == 1,
         (Some("host"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("host"), Some("stop" | "kill")) => args.len() == 2,

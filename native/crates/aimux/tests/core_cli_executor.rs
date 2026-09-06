@@ -14,7 +14,7 @@ struct FakeRuntime {
     daemon_info: Option<AimuxDaemonInfo>,
     daemon_state: DaemonState,
     commands: Vec<CoreCommandCall>,
-    text_routes: Vec<String>,
+    text_routes: Vec<(String, Option<Value>)>,
     open_targets: Vec<Value>,
     restart_calls: Vec<Option<String>>,
     login_calls: Cell<usize>,
@@ -131,8 +131,8 @@ impl CoreCliRuntime for FakeRuntime {
         Ok(command_ok(request.command, response_for(request)))
     }
 
-    fn request_daemon_text(&mut self, path: &str) -> Result<String, String> {
-        self.text_routes.push(path.to_owned());
+    fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
+        self.text_routes.push((path.to_owned(), body));
         Ok(if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -391,8 +391,55 @@ fn doctor_versions_executes_daemon_text_route() {
     assert_eq!(
         runtime.text_routes,
         [
-            "/core/doctor/versions-text",
-            "/core/doctor/versions-text?json=1"
+            ("/core/doctor/versions-text".into(), None),
+            ("/core/doctor/versions-text?json=1".into(), None)
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn dashboard_reload_and_runtime_restart_execute_native_text_routes() {
+    let mut runtime = FakeRuntime::default();
+
+    let reload = run_core_cli_with(
+        &args(&[
+            "dashboard-reload",
+            "--open",
+            "--client-tty",
+            "/dev/ttys001",
+            "--current-client-session=aimux-repo-client-abc12345",
+        ]),
+        &mut runtime,
+    );
+    assert_eq!(reload.code, 0);
+    assert_eq!(reload.stdout, ["Runtime Coherence\n  ok"]);
+
+    let restart = run_core_cli_with(
+        &args(&["restart-runtime", "--project-root", "child", "--json"]),
+        &mut runtime,
+    );
+    assert_eq!(restart.code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&restart.stdout[0]).expect("runtime restart json"),
+        json!({ "generatedAt": "now", "projects": [] })
+    );
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/dashboard-reload-text".into(),
+                Some(json!({
+                    "projectRoot": "/repo",
+                    "open": true,
+                    "clientTty": "/dev/ttys001",
+                    "currentClientSession": "aimux-repo-client-abc12345"
+                })),
+            ),
+            (
+                "/core/runtime-restart-text?json=1".into(),
+                Some(json!({ "projectRoot": "/resolved/child" })),
+            ),
         ]
     );
     assert!(runtime.commands.is_empty());

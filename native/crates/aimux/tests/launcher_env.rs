@@ -24,7 +24,7 @@ fn routes_core_expose_and_main_like_launcher_env() {
     );
     assert_eq!(
         cli_entry_for(&["node", "aimux", "dashboard-reload"]),
-        CliEntry::Main
+        CliEntry::Core
     );
     assert_eq!(cli_entry_for(&["node", "aimux", "unknown"]), CliEntry::Main);
 }

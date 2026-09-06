@@ -68,7 +68,7 @@ pub trait CoreCliRuntime {
     fn clear_credentials(&self) -> String;
     fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String>;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
-    fn request_daemon_text(&mut self, path: &str) -> Result<String, String>;
+    fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String>;
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
@@ -169,10 +169,17 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             .map_err(|error| error.to_string())
     }
 
-    fn request_daemon_text(&mut self, path: &str) -> Result<String, String> {
+    fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
         ensure_daemon_running(EnsureDaemonRunningOptions::default())
             .map_err(|error| error.to_string())?;
-        request_daemon_text(path, DaemonRequestInit::default()).map_err(|error| error.to_string())
+        request_daemon_text(
+            path,
+            DaemonRequestInit {
+                body: body.map(|value| value.to_string()),
+                ..DaemonRequestInit::default()
+            },
+        )
+        .map_err(|error| error.to_string())
     }
 
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -284,7 +291,7 @@ fn run_plan(
             open_dashboard_after,
             runtime,
         ),
-        CoreCliAction::TextRoute { path } => run_text_route(&path, runtime),
+        CoreCliAction::TextRoute { path, body } => run_text_route(&path, body, runtime),
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
         CoreCliAction::RemoteStatus { relay_request } => {
             let credentials = runtime.credentials_for_status();
@@ -409,9 +416,10 @@ fn run_restart_control_plane(
 
 fn run_text_route(
     path: &str,
+    body: Option<Value>,
     runtime: &mut impl CoreCliRuntime,
 ) -> Result<CoreCliExecution, String> {
-    let text = runtime.request_daemon_text(path)?;
+    let text = runtime.request_daemon_text(path, body)?;
     Ok(CoreCliExecution::ok(vec![
         text.strip_suffix('\n').unwrap_or(&text).to_owned(),
     ]))
