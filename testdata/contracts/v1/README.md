@@ -219,6 +219,9 @@ Priority fixture groups:
 - `notifications/osc.json`: OSC 9, OSC 99, OSC 777, chunk buffering, ST
   terminator, base64, and malformed-payload behavior captured by running the
   TypeScript `OscNotificationParser`.
+- `notifications/mobile-push.json`: mobile push alert forwarding request shape
+  and external-notification disable gates captured by running TypeScript
+  `mobile-push-bridge` against a local daemon endpoint.
 - `notifications/store.json`: notification list/filter/count, mark-read, clear,
   add/upsert, live alert event, focus-suppression, dedupe, interaction metadata,
   and runtime-exchange side-effect behavior captured by running TypeScript
@@ -337,6 +340,9 @@ Priority fixture groups:
 - `hosted/config.json`: hosted configuration normalization, global/project
   config loading boundaries, startup validation, forwarded-header allowlist,
   and retention behavior captured by running TypeScript hosted-config helpers.
+- `hosted/events.json`: hosted client-address selection, device fingerprinting,
+  device-sighting state side effects, webhook signing, retry, and disabled
+  delivery behavior captured by running TypeScript hosted-events helpers.
 - `hosted/lockdown.json`: hosted lockdown marker/cache behavior and hosted
   outbox drain/torn-line/CLI-audit side effects captured by running TypeScript
   hosted-lockdown and hosted-outbox helpers, with lockdown timestamps normalized

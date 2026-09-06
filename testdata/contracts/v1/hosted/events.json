@@ -1,0 +1,433 @@
+{
+  "version": 1,
+  "source": "src/full/hosted-events.test.ts",
+  "generatedBy": "scripts/capture-hosted-events-transport-contract.mjs",
+  "description": "Hosted event address selection, device fingerprinting, device-sighting side effects, webhook signing, and delivery behavior captured by running the TypeScript hosted-events module.",
+  "cases": [
+    {
+      "id": "clientAddress-001",
+      "name": "uses the peer address when no forwarded header is configured",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "clientAddress",
+      "input": {
+        "peerAddress": "203.0.113.9",
+        "headers": { "x-forwarded-for": "1.2.3.4" },
+        "trustedForwardedHeader": null
+      },
+      "output": "203.0.113.9",
+      "inputSha256": "b532c64298a416bb0023969af7596d944baaf5e0ca2cfedd161294e1bf36a444"
+    },
+    {
+      "id": "clientAddress-002",
+      "name": "honours the configured header only when the peer is loopback",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "clientAddress",
+      "input": {
+        "peerAddress": "127.0.0.1",
+        "headers": { "x-forwarded-for": "1.2.3.4" },
+        "trustedForwardedHeader": "x-forwarded-for"
+      },
+      "output": "1.2.3.4",
+      "inputSha256": "7059f0f322e1ed731247482438cb1630d9aba16f475f30eadb0f3c3325af7737"
+    },
+    {
+      "id": "clientAddress-003",
+      "name": "ignores forwarded headers from routable peers",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "clientAddress",
+      "input": {
+        "peerAddress": "203.0.113.9",
+        "headers": { "x-forwarded-for": "1.2.3.4" },
+        "trustedForwardedHeader": "x-forwarded-for"
+      },
+      "output": "203.0.113.9",
+      "inputSha256": "9a0e47ed75412672c08ba80ebec01ba77a20666dbe32ce3db58d2366016695d9"
+    },
+    {
+      "id": "clientAddress-004",
+      "name": "takes the rightmost forwarded entry",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "clientAddress",
+      "input": {
+        "peerAddress": "::1",
+        "headers": { "x-forwarded-for": "spoofed, 203.0.113.9 " },
+        "trustedForwardedHeader": "x-forwarded-for"
+      },
+      "output": "203.0.113.9",
+      "inputSha256": "c34ff230a60f47034588c586dcffb1f64613988c897bb955ee8bfaef49330fcb"
+    },
+    {
+      "id": "clientAddress-005",
+      "name": "falls back to the peer when the header is absent or empty",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "clientAddress",
+      "input": {
+        "values": [
+          { "peerAddress": "127.0.0.1", "headers": {}, "trustedForwardedHeader": "x-forwarded-for" },
+          {
+            "peerAddress": "127.0.0.1",
+            "headers": { "x-forwarded-for": "  " },
+            "trustedForwardedHeader": "x-forwarded-for"
+          }
+        ]
+      },
+      "output": ["127.0.0.1", "127.0.0.1"],
+      "inputSha256": "4c45fe01d1f4b9e3974e878dfae9b5e7cfcab4971eef194ea8ef8e6716947f45"
+    },
+    {
+      "id": "clientAddress-006",
+      "name": "reports null when there is genuinely no address",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "clientAddress",
+      "input": { "headers": {}, "trustedForwardedHeader": null },
+      "output": null,
+      "inputSha256": "6209cbd2be19bcc26e50e0f14998c4a695f1324b580e666f4d7724f7e5d70d35"
+    },
+    {
+      "id": "deviceFingerprint-007",
+      "name": "is stable and varies with each input",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "deviceFingerprint",
+      "input": { "salt": "salt", "address": "1.2.3.4", "userAgent": "ua" },
+      "output": {
+        "base": "3b7091bab2deb39c8b72351e4fdd314b",
+        "same": "3b7091bab2deb39c8b72351e4fdd314b",
+        "otherSalt": "8c7d10ea652fbe8d31466eabb71d1545",
+        "otherAddress": "212e5ced0be9bb0fdcec819b8c047a00",
+        "otherUserAgent": "9ee0b44e891b2ca4eb50eca1daa37f40",
+        "exposesAddress": false
+      },
+      "inputSha256": "f1db993235f2caa5463bbf645ce9ad72697c76e55a5c756ded95f900254a9036"
+    },
+    {
+      "id": "deviceFingerprint-008",
+      "name": "normalizes null address and user agent distinctly",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "deviceFingerprint",
+      "input": { "salt": "salt", "address": null, "userAgent": null },
+      "output": "00dc208f929a254c7c075d0d97413ca0",
+      "inputSha256": "d50bc1056253a16f2b1e22d5dea4abe2e7fe041399ce015841e2f45225a32ab6"
+    },
+    {
+      "id": "recordDeviceSighting-009",
+      "name": "reports first use, then a new device, then nothing",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "recordDeviceSighting",
+      "input": {
+        "seed": { "salt": "0000000000000000000000000000000000000000000000000000000000000000", "devices": [] },
+        "sightings": [
+          { "principalId": "prn_a", "label": "grand", "address": "1.2.3.4", "userAgent": "ua" },
+          { "principalId": "prn_a", "label": "grand", "address": "5.6.7.8", "userAgent": "ua" },
+          { "principalId": "prn_a", "label": "grand", "address": "1.2.3.4", "userAgent": "ua" },
+          { "principalId": "prn_a", "label": "grand", "address": "5.6.7.8", "userAgent": "ua" }
+        ]
+      },
+      "output": {
+        "events": [
+          {
+            "id": "<id:1>",
+            "kind": "hosted_token_first_use",
+            "ts": "<ts:1>",
+            "principalId": "prn_a",
+            "label": "grand",
+            "fingerprint": "bbd0a700b26672043bbc5141fced3182",
+            "addressKnown": true,
+            "userAgent": "ua"
+          },
+          {
+            "id": "<id:2>",
+            "kind": "hosted_new_device",
+            "ts": "<ts:2>",
+            "principalId": "prn_a",
+            "label": "grand",
+            "fingerprint": "5eb0505b9c888724fe7465a5c7f49261",
+            "addressKnown": true,
+            "userAgent": "ua"
+          },
+          null,
+          null
+        ],
+        "state": {
+          "version": 1,
+          "salt": "0000000000000000000000000000000000000000000000000000000000000000",
+          "devices": [
+            {
+              "principalId": "prn_a",
+              "fingerprint": "bbd0a700b26672043bbc5141fced3182",
+              "firstSeen": "<ts:1>",
+              "lastSeen": "<ts:1>",
+              "userAgent": "ua"
+            },
+            {
+              "principalId": "prn_a",
+              "fingerprint": "5eb0505b9c888724fe7465a5c7f49261",
+              "firstSeen": "<ts:2>",
+              "lastSeen": "<ts:2>",
+              "userAgent": "ua"
+            }
+          ]
+        }
+      },
+      "inputSha256": "6a40a225827ece96a4437987ec1938bc37969821f2ca2d50a808ce6c7d05bd9a"
+    },
+    {
+      "id": "recordDeviceSighting-010",
+      "name": "keeps principals separate",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "recordDeviceSighting",
+      "input": {
+        "seed": { "salt": "0000000000000000000000000000000000000000000000000000000000000000", "devices": [] },
+        "sightings": [
+          { "principalId": "prn_a", "label": "grand", "address": "1.2.3.4", "userAgent": "ua" },
+          { "principalId": "prn_b", "label": "grand", "address": "1.2.3.4", "userAgent": "ua" }
+        ]
+      },
+      "output": {
+        "id": "<id:1>",
+        "kind": "hosted_token_first_use",
+        "ts": "<ts:1>",
+        "principalId": "prn_b",
+        "label": "grand",
+        "fingerprint": "bbd0a700b26672043bbc5141fced3182",
+        "addressKnown": true,
+        "userAgent": "ua"
+      },
+      "inputSha256": "241aeb02c0ad7c6c5ff273f5c1ba7293c76158abeb8849998273651cd3830c81"
+    },
+    {
+      "id": "recordDeviceSighting-011",
+      "name": "marks an unknown address honestly",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "recordDeviceSighting",
+      "input": {
+        "seed": { "salt": "0000000000000000000000000000000000000000000000000000000000000000", "devices": [] },
+        "sighting": { "principalId": "prn_a", "label": "grand", "address": null, "userAgent": "ua" }
+      },
+      "output": {
+        "id": "<id:1>",
+        "kind": "hosted_token_first_use",
+        "ts": "<ts:1>",
+        "principalId": "prn_a",
+        "label": "grand",
+        "fingerprint": "86552cdae5a59a4f83f89ce70474dacd",
+        "addressKnown": false,
+        "userAgent": "ua"
+      },
+      "inputSha256": "0e6dc9237dad200ed2c6a6459d48381216fb376e22fed6b962f8d4fe709378de"
+    },
+    {
+      "id": "recordDeviceSighting-012",
+      "name": "does not rewrite the store on every routine sighting",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "recordDeviceSighting",
+      "input": {
+        "seed": { "salt": "0000000000000000000000000000000000000000000000000000000000000000", "devices": [] },
+        "sightings": [
+          { "principalId": "prn_a", "label": "grand", "address": "1.2.3.4", "userAgent": "ua" },
+          { "principalId": "prn_a", "label": "grand", "address": "1.2.3.4", "userAgent": "ua" }
+        ]
+      },
+      "output": { "event": null, "stateUnchanged": true },
+      "inputSha256": "d6358db13e72bea3cd2a25c814bbcdeeb677c7e8eac9528ae829a028f364a578"
+    },
+    {
+      "id": "recordDeviceSighting-013",
+      "name": "stores a salt and never the raw address, at 0600",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "recordDeviceSighting",
+      "input": {
+        "seed": null,
+        "sighting": { "principalId": "prn_a", "label": "grand", "address": "203.0.113.9", "userAgent": "ua" }
+      },
+      "output": {
+        "event": {
+          "kind": "hosted_token_first_use",
+          "principalId": "prn_a",
+          "label": "grand",
+          "addressKnown": true,
+          "userAgent": "ua",
+          "fingerprintLooksHashed": true,
+          "fingerprintContainsAddress": false
+        },
+        "rawContainsAddress": false,
+        "saltLooksHex": true,
+        "mode": 384
+      },
+      "inputSha256": "af50edeb9382ccaf32c11abfdb32f7c8a793ea7073443fecd813b1c4182067b1"
+    },
+    {
+      "id": "pruneHostedDevices-014",
+      "name": "prunes devices past the retention window",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "pruneHostedDevices",
+      "input": {
+        "seed": { "salt": "0000000000000000000000000000000000000000000000000000000000000000", "devices": [] },
+        "retentionDays": 30
+      },
+      "output": {
+        "eventAfterPrune": {
+          "id": "<id:1>",
+          "kind": "hosted_token_first_use",
+          "ts": "<ts:1>",
+          "principalId": "prn_a",
+          "label": "grand",
+          "fingerprint": "bbd0a700b26672043bbc5141fced3182",
+          "addressKnown": true,
+          "userAgent": "ua"
+        },
+        "state": {
+          "version": 1,
+          "salt": "0000000000000000000000000000000000000000000000000000000000000000",
+          "devices": [
+            {
+              "principalId": "prn_a",
+              "fingerprint": "bbd0a700b26672043bbc5141fced3182",
+              "firstSeen": "<ts:1>",
+              "lastSeen": "<ts:1>",
+              "userAgent": "ua"
+            }
+          ]
+        }
+      },
+      "inputSha256": "02aaa6019f8effecf452bcd18a83c04f6a950f8ab2ec3e3ab00f0f4817516a3f"
+    },
+    {
+      "id": "signHostedEvent-015",
+      "name": "binds the timestamp to the body",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "signHostedEvent",
+      "input": { "secret": "secret", "timestamp": "1000", "body": "{\"a\":1}" },
+      "output": {
+        "a": "sha256=79735020b7448fd0956ae8a025e12d8e8e654b3b2d7757e722076546bb0f8e3b",
+        "formatOk": true,
+        "otherTimestamp": "sha256=bf971538eb47cd7712f8bb3a126ef4eb678f086ae732ee335f051138f9032db9",
+        "otherBody": "sha256=03c5afd7623852eaf4d33a06241831f1de9baf9d0c51dacce5bbc32a56ff49cc",
+        "otherSecret": "sha256=102a29fbe31ae8b30b4a8fb4f9b884fa717fbd2aac3a929b9266919651d4c82d"
+      },
+      "inputSha256": "a5d01b5776ffd46ea1eff1d7b7c387ee36e592b24644b8dd180f2c32f2696c19"
+    },
+    {
+      "id": "HostedEventDelivery-016",
+      "name": "posts a signed, timestamped event",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "HostedEventDelivery",
+      "input": {
+        "event": {
+          "id": "evt_1",
+          "kind": "hosted_token_first_use",
+          "ts": "1970-01-01T00:00:00.000Z",
+          "principalId": "prn_a",
+          "label": "grand",
+          "fingerprint": "abc",
+          "addressKnown": true,
+          "userAgent": "ua"
+        },
+        "secretConfigured": true,
+        "webhookConfigured": true
+      },
+      "output": {
+        "received": 1,
+        "signatureMatches": true,
+        "timestampLooksNumeric": true,
+        "body": {
+          "id": "evt_1",
+          "kind": "hosted_token_first_use",
+          "ts": "1970-01-01T00:00:00.000Z",
+          "principalId": "prn_a",
+          "label": "grand",
+          "fingerprint": "abc",
+          "addressKnown": true,
+          "userAgent": "ua"
+        }
+      },
+      "inputSha256": "ad42ac705f1285e1116eae9b4c3c9ab0f3f25d71baf83020fc8e05f043025f85"
+    },
+    {
+      "id": "HostedEventDelivery-017",
+      "name": "sends nothing when no secret is configured",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "HostedEventDelivery",
+      "input": {
+        "event": {
+          "id": "evt_1",
+          "kind": "hosted_token_first_use",
+          "ts": "1970-01-01T00:00:00.000Z",
+          "principalId": "prn_a",
+          "label": "grand",
+          "fingerprint": "abc",
+          "addressKnown": true,
+          "userAgent": "ua"
+        },
+        "secretConfigured": false,
+        "webhookConfigured": true
+      },
+      "output": { "received": 0 },
+      "inputSha256": "e543dbbdf26ec637e2bb7cab2f375cbfd7e4b67a48620328d49f80af42d6160e"
+    },
+    {
+      "id": "HostedEventDelivery-018",
+      "name": "sends nothing when no webhook url is configured",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "HostedEventDelivery",
+      "input": {
+        "event": {
+          "id": "evt_1",
+          "kind": "hosted_token_first_use",
+          "ts": "1970-01-01T00:00:00.000Z",
+          "principalId": "prn_a",
+          "label": "grand",
+          "fingerprint": "abc",
+          "addressKnown": true,
+          "userAgent": "ua"
+        },
+        "secretConfigured": true,
+        "webhookConfigured": false
+      },
+      "output": { "threw": false },
+      "inputSha256": "2fc1e3ec3bffb2cef3db7dbbc37e95edd2aab0c3426c9a9bbbca551cb88730f9"
+    },
+    {
+      "id": "HostedEventDelivery-019",
+      "name": "retries a failing receiver and gives up without throwing",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "HostedEventDelivery",
+      "input": {
+        "event": {
+          "id": "evt_1",
+          "kind": "hosted_token_first_use",
+          "ts": "1970-01-01T00:00:00.000Z",
+          "principalId": "prn_a",
+          "label": "grand",
+          "fingerprint": "abc",
+          "addressKnown": true,
+          "userAgent": "ua"
+        },
+        "firstStatus": 500,
+        "secondStatus": 200
+      },
+      "output": { "receivedAtLeastTwo": true, "received": 2 },
+      "inputSha256": "cf709364688af9161934b35d16eb00596d46dc923d0f80179d445c0e23f49d08"
+    },
+    {
+      "id": "HostedEventDelivery-020",
+      "name": "does not throw when the receiver is unreachable",
+      "source": "src/full/hosted-events.test.ts",
+      "api": "HostedEventDelivery",
+      "input": {
+        "event": {
+          "id": "evt_1",
+          "kind": "hosted_token_first_use",
+          "ts": "1970-01-01T00:00:00.000Z",
+          "principalId": "prn_a",
+          "label": "grand",
+          "fingerprint": "abc",
+          "addressKnown": true,
+          "userAgent": "ua"
+        },
+        "webhookUrl": "http://127.0.0.1:1/hook"
+      },
+      "output": { "threw": false },
+      "inputSha256": "8655ae5dc70af3bf6f5ae51c3f7b1e9bd483e53522c333147c2457419e75fb0a"
+    }
+  ]
+}

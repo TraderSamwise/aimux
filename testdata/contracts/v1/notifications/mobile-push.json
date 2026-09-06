@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "source": "src/full/mobile-push-bridge.test.ts",
+  "generatedBy": "scripts/capture-hosted-events-transport-contract.mjs",
+  "description": "Mobile push alert forwarding request shape and notification-disable behavior captured by running the TypeScript mobile-push bridge against a local daemon endpoint.",
+  "cases": [
+    {
+      "id": "forwardAlertToMobilePush-001",
+      "name": "forwards alert payloads to the daemon",
+      "source": "src/full/mobile-push-bridge.test.ts",
+      "api": "forwardAlertToMobilePush",
+      "input": {
+        "event": {
+          "type": "alert",
+          "kind": "needs_input",
+          "projectId": "project-1",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z",
+          "dedupeKey": "needs_input:claude-1"
+        },
+        "env": {}
+      },
+      "output": [
+        {
+          "method": "POST",
+          "path": "/internal/push",
+          "contentType": "application/json",
+          "body": {
+            "title": "claude-1 needs input",
+            "body": "waiting for input",
+            "kind": "needs_input",
+            "sessionId": "claude-1",
+            "projectId": "project-1",
+            "projectRoot": "<cwd>",
+            "dedupeKey": "needs_input:claude-1"
+          }
+        }
+      ],
+      "inputSha256": "39ac0e28b320bb3bc0d1d9c49c584f953ae66007d3387196e50dff86a00b56a9"
+    },
+    {
+      "id": "forwardAlertToMobilePush-002",
+      "name": "does not forward when external notifications are disabled",
+      "source": "src/full/mobile-push-bridge.test.ts",
+      "api": "forwardAlertToMobilePush",
+      "input": {
+        "event": {
+          "type": "alert",
+          "kind": "needs_input",
+          "projectId": "project-1",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        },
+        "env": { "AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS": "1" }
+      },
+      "output": { "received": 0 },
+      "inputSha256": "06e7056803cf58b81114264a9c4252cbcea7154d9c1e3e04610f1a4a9953ff97"
+    }
+  ]
+}
