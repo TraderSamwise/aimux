@@ -1,3 +1,4 @@
+use crate::config::init_project;
 use crate::core_cli::{
     CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCommandCall,
     CoreCommandOk, CoreLoopActorContext, classify_core_cli_with_project_resolver,
@@ -76,6 +77,7 @@ pub trait CoreCliRuntime {
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
+    fn init_project(&self, project_root: &str) -> Result<(), String>;
     fn runtime_topology_path(&self, project_root: &str) -> PathBuf;
     fn read_text_file(&self, path: &Path) -> Result<String, String>;
     fn read_runtime_topology(&self, path: &Path) -> Result<Value, String>;
@@ -213,6 +215,10 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         clear_log_file(path).map_err(|error| error.to_string())
     }
 
+    fn init_project(&self, project_root: &str) -> Result<(), String> {
+        init_project(project_root)
+    }
+
     fn runtime_topology_path(&self, project_root: &str) -> PathBuf {
         let mut resolver = PathResolver::from_env();
         runtime_topology_path(resolver.project_state_dir_for(project_root))
@@ -326,6 +332,7 @@ fn run_plan(
         ),
         CoreCliAction::TextRoute { path, body } => run_text_route(&path, body, runtime),
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
+        CoreCliAction::InitProject => run_init_project(runtime),
         CoreCliAction::HostTopology { json, raw } => run_host_topology(json, raw, runtime),
         CoreCliAction::RemoteStatus { relay_request } => {
             let credentials = runtime.credentials_for_status();
@@ -460,6 +467,14 @@ fn run_text_route(
     let text = runtime.request_daemon_text(path, body)?;
     Ok(CoreCliExecution::ok(vec![
         text.strip_suffix('\n').unwrap_or(&text).to_owned(),
+    ]))
+}
+
+fn run_init_project(runtime: &mut impl CoreCliRuntime) -> Result<CoreCliExecution, String> {
+    let project_root = runtime.resolve_project_root(&runtime.cwd());
+    runtime.init_project(&project_root)?;
+    Ok(CoreCliExecution::ok(vec![
+        "Initialized .aimux/ with config.json and .gitignore".into(),
     ]))
 }
 

@@ -212,6 +212,10 @@ impl CoreCliRuntime for FakeRuntime {
         Ok(())
     }
 
+    fn init_project(&self, _project_root: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     fn runtime_topology_path(&self, _project_root: &str) -> PathBuf {
         self.topology_path.clone()
     }
@@ -370,6 +374,21 @@ fn host_and_project_commands_execute_through_core_requests() {
         runtime.commands[1].payload,
         Some(json!({ "projectRoot": "/repo", "serve": true }))
     );
+}
+
+#[test]
+fn init_executes_locally_without_daemon_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let execution = run_core_cli_with(&args(&["init"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(
+        execution.stdout,
+        ["Initialized .aimux/ with config.json and .gitignore"]
+    );
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
 }
 
 #[test]

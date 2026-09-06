@@ -1,7 +1,30 @@
 use serde_json::{Map, Number, Value, json};
 use std::path::Path;
 
+use crate::atomic_write::{write_json_atomic, write_text_atomic};
 use crate::paths::PathResolver;
+
+const GITIGNORE_CONTENTS: &str =
+    "# Runtime-private service/project state (lives in ~/.aimux/projects/)
+state.json
+
+# Agent-facing shared artifacts
+context/
+history/
+tasks/
+status/
+threads/
+
+# Terminal recordings (large, machine-specific)
+recordings/
+
+# Agent plan files
+plans/
+
+# Managed git worktrees
+worktrees/
+
+";
 
 /// Return a fresh JSON representation of the TypeScript `DEFAULT_CONFIG`.
 pub fn default_config() -> Value {
@@ -161,6 +184,37 @@ pub fn load_config_for_project(project_root: impl AsRef<Path>) -> Value {
     let global = read_json_file(resolver.global_config_path());
     let project = read_json_file(resolver.config_path_for(project_root));
     merge_config_layers(global.as_ref(), project.as_ref())
+}
+
+pub fn init_project(project_root: impl AsRef<Path>) -> Result<(), String> {
+    let mut resolver = PathResolver::from_env();
+    init_project_with_resolver(&mut resolver, project_root)
+}
+
+pub fn init_project_with_resolver(
+    resolver: &mut PathResolver,
+    project_root: impl AsRef<Path>,
+) -> Result<(), String> {
+    let project_root = project_root.as_ref();
+    let local_dir = resolver.aimux_dir_for(project_root);
+    std::fs::create_dir_all(&local_dir).map_err(|error| error.to_string())?;
+    for subdir in ["plans", "context", "history", "status"] {
+        std::fs::create_dir_all(local_dir.join(subdir)).map_err(|error| error.to_string())?;
+    }
+
+    let config_path = resolver.config_path_for(project_root);
+    if !config_path.exists() {
+        write_json_atomic(config_path, &default_config()).map_err(|error| error.to_string())?;
+    }
+
+    let gitignore_path = local_dir.join(".gitignore");
+    if !gitignore_path.exists() {
+        write_text_atomic(gitignore_path, GITIGNORE_CONTENTS).map_err(|error| error.to_string())?;
+    }
+
+    let state_dir = resolver.project_state_dir_for(project_root);
+    std::fs::create_dir_all(state_dir.join("recordings")).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Normalize compatibility-sensitive config fields like `src/config.ts`.

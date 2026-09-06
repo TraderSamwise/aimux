@@ -1,5 +1,20 @@
-use aimux::config::{deep_merge, default_config, merge_config_layers};
+use aimux::config::{deep_merge, default_config, init_project_with_resolver, merge_config_layers};
+use aimux::paths::PathResolver;
 use serde_json::{Value, json};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn temp_path(label: &str) -> PathBuf {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_millis();
+    std::env::temp_dir().join(format!(
+        "aimux-config-{label}-{millis}-{}",
+        std::process::id()
+    ))
+}
 
 #[test]
 fn defaults_match_the_type_script_contract_fixture() {
@@ -9,6 +24,45 @@ fn defaults_match_the_type_script_contract_fixture() {
     .expect("valid config default fixture");
 
     assert_eq!(default_config(), expected);
+}
+
+#[test]
+fn init_project_creates_local_and_global_state_without_overwriting_config() {
+    let temp = temp_path("init");
+    let repo = temp.join("repo");
+    let home = temp.join("home");
+    fs::create_dir_all(&repo).expect("repo");
+    fs::create_dir_all(&home).expect("home");
+    let mut resolver = PathResolver::new(&repo, &home, None);
+    init_project_with_resolver(&mut resolver, &repo).expect("init project");
+
+    for subdir in ["plans", "context", "history", "status"] {
+        assert!(repo.join(".aimux").join(subdir).is_dir(), "{subdir}");
+    }
+    assert!(repo.join(".aimux/config.json").is_file());
+    assert_eq!(
+        fs::read_to_string(repo.join(".aimux/.gitignore")).expect("gitignore"),
+        "# Runtime-private service/project state (lives in ~/.aimux/projects/)\nstate.json\n\n# Agent-facing shared artifacts\ncontext/\nhistory/\ntasks/\nstatus/\nthreads/\n\n# Terminal recordings (large, machine-specific)\nrecordings/\n\n# Agent plan files\nplans/\n\n# Managed git worktrees\nworktrees/\n\n"
+    );
+    assert!(
+        resolver
+            .project_state_dir_for(&repo)
+            .join("recordings")
+            .is_dir()
+    );
+
+    fs::write(
+        repo.join(".aimux/config.json"),
+        "{\"defaultTool\":\"codex\"}\n",
+    )
+    .expect("custom config");
+    init_project_with_resolver(&mut resolver, &repo).expect("second init");
+    assert_eq!(
+        fs::read_to_string(repo.join(".aimux/config.json")).expect("config"),
+        "{\"defaultTool\":\"codex\"}\n"
+    );
+
+    fs::remove_dir_all(temp).expect("cleanup");
 }
 
 #[test]

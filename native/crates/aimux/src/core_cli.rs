@@ -34,6 +34,7 @@ pub enum CoreCliOutputMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CoreCliOperation {
+    Init,
     HostStatus,
     HostAgentRead,
     HostAgentStream,
@@ -369,6 +370,7 @@ pub enum CoreCliAction {
         project_root: Option<String>,
     },
     Logs(CoreLogsArgs),
+    InitProject,
     HostTopology {
         json: bool,
         raw: bool,
@@ -900,6 +902,11 @@ where
     let subcommand = args.get(1).map(String::as_str).unwrap_or("");
 
     let (operation, action, fallback) = match (command, subcommand) {
+        ("init", _) => (
+            CoreCliOperation::Init,
+            CoreCliAction::InitProject,
+            CoreCliFallback::None,
+        ),
         ("restart", _) => {
             let parsed = parse_core_restart_args(&args).expect("eligible restart must parse");
             let project_root = parsed.project.as_deref().map(&resolve_project_root);

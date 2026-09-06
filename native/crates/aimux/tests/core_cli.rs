@@ -94,6 +94,14 @@ fn sidecar_owned_commands_map_to_authoritative_names_and_payloads() {
 }
 
 #[test]
+fn init_command_plans_local_action() {
+    let plan = classify_core_cli(&["init"], &context(false, false)).expect("init plan");
+    assert_eq!(plan.operation, CoreCliOperation::Init);
+    assert_eq!(plan.action, CoreCliAction::InitProject);
+    assert_eq!(plan.fallback, CoreCliFallback::None);
+}
+
+#[test]
 fn host_topology_commands_plan_local_action() {
     let path = classify_core_cli(&["host", "topology"], &context(true, true))
         .expect("host topology path plan");

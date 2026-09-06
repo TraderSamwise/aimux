@@ -3011,6 +3011,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     let subcommand = args.get(1).map(AsRef::as_ref);
     match (command, subcommand) {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
+        (Some("init"), _) => args.len() == 1,
         (Some("ps"), _) => true,
         (Some("input"), _) => true,
         (Some("rename"), _) => true,
