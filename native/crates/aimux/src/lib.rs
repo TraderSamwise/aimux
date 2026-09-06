@@ -18,6 +18,7 @@ pub mod dashboard_actions;
 pub mod dashboard_client;
 pub mod dashboard_command_spec;
 pub mod dashboard_controller;
+pub mod dashboard_focus;
 pub mod dashboard_internal;
 pub mod dashboard_model;
 pub mod dashboard_navigation;

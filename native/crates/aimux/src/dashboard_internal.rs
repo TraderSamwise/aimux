@@ -3,6 +3,7 @@ use crate::dashboard_client::{
     resolve_project_service_endpoint,
 };
 use crate::dashboard_controller::{DashboardController, DashboardControllerEffect};
+use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use crate::dashboard_navigation::DashboardEntryRef;
 use crate::dashboard_readiness::mark_native_dashboard_ready;
@@ -31,6 +32,7 @@ struct DashboardSnapshotLoad {
 
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
     let mut controller = None;
+    let mut focus_state = DashboardFocusState::default();
     let mut ready_marked = false;
     let mut scroll_offset = 0;
     let mut latest_snapshot = None;
@@ -61,7 +63,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             }
             latest_snapshot = Some(loaded.snapshot);
             latest_endpoint = loaded.endpoint;
-            render_now = false;
+            let focus_render = if let (Some(snapshot), Some(endpoint)) =
+                (latest_snapshot.as_ref(), latest_endpoint.as_ref())
+            {
+                sync_dashboard_focus(&mut focus_state, controller, snapshot, endpoint)
+            } else {
+                false
+            };
+            render_now = focus_render;
             last_render = Instant::now();
             if options.once {
                 return Ok(());
@@ -96,6 +105,28 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn sync_dashboard_focus(
+    focus_state: &mut DashboardFocusState,
+    controller: &DashboardController,
+    snapshot: &DesktopStateSnapshot,
+    endpoint: &ProjectServiceEndpoint,
+) -> bool {
+    let plan = focus_state.plan_sync(snapshot, &controller.navigation);
+    let mut synced_seen = false;
+    for request in plan.requests {
+        if execute_dashboard_action(endpoint, &request).is_ok()
+            && request.path == crate::project_api_contract::routes::runtime::MARK_SEEN
+        {
+            synced_seen = true;
+        }
+    }
+    if synced_seen && let Some(session_id) = plan.seen_session_id {
+        focus_state.mark_seen_synced(session_id);
+        return true;
+    }
+    false
 }
 
 fn render_dashboard_snapshot(
