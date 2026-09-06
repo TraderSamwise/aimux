@@ -134,18 +134,18 @@ fn launch_command_uses_stable_shim_for_native_install_root_entry() {
 
     assert_eq!(command.source, AimuxCliLaunchSource::StableShim);
     assert_eq!(command.command, stable.to_string_lossy());
-    assert_eq!(command.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(command.args, vec!["--tmux-dashboard-internal"]);
 }
 
 #[test]
-fn dashboard_launch_uses_native_internal_command_by_default() {
+fn dashboard_launch_preserves_node_default_until_native_parity() {
     let test_dir = TestDir::new();
     let default_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
         BTreeMap::new(),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
     ));
-    assert_eq!(default_command.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(default_command.args, vec!["--tmux-dashboard-internal"]);
 
     let node_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
