@@ -77,15 +77,6 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     };
 
     loop {
-        if drain_dashboard_event_stream(
-            &mut event_stream,
-            &mut event_stream_retry_at,
-            &mut refresh_state,
-            controller.as_mut(),
-        ) {
-            render_now = true;
-        }
-
         let now = elapsed_millis(clock_start);
         let mut dashboard_visible = if visibility_state.started_in_dashboard {
             read_dashboard_tui_visibility_for_loop(
@@ -105,10 +96,19 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             }
         }
         if !dashboard_visible {
+            suspend_dashboard_event_stream(&mut event_stream, &mut event_stream_retry_at);
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
             continue;
         }
         if consume_dashboard_tui_visibility_wake(&mut visibility_state) {
+            render_now = true;
+        }
+        if drain_dashboard_event_stream(
+            &mut event_stream,
+            &mut event_stream_retry_at,
+            &mut refresh_state,
+            controller.as_mut(),
+        ) {
             render_now = true;
         }
         if refresh_state.take_refresh_request() {
@@ -204,6 +204,16 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         }
         thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
     }
+}
+
+fn suspend_dashboard_event_stream(
+    event_stream: &mut Option<DashboardEventStreamHandle>,
+    retry_at: &mut Option<Instant>,
+) {
+    if event_stream.is_some() {
+        *event_stream = None;
+    }
+    *retry_at = None;
 }
 
 fn drain_dashboard_event_stream(
