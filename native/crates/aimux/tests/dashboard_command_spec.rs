@@ -89,19 +89,15 @@ fn command_uses_dashboard_entrypoint_and_shell_wrapper() {
 #[test]
 fn dashboard_selector_ignores_legacy_node_opt_out() {
     let test_dir = TestDir::new();
-    let native = get_dashboard_command_spec_with_options(
-        "/tmp/repo",
-        source_options(&test_dir, BTreeMap::new()),
-    )
-    .expect("native spec");
-    let node = get_dashboard_command_spec_with_options(
-        "/tmp/repo",
-        source_options(
-            &test_dir,
-            BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into())]),
-        ),
-    )
-    .expect("node spec");
+    let base_options = source_options(&test_dir, BTreeMap::new());
+    let native = get_dashboard_command_spec_with_options("/tmp/repo", base_options.clone())
+        .expect("native spec");
+    let mut node_options = base_options;
+    node_options
+        .env
+        .insert("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into());
+    let node =
+        get_dashboard_command_spec_with_options("/tmp/repo", node_options).expect("node spec");
     let node_command = command_text(&node);
     let native_command = command_text(&native);
 
