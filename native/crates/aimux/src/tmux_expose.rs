@@ -8,6 +8,7 @@ use crate::expose_socket::parse_positive_header_integer;
 use crate::project_api_contract::routes;
 use crate::project_service::switchable_agents::agent_status_chip;
 use crate::project_service::usage::parse_recency_timestamp;
+use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use crate::tui_render::text::{truncate_ansi, wrap_text};
 use crate::tui_render::theme::{Tone, pill, style, visible_width};
@@ -662,17 +663,26 @@ pub fn run_tmux_expose_with_client(
         .as_deref()
         .is_some_and(is_meta_dashboard_window_name);
     let mut scope = initial_expose_scope(cross_project, &context, &options.expose_config);
-    let mut view = match load_expose_scope_items_with(
-        scope,
-        &context,
+    let mut view_stale = false;
+    let mut view = if let Some(hot_view) = read_hot_expose_scope_view(
         &options.project_state_dir,
-        &deps,
-        client,
+        &hot_snapshot_key_for_scope(&options, scope),
     ) {
-        Ok(view) => view,
-        Err(error) => {
-            let _ = writeln!(output, "aimux expose: {error}");
-            return 1;
+        view_stale = true;
+        hot_view
+    } else {
+        match load_expose_scope_items_with(
+            scope,
+            &context,
+            &options.project_state_dir,
+            &deps,
+            client,
+        ) {
+            Ok(view) => view,
+            Err(error) => {
+                let _ = writeln!(output, "aimux expose: {error}");
+                return 1;
+            }
         }
     };
     let mut sort_mode = read_expose_ui_state(&options.project_state_dir).sort_mode;
@@ -728,7 +738,17 @@ pub fn run_tmux_expose_with_client(
             }
             if key == ExposeKey::Char('g') {
                 scope = next_expose_scope(scope);
-                if let Ok(next_view) = load_expose_scope_items_with(
+                if let Some(hot_view) = read_hot_expose_scope_view(
+                    &options.project_state_dir,
+                    &hot_snapshot_key_for_scope(&options, scope),
+                ) {
+                    view = hot_view;
+                    view_stale = true;
+                    items = order_items(&view, &options.project_root, sort_mode);
+                    index = index.min(items.len().saturating_sub(1));
+                    layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
+                        .unwrap_or(layout);
+                } else if let Ok(next_view) = load_expose_scope_items_with(
                     scope,
                     &context,
                     &options.project_state_dir,
@@ -736,6 +756,7 @@ pub fn run_tmux_expose_with_client(
                     client,
                 ) {
                     view = next_view;
+                    view_stale = false;
                     items = order_items(&view, &options.project_root, sort_mode);
                     index = index.min(items.len().saturating_sub(1));
                     layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
@@ -751,7 +772,7 @@ pub fn run_tmux_expose_with_client(
                     client,
                 ) {
                     Ok(Some(item)) => {
-                        if focus_or_select(&options, &context, &deps, client, &item) {
+                        if focus_or_select(&options, &context, &deps, client, &item, view_stale) {
                             return finish_plain_expose(output, 0);
                         }
                         layout =
@@ -773,7 +794,8 @@ pub fn run_tmux_expose_with_client(
                 let visible_count = (layout.visible_count.max(0) as usize).min(items.len());
                 if target < visible_count.min(9) {
                     index = target;
-                    if focus_or_select(&options, &context, &deps, client, &items[index]) {
+                    if focus_or_select(&options, &context, &deps, client, &items[index], view_stale)
+                    {
                         return finish_plain_expose(output, 0);
                     }
                     if let Ok(next_view) = load_expose_scope_items_with(
@@ -784,6 +806,7 @@ pub fn run_tmux_expose_with_client(
                         client,
                     ) {
                         view = next_view;
+                        view_stale = false;
                         items = order_items(&view, &options.project_root, sort_mode);
                     }
                     layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
@@ -793,7 +816,7 @@ pub fn run_tmux_expose_with_client(
             }
             if matches!(key, ExposeKey::Enter) {
                 if let Some(item) = items.get(index)
-                    && focus_or_select(&options, &context, &deps, client, item)
+                    && focus_or_select(&options, &context, &deps, client, item, view_stale)
                 {
                     return finish_plain_expose(output, 0);
                 }
@@ -1077,15 +1100,34 @@ fn focus_or_select(
     deps: &LoadExposeScopeDeps,
     client: &mut impl ExposeHttpClient,
     item: &Value,
+    view_stale: bool,
 ) -> bool {
-    if write_selected_window(
-        options.selection_file.as_deref(),
-        &options.project_root,
-        item,
-    ) {
+    if !view_stale
+        && write_selected_window(
+            options.selection_file.as_deref(),
+            &options.project_root,
+            item,
+        )
+    {
         return true;
     }
     focus_expose_item_with(item, context, &options.project_state_dir, deps, client).unwrap_or(false)
+}
+
+fn hot_snapshot_key_for_scope(
+    options: &TmuxExposeOptions,
+    scope: ExposeScope,
+) -> HotExposeScopeKey {
+    HotExposeScopeKey {
+        project_root: options.project_root.to_string_lossy().into_owned(),
+        scope,
+        worktree_key: (scope == ExposeScope::Worktree).then(|| {
+            resolve_scoped_worktree_path(&options.project_root, options.current_path.as_deref())
+        }),
+        launch_window_id: (scope == ExposeScope::Worktree)
+            .then(|| options.current_window_id.clone())
+            .flatten(),
+    }
 }
 
 fn finish_plain_expose(output: &mut impl Write, code: i32) -> i32 {
@@ -1301,6 +1343,31 @@ fn value_worktree_tone_key(item: &Value, project_root: &Path) -> String {
         .map(PathBuf::from)
         .unwrap_or_else(|| project_root.to_path_buf());
     lexical_resolve(path).to_string_lossy().into_owned()
+}
+
+fn resolve_scoped_worktree_path(project_root: &Path, current_path: Option<&str>) -> String {
+    let root = lexical_resolve(project_root);
+    let current = current_path
+        .map(lexical_resolve)
+        .unwrap_or_else(|| root.clone());
+    if current == root || current.starts_with(&root) {
+        if let Ok(relative) = current.strip_prefix(&root) {
+            let mut components = relative.components();
+            if components.next() == Some(std::path::Component::Normal(".aimux".as_ref()))
+                && components.next() == Some(std::path::Component::Normal("worktrees".as_ref()))
+                && let Some(std::path::Component::Normal(name)) = components.next()
+            {
+                return root
+                    .join(".aimux")
+                    .join("worktrees")
+                    .join(name)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+        return root.to_string_lossy().into_owned();
+    }
+    current.to_string_lossy().into_owned()
 }
 
 fn item_recency_at(item: &Value) -> &str {

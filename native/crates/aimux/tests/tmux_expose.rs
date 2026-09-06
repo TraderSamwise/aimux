@@ -3,12 +3,13 @@ use aimux::core_command_transport::DaemonHttpMethod;
 use aimux::project_api_contract::routes;
 use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeConfig, ExposeHttpClient, ExposeHttpRequest, ExposeScope,
-    ExposeSortMode, ExposeSublabel, ExposeUiState, FastControlContext, LoadExposeScopeDeps,
-    focus_expose_item_with, initial_expose_scope, load_expose_scope_items_with,
-    load_overseer_expose_item_with, next_expose_scope, parse_expose_args, read_expose_ui_state,
-    run_tmux_expose_with_client, tmux_expose_options_from_socket_header, write_expose_ui_state,
-    write_selected_window,
+    ExposeScopeView, ExposeSortMode, ExposeSublabel, ExposeUiState, FastControlContext,
+    LoadExposeScopeDeps, focus_expose_item_with, initial_expose_scope,
+    load_expose_scope_items_with, load_overseer_expose_item_with, next_expose_scope,
+    parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client,
+    tmux_expose_options_from_socket_header, write_expose_ui_state, write_selected_window,
 };
+use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::fs;
@@ -486,6 +487,83 @@ fn runner_reloads_scope_toggles_sort_and_uses_same_project_selection_file() {
     cleanup(state_dir);
 }
 
+#[test]
+fn runner_renders_hot_snapshot_without_blocking_on_item_discovery() {
+    let state_dir = temp_dir("runner-hot-snapshot");
+    write_hot_expose_scope_view(
+        &state_dir,
+        HotExposeScopeKey {
+            project_root: "/repo".into(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+        ExposeScopeView {
+            scope: ExposeScope::Project,
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+            items: vec![hot_item("@1", "hot preview line\n")],
+        },
+        None,
+    );
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::default();
+    let mut input: &[u8] = b"q";
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_client(options, &mut input, &mut output, &mut client),
+        0
+    );
+
+    assert!(client.requests.is_empty());
+    assert!(String::from_utf8_lossy(&output).contains("hot preview line"));
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_validates_stale_hot_selection_before_writing_selection_file() {
+    let state_dir = temp_dir("runner-hot-selection");
+    let selection_file = state_dir.join("selected-window.txt");
+    write_hot_expose_scope_view(
+        &state_dir,
+        HotExposeScopeKey {
+            project_root: "/repo".into(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+        ExposeScopeView {
+            scope: ExposeScope::Project,
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+            items: vec![hot_item("@1", "hot preview line\n")],
+        },
+        None,
+    );
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    options.selection_file = Some(selection_file.clone());
+    let mut client = FakeHttp::with_responses([json!({ "ok": true })]);
+    let mut input: &[u8] = b"\r";
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_client(options, &mut input, &mut output, &mut client),
+        0
+    );
+
+    assert!(!selection_file.exists());
+    assert_eq!(
+        client.requests[0].0,
+        format!("http://127.0.0.1:45000{}", routes::controls::FOCUS_WINDOW)
+    );
+    cleanup(state_dir);
+}
+
 fn parsed_options(state_dir: &Path) -> aimux::tmux_expose::TmuxExposeOptions {
     aimux::tmux_expose::TmuxExposeOptions {
         project_root: PathBuf::from("/repo"),
@@ -500,6 +578,38 @@ fn parsed_options(state_dir: &Path) -> aimux::tmux_expose::TmuxExposeOptions {
         rows: Some(24),
         ..aimux::tmux_expose::TmuxExposeOptions::default()
     }
+}
+
+fn hot_item(window_id: &str, output: &str) -> Value {
+    json!({
+        "id": format!("session-{window_id}"),
+        "label": "codex",
+        "urgency": 0,
+        "activity": 0,
+        "recentRank": 0,
+        "previewSnapshot": {
+            "output": output,
+            "capturedAt": "2026-07-20T13:00:00.000Z",
+            "source": "capture",
+            "windowId": window_id,
+            "startLine": -40,
+            "lineCount": 40
+        },
+        "target": {
+            "sessionName": "aimux-test",
+            "windowId": window_id,
+            "windowIndex": 1,
+            "windowName": "codex"
+        },
+        "metadata": {
+            "kind": "agent",
+            "sessionId": format!("session-{window_id}"),
+            "command": "codex",
+            "args": [],
+            "toolConfigKey": "codex",
+            "worktreePath": "/repo"
+        }
+    })
 }
 
 fn temp_dir(label: &str) -> PathBuf {
