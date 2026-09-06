@@ -255,6 +255,216 @@ impl TmuxRuntimeManager {
             .is_ok_and(|value| value.trim() == "1")
     }
 
+    pub fn create_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+        detached: bool,
+    ) -> Result<TmuxTarget, String> {
+        let argv = new_window_argv(session_name, name, cwd, command, args, detached);
+        let raw = self.exec_owned(
+            argv,
+            Some(TmuxExecOptions {
+                cwd: Some(cwd.to_owned()),
+            }),
+        )?;
+        parse_window_target(session_name, &raw)
+    }
+
+    pub fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(kill_window_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn unlink_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(
+            unlink_window_argv(&target.session_name, &target.window_id),
+            None,
+        )
+        .map(|_| ())
+    }
+
+    pub fn kill_session(&mut self, session_name: &str) -> Result<(), String> {
+        self.exec_owned(kill_session_argv(session_name), None)
+            .map(|_| ())
+    }
+
+    pub fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String> {
+        self.exec_owned(rename_window_argv(window_id, name), None)
+            .map(|_| ())
+    }
+
+    pub fn respawn_window(
+        &mut self,
+        target: &TmuxTarget,
+        spec: &TmuxCommandSpec,
+    ) -> Result<(), String> {
+        self.exec_owned(
+            respawn_window_argv(&target.window_id, spec),
+            Some(TmuxExecOptions {
+                cwd: Some(spec.cwd.clone()),
+            }),
+        )
+        .map(|_| ())
+    }
+
+    pub fn clear_target_history(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(clear_history_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn select_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(select_window_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn capture_target(
+        &mut self,
+        target: &TmuxTarget,
+        options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.exec_owned(capture_pane_argv(&target.window_id, options), None)
+    }
+
+    pub fn start_pane_pipe(
+        &mut self,
+        target: &TmuxTarget,
+        command: &str,
+        only_if_not_piped: bool,
+    ) -> Result<(), String> {
+        self.exec_owned(
+            start_pane_pipe_argv(&target.window_id, command, only_if_not_piped),
+            None,
+        )
+        .map(|_| ())
+    }
+
+    pub fn stop_pane_pipe(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(stop_pane_pipe_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn resize_target(
+        &mut self,
+        target: &TmuxTarget,
+        cols: i64,
+        rows: i64,
+    ) -> Result<(), String> {
+        self.exec_owned(resize_window_argv(&target.window_id, cols, rows), None)
+            .map(|_| ())
+    }
+
+    pub fn send_text(&mut self, target: &TmuxTarget, text: &str) -> Result<(), String> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        for chunk in split_text_for_tmux_send_keys(text, TMUX_SEND_TEXT_CHUNK_BYTES) {
+            self.exec_owned(send_text_argv(&target.window_id, &chunk), None)?;
+        }
+        Ok(())
+    }
+
+    pub fn send_enter(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(send_enter_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn send_client_enter(&mut self, client_tty: &str) -> Result<(), String> {
+        self.exec_owned(send_client_enter_argv(client_tty), None)
+            .map(|_| ())
+    }
+
+    pub fn send_client_carriage_return(
+        &mut self,
+        client_tty: &str,
+        target: &TmuxTarget,
+    ) -> Result<(), String> {
+        self.exec_owned(
+            send_client_carriage_return_argv(client_tty, &target.window_id),
+            None,
+        )
+        .map(|_| ())
+    }
+
+    pub fn send_carriage_return(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(send_carriage_return_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn send_escape(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(send_escape_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn send_focus_in(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(send_focus_in_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn send_modified_enter(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.exec_owned(send_modified_enter_argv(&target.window_id), None)
+            .map(|_| ())
+    }
+
+    pub fn send_key(&mut self, target: &TmuxTarget, key: &str) -> Result<(), String> {
+        self.exec_owned(send_key_argv(&target.window_id, key), None)
+            .map(|_| ())
+    }
+
+    pub fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
+        let value = serde_json::to_string(metadata)
+            .map_err(|error| format!("failed to serialize tmux window metadata: {error}"))?;
+        self.set_window_option(window_id, "@aimux-meta", &value)
+    }
+
+    pub fn set_window_option(
+        &mut self,
+        window_id: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        self.exec_owned(set_window_option_argv(window_id, key, value), None)
+            .map(|_| ())
+    }
+
+    pub fn set_session_option(
+        &mut self,
+        session_name: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        self.exec_owned(set_session_option_argv(session_name, key, value), None)
+            .map(|_| ())
+    }
+
+    pub fn get_window_option(&mut self, window_id: &str, key: &str) -> Option<String> {
+        self.exec_tmux(&["show-window-options", "-v", "-t", window_id, key])
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn apply_managed_agent_window_policy(
+        &mut self,
+        window_id: &str,
+        tool_config_key: &str,
+    ) -> Result<(), String> {
+        self.set_window_option(window_id, "@aimux-tool", tool_config_key)?;
+        self.set_window_option(
+            window_id,
+            "allow-passthrough",
+            MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allow_passthrough,
+        )?;
+        self.set_window_option(
+            window_id,
+            "aggressive-resize",
+            MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressive_resize,
+        )
+    }
+
     pub fn list_clients(&mut self) -> Vec<TmuxClientInfo> {
         let Ok(raw) = self.exec_owned(list_clients_argv(), None) else {
             return Vec::new();
@@ -1033,6 +1243,24 @@ fn parse_tmux_managed_windows(session_name: &str, raw: &str) -> Vec<TmuxManagedW
             })
         })
         .collect()
+}
+
+fn parse_window_target(session_name: &str, raw: &str) -> Result<TmuxTarget, String> {
+    let line = raw.lines().next().unwrap_or_default();
+    let mut parts = line.split('\t');
+    let window_id = parts.next().unwrap_or_default();
+    let window_index = parts.next().unwrap_or_default();
+    let window_name = parts.next().unwrap_or_default();
+    if window_id.is_empty() || window_index.is_empty() || window_name.is_empty() {
+        return Err(format!("invalid tmux target output: {raw:?}"));
+    }
+    Ok(TmuxTarget {
+        session_name: session_name.to_owned(),
+        window_id: window_id.to_owned(),
+        window_index: window_index.parse().unwrap_or(0),
+        window_name: window_name.to_owned(),
+        pane_dead: None,
+    })
 }
 
 fn parse_i64_or_zero(value: Option<&str>) -> i64 {
