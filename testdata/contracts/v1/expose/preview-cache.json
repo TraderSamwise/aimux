@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "source": "src/expose-preview-cache.test.ts",
+  "generatedBy": "scripts/capture-expose-preview-cache-contract.mjs",
+  "description": "Expose preview cache tracked-target, snapshot, failure, in-flight, demand-expiry, and global registry behavior captured by running TypeScript ExposePreviewCache with mocked tmux capture.",
+  "cases": [
+    {
+      "id": "expose-preview-cache-001",
+      "name": "captures tracked targets as preview snapshots",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": {
+        "scenario": "capture-tracked",
+        "projectRoot": "/repo",
+        "items": [
+          {
+            "id": "a",
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }
+          }
+        ]
+      },
+      "output": {
+        "calls": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "options": { "startLine": -40, "includeEscapes": true }
+          }
+        ],
+        "snapshot": {
+          "output": "output for @1\n",
+          "capturedAt": "2026-07-20T13:00:00.000Z",
+          "source": "capture",
+          "windowId": "@1",
+          "startLine": -40,
+          "lineCount": 40
+        },
+        "missingSnapshot": null,
+        "captureLines": 40
+      },
+      "inputSha256": "8ecf6fadd8d36ad1e67c2b6f66af8872b5169506e615ba9127a01e503aaede99"
+    },
+    {
+      "id": "expose-preview-cache-002",
+      "name": "keeps the last good snapshot when capture fails",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": { "scenario": "last-good-on-failure" },
+      "output": {
+        "calls": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "options": { "startLine": -40, "includeEscapes": true }
+          },
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "options": { "startLine": -40, "includeEscapes": true }
+          }
+        ],
+        "snapshot": {
+          "output": "first output\n",
+          "capturedAt": "2026-07-20T13:00:00.000Z",
+          "source": "capture",
+          "windowId": "@1",
+          "startLine": -40,
+          "lineCount": 40
+        }
+      },
+      "inputSha256": "877d30e5b1375732f9216e17ecc5249146e9331d663dd05aeba070b11d7ceeaf"
+    },
+    {
+      "id": "expose-preview-cache-003",
+      "name": "captures the active demand union until old demand expires",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": { "scenario": "demand-union-expiry" },
+      "output": {
+        "firstSnapshot": {
+          "output": "output for @1\n",
+          "capturedAt": "2026-07-20T13:00:00.000Z",
+          "source": "capture",
+          "windowId": "@1",
+          "startLine": -40,
+          "lineCount": 40
+        },
+        "during": {
+          "calls": [
+            {
+              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+              "options": { "startLine": -40, "includeEscapes": true }
+            },
+            {
+              "target": { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 1, "windowName": "codex" },
+              "options": { "startLine": -40, "includeEscapes": true }
+            }
+          ],
+          "snapshots": {
+            "one": {
+              "output": "output for @1\n",
+              "capturedAt": "2026-07-20T13:00:00.500Z",
+              "source": "capture",
+              "windowId": "@1",
+              "startLine": -40,
+              "lineCount": 40
+            },
+            "two": {
+              "output": "output for @2\n",
+              "capturedAt": "2026-07-20T13:00:00.500Z",
+              "source": "capture",
+              "windowId": "@2",
+              "startLine": -40,
+              "lineCount": 40
+            }
+          }
+        },
+        "expired": null,
+        "finalCalls": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 1, "windowName": "codex" },
+            "options": { "startLine": -40, "includeEscapes": true }
+          }
+        ]
+      },
+      "inputSha256": "424da9fe0d20e1e40b2e2486c6207ffd96f5a1b6c84a81c849dc24477bdd75b6"
+    },
+    {
+      "id": "expose-preview-cache-004",
+      "name": "accepts in-flight captures after identical re-demand",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": { "scenario": "identical-redemand-inflight" },
+      "output": {
+        "calls": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "options": { "startLine": -40, "includeEscapes": true }
+          }
+        ],
+        "snapshot": {
+          "output": "late output\n",
+          "capturedAt": "2026-07-20T13:00:00.000Z",
+          "source": "capture",
+          "windowId": "@1",
+          "startLine": -40,
+          "lineCount": 40
+        }
+      },
+      "inputSha256": "2aadffc4df09f0dcbd3017b399687e1b9b6a6c2e26b0e4f1fca63c09b12766a6"
+    },
+    {
+      "id": "expose-preview-cache-005",
+      "name": "ignores in-flight captures after demand expires and is renewed",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": { "scenario": "expired-redemand-inflight" },
+      "output": {
+        "calls": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "options": { "startLine": -40, "includeEscapes": true }
+          }
+        ],
+        "snapshot": null
+      },
+      "inputSha256": "c14d602ea2083742fa32571a9b00ee43b9321f0784b83e113a83dffa0b89093b"
+    },
+    {
+      "id": "expose-preview-cache-006",
+      "name": "evicts tracked targets after repeated capture failures",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": { "scenario": "repeated-failures-evict" },
+      "output": {
+        "callCount": 3,
+        "snapshot": null,
+        "stats": {
+          "running": true,
+          "trackedTargets": 0,
+          "snapshots": 0,
+          "failureCounts": 0,
+          "refreshing": false,
+          "refreshPending": false
+        }
+      },
+      "inputSha256": "ee9219753b68843a430982dcfa84b4a17f58896e52b6f4efd8821987d85a99fe"
+    },
+    {
+      "id": "expose-preview-cache-007",
+      "name": "registers running caches for daemon global expose responses",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": { "scenario": "global-registry-get" },
+      "output": {
+        "beforeStop": { "direct": "registered output\n", "normalized": "registered output\n" },
+        "afterStop": null
+      },
+      "inputSha256": "b4f1aea9df29f792c5a4394a7f7bc28025ccba8b95c3800a003e1b1f953be0e7"
+    },
+    {
+      "id": "expose-preview-cache-008",
+      "name": "tracks demand through the project registry",
+      "source": "src/expose-preview-cache.test.ts",
+      "api": "ExposePreviewCache",
+      "input": { "scenario": "global-registry-track" },
+      "output": {
+        "calls": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "options": { "startLine": -40, "includeEscapes": true }
+          }
+        ],
+        "snapshot": {
+          "output": "registry output for @1\n",
+          "capturedAt": "2026-07-20T13:00:00.000Z",
+          "source": "capture",
+          "windowId": "@1",
+          "startLine": -40,
+          "lineCount": 40
+        }
+      },
+      "inputSha256": "3601daea477cccea68f8902f6e90da956de8400d6b9a8be18b7c15c96086e824"
+    }
+  ]
+}

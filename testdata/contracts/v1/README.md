@@ -364,6 +364,9 @@ Priority fixture groups:
   pending-start retry, expiry, compaction, lost-ownership, and tmux failure
   cases captured by running TypeScript `ExposePaneOutputTap` with mocked tmux
   calls and temporary tap files.
+- `expose/preview-cache.json`: expose preview cache tracked-target, snapshot,
+  capture-failure, in-flight, demand-expiry, and global registry behavior
+  captured by running TypeScript `ExposePreviewCache` with mocked tmux capture.
 - `expose/preview-crop.json`: expose preview footer crop thresholds and
   line-window behavior captured by running TypeScript expose-preview-crop
   helpers.
