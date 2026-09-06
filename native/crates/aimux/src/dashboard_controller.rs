@@ -22,6 +22,7 @@ pub struct DashboardController {
     pub service_input: Option<DashboardServiceInputState>,
     pub launch_options: Option<DashboardLaunchOptionsState>,
     pub details_sidebar_visible: bool,
+    pub hide_offline_agents: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +43,7 @@ impl DashboardController {
             service_input: None,
             launch_options: None,
             details_sidebar_visible: true,
+            hide_offline_agents: false,
         }
     }
 
@@ -91,6 +93,16 @@ impl DashboardController {
             },
             DashboardKey::Tab => {
                 self.details_sidebar_visible = !self.details_sidebar_visible;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::ToggleOfflineAgents => {
+                self.hide_offline_agents = !self.hide_offline_agents;
+                self.navigation.clear_quick_jump();
+                self.footer_message = Some(if self.hide_offline_agents {
+                    "Offline agents hidden".into()
+                } else {
+                    "Offline agents shown".into()
+                });
                 DashboardControllerEffect::Render
             }
             DashboardKey::Enter => self.handle_enter(snapshot),
@@ -173,6 +185,7 @@ impl DashboardController {
             | DashboardKey::ForkAgent
             | DashboardKey::SwitchTool
             | DashboardKey::ClearFailures
+            | DashboardKey::ToggleOfflineAgents
             | DashboardKey::Backspace
             | DashboardKey::Digit(_)
             | DashboardKey::Tab
@@ -290,6 +303,7 @@ impl DashboardController {
             | DashboardKey::ForkAgent
             | DashboardKey::SwitchTool
             | DashboardKey::ClearFailures
+            | DashboardKey::ToggleOfflineAgents
             | DashboardKey::LaunchOptions
             | DashboardKey::Quit
             | DashboardKey::Digit(_)
@@ -435,6 +449,7 @@ pub enum DashboardKey {
     ForkAgent,
     SwitchTool,
     ClearFailures,
+    ToggleOfflineAgents,
     LaunchOptions,
     Quit,
     Digit(char),
@@ -532,6 +547,7 @@ fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
         DashboardKey::Printable('q') => DashboardKey::Quit,
         DashboardKey::Printable('x') => DashboardKey::Stop,
         DashboardKey::Printable('X') => DashboardKey::ClearFailures,
+        DashboardKey::Printable('a') => DashboardKey::ToggleOfflineAgents,
         DashboardKey::Printable('n') => DashboardKey::NewAgent,
         DashboardKey::Printable('v') => DashboardKey::NewService,
         DashboardKey::Printable('f') => DashboardKey::ForkAgent,

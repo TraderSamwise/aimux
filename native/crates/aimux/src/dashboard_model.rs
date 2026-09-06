@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -304,4 +304,115 @@ impl DesktopStateSnapshot {
                 .find(|group| group.path.as_deref() == Some(path))
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardVisibleModel {
+    pub snapshot: DesktopStateSnapshot,
+    pub hidden_offline_agent_count: usize,
+}
+
+pub fn is_dashboard_session_offline(session: &DashboardSession) -> bool {
+    if session.pending_action.is_some() {
+        return false;
+    }
+    session
+        .semantic
+        .as_ref()
+        .is_some_and(|semantic| semantic.user.label == "offline")
+        || matches!(
+            session.status,
+            SessionStatus::Offline | SessionStatus::Exited
+        )
+}
+
+pub fn filter_dashboard_visible_model(
+    snapshot: &DesktopStateSnapshot,
+    hide_offline_agents: bool,
+) -> DashboardVisibleModel {
+    if !hide_offline_agents {
+        return DashboardVisibleModel {
+            snapshot: snapshot.clone(),
+            hidden_offline_agent_count: 0,
+        };
+    }
+
+    let hidden_offline_agent_count = snapshot
+        .sessions
+        .iter()
+        .filter(|session| is_dashboard_session_offline(session))
+        .count();
+    let sessions = snapshot
+        .sessions
+        .iter()
+        .filter(|session| !is_dashboard_session_offline(session))
+        .cloned()
+        .collect::<Vec<_>>();
+    let visible_session_worktrees = sessions
+        .iter()
+        .map(|session| worktree_key(session.worktree_path.as_deref()))
+        .collect::<BTreeSet<_>>();
+    let mut visible_service_ids = BTreeSet::new();
+    let mut visible_group_worktrees = BTreeSet::new();
+
+    let worktree_groups = snapshot
+        .worktree_groups
+        .iter()
+        .filter_map(|group| {
+            let group_sessions = group
+                .sessions
+                .iter()
+                .filter(|session| !is_dashboard_session_offline(session))
+                .cloned()
+                .collect::<Vec<_>>();
+            if group_sessions.is_empty() && !should_keep_operational_worktree(group) {
+                return None;
+            }
+            visible_group_worktrees.insert(worktree_key(group.path.as_deref()));
+            for service in &group.services {
+                visible_service_ids.insert(service.id.clone());
+            }
+            let mut group = group.clone();
+            group.sessions = group_sessions;
+            Some(group)
+        })
+        .collect::<Vec<_>>();
+
+    let services = snapshot
+        .services
+        .iter()
+        .filter(|service| {
+            let key = worktree_key(service.worktree_path.as_deref());
+            visible_service_ids.contains(&service.id)
+                || visible_session_worktrees.contains(&key)
+                || visible_group_worktrees.contains(&key)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    DashboardVisibleModel {
+        snapshot: DesktopStateSnapshot {
+            sessions,
+            services,
+            worktree_groups,
+            ..snapshot.clone()
+        },
+        hidden_offline_agent_count,
+    }
+}
+
+fn worktree_key(path: Option<&str>) -> String {
+    path.unwrap_or("__main__").to_owned()
+}
+
+fn should_keep_operational_worktree(group: &WorktreeGroup) -> bool {
+    group.pending
+        || group.removing
+        || group.pending_action.is_some()
+        || group.operation_failure.is_some()
+        || group
+            .extra
+            .get("optimistic")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
 }

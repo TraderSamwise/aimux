@@ -9,7 +9,9 @@ use crate::dashboard_event_stream::{
 };
 use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
-use crate::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
+use crate::dashboard_model::{
+    DesktopStateGoldenFixture, DesktopStateSnapshot, filter_dashboard_visible_model,
+};
 use crate::dashboard_navigation::DashboardEntryRef;
 use crate::dashboard_project_events::{
     DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_footer_flash,
@@ -121,10 +123,21 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
 
         if render_now || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL {
             let loaded = load_dashboard_snapshot(&options)?;
+            let hide_offline_agents = controller
+                .as_ref()
+                .map(|controller| controller.hide_offline_agents)
+                .unwrap_or(false);
+            let visible_model =
+                filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
             let controller =
-                controller.get_or_insert_with(|| DashboardController::new(&loaded.snapshot));
-            let frame =
-                render_dashboard_snapshot(&options, controller, &loaded.snapshot, scroll_offset);
+                controller.get_or_insert_with(|| DashboardController::new(&visible_model.snapshot));
+            let frame = render_dashboard_snapshot(
+                &options,
+                controller,
+                &visible_model.snapshot,
+                visible_model.hidden_offline_agent_count,
+                scroll_offset,
+            );
             stdout.write_all(frame.frame.as_bytes())?;
             stdout.flush()?;
             scroll_offset = frame.scroll_offset;
@@ -132,7 +145,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 let _ = mark_native_dashboard_ready(&options.project_root);
                 ready_marked = true;
             }
-            latest_snapshot = Some(loaded.snapshot);
+            latest_snapshot = Some(visible_model.snapshot);
             latest_endpoint = loaded.endpoint;
             refresh_state.complete_refresh();
             reconcile_dashboard_event_stream(
@@ -300,6 +313,7 @@ fn render_dashboard_snapshot(
     options: &NativeDashboardOptions,
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
+    hidden_offline_agent_count: usize,
     scroll_offset: usize,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
     controller.navigation.clamp(snapshot);
@@ -321,8 +335,8 @@ fn render_dashboard_snapshot(
         runtime_label: Some("native"),
         version: None,
         is_dev_runtime: cfg!(debug_assertions),
-        hide_offline_agents: false,
-        hidden_offline_agent_count: 0,
+        hide_offline_agents: controller.hide_offline_agents,
+        hidden_offline_agent_count,
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,

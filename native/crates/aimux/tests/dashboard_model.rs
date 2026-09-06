@@ -1,4 +1,7 @@
-use aimux::dashboard_model::{DesktopStateGoldenFixture, ServiceStatus, SessionStatus};
+use aimux::dashboard_model::{
+    DesktopStateGoldenFixture, ServiceStatus, SessionStatus, filter_dashboard_visible_model,
+    is_dashboard_session_offline,
+};
 use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
@@ -133,5 +136,39 @@ fn dashboard_session_metadata_round_trips() {
     assert_eq!(
         serialized["notificationUnreadCount"],
         session["notificationUnreadCount"]
+    );
+}
+
+#[test]
+fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = fixture.runtime_full;
+
+    let visible = filter_dashboard_visible_model(&snapshot, true);
+
+    assert_eq!(visible.hidden_offline_agent_count, 2);
+    assert_eq!(
+        visible
+            .snapshot
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["claude-0", "claude-1"]
+    );
+    assert!(visible.snapshot.worktree_groups.iter().all(|group| {
+        group
+            .sessions
+            .iter()
+            .all(|session| !is_dashboard_session_offline(session))
+    }));
+    assert!(
+        visible
+            .snapshot
+            .services
+            .iter()
+            .any(|service| service.id == "service-web"),
+        "services in a visible worktree remain available"
     );
 }

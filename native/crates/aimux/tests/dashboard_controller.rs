@@ -326,6 +326,32 @@ fn tab_toggles_session_details_sidebar() {
 }
 
 #[test]
+fn a_toggles_offline_agent_visibility() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('a')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.hide_offline_agents);
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Offline agents hidden")
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('a')),
+        DashboardControllerEffect::Render
+    );
+    assert!(!controller.hide_offline_agents);
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Offline agents shown")
+    );
+}
+
+#[test]
 fn service_input_collects_printable_text_and_dispatches_create() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
