@@ -21,6 +21,7 @@ use super::preview_snapshots::{
 };
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
 use super::usage::parse_recency_timestamp;
 
 const ACTIVE_WORKTREE_STATUSES: &[&str] = &[
@@ -30,6 +31,38 @@ const DASHBOARD_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "of
 const DASHBOARD_SERVICE_STATUSES: &[&str] = &[
     "planned", "starting", "running", "stopped", "offline", "error",
 ];
+const NOTIFICATION_TAG: &str = "notification";
+
+#[derive(Debug, Clone, Default)]
+struct ThreadStats {
+    unread: i64,
+    waiting: i64,
+    waiting_on_me: i64,
+    waiting_on_them: i64,
+    pending: i64,
+    latest_id: Option<String>,
+    latest_title: Option<String>,
+    latest_updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkflowStats {
+    on_me: i64,
+    blocked: i64,
+    families: BTreeSet<String>,
+    top_urgency: i64,
+    top_label: Option<String>,
+    next_action: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NotificationStats {
+    unread_count: i64,
+    needs_input_unread_count: i64,
+    latest_unread: Option<Value>,
+    latest_text: Option<String>,
+    latest_updated_at: Option<String>,
+}
 
 pub fn route_desktop_state_request(
     context: &ProjectServiceRequestContext,
@@ -127,11 +160,22 @@ pub fn build_desktop_state(input: DesktopStateInput<'_>) -> Value {
             string_field(worktree, "path").map(|path| (path.to_owned(), worktree.clone()))
         })
         .collect::<BTreeMap<_, _>>();
+    let thread_stats = summarize_thread_stats(input.exchange);
+    let workflow_stats = summarize_workflow_stats(input.exchange);
+    let notification_stats = summarize_notification_stats(input.exchange);
+    let active_tasks = summarize_active_tasks(input.exchange);
     let mut sessions = Vec::new();
     let mut teammates = Vec::new();
     for session in all_sessions {
-        let dashboard_session =
-            dashboard_session(&session, input.metadata_sessions, &worktree_by_path);
+        let dashboard_session = dashboard_session(
+            &session,
+            input.metadata_sessions,
+            &worktree_by_path,
+            &thread_stats,
+            &workflow_stats,
+            &notification_stats,
+            &active_tasks,
+        );
         if is_teammate_session(&dashboard_session) {
             teammates.push(dashboard_session);
         } else {
@@ -257,9 +301,15 @@ fn dashboard_session(
     session: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
     worktree_by_path: &BTreeMap<String, Value>,
+    thread_stats: &BTreeMap<String, ThreadStats>,
+    workflow_stats: &BTreeMap<String, WorkflowStats>,
+    notification_stats: &BTreeMap<String, NotificationStats>,
+    active_tasks: &BTreeSet<String>,
 ) -> Value {
     let id = string_field(session, "id").unwrap_or("");
     let metadata = metadata_sessions.get(id);
+    let pending_action = string_field(session, "pendingAction").map(str::to_owned);
+    let raw_status = dashboard_session_status(string_field(session, "status"));
     let mut item = Map::new();
     insert_string(&mut item, "id", id);
     insert_optional(&mut item, "command", string_field(session, "command"));
@@ -274,11 +324,7 @@ fn dashboard_session(
         "backendSessionId",
         string_field(session, "backendSessionId"),
     );
-    insert_string(
-        &mut item,
-        "status",
-        dashboard_session_status(string_field(session, "status")),
-    );
+    insert_string(&mut item, "status", raw_status);
     item.insert(
         "active".into(),
         Value::Bool(matches!(
@@ -319,6 +365,9 @@ fn dashboard_session(
             string_field(worktree, "branch"),
         );
     }
+    let mut activity = None;
+    let mut attention = None;
+    let mut unseen_count = 0;
     if let Some(metadata) = metadata {
         for key in [
             "loop",
@@ -339,8 +388,80 @@ fn dashboard_session(
             ] {
                 insert_value(&mut item, key, derived.get(key).cloned());
             }
+            activity = string_field(derived, "activity").map(str::to_owned);
+            attention = string_field(derived, "attention").map(str::to_owned);
+            unseen_count = integer_field(derived, "unseenCount");
         }
     }
+    let thread = thread_stats.get(id).cloned().unwrap_or_default();
+    let workflow = workflow_stats.get(id).cloned().unwrap_or_default();
+    let notifications = notification_stats.get(id).cloned().unwrap_or_default();
+    item.insert("threadUnreadCount".into(), Value::from(thread.unread));
+    item.insert("threadWaitingCount".into(), Value::from(thread.waiting));
+    item.insert(
+        "threadWaitingOnMeCount".into(),
+        Value::from(thread.waiting_on_me),
+    );
+    item.insert(
+        "threadWaitingOnThemCount".into(),
+        Value::from(thread.waiting_on_them),
+    );
+    item.insert("threadPendingCount".into(), Value::from(thread.pending));
+    insert_optional_owned(&mut item, "threadId", thread.latest_id.clone());
+    insert_optional_owned(&mut item, "threadName", thread.latest_title.clone());
+    item.insert("workflowOnMeCount".into(), Value::from(workflow.on_me));
+    item.insert("workflowBlockedCount".into(), Value::from(workflow.blocked));
+    item.insert(
+        "workflowFamilyCount".into(),
+        Value::from(workflow.families.len() as i64),
+    );
+    insert_optional_owned(&mut item, "workflowTopLabel", workflow.top_label.clone());
+    insert_optional_owned(
+        &mut item,
+        "workflowNextAction",
+        workflow.next_action.clone(),
+    );
+    item.insert(
+        "notificationUnreadCount".into(),
+        Value::from(notifications.unread_count),
+    );
+    item.insert(
+        "notificationNeedsInputUnreadCount".into(),
+        Value::from(notifications.needs_input_unread_count),
+    );
+    if let Some(text) = notifications.latest_text.clone() {
+        item.insert("latestNotificationText".into(), Value::String(text));
+    }
+    let semantic = derive_session_semantics(SessionSemanticsInput {
+        status: raw_status.to_owned(),
+        pending_action,
+        activity,
+        attention,
+        unseen_count,
+        notification_unread_count: notifications.unread_count,
+        latest_notification: notifications.latest_unread.clone(),
+        latest_notification_text: notifications.latest_text.clone(),
+        thread_unread_count: thread.unread,
+        thread_pending_count: thread.pending,
+        thread_waiting_on_me_count: thread.waiting_on_me,
+        thread_waiting_on_them_count: thread.waiting_on_them,
+        workflow_on_me_count: workflow.on_me,
+        workflow_blocked_count: workflow.blocked,
+        workflow_family_count: workflow.families.len() as i64,
+        has_active_task: active_tasks.contains(id),
+    });
+    let live_label = semantic
+        .get("user")
+        .and_then(|user| string_field(user, "label"))
+        .unwrap_or("");
+    let notification_stale = semantic
+        .get("runtime")
+        .and_then(|runtime| runtime.get("isAlive"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && is_notification_stale(live_label, notifications.needs_input_unread_count > 0);
+    item.insert("notificationStale".into(), Value::Bool(notification_stale));
+    item.insert("semantic".into(), semantic);
     if !item.contains_key("overseer") {
         item.insert("overseer".into(), Value::Bool(false));
     }
@@ -553,6 +674,269 @@ fn sorted_dashboard_items(mut items: Vec<Value>) -> Vec<Value> {
     items
 }
 
+fn summarize_thread_stats(exchange: &Value) -> BTreeMap<String, ThreadStats> {
+    let mut stats: BTreeMap<String, ThreadStats> = BTreeMap::new();
+    for thread in array_field(exchange, "threads") {
+        if string_array_field(thread, "tags")
+            .iter()
+            .any(|tag| tag == NOTIFICATION_TAG)
+        {
+            continue;
+        }
+        let thread_id = string_field(thread, "id").unwrap_or("");
+        let pending_by_participant = pending_deliveries_by_participant(exchange, thread_id);
+        for participant in string_array_field(thread, "participants") {
+            let current = stats.entry(participant.clone()).or_default();
+            if string_array_field(thread, "unreadBy")
+                .iter()
+                .any(|value| value == &participant)
+            {
+                current.unread += 1;
+            }
+            let waits_on_participant = string_array_field(thread, "waitingOn")
+                .iter()
+                .any(|value| value == &participant);
+            let owned_by_participant = string_field(thread, "owner") == Some(participant.as_str());
+            if waits_on_participant || owned_by_participant {
+                current.waiting += 1;
+            }
+            if waits_on_participant {
+                current.waiting_on_me += 1;
+            }
+            if owned_by_participant && !string_array_field(thread, "waitingOn").is_empty() {
+                current.waiting_on_them += 1;
+            }
+            current.pending += pending_by_participant
+                .get(&participant)
+                .copied()
+                .unwrap_or_default();
+            let updated_at = string_field(thread, "updatedAt").map(str::to_owned);
+            if current.latest_id.is_none()
+                || updated_at.as_deref() > current.latest_updated_at.as_deref()
+            {
+                current.latest_id = Some(thread_id.to_owned());
+                current.latest_title = string_field(thread, "title").map(str::to_owned);
+                current.latest_updated_at = updated_at;
+            }
+        }
+    }
+    stats
+}
+
+fn summarize_workflow_stats(exchange: &Value) -> BTreeMap<String, WorkflowStats> {
+    let tasks = array_field(exchange, "tasks");
+    let mut family_sizes = BTreeMap::<String, i64>::new();
+    for task in tasks {
+        let root = string_field(task, "reviewOf")
+            .or_else(|| string_field(task, "id"))
+            .unwrap_or("");
+        if !root.is_empty() {
+            *family_sizes.entry(root.to_owned()).or_default() += 1;
+        }
+    }
+    let mut task_by_id = BTreeMap::<String, &Value>::new();
+    for task in tasks {
+        if let Some(id) = string_field(task, "id") {
+            task_by_id.insert(id.to_owned(), task);
+        }
+    }
+
+    let mut stats: BTreeMap<String, WorkflowStats> = BTreeMap::new();
+    for thread in array_field(exchange, "threads") {
+        if string_array_field(thread, "tags")
+            .iter()
+            .any(|tag| tag == NOTIFICATION_TAG)
+        {
+            continue;
+        }
+        let task =
+            string_field(thread, "taskId").and_then(|task_id| task_by_id.get(task_id).copied());
+        let family_key = task
+            .and_then(|task| string_field(task, "reviewOf").or_else(|| string_field(task, "id")))
+            .or_else(|| string_field(thread, "id"))
+            .unwrap_or("");
+        let blocked = string_field(thread, "status") == Some("blocked")
+            || task.is_some_and(|task| string_field(task, "status") == Some("blocked"));
+        let urgency = i64::from(blocked) * 8
+            + string_array_field(thread, "waitingOn").len() as i64 * 10
+            + pending_deliveries_for_thread(exchange, string_field(thread, "id").unwrap_or("")) * 4
+            + string_array_field(thread, "unreadBy").len() as i64 * 3;
+        let state_label = workflow_state_label(thread, task);
+        let display_title = string_field(thread, "title").unwrap_or("");
+        for participant in string_array_field(thread, "participants") {
+            let current = stats.entry(participant.clone()).or_default();
+            if string_array_field(thread, "waitingOn")
+                .iter()
+                .any(|value| value == &participant)
+            {
+                current.on_me += 1;
+            }
+            if blocked {
+                current.blocked += 1;
+            }
+            if family_sizes.get(family_key).copied().unwrap_or_default() > 1 {
+                current.families.insert(family_key.to_owned());
+            }
+            if current.top_label.is_none() || urgency > current.top_urgency {
+                current.top_urgency = urgency;
+                current.top_label = Some(format!("{display_title} ({state_label})"));
+                current.next_action =
+                    Some(describe_workflow_next_action(thread, task, &participant));
+            }
+        }
+    }
+    stats
+}
+
+fn summarize_notification_stats(exchange: &Value) -> BTreeMap<String, NotificationStats> {
+    let mut stats: BTreeMap<String, NotificationStats> = BTreeMap::new();
+    for thread in array_field(exchange, "threads") {
+        if !string_array_field(thread, "tags")
+            .iter()
+            .any(|tag| tag == NOTIFICATION_TAG)
+        {
+            continue;
+        }
+        let participant = string_array_field(thread, "participants")
+            .into_iter()
+            .find(|participant| participant != "aimux")
+            .unwrap_or_else(|| "project".to_owned());
+        if !string_array_field(thread, "unreadBy")
+            .iter()
+            .any(|value| value == &participant)
+        {
+            continue;
+        }
+        let current = stats.entry(participant.clone()).or_default();
+        current.unread_count += 1;
+        let message = latest_message_for_thread(exchange, string_field(thread, "id").unwrap_or(""));
+        let metadata = message.and_then(|message| message.get("metadata"));
+        if metadata.and_then(|metadata| string_field(metadata, "kind")) == Some("needs_input") {
+            current.needs_input_unread_count += 1;
+        }
+        let updated_at = string_field(thread, "updatedAt").map(str::to_owned);
+        if current.latest_unread.is_none()
+            || updated_at.as_deref() > current.latest_updated_at.as_deref()
+        {
+            current.latest_updated_at = updated_at;
+            current.latest_text = message
+                .and_then(|message| string_field(message, "body"))
+                .or_else(|| string_field(thread, "title"))
+                .map(str::to_owned);
+            current.latest_unread = Some(notification_record(thread, message));
+        }
+    }
+    stats
+}
+
+fn summarize_active_tasks(exchange: &Value) -> BTreeSet<String> {
+    array_field(exchange, "tasks")
+        .iter()
+        .filter(|task| {
+            matches!(
+                string_field(task, "status"),
+                Some("assigned" | "in_progress" | "blocked")
+            )
+        })
+        .filter_map(|task| {
+            string_field(task, "assignedTo")
+                .or_else(|| string_field(task, "assignee"))
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+fn pending_deliveries_by_participant(exchange: &Value, thread_id: &str) -> BTreeMap<String, i64> {
+    let mut pending = BTreeMap::new();
+    for message in messages_for_thread(exchange, thread_id) {
+        let delivered_to = string_array_field(message, "deliveredTo");
+        for recipient in string_array_field(message, "to") {
+            if !delivered_to.iter().any(|delivered| delivered == &recipient) {
+                *pending.entry(recipient).or_default() += 1;
+            }
+        }
+    }
+    pending
+}
+
+fn pending_deliveries_for_thread(exchange: &Value, thread_id: &str) -> i64 {
+    pending_deliveries_by_participant(exchange, thread_id)
+        .values()
+        .sum()
+}
+
+fn messages_for_thread<'a>(exchange: &'a Value, thread_id: &str) -> Vec<&'a Value> {
+    array_field(exchange, "messages")
+        .iter()
+        .filter(|message| string_field(message, "threadId") == Some(thread_id))
+        .collect()
+}
+
+fn latest_message_for_thread<'a>(exchange: &'a Value, thread_id: &str) -> Option<&'a Value> {
+    messages_for_thread(exchange, thread_id)
+        .into_iter()
+        .max_by(|left, right| string_field(left, "ts").cmp(&string_field(right, "ts")))
+}
+
+fn notification_record(thread: &Value, message: Option<&Value>) -> Value {
+    let metadata = message
+        .and_then(|message| message.get("metadata"))
+        .unwrap_or(&Value::Null);
+    json!({
+        "id": metadata.get("notificationRecordId")
+            .or_else(|| metadata.get("recordId"))
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| string_field(thread, "id").unwrap_or("")),
+        "threadId": string_field(thread, "id").unwrap_or(""),
+        "sessionId": metadata.get("sessionId").and_then(Value::as_str).unwrap_or(""),
+        "kind": metadata.get("kind").and_then(Value::as_str).unwrap_or("notification"),
+        "title": string_field(thread, "title").unwrap_or("aimux"),
+        "body": message.and_then(|message| string_field(message, "body")).unwrap_or(""),
+        "createdAt": message.and_then(|message| string_field(message, "ts"))
+            .or_else(|| string_field(thread, "createdAt"))
+            .unwrap_or(""),
+    })
+}
+
+fn workflow_state_label(thread: &Value, task: Option<&Value>) -> String {
+    if string_field(thread, "status") == Some("blocked") {
+        "blocked".into()
+    } else if !string_array_field(thread, "waitingOn").is_empty() {
+        format!("on {}", string_array_field(thread, "waitingOn").join(", "))
+    } else {
+        task.and_then(|task| string_field(task, "status"))
+            .or_else(|| string_field(thread, "status"))
+            .unwrap_or("")
+            .to_owned()
+    }
+}
+
+fn describe_workflow_next_action(
+    thread: &Value,
+    task: Option<&Value>,
+    participant: &str,
+) -> String {
+    if string_array_field(thread, "waitingOn")
+        .iter()
+        .any(|value| value == participant)
+    {
+        "reply".into()
+    } else if task.is_some() {
+        "open task".into()
+    } else {
+        "open thread".into()
+    }
+}
+
+fn is_notification_stale(live_label: &str, has_unread_needs_input: bool) -> bool {
+    has_unread_needs_input
+        && !live_label.is_empty()
+        && !matches!(
+            live_label,
+            "needs_input" | "needs_response" | "blocked" | "error"
+        )
+}
+
 fn sort_worktrees(worktrees: &mut [Value], project_root: &str) {
     worktrees.sort_by(|left, right| {
         let left_main = string_field(left, "path") == Some(project_root);
@@ -672,6 +1056,26 @@ fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
+fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+fn string_array_field(value: &Value, key: &str) -> Vec<String> {
+    array_field(value, key)
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn integer_field(value: &Value, key: &str) -> i64 {
+    value.get(key).and_then(Value::as_i64).unwrap_or_default()
+}
+
 fn insert_string(map: &mut Map<String, Value>, key: &str, value: &str) {
     map.insert(key.into(), Value::String(value.to_owned()));
 }
@@ -679,6 +1083,12 @@ fn insert_string(map: &mut Map<String, Value>, key: &str, value: &str) {
 fn insert_optional(map: &mut Map<String, Value>, key: &str, value: Option<&str>) {
     if let Some(value) = value {
         insert_string(map, key, value);
+    }
+}
+
+fn insert_optional_owned(map: &mut Map<String, Value>, key: &str, value: Option<String>) {
+    if let Some(value) = value {
+        map.insert(key.into(), Value::String(value));
     }
 }
 

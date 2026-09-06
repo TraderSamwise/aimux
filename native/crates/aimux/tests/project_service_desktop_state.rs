@@ -72,6 +72,36 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
     assert_eq!(live["activity"], "running");
     assert_eq!(live["attention"], "needs_input");
     assert_eq!(live["unseenCount"], 2);
+    assert_eq!(live["threadUnreadCount"], 1);
+    assert_eq!(live["threadWaitingCount"], 1);
+    assert_eq!(live["threadWaitingOnMeCount"], 0);
+    assert_eq!(live["threadWaitingOnThemCount"], 1);
+    assert_eq!(live["threadPendingCount"], 1);
+    assert_eq!(live["threadId"], "thread-build");
+    assert_eq!(live["threadName"], "Build");
+    assert_eq!(live["workflowOnMeCount"], 0);
+    assert_eq!(live["workflowBlockedCount"], 0);
+    assert_eq!(live["workflowFamilyCount"], 0);
+    assert_eq!(live["workflowTopLabel"], "Build (on user)");
+    assert_eq!(live["workflowNextAction"], "open task");
+    assert_eq!(live["notificationUnreadCount"], 1);
+    assert_eq!(live["notificationNeedsInputUnreadCount"], 1);
+    assert_eq!(live["latestNotificationText"], "Approve the command");
+    assert_eq!(live["notificationStale"], false);
+    assert_eq!(live["semantic"]["runtime"]["lifecycle"], "running");
+    assert_eq!(live["semantic"]["runtime"]["canReceiveInput"], true);
+    assert_eq!(live["semantic"]["user"]["label"], "needs_input");
+    assert_eq!(live["semantic"]["user"]["attention"], "needs_input");
+    assert_eq!(live["semantic"]["notifications"]["unreadCount"], 1);
+    assert_eq!(
+        live["semantic"]["presentation"]["statusLabel"],
+        "needs input"
+    );
+    assert_eq!(live["semantic"]["presentation"]["compactHint"], "on you");
+    assert_eq!(live["semantic"]["presentation"]["attentionScore"], 4);
+    assert_eq!(live["semantic"]["threadUnreadCount"], 1);
+    assert_eq!(live["semantic"]["pendingDeliveryCount"], 1);
+    assert_eq!(live["semantic"]["waitingOnThemCount"], 1);
     assert_eq!(live["loop"]["active"], true);
     assert_eq!(live["overseer"], false);
     assert_eq!(live["scribe"], false);
@@ -396,8 +426,58 @@ fn exchange_fixture() -> Value {
     json!({
         "version": 1,
         "generatedAt": "2026-09-05T00:00:00.000Z",
-        "threads": [],
-        "messages": [],
+        "threads": [
+            {
+                "id": "thread-build",
+                "title": "Build",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "2026-09-05T00:01:00.000Z",
+                "updatedAt": "2026-09-05T00:03:00.000Z",
+                "participants": ["codex-live", "user"],
+                "owner": "codex-live",
+                "waitingOn": ["user"],
+                "unreadBy": ["codex-live"],
+                "taskId": "task-assigned"
+            },
+            {
+                "id": "thread-notification",
+                "title": "codex-live needs input",
+                "kind": "conversation",
+                "status": "open",
+                "createdAt": "2026-09-05T00:02:00.000Z",
+                "updatedAt": "2026-09-05T00:04:00.000Z",
+                "participants": ["aimux", "codex-live"],
+                "unreadBy": ["codex-live"],
+                "tags": ["notification"]
+            }
+        ],
+        "messages": [
+            {
+                "id": "message-build",
+                "threadId": "thread-build",
+                "ts": "2026-09-05T00:03:00.000Z",
+                "from": "user",
+                "to": ["codex-live"],
+                "deliveredTo": [],
+                "kind": "request",
+                "body": "Build this"
+            },
+            {
+                "id": "message-notification",
+                "threadId": "thread-notification",
+                "ts": "2026-09-05T00:04:00.000Z",
+                "from": "aimux",
+                "to": ["codex-live"],
+                "kind": "note",
+                "body": "Approve the command",
+                "metadata": {
+                    "notificationRecordId": "notification-record-1",
+                    "sessionId": "codex-live",
+                    "kind": "needs_input"
+                }
+            }
+        ],
         "tasks": [
             { "id": "task-pending", "status": "pending" },
             { "id": "task-assigned", "status": "assigned", "assignedTo": "codex-live" },

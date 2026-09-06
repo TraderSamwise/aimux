@@ -40,6 +40,7 @@ pub mod runtime_event_state;
 pub mod runtime_events;
 pub mod runtime_exchange;
 pub mod server;
+pub mod session_semantics;
 pub mod shell_state;
 pub mod statusline;
 pub mod switchable_agents;
