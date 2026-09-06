@@ -1048,16 +1048,10 @@ export default function ChatScreen() {
       session?.label ||
       sessionId ||
       "Unknown session";
-  const sessionToolLabel =
-    routeSessionMissing || compactHeaderActions ? "" : (session?.command ?? "");
-  // Status and branch, then the id last: the id is the only part that never helps
-  // you tell two of these apart at a glance, but it is still what you quote in a
-  // bug report, so it stays reachable rather than gone.
+  // Keep the chat header focused on human context; ids remain in error states.
   const sessionSubtitle = routeSessionMissing
     ? `${sessionId} · not found`
-    : [headerWorktreeBranch, session?.status ?? "unknown", session?.command, sessionId]
-        .filter(Boolean)
-        .join(" · ");
+    : [headerWorktreeBranch, session?.status ?? "unknown"].filter(Boolean).join(" · ");
   const composerSendText =
     draftHasContent && serviceEndpoint && sessionId && !routeSessionMissing && !sendBusy
       ? draft
@@ -1952,15 +1946,6 @@ export default function ChatScreen() {
                           >
                             {sessionTitle}
                           </Text>
-                          {sessionToolLabel ? (
-                            <Text
-                              className="text-xs text-muted-foreground"
-                              numberOfLines={1}
-                              style={{ flexShrink: 0 }}
-                            >
-                              {sessionToolLabel}
-                            </Text>
-                          ) : null}
                         </View>
                         <Text
                           className="text-xs text-muted-foreground"
@@ -2054,15 +2039,6 @@ export default function ChatScreen() {
                         >
                           {sessionTitle}
                         </Text>
-                        {sessionToolLabel && !compactHeaderActions ? (
-                          <Text
-                            className="text-xs text-muted-foreground"
-                            numberOfLines={1}
-                            style={{ minWidth: 0, flexShrink: 1 }}
-                          >
-                            {sessionToolLabel}
-                          </Text>
-                        ) : null}
                       </View>
                       <Text
                         className="text-xs text-muted-foreground"
