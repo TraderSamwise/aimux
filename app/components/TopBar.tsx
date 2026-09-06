@@ -54,11 +54,13 @@ function TopLevelExperienceNav() {
   const activeShare = useRouteShare();
   const { userId } = useAuth();
   const active =
-    pathname === "/monitor" || pathname.startsWith("/monitor/")
-      ? "monitor"
-      : pathname === "/shares" || pathname.startsWith("/shares/")
-        ? "shared"
-        : "projects";
+    pathname === "/global-notifications" || pathname.startsWith("/global-notifications/")
+      ? "inbox"
+      : pathname === "/monitor" || pathname.startsWith("/monitor/")
+        ? "monitor"
+        : pathname === "/shares" || pathname.startsWith("/shares/")
+          ? "shared"
+          : "projects";
   const projectTargetPath =
     activeShare && activeShare.ownerUserId === userId
       ? activeShare.projectRoot
@@ -74,6 +76,9 @@ function TopLevelExperienceNav() {
     },
     { id: "shared", label: "Shared", icon: Share2, href: "/shares" as Href },
     { id: "monitor", label: "Monitor", icon: Camera, href: "/monitor" as Href },
+    ...(compact
+      ? [{ id: "inbox", label: "Inbox", icon: Bell, href: "/global-notifications" as Href }]
+      : []),
   ] as const;
 
   return (
