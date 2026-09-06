@@ -11,14 +11,18 @@ fn fixture_visual_client_leases_matches_typescript() {
     let cases = contract["cases"]
         .as_array()
         .expect("visual-client-leases cases");
-    assert_eq!(cases.len(), 12, "unexpected visual-client-leases case count");
+    assert_eq!(
+        cases.len(),
+        12,
+        "unexpected visual-client-leases case count"
+    );
 
     let mut failures = Vec::new();
     for case in cases {
         let actual = match case["api"].as_str().unwrap_or_default() {
-            "parseVisualClientKind" => Value::String(
-                parse_visual_client_kind(case["input"]["value"].as_str()).to_owned(),
-            ),
+            "parseVisualClientKind" => {
+                Value::String(parse_visual_client_kind(case["input"]["value"].as_str()).to_owned())
+            }
             "VisualClientLeaseRegistry" => run_registry_steps(
                 case["input"]["initialNow"]
                     .as_str()

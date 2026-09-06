@@ -1,0 +1,642 @@
+{
+  "version": 1,
+  "source": ["src/tasks.test.ts", "src/threads.test.ts"],
+  "generatedBy": "scripts/capture-tasks-threads-contract.mjs",
+  "description": "Task compatibility and thread snapshot contracts captured by running TypeScript tasks and threads helpers against runtime-exchange-shaped inputs.",
+  "cases": [
+    {
+      "id": "tasks-threads-001",
+      "name": "normalizes review status aliases",
+      "source": "src/tasks.test.ts",
+      "api": "normalizeReviewStatus",
+      "input": {
+        "values": [
+          null,
+          "",
+          "approve",
+          "approved",
+          "pending",
+          "request-changes",
+          "request_changes",
+          "changes requested",
+          "nope"
+        ]
+      },
+      "output": [
+        null,
+        null,
+        "approved",
+        "approved",
+        "pending",
+        "changes_requested",
+        "changes_requested",
+        "changes_requested",
+        null
+      ],
+      "inputSha256": "9287d521df72e733af76bdeba8752703c72beb97ee79702f5c36bf448352941e"
+    },
+    {
+      "id": "tasks-threads-002",
+      "name": "projects task snapshots from exchange without mutation",
+      "source": "src/tasks.test.ts",
+      "api": "taskSnapshotsFromExchange",
+      "input": {
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [
+            {
+              "id": "task-pending-review",
+              "type": "review",
+              "status": "pending",
+              "assignee": "reviewer",
+              "assignedBy": "lead",
+              "description": "Review patch",
+              "prompt": "review it",
+              "reviewStatus": "pending",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:01.000Z"
+            },
+            {
+              "id": "task-active",
+              "status": "assigned",
+              "assignee": "worker",
+              "assignedBy": "lead",
+              "description": "Patch bug",
+              "prompt": "fix it",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:02.000Z"
+            },
+            {
+              "id": "task-done",
+              "status": "done",
+              "assignee": "worker",
+              "assignedBy": "lead",
+              "description": "Old task",
+              "prompt": "done",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "output": [
+        {
+          "id": "task-pending-review",
+          "type": "review",
+          "status": "pending",
+          "assignee": "reviewer",
+          "assignedBy": "lead",
+          "description": "Review patch",
+          "prompt": "review it",
+          "reviewStatus": "pending",
+          "createdAt": "2026-08-25T00:00:00.000Z",
+          "updatedAt": "2026-08-25T00:00:01.000Z"
+        },
+        {
+          "id": "task-active",
+          "status": "assigned",
+          "assignee": "worker",
+          "assignedBy": "lead",
+          "description": "Patch bug",
+          "prompt": "fix it",
+          "createdAt": "2026-08-25T00:00:00.000Z",
+          "updatedAt": "2026-08-25T00:00:02.000Z"
+        },
+        {
+          "id": "task-done",
+          "status": "done",
+          "assignee": "worker",
+          "assignedBy": "lead",
+          "description": "Old task",
+          "prompt": "done",
+          "createdAt": "2026-08-25T00:00:00.000Z",
+          "updatedAt": "2026-08-25T00:00:03.000Z"
+        }
+      ],
+      "inputSha256": "d5799dd7f00656ba0a1b88ec61927e1ec0b9b81586ca9adc96738608a1df2ac4"
+    },
+    {
+      "id": "tasks-threads-003",
+      "name": "filters pending review tasks for a role",
+      "source": "src/tasks.test.ts",
+      "api": "listPendingReviews",
+      "input": {
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [
+            {
+              "id": "task-pending-review",
+              "type": "review",
+              "status": "pending",
+              "assignee": "reviewer",
+              "assignedBy": "lead",
+              "description": "Review patch",
+              "prompt": "review it",
+              "reviewStatus": "pending",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:01.000Z"
+            },
+            {
+              "id": "task-active",
+              "status": "assigned",
+              "assignee": "worker",
+              "assignedBy": "lead",
+              "description": "Patch bug",
+              "prompt": "fix it",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:02.000Z"
+            },
+            {
+              "id": "task-done",
+              "status": "done",
+              "assignee": "worker",
+              "assignedBy": "lead",
+              "description": "Old task",
+              "prompt": "done",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "role": "reviewer"
+      },
+      "output": [
+        {
+          "id": "task-pending-review",
+          "status": "pending",
+          "assignedBy": "lead",
+          "assignee": "reviewer",
+          "description": "Review patch",
+          "prompt": "review it",
+          "createdAt": "2026-08-25T00:00:00.000Z",
+          "updatedAt": "2026-08-25T00:00:01.000Z",
+          "type": "review",
+          "reviewStatus": "pending"
+        }
+      ],
+      "inputSha256": "2c298cb6b7f92849613d1ec9875441862786b14125c8cbbbfc097c1802c17650"
+    },
+    {
+      "id": "tasks-threads-004",
+      "name": "filters active role tasks",
+      "source": "src/tasks.test.ts",
+      "api": "listTasksForRole",
+      "input": {
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [
+            {
+              "id": "task-pending-review",
+              "type": "review",
+              "status": "pending",
+              "assignee": "reviewer",
+              "assignedBy": "lead",
+              "description": "Review patch",
+              "prompt": "review it",
+              "reviewStatus": "pending",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:01.000Z"
+            },
+            {
+              "id": "task-active",
+              "status": "assigned",
+              "assignee": "worker",
+              "assignedBy": "lead",
+              "description": "Patch bug",
+              "prompt": "fix it",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:02.000Z"
+            },
+            {
+              "id": "task-done",
+              "status": "done",
+              "assignee": "worker",
+              "assignedBy": "lead",
+              "description": "Old task",
+              "prompt": "done",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "role": "worker"
+      },
+      "output": [
+        {
+          "id": "task-active",
+          "status": "assigned",
+          "assignedBy": "lead",
+          "assignee": "worker",
+          "description": "Patch bug",
+          "prompt": "fix it",
+          "createdAt": "2026-08-25T00:00:00.000Z",
+          "updatedAt": "2026-08-25T00:00:02.000Z"
+        }
+      ],
+      "inputSha256": "51440b7bbd5d9943b9118c79456680fea8668580a88dc409b6c963b4be3904ee"
+    },
+    {
+      "id": "tasks-threads-005",
+      "name": "summarizes threads with latest messages and groups",
+      "source": "src/threads.test.ts",
+      "api": "threadSummarySnapshotFromExchange",
+      "input": {
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [
+            {
+              "id": "thread-a",
+              "title": "Review API shape",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"]
+            },
+            {
+              "id": "thread-b",
+              "title": "Check failing test",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1", "claude-2"],
+              "waitingOn": ["claude-2"]
+            },
+            {
+              "id": "thread-c",
+              "title": "Same timestamp",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "msg-1",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:01.000Z",
+              "from": "claude-1",
+              "kind": "request",
+              "body": "Take a look"
+            },
+            {
+              "id": "msg-2",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:02.000Z",
+              "from": "codex-1",
+              "kind": "reply",
+              "body": "Looking"
+            },
+            {
+              "id": "msg-3",
+              "threadId": "thread-b",
+              "ts": "2026-08-25T00:00:03.000Z",
+              "from": "codex-1",
+              "kind": "request",
+              "body": "Please fix test"
+            }
+          ],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "participantId": null,
+        "options": {}
+      },
+      "output": {
+        "summaries": [
+          {
+            "thread": {
+              "id": "thread-b",
+              "title": "Check failing test",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1", "claude-2"],
+              "waitingOn": ["claude-2"]
+            },
+            "latestMessage": {
+              "id": "msg-3",
+              "threadId": "thread-b",
+              "ts": "2026-08-25T00:00:03.000Z",
+              "from": "codex-1",
+              "kind": "request",
+              "body": "Please fix test"
+            }
+          },
+          {
+            "thread": {
+              "id": "thread-c",
+              "title": "Same timestamp",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1"]
+            }
+          },
+          {
+            "thread": {
+              "id": "thread-a",
+              "title": "Review API shape",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"]
+            },
+            "latestMessage": {
+              "id": "msg-2",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:02.000Z",
+              "from": "codex-1",
+              "kind": "reply",
+              "body": "Looking"
+            }
+          }
+        ],
+        "messagesByThreadId": {
+          "thread-a": [
+            {
+              "id": "msg-1",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:01.000Z",
+              "from": "claude-1",
+              "kind": "request",
+              "body": "Take a look"
+            },
+            {
+              "id": "msg-2",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:02.000Z",
+              "from": "codex-1",
+              "kind": "reply",
+              "body": "Looking"
+            }
+          ],
+          "thread-b": [
+            {
+              "id": "msg-3",
+              "threadId": "thread-b",
+              "ts": "2026-08-25T00:00:03.000Z",
+              "from": "codex-1",
+              "kind": "request",
+              "body": "Please fix test"
+            }
+          ]
+        }
+      },
+      "inputSha256": "71747f08d3f286b7410232472930c2d0bf32ae469c410660a80e4b5e2c0ace3f"
+    },
+    {
+      "id": "tasks-threads-006",
+      "name": "filters thread summaries by participant and limit",
+      "source": "src/threads.test.ts",
+      "api": "threadSummarySnapshotFromExchange",
+      "input": {
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [
+            {
+              "id": "thread-a",
+              "title": "Review API shape",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"]
+            },
+            {
+              "id": "thread-b",
+              "title": "Check failing test",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1", "claude-2"],
+              "waitingOn": ["claude-2"]
+            },
+            {
+              "id": "thread-c",
+              "title": "Same timestamp",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "msg-1",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:01.000Z",
+              "from": "claude-1",
+              "kind": "request",
+              "body": "Take a look"
+            },
+            {
+              "id": "msg-2",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:02.000Z",
+              "from": "codex-1",
+              "kind": "reply",
+              "body": "Looking"
+            },
+            {
+              "id": "msg-3",
+              "threadId": "thread-b",
+              "ts": "2026-08-25T00:00:03.000Z",
+              "from": "codex-1",
+              "kind": "request",
+              "body": "Please fix test"
+            }
+          ],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "participantId": "claude-1",
+        "options": { "limit": 1, "includeMessageGroups": false }
+      },
+      "output": {
+        "summaries": [
+          {
+            "thread": {
+              "id": "thread-a",
+              "title": "Review API shape",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"]
+            },
+            "latestMessage": {
+              "id": "msg-2",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:02.000Z",
+              "from": "codex-1",
+              "kind": "reply",
+              "body": "Looking"
+            }
+          }
+        ],
+        "messagesByThreadId": {}
+      },
+      "inputSha256": "0ee2a22c9b193951b72f142cac7c99b5106c5ab7ac339ec59dc94aeaed6ce134"
+    },
+    {
+      "id": "tasks-threads-007",
+      "name": "bounds message snapshots from exchange",
+      "source": "src/threads.test.ts",
+      "api": "readMessageSnapshot",
+      "input": {
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [
+            {
+              "id": "thread-a",
+              "title": "Review API shape",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:03.000Z",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-1"]
+            },
+            {
+              "id": "thread-b",
+              "title": "Check failing test",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1", "claude-2"],
+              "waitingOn": ["claude-2"]
+            },
+            {
+              "id": "thread-c",
+              "title": "Same timestamp",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:05.000Z",
+              "createdBy": "codex-1",
+              "participants": ["codex-1"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "msg-1",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:01.000Z",
+              "from": "claude-1",
+              "kind": "request",
+              "body": "Take a look"
+            },
+            {
+              "id": "msg-2",
+              "threadId": "thread-a",
+              "ts": "2026-08-25T00:00:02.000Z",
+              "from": "codex-1",
+              "kind": "reply",
+              "body": "Looking"
+            },
+            {
+              "id": "msg-3",
+              "threadId": "thread-b",
+              "ts": "2026-08-25T00:00:03.000Z",
+              "from": "codex-1",
+              "kind": "request",
+              "body": "Please fix test"
+            }
+          ],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "threadId": "thread-a",
+        "options": { "limit": 1 }
+      },
+      "output": {
+        "messages": [
+          {
+            "id": "msg-2",
+            "threadId": "thread-a",
+            "ts": "2026-08-25T00:00:02.000Z",
+            "from": "codex-1",
+            "kind": "reply",
+            "body": "Looking"
+          }
+        ],
+        "total": 2,
+        "limit": 1,
+        "truncated": true
+      },
+      "inputSha256": "4a4b97c97b13e9fe12b93133f0b606b7a85d2c9fd50cd071d7f97997df6b39dc"
+    }
+  ]
+}

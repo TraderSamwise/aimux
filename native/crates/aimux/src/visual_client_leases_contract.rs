@@ -64,7 +64,10 @@ impl VisualClientLeaseRegistry {
         let mut active = self.leases.values().cloned().collect::<Vec<_>>();
         active.sort_by(|left, right| {
             let left_kind = left.get("kind").and_then(Value::as_str).unwrap_or_default();
-            let right_kind = right.get("kind").and_then(Value::as_str).unwrap_or_default();
+            let right_kind = right
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             left_kind.cmp(right_kind).then_with(|| {
                 let left_id = left.get("id").and_then(Value::as_str).unwrap_or_default();
                 let right_id = right.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -148,7 +151,9 @@ pub fn run_registry_steps(initial_now: &str, steps: &[Value]) -> Value {
                 "op": "hasActivePreviewClients",
                 "value": registry.has_active_preview_clients(now_ms),
             })),
-            _ => outputs.push(json!({ "op": step["op"].clone(), "error": "unsupported operation" })),
+            _ => {
+                outputs.push(json!({ "op": step["op"].clone(), "error": "unsupported operation" }))
+            }
         }
     }
     Value::Array(outputs)

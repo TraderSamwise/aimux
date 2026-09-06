@@ -121,6 +121,10 @@ Priority fixture groups:
 - `coordination/model.json`: coordination inbox, worklist, stale-notification,
   reachability, sorting, and view composition cases captured by running the
   TypeScript coordination model functions.
+- `coordination/tasks-threads.json`: task compatibility filters, review-status
+  normalization, thread summaries, latest-message selection, message grouping,
+  and bounded message snapshots captured by running TypeScript `tasks` and
+  `threads` helpers.
 
 ## Daemon State
 
