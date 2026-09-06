@@ -2544,21 +2544,26 @@ function ChatTranscriptPlaceholder({
 }) {
   if (state.kind === "none") return null;
   const retryable = state.kind === "timed-out" || state.kind === "error";
+  const loading = state.kind === "loading";
   return (
-    <View className="flex-1 items-center justify-center px-5 py-10">
-      <View className="w-full max-w-md items-center rounded-lg border border-border bg-card px-5 py-5">
-        {state.kind === "loading" ? (
-          <ActivityIndicator size="small" color="#a1a1aa" />
-        ) : state.kind === "error" ? (
-          <CircleAlert size={18} color="#f87171" />
-        ) : null}
-        <Text className="mt-3 text-center text-sm font-semibold text-foreground">
-          {state.title}
-        </Text>
-        <Text className="mt-2 text-center text-xs text-muted-foreground">{state.message}</Text>
+    <View className="flex-1 items-center justify-center px-4 py-10">
+      <View className="max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 shadow-sm">
+        <View className="flex-row items-center gap-2">
+          {loading ? (
+            <ActivityIndicator size="small" color="#a1a1aa" />
+          ) : state.kind === "error" ? (
+            <CircleAlert size={18} color="#f87171" />
+          ) : null}
+          <View className="flex-1">
+            <Text className="text-sm text-muted-foreground">{state.title}</Text>
+            {!loading ? (
+              <Text className="mt-1 text-xs text-muted-foreground">{state.message}</Text>
+            ) : null}
+          </View>
+        </View>
         {retryable ? (
           <Button
-            className="mt-4"
+            className="mt-2 self-start"
             size="sm"
             variant="outline"
             label={state.retryLabel}
