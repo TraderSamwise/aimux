@@ -120,10 +120,6 @@ Priority fixture groups:
   add/upsert, live alert event, focus-suppression, dedupe, interaction metadata,
   and runtime-exchange side-effect behavior captured by running TypeScript
   notification helpers.
-- `notifications/inbox-cleanup.json`: cleanup target planning, unread/protected
-  notification retention, overflow trimming, dry-run execution, and clear
-  failure reporting captured by running TypeScript `inbox-cleanup`.
-
 ## Operation Failures
 
 - `operation-failures/failures.json`: dashboard operation failure add/list/clear
