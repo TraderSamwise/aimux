@@ -77,11 +77,9 @@ function deriveAgentState(session: DesktopSession): AgentState {
     case "needs_response":
       return { label: "Needs reply", kind: "needs", pill: true };
   }
-  const kind = agentStatusKind(session);
-  if (session.status === "running") return { label: "Running", kind, pill: true };
-  if (session.status === "waiting") return { label: "Waiting", kind, pill: true };
+  if (session.status === "running") return { label: "Running", kind: "working", pill: true };
+  if (session.status === "waiting") return { label: "Waiting", kind: "needs", pill: true };
   if (session.status === "idle") return { label: "Idle", kind: "idle", pill: false };
-  if (session.status === "exited") return { label: "Exited", kind, pill: false };
   return { label: "Offline", kind: "offline", pill: false };
 }
 
@@ -362,7 +360,7 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   let idle = 0;
   let offline = 0;
   for (const session of bucket.sessions) {
-    const kind = agentStatusKind(session);
+    const kind = deriveAgentState(session).kind;
     if (kind === "working") working++;
     else if (kind === "needs") needs++;
     else if (kind === "blocked") blocked++;
