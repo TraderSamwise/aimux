@@ -21,6 +21,7 @@ use super::http::{
     trimmed_query,
 };
 use super::metadata::update_session_metadata;
+use super::output_cache::AgentOutputCaptureCacheKey;
 use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
 
@@ -358,13 +359,17 @@ fn read_agent_output_payload(
             format!("Session \"{session_id}\" is not running"),
         )));
     };
-    let output_ansi = match runtime.capture_pane(
-        &window_id,
-        CapturePaneOptions {
-            start_line: Some(capture_window.start_line),
-            end_line: capture_window.end_line,
-            include_escapes: true,
+    let capture_options = CapturePaneOptions {
+        start_line: Some(capture_window.start_line),
+        end_line: capture_window.end_line,
+        include_escapes: true,
+    };
+    let output_ansi = match context.output_cache.capture_or_reuse(
+        AgentOutputCaptureCacheKey {
+            window_id: window_id.clone(),
+            options: capture_options,
         },
+        || runtime.capture_pane(&window_id, capture_options),
     ) {
         Ok(output) => output,
         Err(error) => return Err(Box::new(json_error(500, error))),

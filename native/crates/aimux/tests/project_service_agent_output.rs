@@ -303,6 +303,54 @@ fn output_route_omits_terminal_fields_in_chat_mode_and_bounds_forward_reads() {
 }
 
 #[test]
+fn equivalent_output_reads_share_one_capture_inside_project_context() {
+    let project = temp_project("cache");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "\u{1b}[31mfirst\u{1b}[0m".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let full = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=25&mode=full",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    runtime.output = "\u{1b}[32msecond\u{1b}[0m".into();
+    let chat = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=25&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    let next_slice = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=26&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(full.status, 200);
+    assert_eq!(chat.status, 200);
+    assert_eq!(next_slice.status, 200);
+    assert_eq!(full.body["output"], "first");
+    assert_eq!(runtime.calls.len(), 2);
+    assert_eq!(runtime.calls[0].1.start_line, Some(25));
+    assert_eq!(runtime.calls[1].1.start_line, Some(26));
+    cleanup(project);
+}
+
+#[test]
 fn output_route_rejects_offline_sessions_without_capture() {
     let project = temp_project("offline");
     let state_dir = project.join("state");
