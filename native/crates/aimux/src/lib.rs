@@ -79,6 +79,7 @@ pub mod project_connection_display_contract;
 pub mod project_service;
 pub mod project_service_manifest;
 pub mod proxy_project_binding;
+pub mod push_registration_url_contract;
 pub mod recording_cleanup;
 pub mod remote_access;
 pub mod remote_credentials;

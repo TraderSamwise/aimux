@@ -209,6 +209,13 @@ Priority fixture groups:
   view, flattened-row, and count contracts captured by running TypeScript
   `project-topology` helpers.
 
+## Push Registration
+
+- `push-registration/url.json`: app security push registration/test URL
+  construction, relay protocol conversion, shared relay context query params,
+  trimming, and partial-context errors captured by running TypeScript
+  `app/lib/push-registration-url` helpers.
+
 ## Project Takeover
 
 - `project-takeover/takeover.json`: alternate-owner stop requests, stale daemon
