@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -843,10 +844,17 @@ export default function ChatScreen() {
     () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
     [allMessages],
   );
+  const userMessageCountRef = useRef(userMessageCount);
+  const allMessageCountRef = useRef(allMessages.length);
   const composerSendAcknowledged = pendingComposerAck
     ? userMessageAcknowledgesComposerSend(allMessages, pendingComposerAck)
     : false;
   const composerAwaitingAck = pendingComposerAck !== null && !pendingComposerAck.timedOut;
+
+  useLayoutEffect(() => {
+    userMessageCountRef.current = userMessageCount;
+    allMessageCountRef.current = allMessages.length;
+  }, [allMessages.length, userMessageCount]);
 
   useEffect(() => {
     if (!pendingComposerAck) return;
@@ -957,7 +965,7 @@ export default function ChatScreen() {
     (composerSendText || hasPendingAttachments),
   );
 
-  async function handleSendMessage() {
+  const handleSendMessage = useCallback(async () => {
     const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
     const attachments = [...pendingAttachments];
     if (
@@ -976,8 +984,8 @@ export default function ChatScreen() {
     sendOperationIdRef.current = sendOperationId;
     const sendComposerDraftKey = composerDraftKey;
     clearLocalInterruptHold(sessionId);
-    const baselineUserMessageCount = userMessageCount;
-    const baselineMessageCount = allMessages.length;
+    const baselineUserMessageCount = userMessageCountRef.current;
+    const baselineMessageCount = allMessageCountRef.current;
     chatViewportRef.current?.showNewest();
     setSendBusy(true);
     setSendError(null);
@@ -1090,9 +1098,51 @@ export default function ChatScreen() {
         setSendBusy(false);
       }
     }
-  }
+  }, [
+    clearLocalInterruptHold,
+    composerAwaitingAck,
+    composerDraftKey,
+    composerSendText,
+    ownerShareStatusPending,
+    pendingAttachments,
+    refreshOutputSnapshot,
+    serviceEndpoint,
+    session,
+    sessionId,
+    sessionKey,
+    setAcceptedComposerMessages,
+    setDraft,
+    setDraftHasContent,
+    setPendingAttachments,
+    setPendingComposerAck,
+    setSendBusy,
+    setSendError,
+    sharedChatActor,
+    token,
+  ]);
 
-  async function handleAttachAttachment() {
+  const appendPendingAttachments = useCallback(
+    (attachments: PickedAttachment[]) => {
+      if (attachments.length === 0) return;
+      const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
+      if (slots <= 0) {
+        releasePendingAttachmentPreviews(attachments);
+        setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} files.`);
+        return;
+      }
+      const accepted = attachments.slice(0, slots);
+      releasePendingAttachmentPreviews(attachments.slice(slots));
+      setPendingAttachments((current) => [...current, ...accepted]);
+      setSendError(
+        accepted.length < attachments.length
+          ? `Attach up to ${MAX_PENDING_ATTACHMENTS} files.`
+          : null,
+      );
+    },
+    [pendingAttachments.length, setPendingAttachments, setSendError],
+  );
+
+  const handleAttachAttachment = useCallback(async () => {
     if (sendBusy || sendBusyRef.current || composerAwaitingAck) return;
     setSendError(null);
     try {
@@ -1106,63 +1156,60 @@ export default function ChatScreen() {
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
     }
-  }
+  }, [
+    appendPendingAttachments,
+    composerAwaitingAck,
+    pendingAttachments.length,
+    sendBusy,
+    setSendError,
+  ]);
 
-  function handleDropAttachments(attachments: PickedAttachment[]) {
-    if (sendBusy || sendBusyRef.current || composerAwaitingAck) {
-      releasePendingAttachmentPreviews(attachments);
-      return;
-    }
-    setSendError(null);
-    appendPendingAttachments(attachments);
-  }
-
-  async function handleComposerPaste(event: {
-    clipboardData?: ClipboardFileSource | null;
-    nativeEvent?: { clipboardData?: ClipboardFileSource | null };
-    preventDefault?: () => void;
-  }) {
-    if (Platform.OS !== "web" || sendBusy || sendBusyRef.current || composerAwaitingAck) return;
-    const clipboardData = event.clipboardData ?? event.nativeEvent?.clipboardData;
-    if (!clipboardDataHasFile(clipboardData)) return;
-    event.preventDefault?.();
-    setSendError(null);
-    try {
-      const attachments = await attachmentsFromClipboardData(clipboardData);
-      if (attachments.length === 0) {
-        setSendError("Pasted files are not supported.");
+  const handleDropAttachments = useCallback(
+    (attachments: PickedAttachment[]) => {
+      if (sendBusy || sendBusyRef.current || composerAwaitingAck) {
+        releasePendingAttachmentPreviews(attachments);
         return;
       }
+      setSendError(null);
       appendPendingAttachments(attachments);
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : String(err));
-    }
-  }
+    },
+    [appendPendingAttachments, composerAwaitingAck, sendBusy, setSendError],
+  );
 
-  function appendPendingAttachments(attachments: PickedAttachment[]) {
-    if (attachments.length === 0) return;
-    const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
-    if (slots <= 0) {
-      releasePendingAttachmentPreviews(attachments);
-      setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} files.`);
-      return;
-    }
-    const accepted = attachments.slice(0, slots);
-    releasePendingAttachmentPreviews(attachments.slice(slots));
-    setPendingAttachments((current) => [...current, ...accepted]);
-    setSendError(
-      accepted.length < attachments.length
-        ? `Attach up to ${MAX_PENDING_ATTACHMENTS} files.`
-        : null,
-    );
-  }
+  const handleComposerPaste = useCallback(
+    async (event: {
+      clipboardData?: ClipboardFileSource | null;
+      nativeEvent?: { clipboardData?: ClipboardFileSource | null };
+      preventDefault?: () => void;
+    }) => {
+      if (Platform.OS !== "web" || sendBusy || sendBusyRef.current || composerAwaitingAck) return;
+      const clipboardData = event.clipboardData ?? event.nativeEvent?.clipboardData;
+      if (!clipboardDataHasFile(clipboardData)) return;
+      event.preventDefault?.();
+      setSendError(null);
+      try {
+        const attachments = await attachmentsFromClipboardData(clipboardData);
+        if (attachments.length === 0) {
+          setSendError("Pasted files are not supported.");
+          return;
+        }
+        appendPendingAttachments(attachments);
+      } catch (err) {
+        setSendError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [appendPendingAttachments, composerAwaitingAck, sendBusy, setSendError],
+  );
 
-  function removePendingAttachment(id: string) {
-    setPendingAttachments((current) => {
-      releasePendingAttachmentPreviews(current.filter((attachment) => attachment.id === id));
-      return current.filter((attachment) => attachment.id !== id);
-    });
-  }
+  const removePendingAttachment = useCallback(
+    (id: string) => {
+      setPendingAttachments((current) => {
+        releasePendingAttachmentPreviews(current.filter((attachment) => attachment.id === id));
+        return current.filter((attachment) => attachment.id !== id);
+      });
+    },
+    [setPendingAttachments],
+  );
 
   /**
    * Interrupt is offered unconditionally rather than only while we believe the
@@ -1170,7 +1217,7 @@ export default function ChatScreen() {
    * on our guess about busy-ness only makes it unavailable exactly when the
    * guess is wrong.
    */
-  async function handleInterrupt() {
+  const handleInterrupt = useCallback(async () => {
     if (!endpointHost || !endpointPort || !sessionId) return;
     markOutputInterrupted(sessionId);
     if (interruptInFlightRef.current) return;
@@ -1184,36 +1231,53 @@ export default function ChatScreen() {
     } finally {
       interruptInFlightRef.current = false;
     }
-  }
+  }, [
+    endpointHost,
+    endpointPort,
+    markOutputInterrupted,
+    refreshOutputSnapshot,
+    sessionId,
+    setSendError,
+    token,
+  ]);
 
-  function handleComposerKeyPress(event: {
-    nativeEvent: {
-      key?: string;
-      shiftKey?: boolean;
-      ctrlKey?: boolean;
-      metaKey?: boolean;
-      altKey?: boolean;
-    };
-    preventDefault?: () => void;
-  }) {
-    if (Platform.OS !== "web") return;
-    if (shouldSubmitComposerKey(event.nativeEvent)) {
-      event.preventDefault?.();
-      void handleSendMessage();
-    }
-  }
+  const handleComposerKeyPress = useCallback(
+    (event: {
+      nativeEvent: {
+        key?: string;
+        shiftKey?: boolean;
+        ctrlKey?: boolean;
+        metaKey?: boolean;
+        altKey?: boolean;
+      };
+      preventDefault?: () => void;
+    }) => {
+      if (Platform.OS !== "web") return;
+      if (shouldSubmitComposerKey(event.nativeEvent)) {
+        event.preventDefault?.();
+        void handleSendMessage();
+      }
+    },
+    [handleSendMessage],
+  );
 
-  function handleDraftChange(text: string) {
-    setDraft(text);
-    const nextHasContent = hasComposerDraftContent(text);
-    setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
-    if (sendError) setSendError(null);
-  }
+  const handleDraftChange = useCallback(
+    (text: string) => {
+      setDraft(text);
+      const nextHasContent = hasComposerDraftContent(text);
+      setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
+      if (sendError) setSendError(null);
+    },
+    [sendError, setDraft, setDraftHasContent, setSendError],
+  );
 
-  const composerPasteProps =
-    Platform.OS === "web"
-      ? ({ onPaste: handleComposerPaste } as Record<string, unknown>)
-      : undefined;
+  const composerPasteProps = useMemo(
+    () =>
+      Platform.OS === "web"
+        ? ({ onPaste: handleComposerPaste } as Record<string, unknown>)
+        : undefined,
+    [handleComposerPaste],
+  );
 
   useEffect(() => {
     if (!shouldLoadShareSummary) {
@@ -1376,194 +1440,225 @@ export default function ChatScreen() {
     else router.replace(parentViewHrefForPath(pathname, projectPath));
   }
 
-  const composerFooterContent = (
-    <View
-      className="border-t border-border bg-background px-3 py-3"
-      style={{
-        flexShrink: 0,
-        paddingBottom: composerFooterBottomPadding,
-      }}
-    >
-      {pendingAttachments.length > 0 ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
-          <View className="flex-row gap-2">
-            {pendingAttachments.map((attachment) => (
-              <View
-                key={attachment.id}
-                className="w-24 rounded-md border border-border bg-card p-1"
-              >
-                {attachment.kind === "image" || attachment.mimeType.startsWith("image/") ? (
-                  <Image
-                    source={{ uri: attachment.previewUri }}
-                    className="h-14 w-full rounded"
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View className="h-14 w-full items-center justify-center rounded bg-muted px-1">
-                    <Text className="text-center text-[10px] font-semibold uppercase text-muted-foreground">
-                      {attachment.kind}
-                    </Text>
-                  </View>
-                )}
-                <Text className="mt-1 text-[10px] text-muted-foreground" numberOfLines={1}>
-                  {attachment.filename}
-                </Text>
-                <Pressable
-                  onPress={() => removePendingAttachment(attachment.id)}
-                  accessibilityLabel={`Remove ${attachment.filename}`}
-                  className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
+  const composerFooterContent = useMemo(
+    () => (
+      <View
+        className="border-t border-border bg-background px-3 py-3"
+        style={{
+          flexShrink: 0,
+          paddingBottom: composerFooterBottomPadding,
+        }}
+      >
+        {pendingAttachments.length > 0 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+            <View className="flex-row gap-2">
+              {pendingAttachments.map((attachment) => (
+                <View
+                  key={attachment.id}
+                  className="w-24 rounded-md border border-border bg-card p-1"
                 >
-                  <X size={12} color="#a1a1aa" />
-                </Pressable>
-              </View>
-            ))}
-          </View>
-        </ScrollView>
-      ) : null}
-      {/*
+                  {attachment.kind === "image" || attachment.mimeType.startsWith("image/") ? (
+                    <Image
+                      source={{ uri: attachment.previewUri }}
+                      className="h-14 w-full rounded"
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View className="h-14 w-full items-center justify-center rounded bg-muted px-1">
+                      <Text className="text-center text-[10px] font-semibold uppercase text-muted-foreground">
+                        {attachment.kind}
+                      </Text>
+                    </View>
+                  )}
+                  <Text className="mt-1 text-[10px] text-muted-foreground" numberOfLines={1}>
+                    {attachment.filename}
+                  </Text>
+                  <Pressable
+                    onPress={() => removePendingAttachment(attachment.id)}
+                    accessibilityLabel={`Remove ${attachment.filename}`}
+                    className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
+                  >
+                    <X size={12} color="#a1a1aa" />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        ) : null}
+        {/*
       One card holding the message and the controls that act on it, so the
       composer reads as a single object rather than a field with things parked
       either side of it. The controls sit under the text because that is where
       the width is: flanking them costs a third of a phone screen, and the text
       is the part that needs it.
     */}
-      <AttachmentDropZone
-        disabled={
-          sendBusy || composerAwaitingAck || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-        }
-        onDropAttachments={handleDropAttachments}
-        onDropRejected={setSendError}
-        onPasteAttachments={handleDropAttachments}
-        onPasteRejected={setSendError}
-      >
-        {({ dragging }) => (
-          <ComposerFocusShell
-            dragging={dragging}
-            sending={sendBusy || composerAwaitingAck}
-            onLayout={(event: LayoutChangeEvent) => {
-              const nextWidth = event.nativeEvent.layout.width;
-              setComposerWidth((currentWidth) =>
-                currentWidth === nextWidth ? currentWidth : nextWidth,
-              );
-            }}
-          >
-            {({ onBlur, onFocus }) => (
-              <>
-                <TextInput
-                  ref={composerInputRef}
-                  accessibilityLabel="Message the agent"
-                  nativeID={CHAT_INPUT_NATIVE_ID}
-                  autoComplete="off"
-                  autoCapitalize="sentences"
-                  importantForAutofill="no"
-                  inputMode="text"
-                  textContentType="none"
-                  onFocus={onFocus}
-                  onBlur={onBlur}
-                  value={draft}
-                  onChangeText={handleDraftChange}
-                  onKeyPress={handleComposerKeyPress}
-                  {...COMPOSER_WEB_INPUT_PROPS}
-                  {...composerPasteProps}
-                  placeholder="Ask the agent…"
-                  placeholderTextColor="#71717a"
-                  multiline
-                  lineBreakStrategyIOS="standard"
-                  editable={!sendBusy && !composerAwaitingAck}
-                  scrollEnabled
-                  textBreakStrategy="balanced"
-                  className="w-full text-sm text-foreground"
-                  style={[
-                    NO_BROWSER_FOCUS_RING,
-                    {
-                      alignSelf: "stretch",
-                      fontSize: COMPOSER_INPUT_FONT_SIZE,
-                      lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-                      maxWidth: "100%",
-                      maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
-                      minHeight: COMPOSER_INPUT_MIN_HEIGHT,
-                      minWidth: 0,
-                      paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
-                      paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
-                      paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
-                      opacity: sendBusy || composerAwaitingAck ? 0.55 : 1,
-                      width: "100%",
-                    },
-                  ]}
-                  textAlignVertical="top"
-                />
-                <View className="flex-row items-center gap-2">
-                  <ComposerControl
-                    wide={wideControls}
-                    label="Attach"
-                    accessibilityLabel="Attach a file"
-                    icon={<Plus size={17} color={CONTROL_INK} />}
-                    disabled={
-                      sendBusy ||
-                      composerAwaitingAck ||
-                      pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-                    }
-                    onPress={handleAttachAttachment}
+        <AttachmentDropZone
+          disabled={
+            sendBusy || composerAwaitingAck || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+          }
+          onDropAttachments={handleDropAttachments}
+          onDropRejected={setSendError}
+          onPasteAttachments={handleDropAttachments}
+          onPasteRejected={setSendError}
+        >
+          {({ dragging }) => (
+            <ComposerFocusShell
+              dragging={dragging}
+              sending={sendBusy || composerAwaitingAck}
+              onLayout={(event: LayoutChangeEvent) => {
+                const nextWidth = event.nativeEvent.layout.width;
+                setComposerWidth((currentWidth) =>
+                  currentWidth === nextWidth ? currentWidth : nextWidth,
+                );
+              }}
+            >
+              {({ onBlur, onFocus }) => (
+                <>
+                  <TextInput
+                    ref={composerInputRef}
+                    accessibilityLabel="Message the agent"
+                    nativeID={CHAT_INPUT_NATIVE_ID}
+                    autoComplete="off"
+                    autoCapitalize="sentences"
+                    importantForAutofill="no"
+                    inputMode="text"
+                    textContentType="none"
+                    onFocus={onFocus}
+                    onBlur={onBlur}
+                    value={draft}
+                    onChangeText={handleDraftChange}
+                    onKeyPress={handleComposerKeyPress}
+                    {...COMPOSER_WEB_INPUT_PROPS}
+                    {...composerPasteProps}
+                    placeholder="Ask the agent…"
+                    placeholderTextColor="#71717a"
+                    multiline
+                    lineBreakStrategyIOS="standard"
+                    editable={!sendBusy && !composerAwaitingAck}
+                    scrollEnabled
+                    textBreakStrategy="balanced"
+                    className="w-full text-sm text-foreground"
+                    style={[
+                      NO_BROWSER_FOCUS_RING,
+                      {
+                        alignSelf: "stretch",
+                        fontSize: COMPOSER_INPUT_FONT_SIZE,
+                        lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+                        maxWidth: "100%",
+                        maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
+                        minHeight: COMPOSER_INPUT_MIN_HEIGHT,
+                        minWidth: 0,
+                        paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
+                        paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
+                        paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
+                        opacity: sendBusy || composerAwaitingAck ? 0.55 : 1,
+                        width: "100%",
+                      },
+                    ]}
+                    textAlignVertical="top"
                   />
-                  <View className="min-w-0 flex-1 px-1">
-                    {sendError ? (
-                      <View className="min-w-0 flex-row items-center gap-1.5">
-                        <CircleAlert size={13} color="#f87171" />
-                        <Text className="min-w-0 flex-1 text-xs text-destructive" numberOfLines={1}>
-                          {sendError}
-                        </Text>
-                      </View>
-                    ) : sendBusy || composerAwaitingAck ? (
-                      <View className="min-w-0 flex-row items-center gap-1.5">
-                        <ActivityIndicator size="small" color="#a1a1aa" />
-                        <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                          Sending...
-                        </Text>
-                      </View>
-                    ) : activityLabel ? (
-                      <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
-                    ) : null}
-                  </View>
-                  {/*
+                  <View className="flex-row items-center gap-2">
+                    <ComposerControl
+                      wide={wideControls}
+                      label="Attach"
+                      accessibilityLabel="Attach a file"
+                      icon={<Plus size={17} color={CONTROL_INK} />}
+                      disabled={
+                        sendBusy ||
+                        composerAwaitingAck ||
+                        pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+                      }
+                      onPress={handleAttachAttachment}
+                    />
+                    <View className="min-w-0 flex-1 px-1">
+                      {sendError ? (
+                        <View className="min-w-0 flex-row items-center gap-1.5">
+                          <CircleAlert size={13} color="#f87171" />
+                          <Text
+                            className="min-w-0 flex-1 text-xs text-destructive"
+                            numberOfLines={1}
+                          >
+                            {sendError}
+                          </Text>
+                        </View>
+                      ) : sendBusy || composerAwaitingAck ? (
+                        <View className="min-w-0 flex-row items-center gap-1.5">
+                          <ActivityIndicator size="small" color="#a1a1aa" />
+                          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                            Sending...
+                          </Text>
+                        </View>
+                      ) : activityLabel ? (
+                        <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
+                      ) : null}
+                    </View>
+                    {/*
                   Always offered, never revealed only while we think the agent is
                   busy. Interrupt is a single ESC, which an idle tool ignores, so
                   gating it on that guess only makes it unavailable exactly when
                   the guess is wrong.
                 */}
-                  {!isSharedSessionView ? (
+                    {!isSharedSessionView ? (
+                      <ComposerControl
+                        wide={wideControls}
+                        label="Stop"
+                        accessibilityLabel="Interrupt the agent"
+                        // Filled, because a stop is a stop and an outline reads as
+                        // a checkbox at this size.
+                        icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                        onPress={handleInterrupt}
+                      />
+                    ) : null}
                     <ComposerControl
                       wide={wideControls}
-                      label="Stop"
-                      accessibilityLabel="Interrupt the agent"
-                      // Filled, because a stop is a stop and an outline reads as
-                      // a checkbox at this size.
-                      icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                      onPress={handleInterrupt}
+                      brand
+                      label="Send"
+                      accessibilityLabel="Send the message"
+                      icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+                      disabled={!canSendMessage}
+                      onPress={handleSendMessage}
                     />
-                  ) : null}
-                  <ComposerControl
-                    wide={wideControls}
-                    brand
-                    label="Send"
-                    accessibilityLabel="Send the message"
-                    icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
-                    disabled={!canSendMessage}
-                    onPress={handleSendMessage}
-                  />
-                </View>
-              </>
-            )}
-          </ComposerFocusShell>
-        )}
-      </AttachmentDropZone>
-    </View>
+                  </View>
+                </>
+              )}
+            </ComposerFocusShell>
+          )}
+        </AttachmentDropZone>
+      </View>
+    ),
+    [
+      activityLabel,
+      activityLabelShimmer,
+      canSendMessage,
+      composerAwaitingAck,
+      composerFooterBottomPadding,
+      composerPasteProps,
+      draft,
+      handleAttachAttachment,
+      handleComposerKeyPress,
+      handleDraftChange,
+      handleDropAttachments,
+      handleInterrupt,
+      handleSendMessage,
+      isSharedSessionView,
+      pendingAttachments,
+      removePendingAttachment,
+      sendBusy,
+      sendError,
+      setComposerWidth,
+      setSendError,
+      wideControls,
+    ],
   );
-  const composerFooter =
-    Platform.OS === "web" ? (
-      composerFooterContent
-    ) : (
-      <KeyboardStickyView style={{ flexShrink: 0 }}>{composerFooterContent}</KeyboardStickyView>
-    );
+  const composerFooter = useMemo(
+    () =>
+      Platform.OS === "web" ? (
+        composerFooterContent
+      ) : (
+        <KeyboardStickyView style={{ flexShrink: 0 }}>{composerFooterContent}</KeyboardStickyView>
+      ),
+    [composerFooterContent],
+  );
 
   return (
     <View style={{ flex: 1 }}>
