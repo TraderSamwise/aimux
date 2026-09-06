@@ -8,6 +8,7 @@ use crate::expose_socket::parse_positive_header_integer;
 use crate::project_api_contract::routes;
 use crate::project_service::switchable_agents::agent_status_chip;
 use crate::project_service::usage::parse_recency_timestamp;
+use crate::tmux::{CapturePaneOptions, TmuxRuntimeManager, TmuxTarget};
 use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use crate::tui_render::text::{truncate_ansi, wrap_text};
@@ -22,6 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const EXPOSE_HTTP_TIMEOUT_MS: u64 = 4_000;
 pub const EXPOSE_CLIENT_TTL_MS: &str = "10000";
+const CAPTURE_LINES: i64 = 40;
 const GAP: i64 = 1;
 const MIN_TILE_WIDTH: i64 = 30;
 const MIN_TILE_HEIGHT: i64 = 5;
@@ -157,8 +159,23 @@ pub struct DrawTileInput<'a> {
     pub options: &'a TmuxExposeOptions,
 }
 
+struct RenderTileAtInput<'a> {
+    tile_index: usize,
+    selected_index: usize,
+    layout: &'a GridLayout,
+    items: &'a [Value],
+    captures: &'a BTreeMap<String, String>,
+    tones: &'a BTreeMap<String, i64>,
+    view: &'a ExposeScopeView,
+    options: &'a TmuxExposeOptions,
+}
+
 pub trait ExposeHttpClient {
     fn request_json(&mut self, url: &str, request: ExposeHttpRequest) -> Result<Value, String>;
+}
+
+pub trait ExposeTmuxCapture {
+    fn capture_target(&mut self, item: &Value) -> Result<String, String>;
 }
 
 #[derive(Debug, Default)]
@@ -188,6 +205,25 @@ impl ExposeHttpClient for SystemExposeHttpClient {
             return Err(daemon_json_error(response.status, &response.json));
         }
         Ok(response.json)
+    }
+}
+
+#[derive(Default)]
+pub struct SystemExposeTmuxCapture {
+    tmux: TmuxRuntimeManager,
+}
+
+impl ExposeTmuxCapture for SystemExposeTmuxCapture {
+    fn capture_target(&mut self, item: &Value) -> Result<String, String> {
+        let target = tmux_target_from_item(item);
+        self.tmux.capture_target(
+            &target,
+            CapturePaneOptions {
+                start_line: Some(-CAPTURE_LINES),
+                end_line: None,
+                include_escapes: true,
+            },
+        )
     }
 }
 
@@ -635,9 +671,16 @@ pub fn tmux_expose_options_from_socket_header(
 
 pub fn run_tmux_expose(options: TmuxExposeOptions) -> i32 {
     let mut client = SystemExposeHttpClient;
+    let mut capture = SystemExposeTmuxCapture::default();
     let mut input = std::io::stdin();
     let mut output = std::io::stdout();
-    run_tmux_expose_with_client(options, &mut input, &mut output, &mut client)
+    run_tmux_expose_with_client_and_capture(
+        options,
+        &mut input,
+        &mut output,
+        &mut client,
+        &mut capture,
+    )
 }
 
 pub fn run_tmux_expose_with_client(
@@ -645,6 +688,17 @@ pub fn run_tmux_expose_with_client(
     input: &mut impl Read,
     output: &mut impl Write,
     client: &mut impl ExposeHttpClient,
+) -> i32 {
+    let mut capture = SystemExposeTmuxCapture::default();
+    run_tmux_expose_with_client_and_capture(options, input, output, client, &mut capture)
+}
+
+pub fn run_tmux_expose_with_client_and_capture(
+    options: TmuxExposeOptions,
+    input: &mut impl Read,
+    output: &mut impl Write,
+    client: &mut impl ExposeHttpClient,
+    capture: &mut impl ExposeTmuxCapture,
 ) -> i32 {
     let context = FastControlContext {
         project_root: options.project_root.to_string_lossy().into_owned(),
@@ -689,8 +743,14 @@ pub fn run_tmux_expose_with_client(
     let mut items = order_items(&view, &options.project_root, sort_mode);
     let mut index = 0_usize;
     let mut leader_pending = false;
-    let mut layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
-        .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
+    let mut captures = seed_preview_snapshots(&items);
+    let mut layout =
+        render_grid_expose(output, &view, &items, &captures, index, &options, sort_mode)
+            .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
+    if refresh_captures(&items, &mut captures, capture) {
+        layout = render_grid_expose(output, &view, &items, &captures, index, &options, sort_mode)
+            .unwrap_or(layout);
+    }
     let mut buffer = [0_u8; 8192];
     loop {
         let count = match input.read(&mut buffer) {
@@ -725,6 +785,7 @@ pub fn run_tmux_expose_with_client(
                 let _ =
                     write_expose_ui_state(&options.project_state_dir, ExposeUiState { sort_mode });
                 items = order_items(&view, &options.project_root, sort_mode);
+                captures = seed_preview_snapshots(&items);
                 index = selected_window_id
                     .and_then(|window_id| {
                         items
@@ -732,8 +793,10 @@ pub fn run_tmux_expose_with_client(
                             .position(|item| item_window_id(Some(item)) == Some(window_id.as_str()))
                     })
                     .unwrap_or_else(|| index.min(items.len().saturating_sub(1)));
-                layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
-                    .unwrap_or(layout);
+                layout = render_grid_expose(
+                    output, &view, &items, &captures, index, &options, sort_mode,
+                )
+                .unwrap_or(layout);
                 continue;
             }
             if key == ExposeKey::Char('g') {
@@ -745,9 +808,12 @@ pub fn run_tmux_expose_with_client(
                     view = hot_view;
                     view_stale = true;
                     items = order_items(&view, &options.project_root, sort_mode);
+                    captures = seed_preview_snapshots(&items);
                     index = index.min(items.len().saturating_sub(1));
-                    layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
-                        .unwrap_or(layout);
+                    layout = render_grid_expose(
+                        output, &view, &items, &captures, index, &options, sort_mode,
+                    )
+                    .unwrap_or(layout);
                 } else if let Ok(next_view) = load_expose_scope_items_with(
                     scope,
                     &context,
@@ -758,9 +824,13 @@ pub fn run_tmux_expose_with_client(
                     view = next_view;
                     view_stale = false;
                     items = order_items(&view, &options.project_root, sort_mode);
+                    captures = seed_preview_snapshots(&items);
                     index = index.min(items.len().saturating_sub(1));
-                    layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
-                        .unwrap_or(layout);
+                    let _ = refresh_captures(&items, &mut captures, capture);
+                    layout = render_grid_expose(
+                        output, &view, &items, &captures, index, &options, sort_mode,
+                    )
+                    .unwrap_or(layout);
                 }
                 continue;
             }
@@ -775,14 +845,16 @@ pub fn run_tmux_expose_with_client(
                         if focus_or_select(&options, &context, &deps, client, &item, view_stale) {
                             return finish_plain_expose(output, 0);
                         }
-                        layout =
-                            render_grid_expose(output, &view, &items, index, &options, sort_mode)
-                                .unwrap_or(layout);
+                        layout = render_grid_expose(
+                            output, &view, &items, &captures, index, &options, sort_mode,
+                        )
+                        .unwrap_or(layout);
                     }
                     _ => {
-                        layout =
-                            render_grid_expose(output, &view, &items, index, &options, sort_mode)
-                                .unwrap_or(layout);
+                        layout = render_grid_expose(
+                            output, &view, &items, &captures, index, &options, sort_mode,
+                        )
+                        .unwrap_or(layout);
                     }
                 }
                 continue;
@@ -808,9 +880,13 @@ pub fn run_tmux_expose_with_client(
                         view = next_view;
                         view_stale = false;
                         items = order_items(&view, &options.project_root, sort_mode);
+                        captures = seed_preview_snapshots(&items);
+                        let _ = refresh_captures(&items, &mut captures, capture);
                     }
-                    layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
-                        .unwrap_or(layout);
+                    layout = render_grid_expose(
+                        output, &view, &items, &captures, index, &options, sort_mode,
+                    )
+                    .unwrap_or(layout);
                 }
                 continue;
             }
@@ -848,8 +924,10 @@ pub fn run_tmux_expose_with_client(
                 _ => {}
             }
             if previous != index {
-                layout = render_grid_expose(output, &view, &items, index, &options, sort_mode)
-                    .unwrap_or(layout);
+                layout = render_grid_expose(
+                    output, &view, &items, &captures, index, &options, sort_mode,
+                )
+                .unwrap_or(layout);
             }
         }
     }
@@ -1094,6 +1172,48 @@ fn request_expose_items(url: &str, client: &mut impl ExposeHttpClient) -> Vec<Va
         .unwrap_or_default()
 }
 
+fn seed_preview_snapshots(items: &[Value]) -> BTreeMap<String, String> {
+    let mut captures = BTreeMap::new();
+    for item in items {
+        let Some(window_id) = item_window_id(Some(item)) else {
+            continue;
+        };
+        let Some(output) = item
+            .get("previewSnapshot")
+            .and_then(|snapshot| snapshot.get("output"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        captures.insert(window_id.to_owned(), output.to_owned());
+    }
+    captures
+}
+
+fn refresh_captures(
+    items: &[Value],
+    captures: &mut BTreeMap<String, String>,
+    capture: &mut impl ExposeTmuxCapture,
+) -> bool {
+    if items.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    for item in items {
+        let Some(window_id) = item_window_id(Some(item)) else {
+            continue;
+        };
+        let next = capture
+            .capture_target(item)
+            .unwrap_or_else(|_| captures.get(window_id).cloned().unwrap_or_default());
+        if captures.get(window_id).map(String::as_str) != Some(next.as_str()) {
+            changed = true;
+        }
+        captures.insert(window_id.to_owned(), next);
+    }
+    changed
+}
+
 fn focus_or_select(
     options: &TmuxExposeOptions,
     context: &FastControlContext,
@@ -1140,6 +1260,7 @@ fn render_grid_expose(
     output: &mut impl Write,
     view: &ExposeScopeView,
     items: &[Value],
+    captures: &BTreeMap<String, String>,
     selected_index: usize,
     options: &TmuxExposeOptions,
     sort_mode: ExposeSortMode,
@@ -1191,15 +1312,16 @@ fn render_grid_expose(
     } else {
         let tones = assign_value_worktree_tones(items, &options.project_root);
         for tile_index in 0..visible_count {
-            rendered.push_str(&render_tile_at(
+            rendered.push_str(&render_tile_at(RenderTileAtInput {
                 tile_index,
                 selected_index,
-                &layout,
+                layout: &layout,
                 items,
-                &tones,
+                captures,
+                tones: &tones,
                 view,
                 options,
-            ));
+            }));
         }
     }
     rendered.push_str(&format!(
@@ -1211,24 +1333,29 @@ fn render_grid_expose(
     Ok(layout)
 }
 
-fn render_tile_at(
-    tile_index: usize,
-    selected_index: usize,
-    layout: &GridLayout,
-    items: &[Value],
-    tones: &BTreeMap<String, i64>,
-    view: &ExposeScopeView,
-    options: &TmuxExposeOptions,
-) -> String {
+fn render_tile_at(input: RenderTileAtInput<'_>) -> String {
+    let RenderTileAtInput {
+        tile_index,
+        selected_index,
+        layout,
+        items,
+        captures,
+        tones,
+        view,
+        options,
+    } = input;
     let row_offset = (tile_index as i64 / layout.tile_cols) * layout.tile_height;
     let column = tile_index as i64 % layout.tile_cols;
     let top = TITLE_ROW + layout.grid_top_row + row_offset;
     let left = CONTENT_LEFT + column * (layout.tile_width + GAP);
     let item = &items[tile_index];
-    let raw = item
-        .get("previewSnapshot")
-        .and_then(|snapshot| snapshot.get("output"))
-        .and_then(Value::as_str)
+    let raw = item_window_id(Some(item))
+        .and_then(|window_id| captures.get(window_id).map(String::as_str))
+        .or_else(|| {
+            item.get("previewSnapshot")
+                .and_then(|snapshot| snapshot.get("output"))
+                .and_then(Value::as_str)
+        })
         .unwrap_or("");
     let preview = tile_preview(raw, layout.body_lines);
     let context = tile_context_for_value(item, view.sublabel, &options.project_root, tones);
@@ -1387,6 +1514,32 @@ fn item_window_id(item: Option<&Value>) -> Option<&str> {
     item.and_then(|item| item.get("target"))
         .and_then(|target| target.get("windowId"))
         .and_then(Value::as_str)
+}
+
+fn tmux_target_from_item(item: &Value) -> TmuxTarget {
+    let target = item.get("target").unwrap_or(&Value::Null);
+    TmuxTarget {
+        session_name: target
+            .get("sessionName")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        window_id: target
+            .get("windowId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        window_index: target
+            .get("windowIndex")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        window_name: target
+            .get("windowName")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        pane_dead: target.get("paneDead").and_then(Value::as_bool),
+    }
 }
 
 fn parse_key_events(bytes: &[u8]) -> Vec<ExposeKey> {

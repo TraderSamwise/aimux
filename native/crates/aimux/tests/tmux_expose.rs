@@ -3,10 +3,10 @@ use aimux::core_command_transport::DaemonHttpMethod;
 use aimux::project_api_contract::routes;
 use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeConfig, ExposeHttpClient, ExposeHttpRequest, ExposeScope,
-    ExposeScopeView, ExposeSortMode, ExposeSublabel, ExposeUiState, FastControlContext,
-    LoadExposeScopeDeps, focus_expose_item_with, initial_expose_scope,
+    ExposeScopeView, ExposeSortMode, ExposeSublabel, ExposeTmuxCapture, ExposeUiState,
+    FastControlContext, LoadExposeScopeDeps, focus_expose_item_with, initial_expose_scope,
     load_expose_scope_items_with, load_overseer_expose_item_with, next_expose_scope,
-    parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client,
+    parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client_and_capture,
     tmux_expose_options_from_socket_header, write_expose_ui_state, write_selected_window,
 };
 use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
@@ -22,6 +22,45 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 struct FakeHttp {
     responses: VecDeque<Value>,
     requests: Vec<(String, ExposeHttpRequest)>,
+}
+
+#[derive(Debug)]
+struct FakeCapture {
+    responses: VecDeque<Result<String, String>>,
+    calls: Vec<String>,
+}
+
+impl Default for FakeCapture {
+    fn default() -> Self {
+        Self {
+            responses: VecDeque::from([Ok("agent output\n".into())]),
+            calls: Vec::new(),
+        }
+    }
+}
+
+impl FakeCapture {
+    fn with_responses(values: impl IntoIterator<Item = Result<String, String>>) -> Self {
+        Self {
+            responses: values.into_iter().collect(),
+            calls: Vec::new(),
+        }
+    }
+}
+
+impl ExposeTmuxCapture for FakeCapture {
+    fn capture_target(&mut self, item: &Value) -> Result<String, String> {
+        self.calls.push(
+            item.get("target")
+                .and_then(|target| target.get("windowId"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        );
+        self.responses
+            .pop_front()
+            .unwrap_or_else(|| Ok("agent output\n".into()))
+    }
 }
 
 impl FakeHttp {
@@ -393,27 +432,31 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
     let options = parsed_options(&state_dir);
 
     let mut close_client = FakeHttp::with_responses([json!({ "ok": true, "items": [] })]);
+    let mut close_capture = FakeCapture::default();
     let mut close_input: &[u8] = b"q";
     let mut close_output = Vec::new();
     assert_eq!(
-        run_tmux_expose_with_client(
+        run_tmux_expose_with_client_and_capture(
             options.clone(),
             &mut close_input,
             &mut close_output,
-            &mut close_client
+            &mut close_client,
+            &mut close_capture,
         ),
         0
     );
 
     let mut dashboard_client = FakeHttp::with_responses([json!({ "ok": true, "items": [] })]);
+    let mut dashboard_capture = FakeCapture::default();
     let mut dashboard_input: &[u8] = b"\x01d";
     let mut dashboard_output = Vec::new();
     assert_eq!(
-        run_tmux_expose_with_client(
+        run_tmux_expose_with_client_and_capture(
             options.clone(),
             &mut dashboard_input,
             &mut dashboard_output,
-            &mut dashboard_client
+            &mut dashboard_client,
+            &mut dashboard_capture,
         ),
         76
     );
@@ -433,14 +476,16 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
         }),
         json!({ "ok": true }),
     ]);
+    let mut focus_capture = FakeCapture::default();
     let mut focus_input: &[u8] = b"1";
     let mut focus_output = Vec::new();
     assert_eq!(
-        run_tmux_expose_with_client(
+        run_tmux_expose_with_client_and_capture(
             options.clone(),
             &mut focus_input,
             &mut focus_output,
-            &mut focus_client
+            &mut focus_client,
+            &mut focus_capture,
         ),
         0
     );
@@ -467,11 +512,18 @@ fn runner_reloads_scope_toggles_sort_and_uses_same_project_selection_file() {
             { "id": "new", "label": "new", "target": { "windowId": "@2" }, "metadata": { "recencyAt": "2026-01-02T00:00:00.000Z" }, "recentRank": 0 }
         ]
     })]);
+    let mut capture = FakeCapture::default();
     let mut input: &[u8] = b"r1";
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client(options, &mut input, &mut output, &mut client),
+        run_tmux_expose_with_client_and_capture(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
         0
     );
 
@@ -510,11 +562,18 @@ fn runner_renders_hot_snapshot_without_blocking_on_item_discovery() {
     options.current_window = Some("codex".into());
     options.expose_config.initial_scope = Some(ExposeScope::Project);
     let mut client = FakeHttp::default();
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
     let mut input: &[u8] = b"q";
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client(options, &mut input, &mut output, &mut client),
+        run_tmux_expose_with_client_and_capture(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
         0
     );
 
@@ -548,11 +607,18 @@ fn runner_validates_stale_hot_selection_before_writing_selection_file() {
     options.expose_config.initial_scope = Some(ExposeScope::Project);
     options.selection_file = Some(selection_file.clone());
     let mut client = FakeHttp::with_responses([json!({ "ok": true })]);
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
     let mut input: &[u8] = b"\r";
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client(options, &mut input, &mut output, &mut client),
+        run_tmux_expose_with_client_and_capture(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
         0
     );
 
@@ -561,6 +627,38 @@ fn runner_validates_stale_hot_selection_before_writing_selection_file() {
         client.requests[0].0,
         format!("http://127.0.0.1:45000{}", routes::controls::FOCUS_WINDOW)
     );
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_replaces_preview_snapshot_with_live_capture_output() {
+    let state_dir = temp_dir("runner-live-capture");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [hot_item("@1", "warm preview line\n")]
+    })]);
+    let mut capture = FakeCapture::with_responses([Ok("live capture line\n".into())]);
+    let mut input: &[u8] = b"q";
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_client_and_capture(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8_lossy(&output);
+    assert!(rendered.contains("warm preview line"));
+    assert!(rendered.contains("live capture line"));
+    assert_eq!(capture.calls, vec!["@1"]);
     cleanup(state_dir);
 }
 
