@@ -141,6 +141,9 @@ Priority fixture groups:
 - `agent-output/transcript.json`: transcript projection and published
   attachment merge cases captured by running the TypeScript
   `agent-transcript` APIs against `src/agent-transcript.test.ts` inputs.
+- `agent-output/transcript-reconciler.json`: stuck-activity settlement,
+  stranded `needs_response` clearing, Codex transcript path caching, and miss
+  backoff behavior captured by running TypeScript `TranscriptReconciler`.
 - `agent-output/tracker.json`: `AgentTracker` event, `markSeen`,
   `setActivity`, `setAttention`, focus-suppression, and derived-count
   transition snapshots captured from the TypeScript metadata store path,

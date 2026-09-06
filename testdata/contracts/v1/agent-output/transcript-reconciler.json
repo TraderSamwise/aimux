@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/transcript-reconciler.test.ts",
+  "generatedBy": "scripts/capture-transcript-reconciler-contract.mjs",
+  "description": "Transcript reconciler stuck-activity settlement, stranded needs_response clearing, and Codex transcript path cache behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "agent-output-transcript-reconciler-001",
+      "name": "settles only after the transcript is complete AND quiescent across two ticks",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "settles only after the transcript is complete AND quiescent across two ticks",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 2, "probe": { "turn": "complete", "size": 10, "mtimeMs": 1 } },
+      "output": {
+        "afterFirst": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [["claude", "/t/a.jsonl"]],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        },
+        "calls": {
+          "settleActivity": [["a"]],
+          "clearStaleResponse": [],
+          "probe": [
+            ["claude", "/t/a.jsonl"],
+            ["claude", "/t/a.jsonl"]
+          ],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "69fe1e60cac5c6f8cece8c1ec6090a3b8a47bbe79ba95b686b56d278f99d2d47"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-002",
+      "name": "does not settle while the transcript is still being written (size changes)",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "does not settle while the transcript is still being written (size changes)",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 3, "probe": "size-increments" },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [
+            ["claude", "/t/a.jsonl"],
+            ["claude", "/t/a.jsonl"],
+            ["claude", "/t/a.jsonl"]
+          ],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "6cbf810113e7b17700dda8d68038817f8cb955d30f92b016ab7023728982ed45"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-003",
+      "name": "never settles a mid-turn (in_progress) transcript",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "never settles a mid-turn (in_progress) transcript",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 2, "probe": { "turn": "in_progress", "size": 10, "mtimeMs": 1 } },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [
+            ["claude", "/t/a.jsonl"],
+            ["claude", "/t/a.jsonl"]
+          ],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "67d0fd5269977d0bd6058848ad65ccd956cc35bcf234b8c55a85a684b762c314"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-004",
+      "name": "ignores a genuinely idle agent (activity not running/waiting)",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "ignores a genuinely idle agent (activity not running/waiting)",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 2, "derived": { "activity": "idle", "attention": "normal" } },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "a47ae3b3a2250bee161d7409bb8dfce1a10e2da005c94f30aa58a8bd2acb3688"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-005",
+      "name": "does not touch a needs_input agent (attention not normal)",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "does not touch a needs_input agent (attention not normal)",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 2, "derived": { "activity": "waiting", "attention": "needs_input" } },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "856f874f187375b7bac01a28bbe0da4873e1e40e01ca510e2f237c48ad5ce1e2"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-006",
+      "name": "settles a stuck waiting+normal agent (decoupled pair) too",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "settles a stuck waiting+normal agent (decoupled pair) too",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 2, "derived": { "activity": "waiting", "attention": "normal" } },
+      "output": {
+        "calls": {
+          "settleActivity": [["a"]],
+          "clearStaleResponse": [],
+          "probe": [
+            ["claude", "/t/a.jsonl"],
+            ["claude", "/t/a.jsonl"]
+          ],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "16c2a8f67cd01b2c09b9b177e54abc2e50bef590bff3a846a645c93464218daf"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-007",
+      "name": "skips sessions with no resolvable transcript path",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "skips sessions with no resolvable transcript path",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 2, "context": {}, "session": {} },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [],
+          "findCodexPath": [],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "0940b01299ff6c6bbf59b4b7f269e6c66327e7d160f017e7e2c4091c5725c211"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-008",
+      "name": "caches the resolved codex path while live and re-resolves after the session leaves",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "caches the resolved codex path while live and re-resolves after the session leaves",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": ["live", "live", "gone", "live"], "codexPath": "/codex/x.jsonl" },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [
+            ["codex", "/codex/x.jsonl"],
+            ["codex", "/codex/x.jsonl"],
+            ["codex", "/codex/x.jsonl"]
+          ],
+          "findCodexPath": [["be"], ["be"]],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "d58c8c863379fdfbe9fb09435d9b0737be3cad935c6dcd38b084a5bdf171a0af"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-009",
+      "name": "clears needs_response only after it stays unbacked for a second tick",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "clears needs_response only after it stays unbacked for a second tick",
+      "api": "TranscriptReconciler.scan",
+      "input": {
+        "ticks": 2,
+        "derived": { "activity": "idle", "attention": "needs_response" },
+        "pendingInteraction": false
+      },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [["a"]],
+          "probe": [],
+          "findCodexPath": [],
+          "hasPendingInteraction": [["a"], ["a"]]
+        }
+      },
+      "inputSha256": "73e293e62e376d08023e88932d2272c9d7d65f4968e97ef2c7052d41c33cb57a"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-010",
+      "name": "leaves needs_response alone while an interaction is still pending",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "leaves needs_response alone while an interaction is still pending",
+      "api": "TranscriptReconciler.scan",
+      "input": {
+        "ticks": 2,
+        "derived": { "activity": "idle", "attention": "needs_response" },
+        "pendingInteraction": true
+      },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [],
+          "findCodexPath": [],
+          "hasPendingInteraction": [["a"], ["a"]]
+        }
+      },
+      "inputSha256": "b102b03c608e9d06395d0cf14b5edecb113b584ad5ce5615e9f0dc2692cdd95a"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-011",
+      "name": "resets the confirm if the interaction re-registers before the second tick",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "resets the confirm if the interaction re-registers before the second tick",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": [false, true, false], "derived": { "activity": "idle", "attention": "needs_response" } },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [],
+          "findCodexPath": [],
+          "hasPendingInteraction": [["a"], ["a"], ["a"]]
+        }
+      },
+      "inputSha256": "2f4d4222cb2fdaa9a4a21b8897de72c80ad3b46d94b892fabf2b909819353b83"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-012",
+      "name": "re-resolves when the backendSessionId changes on a live session",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "re-resolves when the backendSessionId changes on a live session",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": ["be-1", "be-1", "be-2"] },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [
+            ["codex", "/codex/be-1.jsonl"],
+            ["codex", "/codex/be-1.jsonl"],
+            ["codex", "/codex/be-2.jsonl"]
+          ],
+          "findCodexPath": [["be-1"], ["be-2"]],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "7ed4bd3cdcaa4fe2a828c59da1f91c8010da07911ea36f14ade17c6659c5a3ff"
+    },
+    {
+      "id": "agent-output-transcript-reconciler-013",
+      "name": "does not re-scan the codex tree every tick after a miss",
+      "source": "src/multiplexer/transcript-reconciler.test.ts",
+      "sourceName": "does not re-scan the codex tree every tick after a miss",
+      "api": "TranscriptReconciler.scan",
+      "input": { "ticks": 5, "codexPath": null },
+      "output": {
+        "calls": {
+          "settleActivity": [],
+          "clearStaleResponse": [],
+          "probe": [],
+          "findCodexPath": [["be"]],
+          "hasPendingInteraction": []
+        }
+      },
+      "inputSha256": "27bc5a3465255967bfa6d91ba1c82dca0e79bf16ee132dedc523e3dae934fcd5"
+    }
+  ]
+}
