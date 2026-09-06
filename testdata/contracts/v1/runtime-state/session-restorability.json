@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "source": "src/session-restorability.test.ts",
+  "generatedBy": "scripts/capture-session-semantics-contract.mjs",
+  "description": "Offline session restorability contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-session-restorability-001",
+      "name": "prefers toolConfigKey when checking exact backend resume support",
+      "source": "src/session-restorability.test.ts",
+      "api": "describeSessionRestorability",
+      "input": {
+        "session": {
+          "id": "claude-custom-1",
+          "status": "offline",
+          "tool": "claude",
+          "command": "claude",
+          "toolConfigKey": "claude-custom",
+          "backendSessionId": "backend-1"
+        },
+        "tools": {
+          "claude": { "resumeArgs": [], "resumeByBackendSessionId": false },
+          "claude-custom": { "resumeArgs": ["--resume", "{sessionId}"], "resumeByBackendSessionId": true }
+        }
+      },
+      "output": { "restoreState": "ready" },
+      "inputSha256": "fae6f90c84b6feec9de7954214b5aa61640c96f6bd27a756abe9e7daacf0bc44"
+    },
+    {
+      "id": "runtime-state-session-restorability-002",
+      "name": "reports custom tool config restore blockers by config key",
+      "source": "src/session-restorability.test.ts",
+      "api": "describeSessionRestorability",
+      "input": {
+        "session": {
+          "id": "claude-custom-1",
+          "status": "offline",
+          "tool": "claude",
+          "command": "claude",
+          "toolConfigKey": "claude-custom",
+          "backendSessionId": "backend-1"
+        },
+        "tools": {
+          "claude": { "resumeArgs": ["--resume", "{sessionId}"], "resumeByBackendSessionId": true },
+          "claude-custom": { "resumeArgs": [], "resumeByBackendSessionId": false }
+        }
+      },
+      "output": {
+        "restoreState": "blocked",
+        "restoreBlockedReason": "agent tool \"claude-custom\" does not support exact backend resume"
+      },
+      "inputSha256": "a4304a922dea7af0da26a7c8eef78496ffecb5716c7957c1c8120ec34856e03e"
+    },
+    {
+      "id": "runtime-state-session-restorability-003",
+      "name": "revalidates precomputed ready state against exact backend resume requirements",
+      "source": "src/session-restorability.test.ts",
+      "api": "describeSessionRestorability",
+      "input": {
+        "session": {
+          "id": "claude-stale-ready",
+          "status": "offline",
+          "command": "claude",
+          "toolConfigKey": "claude",
+          "restoreState": "ready"
+        },
+        "tools": { "claude": { "resumeArgs": ["--resume", "{sessionId}"], "resumeByBackendSessionId": true } }
+      },
+      "output": { "restoreState": "blocked", "restoreBlockedReason": "missing exact resumable backend session id" },
+      "inputSha256": "828f4a2c525ff630c4fb21446abeb28fde50cd7909b2f820c735f24fcccc6a54"
+    },
+    {
+      "id": "runtime-state-session-restorability-004",
+      "name": "allows backend-less offline sessions that are safe to relaunch fresh",
+      "source": "src/session-restorability.test.ts",
+      "api": "describeSessionRestorability",
+      "input": {
+        "session": {
+          "id": "codex-empty",
+          "status": "offline",
+          "command": "codex",
+          "toolConfigKey": "codex",
+          "freshRelaunchAllowed": true
+        },
+        "tools": { "codex": { "resumeArgs": ["resume", "{sessionId}"], "resumeByBackendSessionId": true } }
+      },
+      "output": { "restoreState": "ready" },
+      "inputSha256": "6f2c7db0ccc4c5e5524553344efa7264bbb96235a7cad8c4e29676be06e0a06f"
+    },
+    {
+      "id": "runtime-state-session-restorability-005",
+      "name": "keeps persisted restore blockers ahead of backend ids",
+      "source": "src/session-restorability.test.ts",
+      "api": "describeSessionRestorability",
+      "input": {
+        "session": {
+          "id": "claude-crashed",
+          "status": "offline",
+          "command": "claude",
+          "toolConfigKey": "claude",
+          "backendSessionId": "backend-1",
+          "restoreBlockedReason": "agent exited during startup"
+        },
+        "tools": { "claude": { "resumeArgs": ["--resume", "{sessionId}"], "resumeByBackendSessionId": true } }
+      },
+      "output": { "restoreState": "blocked", "restoreBlockedReason": "agent exited during startup" },
+      "inputSha256": "a715e609a7c068713cd7462d1b147986d428f66e4570436f18ff1db3e2c884f1"
+    }
+  ]
+}

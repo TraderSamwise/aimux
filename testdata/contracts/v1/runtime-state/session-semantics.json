@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "source": "src/session-semantics.test.ts",
+  "generatedBy": "scripts/capture-session-semantics-contract.mjs",
+  "description": "Session semantic label, attention, compact hint, notification, and display contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-session-semantics-001",
+      "name": "keeps explicit needs-input as user attention without making workflow authoritative",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "idle", "attention": "needs_input", "unseenCount": 1, "workflowOnMeCount": 1 } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "needs_input",
+        "userAttention": "needs_input",
+        "orchestrationPressure": "waiting_on_user",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "needs input",
+        "compactHint": "on you",
+        "attentionScore": 4,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "f541d04444a621fecbfd450f6a24b1d9407e76a2632cc157641af1a44abf26dc"
+    },
+    {
+      "id": "runtime-state-session-semantics-002",
+      "name": "distinguishes plain response waits from formal input prompts",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "idle", "attention": "needs_response" } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "needs_response",
+        "userAttention": "needs_response",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "needs answer",
+        "compactHint": "answer",
+        "attentionScore": 4,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "0f29adc199999dd5489e546845f4324b4f056276cabeec73aca613811a55fd4b"
+    },
+    {
+      "id": "runtime-state-session-semantics-003",
+      "name": "labels idle assigned-task sessions as needing a next step",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "idle", "attention": "normal", "hasActiveTask": true } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "next_step",
+        "userAttention": "none",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": false,
+        "statusLabel": "next step",
+        "compactHint": "on you",
+        "attentionScore": 0,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "34558a2b21f141f250c552aa26ade5de7c6ddc9fb97036696f9592493c03f1a2"
+    },
+    {
+      "id": "runtime-state-session-semantics-004",
+      "name": "keeps blocked workflow as orchestration pressure instead of primary user state",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "idle", "workflowBlockedCount": 1 } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "idle",
+        "userAttention": "none",
+        "orchestrationPressure": "blocked",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "idle",
+        "compactHint": "blocked task",
+        "attentionScore": 0,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "4a55628cd20d089b6504fbdf2befb23305cdc1d5147634d57b3624f46806a1e9"
+    },
+    {
+      "id": "runtime-state-session-semantics-005",
+      "name": "blocks input only for real tool/runtime blockers",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "running", "attention": "blocked" } },
+      "output": {
+        "runtimeCanReceiveInput": false,
+        "userLabel": "blocked",
+        "userAttention": "blocked",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": false,
+        "statusLabel": "blocked",
+        "compactHint": "blocked",
+        "attentionScore": 3,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "1959075c9d76816c2a2053b4a4b9c4b95b68115700875e01840fab1d33978b45"
+    },
+    {
+      "id": "runtime-state-session-semantics-006",
+      "name": "treats idle task-free sessions as assignable",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "idle", "attention": "normal" } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "idle",
+        "userAttention": "none",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "idle",
+        "compactHint": null,
+        "attentionScore": 0,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "e3412acde1fb0a5e74d95ce63d7ec3ea2947ac05c31257de6489fcd915c432f3"
+    },
+    {
+      "id": "runtime-state-session-semantics-007",
+      "name": "labels alive sessions without active work as ready",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "running", "attention": "normal" } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "ready",
+        "userAttention": "none",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "ready",
+        "compactHint": null,
+        "attentionScore": 0,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "af58a3f4cdd8f3331ac191653cb4177f8570ef32b5be76c67f973e15a12366e2"
+    },
+    {
+      "id": "runtime-state-session-semantics-008",
+      "name": "keeps explicit activity as working",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "running", "activity": "running", "attention": "normal" } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "working",
+        "userAttention": "none",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "working",
+        "compactHint": null,
+        "attentionScore": 0,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "45b48d0c792147c4f64b5a41eaea02483944cc4346d3e4818e1106c26bab939d"
+    },
+    {
+      "id": "runtime-state-session-semantics-009",
+      "name": "notification unread compact hint",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "idle", "attention": "normal", "notificationUnreadCount": 3 } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "idle",
+        "userAttention": "none",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "idle",
+        "compactHint": "3 unread",
+        "attentionScore": 2,
+        "notificationUnreadCount": 3,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "4b9be9bccbfec9ac8be40a5e101d28b07b39e5d4aac2622435a7c2f2d5185efa"
+    },
+    {
+      "id": "runtime-state-session-semantics-010",
+      "name": "raw new activity compact hint",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": { "input": { "status": "idle", "attention": "normal", "unseenCount": 3 } },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "idle",
+        "userAttention": "none",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "idle",
+        "compactHint": "3 new",
+        "attentionScore": 1,
+        "notificationUnreadCount": 0,
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "592191be5260db3b6a268a53edb7438f2155290787368d51a2df62b4e5c2a3b4"
+    },
+    {
+      "id": "runtime-state-session-semantics-011",
+      "name": "accepts API-provided latest notification text without a local notification record",
+      "source": "src/session-semantics.test.ts",
+      "api": "deriveSessionSemantics",
+      "input": {
+        "input": { "status": "running", "notificationUnreadCount": 1, "latestNotificationText": "Claude needs input" }
+      },
+      "output": {
+        "runtimeCanReceiveInput": true,
+        "userLabel": "ready",
+        "userAttention": "none",
+        "orchestrationPressure": "none",
+        "orchestrationCanBeAssignedWork": true,
+        "statusLabel": "ready",
+        "compactHint": "1 unread",
+        "attentionScore": 2,
+        "notificationUnreadCount": 1,
+        "notificationLatestText": "Claude needs input",
+        "notificationHasLatestUnread": false
+      },
+      "inputSha256": "64c20225abebf88623efd547d2f7d915c6dfe5a3070f23c7e56cc41caa05e039"
+    },
+    {
+      "id": "runtime-state-session-semantics-012",
+      "name": "keeps raw dashboard status fallback labels in the semantic display helper",
+      "source": "src/session-semantics.test.ts",
+      "api": "sessionDisplayStatusLabel",
+      "input": {
+        "inputs": [
+          { "status": "running" },
+          { "status": "idle" },
+          { "status": "waiting" },
+          { "status": "exited" },
+          { "status": "offline" }
+        ]
+      },
+      "output": ["running", "idle", "thinking", "exited", "offline"],
+      "inputSha256": "d983563e780c78214f222625ecdb329c4aae46c6952673d8820eee97685cc5f8"
+    },
+    {
+      "id": "runtime-state-session-semantics-013",
+      "name": "keeps pending action labels authoritative over semantic user state",
+      "source": "src/session-semantics.test.ts",
+      "api": "sessionDisplayStatusLabel",
+      "input": {
+        "semanticInput": { "status": "running", "attention": "needs_input" },
+        "pendingActions": ["creating", "forking", "migrating", "starting", "stopping", "graveyarding", "renaming"]
+      },
+      "output": {
+        "semanticDisplay": "needs input",
+        "pendingDisplays": ["creating", "forking", "migrating", "starting", "stopping", "graveyarding", "renaming"]
+      },
+      "inputSha256": "ea158f0552ede23eac3928490e4cd16ff19fa121815be213a3fdc109d0aad482"
+    }
+  ]
+}

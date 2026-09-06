@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "source": "src/session-recency.test.ts",
+  "generatedBy": "scripts/capture-session-semantics-contract.mjs",
+  "description": "Session recency anchor contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-session-recency-001",
+      "name": "anchors working to last output",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "working", "lastOutputAt": "2026-06-16T00:00:00.000Z" },
+      "output": { "label": "output", "value": "2026-06-16T00:00:00.000Z" },
+      "inputSha256": "bc4303364c6fc85e675b1c07f08195e796a1b48fefd1496f3f1d65dea598aff4"
+    },
+    {
+      "id": "runtime-state-session-recency-002",
+      "name": "anchors ready to last output",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "ready", "lastOutputAt": "2026-06-16T00:00:00.000Z" },
+      "output": { "label": "output", "value": "2026-06-16T00:00:00.000Z" },
+      "inputSha256": "49c31983e027bba1bf3b6f3de33b538cf6441e21fbb524b695fee7eebdbf9c1a"
+    },
+    {
+      "id": "runtime-state-session-recency-003",
+      "name": "returns null for working with no output yet",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "working" },
+      "output": null,
+      "inputSha256": "6fafe134e9bffc7bfef2c24d757fff4c5cc233f6e9a81d68241bb8972bc552b5"
+    },
+    {
+      "id": "runtime-state-session-recency-004",
+      "name": "returns null for ready with no output yet",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "ready" },
+      "output": null,
+      "inputSha256": "b49e8f15c657b2d06b86c1eea31f8ad02fda78535a1d1fe18d58927c46f43fdd"
+    },
+    {
+      "id": "runtime-state-session-recency-005",
+      "name": "idle prefers output",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "idle", "lastOutputAt": "2026-06-16T00:00:00.000Z" },
+      "output": { "label": "output", "value": "2026-06-16T00:00:00.000Z" },
+      "inputSha256": "76b87904ac5dcd79b30427d31e493011c6301edb48b61236047d190cb6640458"
+    },
+    {
+      "id": "runtime-state-session-recency-006",
+      "name": "idle falls back to became-idle",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "idle", "becameIdleAt": "2026-06-15T00:00:00.000Z" },
+      "output": { "label": "idle", "value": "2026-06-15T00:00:00.000Z" },
+      "inputSha256": "6e9e7d20088d46010e19870551822c79ea1343a54f6b11d5562f91fc129d48f4"
+    },
+    {
+      "id": "runtime-state-session-recency-007",
+      "name": "next_step falls back to became-idle",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "next_step", "becameIdleAt": "2026-06-15T00:00:00.000Z" },
+      "output": { "label": "idle", "value": "2026-06-15T00:00:00.000Z" },
+      "inputSha256": "f157f8b7797c03be4fe1f0b4feb6ef3de50f84d5263470b1252fe1806a342ab2"
+    },
+    {
+      "id": "runtime-state-session-recency-008",
+      "name": "needs_input anchors to prompt time",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": {
+        "label": "needs_input",
+        "latestUnreadAt": "2026-06-16T00:05:00.000Z",
+        "lastOutputAt": "2026-06-16T00:00:00.000Z"
+      },
+      "output": { "label": "prompted", "value": "2026-06-16T00:05:00.000Z" },
+      "inputSha256": "470539bf968e569fe992b186bbfb60d4dd8606dd21cd0b33d37a61c8a811a382"
+    },
+    {
+      "id": "runtime-state-session-recency-009",
+      "name": "needs_response falls back to output",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "needs_response", "lastOutputAt": "2026-06-16T00:00:00.000Z" },
+      "output": { "label": "prompted", "value": "2026-06-16T00:00:00.000Z" },
+      "inputSha256": "8cc6fe634b38a711673aaeb35c8f0937c6b3217b5b7e15bda051faa0faeee21c"
+    },
+    {
+      "id": "runtime-state-session-recency-010",
+      "name": "error labels failed",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "error", "becameIdleAt": "2026-06-15T00:00:00.000Z" },
+      "output": { "label": "failed", "value": "2026-06-15T00:00:00.000Z" },
+      "inputSha256": "ae4c3813ce0aa58ad932f6bd0bad0c3e3c121210d867e0db34b869970b8f6df2"
+    },
+    {
+      "id": "runtime-state-session-recency-011",
+      "name": "blocked labels blocked",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "blocked", "lastOutputAt": "2026-06-16T00:00:00.000Z" },
+      "output": { "label": "blocked", "value": "2026-06-16T00:00:00.000Z" },
+      "inputSha256": "fa7d989e4064e824b5d364e65cc01d1978c4aee6f812c9cf97bbd0ffa1232f32"
+    },
+    {
+      "id": "runtime-state-session-recency-012",
+      "name": "offline falls back to last used",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "offline", "lastUsedAt": "2026-06-10T00:00:00.000Z" },
+      "output": { "label": "offline", "value": "2026-06-10T00:00:00.000Z" },
+      "inputSha256": "cde179664f1edf97c79a3c7246a57b0306a885650af89b6090e6413fa7d06998"
+    },
+    {
+      "id": "runtime-state-session-recency-013",
+      "name": "offline prefers output",
+      "source": "src/session-recency.test.ts",
+      "api": "sessionRecencyAnchor",
+      "input": { "label": "offline", "lastOutputAt": "2026-06-16T00:00:00.000Z" },
+      "output": { "label": "output", "value": "2026-06-16T00:00:00.000Z" },
+      "inputSha256": "2096967d18213255e9acaf8e2085bf7cb145810826b4e528ab2c2a962baa76d2"
+    }
+  ]
+}

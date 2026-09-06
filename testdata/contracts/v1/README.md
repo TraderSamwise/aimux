@@ -229,6 +229,14 @@ Priority fixture groups:
 - `runtime-state/last-used.json`: last-used recency ordering, monotonic
   timestamp updates, per-client isolation, pruning, and legacy seeding captured
   by running TypeScript `last-used`.
+- `runtime-state/session-recency.json`: user-label recency anchor selection
+  captured by running TypeScript `session-recency`.
+- `runtime-state/session-restorability.json`: offline-session exact backend
+  restore readiness and blocker selection captured by running TypeScript
+  `session-restorability`.
+- `runtime-state/session-semantics.json`: session semantic labels, attention
+  scores, compact hints, notification projection, and display-label precedence
+  captured by running TypeScript `session-semantics`.
 - `runtime-state/drift.json`: local-build drift error classification captured
   by running TypeScript `runtime-drift`.
 - `runtime-state/repair-events.json`: durable repair event JSONL logging
