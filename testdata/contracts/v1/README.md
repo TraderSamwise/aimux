@@ -123,6 +123,9 @@ Priority fixture groups:
   renderer behavior captured by running TypeScript `cli/agent-list` helpers.
 - `cli/attachment.json`: CLI attachment MIME and relay URL helper behavior
   captured by running TypeScript `cli/attachment` helpers.
+- `cli/project-service.json`: CLI project-service resolved-path matching,
+  pid extraction, and stale-build help text captured by running TypeScript
+  `cli/project-service` helpers.
 - `cli/team.json`: CLI team payload and text renderer behavior captured by
   running TypeScript `cli/team` helpers.
 
