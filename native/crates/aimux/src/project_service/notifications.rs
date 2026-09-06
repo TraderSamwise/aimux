@@ -65,6 +65,7 @@ pub struct NotificationSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationWriteInput {
     pub title: String,
+    pub subtitle: Option<String>,
     pub body: String,
     pub session_id: Option<String>,
     pub target_key: Option<String>,
@@ -88,6 +89,7 @@ impl Default for NotificationWriteInput {
     fn default() -> Self {
         Self {
             title: String::new(),
+            subtitle: None,
             body: String::new(),
             session_id: None,
             target_key: None,
@@ -113,6 +115,21 @@ pub fn add_notification(
     project_state_dir: impl AsRef<Path>,
     input: NotificationWriteInput,
 ) -> Result<Value, String> {
+    write_notification(project_state_dir, input, false)
+}
+
+pub fn upsert_notification(
+    project_state_dir: impl AsRef<Path>,
+    input: NotificationWriteInput,
+) -> Result<Value, String> {
+    write_notification(project_state_dir, input, true)
+}
+
+fn write_notification(
+    project_state_dir: impl AsRef<Path>,
+    input: NotificationWriteInput,
+    replace_target: bool,
+) -> Result<Value, String> {
     let now = input
         .created_at
         .as_deref()
@@ -127,7 +144,14 @@ pub fn add_notification(
         target_key.as_deref(),
         input.target_kind.as_deref(),
     );
-    let thread_id = unique_notification_id("notification");
+    let thread_id = if replace_target {
+        target_key
+            .as_deref()
+            .map(notification_thread_id)
+            .unwrap_or_else(|| unique_notification_id("notification"))
+    } else {
+        unique_notification_id("notification")
+    };
     let message_id = format!("message-{thread_id}");
     let record_id = unique_notification_id("notification-record");
     let participant_id = session_id
@@ -156,6 +180,7 @@ pub fn add_notification(
     });
     let metadata = notification_metadata(NotificationMetadataInput {
         record_id,
+        subtitle: input.subtitle,
         session_id,
         target_key,
         target_kind,
@@ -381,6 +406,7 @@ fn parse_notification_mutation(body: &Value) -> Result<NotificationMutation, Str
 
 struct NotificationMetadataInput {
     record_id: String,
+    subtitle: Option<String>,
     session_id: Option<String>,
     target_key: Option<String>,
     target_kind: Option<String>,
@@ -401,6 +427,11 @@ fn notification_metadata(input: NotificationMetadataInput) -> Value {
     metadata.insert(
         "notificationRecordId".into(),
         Value::String(input.record_id),
+    );
+    insert_nullable_trimmed(
+        &mut metadata,
+        "notificationSubtitle",
+        input.subtitle.as_deref(),
     );
     for (key, value) in [
         ("notificationSessionId", input.session_id),
@@ -471,6 +502,29 @@ fn normalize_target_kind(
             }
         })
     })
+}
+
+fn notification_thread_id(target_key: &str) -> String {
+    format!("notification-{}", base64_url_no_pad(target_key.as_bytes()))
+}
+
+fn base64_url_no_pad(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut output = String::with_capacity((bytes.len() * 4).div_ceil(3));
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0];
+        let second = chunk.get(1).copied().unwrap_or(0);
+        let third = chunk.get(2).copied().unwrap_or(0);
+        output.push(TABLE[(first >> 2) as usize] as char);
+        output.push(TABLE[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            output.push(TABLE[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char);
+        }
+        if chunk.len() > 2 {
+            output.push(TABLE[(third & 0b0011_1111) as usize] as char);
+        }
+    }
+    output
 }
 
 fn insert_nullable_trimmed(map: &mut Map<String, Value>, key: &str, value: Option<&str>) {

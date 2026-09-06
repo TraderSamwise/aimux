@@ -104,9 +104,10 @@ Priority fixture groups:
 - `notifications/osc.json`: OSC 9, OSC 99, OSC 777, chunk buffering, ST
   terminator, base64, and malformed-payload behavior captured by running the
   TypeScript `OscNotificationParser`.
-- `notifications/store.json`: notification list/filter/count, mark-read, and
-  clear mutation behavior captured by running TypeScript notification store
-  helpers against a seeded runtime exchange.
+- `notifications/store.json`: notification list/filter/count, mark-read, clear,
+  add/upsert, live alert event, focus-suppression, dedupe, interaction metadata,
+  and runtime-exchange side-effect behavior captured by running TypeScript
+  notification helpers.
 
 ## Context
 
