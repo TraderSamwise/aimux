@@ -437,6 +437,8 @@ Priority fixture groups:
   detection, deletion/dry-run behavior, debris reclamation, environment root
   handling, and conservative defaults captured by running TypeScript
   `install-cleanup` helpers.
+- `install-cleanup/doctor.json`: install cleanup dry-run guard and report text
+  renderer behavior captured by running TypeScript `install-doctor` helpers.
 
 ## Interaction Requests
 

@@ -296,6 +296,10 @@ pub fn is_install_cleanup_dry_run(fix: bool) -> bool {
     !fix
 }
 
+pub fn is_install_cleanup_dry_run_value(options: &serde_json::Value) -> bool {
+    options.get("fix").and_then(serde_json::Value::as_bool) != Some(true)
+}
+
 pub fn render_install_cleanup_plan(plan: &InstallCleanupPlan) -> String {
     let mut lines = vec![
         "Aimux Installs".to_owned(),

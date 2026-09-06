@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "source": "src/install-doctor.test.ts",
+  "generatedBy": "scripts/capture-install-doctor-contract.mjs",
+  "description": "Install doctor dry-run guard and cleanup report renderer outputs captured by running TypeScript install-doctor helpers.",
+  "cases": [
+    {
+      "id": "install-doctor-001",
+      "name": "keeps dry-run default unless fix is exactly true",
+      "source": "src/install-doctor.test.ts",
+      "api": "isInstallCleanupDryRun",
+      "input": {
+        "name": "keeps dry-run default unless fix is exactly true",
+        "api": "isInstallCleanupDryRun",
+        "options": {}
+      },
+      "output": true,
+      "inputSha256": "e29d0a94802d64a9b9fa140c0ab0869e7cbc2983515dc0ec91ce4e03469c7e34"
+    },
+    {
+      "id": "install-doctor-002",
+      "name": "leaves dry-run mode when fix is true",
+      "source": "src/install-doctor.test.ts",
+      "api": "isInstallCleanupDryRun",
+      "input": {
+        "name": "leaves dry-run mode when fix is true",
+        "api": "isInstallCleanupDryRun",
+        "options": { "fix": true }
+      },
+      "output": false,
+      "inputSha256": "8f54af8a16b6f74b391c4d997c79ea30ff349a5ff252e8d3042d55b53d0669e2"
+    },
+    {
+      "id": "install-doctor-003",
+      "name": "stays dry-run for truthy non-boolean fix value",
+      "source": "src/install-doctor.test.ts",
+      "api": "isInstallCleanupDryRun",
+      "input": {
+        "name": "stays dry-run for truthy non-boolean fix value",
+        "api": "isInstallCleanupDryRun",
+        "options": { "fix": "yes" }
+      },
+      "output": true,
+      "inputSha256": "a41d88850cf8df27a8520370ee9e367e44e871a51a1eb56acddbf8c214f3fd87"
+    },
+    {
+      "id": "install-doctor-004",
+      "name": "summarises cleanup plan",
+      "source": "src/install-doctor.test.ts",
+      "api": "renderInstallCleanupPlan",
+      "input": {
+        "name": "summarises cleanup plan",
+        "api": "renderInstallCleanupPlan",
+        "plan": {
+          "root": "/root/native",
+          "currentInstall": "current",
+          "retentionDays": 30,
+          "keepRecent": 10,
+          "referencesComplete": true,
+          "remove": [{ "name": "old", "path": "/root/native/old", "ageDays": 70.4, "sizeBytes": 19000000 }],
+          "keep": [
+            { "name": "current", "reason": "current-install" },
+            { "name": "busy", "reason": "in-use" }
+          ],
+          "reclaimableBytes": 19000000
+        }
+      },
+      "output": "Aimux Installs\n  root: /root/native\n  current: current\n  kept: 2\n    current install: 1\n    still referenced: 1\n  removable: 1 (19 MB)\n  policy: keep 10 newest, retain 30 days\n\n  Oldest removable:\n    old  70d  19 MB",
+      "inputSha256": "52c8141959a9c8a5ee7a572352063ed101ac7247c0fc4305803316f77ae3231f"
+    },
+    {
+      "id": "install-doctor-005",
+      "name": "renders incomplete reference scan as non-removable",
+      "source": "src/install-doctor.test.ts",
+      "api": "renderInstallCleanupPlan",
+      "input": {
+        "name": "renders incomplete reference scan as non-removable",
+        "api": "renderInstallCleanupPlan",
+        "plan": {
+          "root": "/root/native",
+          "currentInstall": "current",
+          "retentionDays": 30,
+          "keepRecent": 10,
+          "referencesComplete": false,
+          "remove": [],
+          "keep": [
+            { "name": "current", "reason": "current-install" },
+            { "name": "busy", "reason": "in-use" }
+          ],
+          "reclaimableBytes": 0
+        }
+      },
+      "output": "Aimux Installs\n  root: /root/native\n  current: current\n  kept: 2\n    current install: 1\n    still referenced: 1\n  removable: 0 (0 B)\n  policy: keep 10 newest, retain 30 days\n\n  Reference scan was incomplete, so nothing can be removed.\n  An install that could not be checked is treated as still in use.",
+      "inputSha256": "c02b7e1f4b342ada3a72e82d1721ffcc15189934c4ff2f84ab9fe2db9bebd978"
+    },
+    {
+      "id": "install-doctor-006",
+      "name": "reports unknown current install",
+      "source": "src/install-doctor.test.ts",
+      "api": "renderInstallCleanupPlan",
+      "input": {
+        "name": "reports unknown current install",
+        "api": "renderInstallCleanupPlan",
+        "plan": {
+          "root": "/root/native",
+          "currentInstall": null,
+          "retentionDays": 30,
+          "keepRecent": 10,
+          "referencesComplete": true,
+          "remove": [{ "name": "old", "path": "/root/native/old", "ageDays": 70.4, "sizeBytes": 19000000 }],
+          "keep": [
+            { "name": "current", "reason": "current-install" },
+            { "name": "busy", "reason": "in-use" }
+          ],
+          "reclaimableBytes": 19000000
+        }
+      },
+      "output": "Aimux Installs\n  root: /root/native\n  current: unknown\n  kept: 2\n    current install: 1\n    still referenced: 1\n  removable: 1 (19 MB)\n  policy: keep 10 newest, retain 30 days\n\n  Oldest removable:\n    old  70d  19 MB",
+      "inputSha256": "2f5d889e07507459a29f18d514d09d9d8c8f26f80ac85f568dff81af005d9272"
+    },
+    {
+      "id": "install-doctor-007",
+      "name": "renders dry-run cleanup result with fix guidance",
+      "source": "src/install-doctor.test.ts",
+      "api": "renderInstallCleanupResult",
+      "input": {
+        "name": "renders dry-run cleanup result with fix guidance",
+        "api": "renderInstallCleanupResult",
+        "result": {
+          "dryRun": true,
+          "plan": {
+            "root": "/root/native",
+            "currentInstall": "current",
+            "retentionDays": 30,
+            "keepRecent": 10,
+            "referencesComplete": true,
+            "remove": [{ "name": "old", "path": "/root/native/old", "ageDays": 70.4, "sizeBytes": 19000000 }],
+            "keep": [
+              { "name": "current", "reason": "current-install" },
+              { "name": "busy", "reason": "in-use" }
+            ],
+            "reclaimableBytes": 19000000
+          },
+          "results": [],
+          "reclaimedBytes": 0
+        }
+      },
+      "output": "Aimux Installs\n  root: /root/native\n  current: current\n  kept: 2\n    current install: 1\n    still referenced: 1\n  removable: 1 (19 MB)\n  policy: keep 10 newest, retain 30 days\n\n  Oldest removable:\n    old  70d  19 MB\n\n  Dry run: nothing was removed. Pass --fix to reclaim 19 MB.",
+      "inputSha256": "a3a09b243355137e3bbcdd020df33268639930aa5baf45972af8e6fe65f17283"
+    },
+    {
+      "id": "install-doctor-008",
+      "name": "renders real cleanup result with failures",
+      "source": "src/install-doctor.test.ts",
+      "api": "renderInstallCleanupResult",
+      "input": {
+        "name": "renders real cleanup result with failures",
+        "api": "renderInstallCleanupResult",
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "root": "/root/native",
+            "currentInstall": "current",
+            "retentionDays": 30,
+            "keepRecent": 10,
+            "referencesComplete": true,
+            "remove": [{ "name": "old", "path": "/root/native/old", "ageDays": 70.4, "sizeBytes": 19000000 }],
+            "keep": [
+              { "name": "current", "reason": "current-install" },
+              { "name": "busy", "reason": "in-use" }
+            ],
+            "reclaimableBytes": 19000000
+          },
+          "results": [
+            { "name": "old", "status": "removed", "sizeBytes": 19000000 },
+            { "name": "stuck", "status": "failed", "sizeBytes": 0, "error": "permission denied" }
+          ],
+          "reclaimedBytes": 19000000
+        }
+      },
+      "output": "Aimux Installs\n  root: /root/native\n  current: current\n  kept: 2\n    current install: 1\n    still referenced: 1\n  removable: 1 (19 MB)\n  policy: keep 10 newest, retain 30 days\n\n  Oldest removable:\n    old  70d  19 MB\n\n  Removed 1 installs, reclaiming 19 MB.\n    failed: stuck: permission denied",
+      "inputSha256": "f9d34a41a65acd298ccad8e476b9631a807b9b4cac091780b1c0aeb8d8afdb3d"
+    },
+    {
+      "id": "install-doctor-009",
+      "name": "does not offer fix when nothing is removable",
+      "source": "src/install-doctor.test.ts",
+      "api": "renderInstallCleanupResult",
+      "input": {
+        "name": "does not offer fix when nothing is removable",
+        "api": "renderInstallCleanupResult",
+        "result": {
+          "dryRun": true,
+          "plan": {
+            "root": "/root/native",
+            "currentInstall": "current",
+            "retentionDays": 30,
+            "keepRecent": 10,
+            "referencesComplete": true,
+            "remove": [],
+            "keep": [
+              { "name": "current", "reason": "current-install" },
+              { "name": "busy", "reason": "in-use" }
+            ],
+            "reclaimableBytes": 0
+          },
+          "results": [],
+          "reclaimedBytes": 0
+        }
+      },
+      "output": "Aimux Installs\n  root: /root/native\n  current: current\n  kept: 2\n    current install: 1\n    still referenced: 1\n  removable: 0 (0 B)\n  policy: keep 10 newest, retain 30 days\n\n  Nothing to remove.",
+      "inputSha256": "5055a364ffc28f9ce317369b418aea2edbd8983e8b4c9d5b046c876aafe0b906"
+    }
+  ]
+}
