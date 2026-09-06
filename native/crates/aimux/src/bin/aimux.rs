@@ -131,6 +131,9 @@ fn main() -> Result<ExitCode> {
             return Ok(ExitCode::from(run_tmux_expose(options) as u8));
         }
         CliEntry::Main => {
+            if stripped_args.is_empty() {
+                return run_root_dashboard_command();
+            }
             if !is_native_main_command(&stripped_args) {
                 return run_node_fallback(&raw_args);
             }
@@ -190,6 +193,7 @@ fn main() -> Result<ExitCode> {
 
 fn is_native_main_command(args: &[String]) -> bool {
     match args {
+        [] => true,
         [command, ..] if command == "build-info" => true,
         [command, subcommand, ..] if command == "daemon" && subcommand == "run" => true,
         [command, subcommand, ..] if command == "contracts" && subcommand == "list" => true,
@@ -199,6 +203,30 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "__dashboard-internal-native" => true,
         _ => false,
     }
+}
+
+fn run_root_dashboard_command() -> Result<ExitCode> {
+    let serve_args = vec!["serve".to_owned()];
+    let serve = run_core_cli(&serve_args);
+    if serve.code != 0 {
+        for line in serve.stdout {
+            println!("{line}");
+        }
+        for line in serve.stderr {
+            eprintln!("{line}");
+        }
+        return Ok(ExitCode::from(serve.code as u8));
+    }
+
+    let dashboard_args = vec!["dashboard-reload".to_owned(), "--open".to_owned()];
+    let dashboard = run_core_cli(&dashboard_args);
+    for line in dashboard.stdout {
+        println!("{line}");
+    }
+    for line in dashboard.stderr {
+        eprintln!("{line}");
+    }
+    Ok(ExitCode::from(dashboard.code as u8))
 }
 
 fn run_local_ui_command(

@@ -99,6 +99,32 @@ fn native_dashboard_internal_once_renders_snapshot_without_node_fallback() {
     cleanup(root);
 }
 
+#[test]
+fn root_dashboard_entry_stays_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-root-dashboard");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .env("AIMUX_DAEMON_PORT", "0")
+        .output()
+        .expect("run native aimux");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("AIMUX_DAEMON_PORT must be an integer between 1 and 65535"),
+        "stderr should report invalid daemon port"
+    );
+    assert!(
+        !log.exists(),
+        "root dashboard command should not invoke node fallback"
+    );
+    cleanup(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
