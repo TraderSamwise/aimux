@@ -232,6 +232,13 @@ Priority fixture groups:
   fixture is an ignored checklist until the daemon exposes an equivalent
   histogram API.
 
+## Debug
+
+- `debug/lifecycle-log.json`: control-plane lifecycle log writes, daemon-log
+  destination, process id presence, and sensitive-field redaction captured by
+  running TypeScript `logLifecycleAlways`; the Rust fixture is an ignored
+  checklist until the logging subsystem is ported.
+
 ## Graveyard
 
 - `graveyard/cleanup.json`: graveyard cleanup plan cutoffs, retention
