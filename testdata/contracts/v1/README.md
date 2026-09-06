@@ -81,6 +81,14 @@ Priority fixture groups:
   replacement/expiry/drop/rejection, and malformed rail cases captured by
   running the TypeScript metadata store against temporary project state.
 
+## Runtime Coherence
+
+- `runtime-coherence/report.json`: daemon/project-service/tmux version
+  coherence, service reachability, dashboard staleness, runtime contract
+  rebuild, supervisor restart, stale native path, and rendered-report cases
+  captured by running TypeScript `buildRuntimeCoherenceReport` with mocked
+  runtime dependencies.
+
 ## Statusline
 
 - `statusline/model.json`: statusline helper, scoped-session, teammate,
