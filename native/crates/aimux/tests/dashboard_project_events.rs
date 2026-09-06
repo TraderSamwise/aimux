@@ -98,3 +98,16 @@ fn ready_refreshes_but_plain_alert_does_not() {
     assert!(event_requests_desktop_state(&ready));
     assert!(!event_requests_desktop_state(&alert));
 }
+
+#[test]
+fn handles_crlf_and_ignores_invalid_payload_shapes() {
+    let mut decoder = ProjectEventsSseDecoder::default();
+    let events = decoder
+        .push_chunk(
+            b"event: alert\r\ndata: nope\r\n\r\nevent: project_update\r\ndata: []\r\n\r\nevent: alert\r\ndata: {\"title\":\"kept\"}\r\n\r\n",
+        )
+        .expect("decode frames");
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].payload()["title"], "kept");
+}
