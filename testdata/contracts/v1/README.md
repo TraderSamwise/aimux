@@ -630,6 +630,10 @@ Priority fixture groups:
   hidden-worktree filtering, teammate inclusion, teammate metadata
   preservation, and teammate ordering captured by running TypeScript
   `dashboard/session-registry` helpers.
+- `dashboard/session-actions.json`: dashboard stop, graveyard, and offline
+  resume result states plus side-effect call ordering captured by running
+  TypeScript `dashboard/session-actions` helpers with a deterministic clock for
+  timeout paths.
 - `dashboard/visibility.json`: dashboard offline-session classification and
   hide-offline model filtering captured by running TypeScript
   `dashboard/visibility` helpers.
