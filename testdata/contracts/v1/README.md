@@ -356,6 +356,16 @@ Priority fixture groups:
   cases captured by running TypeScript `ExposePaneOutputTap` with mocked tmux
   calls and temporary tap files.
 
+## Metadata Server
+
+- `metadata-server/interaction-display.json`: interaction title, message, and
+  summary projection behavior captured by running TypeScript
+  `summarizeInteractionForDisplay`.
+- `metadata-server/output-previews.json`: expose preview snapshot merging,
+  agent-output read coalescing, visual client lease touch behavior, and default
+  preview diagnostics captured by running TypeScript metadata-server
+  output-preview helpers, with lease timestamps normalized after execution.
+
 ## Metadata Store
 
 - `metadata-store/store.json`: persisted metadata load/save, topology-owned
