@@ -14,6 +14,8 @@ pub mod daemon;
 pub mod daemon_projects;
 pub mod daemon_state;
 pub mod daemon_supervisor;
+pub mod dashboard_command_spec;
+pub mod dashboard_model;
 pub mod debug_state;
 pub mod expose_socket;
 pub mod launcher_env;
@@ -37,6 +39,7 @@ pub mod tmux;
 pub mod tmux_expose;
 pub mod tool_hooks;
 pub mod translation_plan;
+pub mod tui_render;
 
 pub use build_info::{BuildInfo, build_info};
 pub use contracts::{ContractArea, ContractManifest, contract_manifest};
