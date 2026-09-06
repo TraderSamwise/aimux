@@ -15,6 +15,21 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn fixture_tmux_control_script_matches_typescript_contract() {
+    assert_tmux_control_contract(TmuxControlRunner::ShellScript);
+}
+
+#[test]
+fn fixture_tmux_control_native_matches_typescript_contract() {
+    assert_tmux_control_contract(TmuxControlRunner::Native);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TmuxControlRunner {
+    ShellScript,
+    Native,
+}
+
+fn assert_tmux_control_contract(runner: TmuxControlRunner) {
     let contract: Value =
         serde_json::from_str(TMUX_CONTROL_SCRIPT).expect("valid tmux-control fixture");
     let cases = contract["cases"].as_array().expect("tmux-control cases");
@@ -23,7 +38,7 @@ fn fixture_tmux_control_script_matches_typescript_contract() {
     let mut failures = Vec::new();
     for case in cases {
         let expected = &case["output"];
-        let actual = run_case(case);
+        let actual = run_case(case, runner);
         if &actual != expected {
             failures.push(json!({
                 "id": case["id"],
@@ -42,7 +57,7 @@ fn fixture_tmux_control_script_matches_typescript_contract() {
     );
 }
 
-fn run_case(case: &Value) -> Value {
+fn run_case(case: &Value, runner: TmuxControlRunner) -> Value {
     let repo = repo_root();
     let mut roots = BTreeMap::<String, TempRoot>::new();
     let exec_calls = case["input"]["execCalls"].as_array().expect("exec calls");
@@ -77,7 +92,7 @@ fn run_case(case: &Value) -> Value {
 
     let mut thrown = Value::Null;
     for call in exec_calls {
-        if let Err(error) = run_exec_call(call, &repo, &roots) {
+        if let Err(error) = run_exec_call(call, &repo, &roots, runner) {
             thrown = error;
             break;
         }
@@ -100,6 +115,7 @@ fn run_exec_call(
     call: &Value,
     repo: &Path,
     roots: &BTreeMap<String, TempRoot>,
+    runner: TmuxControlRunner,
 ) -> Result<(), Value> {
     let root_placeholder = call["beforeRoot"]["root"]
         .as_str()
@@ -109,17 +125,25 @@ fn run_exec_call(
         .expect("root for exec call")
         .path();
     let replacements = placeholder_map(roots);
-    let command = denormalize_string(
+    let recorded_command = denormalize_string(
         call["command"].as_str().expect("command"),
         repo,
         &replacements,
     );
-    let args = call["args"]
+    let recorded_args = call["args"]
         .as_array()
         .expect("args")
         .iter()
         .map(|arg| denormalize_string(arg.as_str().expect("arg"), repo, &replacements))
         .collect::<Vec<_>>();
+    let (command, args) = match runner {
+        TmuxControlRunner::ShellScript => (recorded_command, recorded_args),
+        TmuxControlRunner::Native => {
+            let mut args = vec!["__tmux-control-internal".to_owned()];
+            args.extend(recorded_args.into_iter().skip(1));
+            (native_aimux_binary(), args)
+        }
+    };
     let bin_dir = root.join("bin");
     let path = format!(
         "{}:{}",
@@ -138,6 +162,15 @@ fn run_exec_call(
         .env("TMUX_FAKE_CURL_LOG", root.join("curl-log.jsonl"))
         .env("TMUX_FAKE_AIMUX_LOG", root.join("aimux-log.txt"))
         .env("AIMUX_BIN", bin_dir.join("aimux"));
+    if runner == TmuxControlRunner::Native {
+        process.env(
+            "AIMUX_TMUX_CONTROL_COMMAND",
+            format!(
+                "sh {}",
+                repo.join("scripts/tmux-control.sh").to_string_lossy()
+            ),
+        );
+    }
     if let Some(env) = call["env"].as_object() {
         for (key, value) in env {
             if key == "PATH" || value.is_null() {
@@ -159,6 +192,15 @@ fn run_exec_call(
             "status": output.status.code(),
         }))
     }
+}
+
+fn native_aimux_binary() -> String {
+    std::env::var("CARGO_BIN_EXE_aimux").unwrap_or_else(|_| {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/debug/aimux")
+            .to_string_lossy()
+            .into_owned()
+    })
 }
 
 struct TempRoot {
@@ -509,8 +551,9 @@ fn sanitize_label(value: &str) -> String {
 }
 
 fn normalize_tempfile_paths(value: &str) -> String {
+    let value = normalize_fixture_root_tempfile_paths(value);
     let mut output = String::new();
-    let mut rest = value;
+    let mut rest = value.as_str();
     while let Some(start) = rest.find("/var/folders/") {
         output.push_str(&rest[..start]);
         let tail = &rest[start..];
@@ -526,6 +569,34 @@ fn normalize_tempfile_paths(value: &str) -> String {
             .unwrap_or(rest.len());
         output.push_str("<tempfile>");
         rest = &rest[absolute_after_tmp..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn normalize_fixture_root_tempfile_paths(value: &str) -> String {
+    let mut output = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("<temp") {
+        output.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let Some(close_offset) = tail.find('>') else {
+            output.push_str(tail);
+            return output;
+        };
+        let after_placeholder = close_offset + 1;
+        if !tail[after_placeholder..].starts_with("/tmp.") {
+            output.push_str(&tail[..after_placeholder]);
+            rest = &tail[after_placeholder..];
+            continue;
+        }
+        let after_tmp = after_placeholder + "/tmp.".len();
+        let end = tail[after_tmp..]
+            .find(|character: char| !character.is_ascii_alphanumeric())
+            .map(|offset| after_tmp + offset)
+            .unwrap_or(tail.len());
+        output.push_str("<tempfile>");
+        rest = &tail[end..];
     }
     output.push_str(rest);
     output

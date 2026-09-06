@@ -17,6 +17,7 @@ use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
 use aimux::root_session_launch::{parse_root_resume_args, resume_saved_sessions};
+use aimux::tmux_control::{parse_tmux_control_args, run_tmux_control};
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -32,7 +33,7 @@ struct Cli {
     command: Command,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum Command {
     BuildInfo {
         #[arg(long)]
@@ -82,9 +83,14 @@ enum Command {
         #[arg(long)]
         once: bool,
     },
+    #[command(name = "__tmux-control-internal", hide = true)]
+    TmuxControlInternal {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum ContractsCommand {
     List {
         #[arg(long)]
@@ -92,12 +98,12 @@ enum ContractsCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum DaemonCommand {
     Run,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum RewriteCommand {
     Status {
         #[arg(long)]
@@ -157,6 +163,15 @@ fn main() -> Result<ExitCode> {
         }
     }
     let cli = Cli::parse_from(std::iter::once("aimux".to_owned()).chain(stripped_args));
+    if let Command::TmuxControlInternal { args } = cli.command.clone() {
+        return match parse_tmux_control_args(&args) {
+            Ok(options) => Ok(ExitCode::from(run_tmux_control(options) as u8)),
+            Err(error) => {
+                eprintln!("Error: {error}");
+                Ok(ExitCode::from(1))
+            }
+        };
+    }
     match cli.command {
         Command::BuildInfo { json } => print_value(aimux::build_info(), json),
         Command::Daemon {
@@ -204,6 +219,7 @@ fn main() -> Result<ExitCode> {
             })?;
             Ok(())
         }
+        Command::TmuxControlInternal { .. } => unreachable!("handled before native command match"),
     }?;
     Ok(ExitCode::SUCCESS)
 }
@@ -218,6 +234,7 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "ui" => true,
         [command, ..] if command == "__project-service-internal" => true,
         [command, ..] if command == "__dashboard-internal-native" => true,
+        [command, ..] if command == "__tmux-control-internal" => true,
         _ => false,
     }
 }
@@ -418,6 +435,7 @@ fn is_known_aimux_command_word(word: &str) -> bool {
             | "whoami"
             | "worktree"
             | "__dashboard-internal-native"
+            | "__tmux-control-internal"
             | "__project-service-internal"
     )
 }

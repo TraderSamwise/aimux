@@ -1839,10 +1839,15 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
         .join("scripts");
     TmuxRuntimeConfig {
         project_state_dir,
-        control_script_command: format!(
-            "sh {}",
-            shell_quote(&script_root.join("tmux-control.sh").to_string_lossy())
-        ),
+        control_script_command: std::env::current_exe()
+            .ok()
+            .map(|path| {
+                format!(
+                    "{} __tmux-control-internal",
+                    shell_quote(&path.to_string_lossy())
+                )
+            })
+            .unwrap_or_else(|| "aimux __tmux-control-internal".to_owned()),
         statusline_command: TmuxCommandSpec {
             cwd: project_root_text.to_owned(),
             command: "sh".to_owned(),
