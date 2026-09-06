@@ -16,6 +16,7 @@ use aimux::paths::PathResolver;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
+use aimux::root_session_launch::{parse_root_resume_args, resume_saved_sessions};
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -136,6 +137,9 @@ fn main() -> Result<ExitCode> {
             if stripped_args.is_empty() {
                 return run_root_dashboard_command();
             }
+            if let Some(request) = parse_root_resume_args(&stripped_args) {
+                return run_root_resume_command(request.tool_filter.as_deref());
+            }
             if let Some(args) = native_tool_launch_args(&stripped_args) {
                 return run_core_command_and_print(&args);
             }
@@ -236,6 +240,29 @@ fn run_core_command_and_print(args: &[String]) -> Result<ExitCode> {
         eprintln!("{line}");
     }
     Ok(ExitCode::from(execution.code as u8))
+}
+
+fn run_root_resume_command(tool_filter: Option<&str>) -> Result<ExitCode> {
+    let serve_args = vec!["serve".to_owned()];
+    let serve = run_core_cli(&serve_args);
+    if serve.code != 0 {
+        for line in serve.stdout {
+            println!("{line}");
+        }
+        for line in serve.stderr {
+            eprintln!("{line}");
+        }
+        return Ok(ExitCode::from(serve.code as u8));
+    }
+    let project_root = current_project_root()?;
+    let result = resume_saved_sessions(&project_root, tool_filter)?;
+    if result.resumed.is_empty() {
+        eprintln!("No saved session state found (or state is stale). Starting fresh.");
+    }
+    for (session_id, error) in result.failed {
+        eprintln!("Skipping saved session \"{session_id}\": {error}");
+    }
+    run_core_command_and_print(&["dashboard-reload".to_owned(), "--open".to_owned()])
 }
 
 fn native_tool_launch_args(args: &[String]) -> Option<Vec<String>> {

@@ -48,6 +48,7 @@ pub mod proxy_project_binding;
 pub mod remote_access;
 pub mod remote_credentials;
 pub mod remote_login;
+pub mod root_session_launch;
 pub mod runtime_topology;
 pub mod session_bootstrap;
 pub mod shell_hooks;

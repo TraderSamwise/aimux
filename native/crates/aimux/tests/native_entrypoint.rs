@@ -157,6 +157,33 @@ fn configured_tool_launch_stays_native_with_original_tool_args() {
     cleanup(root);
 }
 
+#[test]
+fn root_resume_entry_stays_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-root-resume");
+    fs::create_dir_all(root.join("dist")).expect("create dist");
+    fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .current_dir(&root)
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .env("AIMUX_DAEMON_PORT", "0")
+        .args(["--resume", "codex"])
+        .output()
+        .expect("run native aimux");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("AIMUX_DAEMON_PORT must be an integer between 1 and 65535"),
+        "stderr should report invalid daemon port"
+    );
+    assert!(!log.exists(), "root resume should not invoke node fallback");
+    cleanup(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
