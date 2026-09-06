@@ -4,10 +4,7 @@ use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 
-use super::dispatcher::{
-    ProjectServiceDispatchResponse, project_service_pathname,
-    route_unimplemented_project_service_request,
-};
+use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{inspect_runtime_exchange_store, runtime_exchange_path};
 
@@ -89,21 +86,6 @@ pub fn route_read_request(
                 },
             }),
         ));
-    }
-
-    if pathname == routes::DESKTOP_STATE
-        || pathname == routes::COORDINATION_WORKLIST
-        || pathname == routes::PROJECT_OBSERVABILITY
-        || pathname == routes::TOPOLOGY
-        || pathname == routes::WORKTREES
-        || pathname == routes::GRAVEYARD
-        || pathname == routes::agents::LIST
-        || pathname == routes::agents::TEAMMATES
-        || pathname == routes::agents::HISTORY
-        || pathname == routes::team::CONFIG
-        || pathname == routes::controls::SWITCHABLE_AGENTS
-    {
-        return Some(route_unimplemented_project_service_request(method, path));
     }
 
     None

@@ -59,12 +59,15 @@ else
   yarn build:release
   yarn build:ui:local
 fi
+cargo build --manifest-path native/Cargo.toml -p aimux --release
 
 PKG_DIR="$TMP_DIR/aimux"
 mkdir -p "$PKG_DIR"
 
 cp package.json yarn.lock README.md LICENSE "$PKG_DIR/"
 cp -R bin dist "$PKG_DIR/"
+mkdir -p "$PKG_DIR/native/$PLATFORM-$ARCH"
+cp native/target/release/aimux "$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
 if [ "$BUILD_PROFILE" = "full" ]; then
   cp -R dist-ui docs scripts "$PKG_DIR/"
 else
@@ -85,7 +88,8 @@ artifact_mtime_ms() {
 }
 
 MAIN_ARTIFACT="$PKG_DIR/dist/main.js"
-BUILD_STAMP="$(artifact_mtime_ms "$PKG_DIR/dist/launcher-bin.js").$(artifact_mtime_ms "$MAIN_ARTIFACT")-$(cat "$PKG_DIR/dist/launcher-bin.js" "$MAIN_ARTIFACT" | shasum -a 1 | awk '{ print substr($1, 1, 12) }')"
+NATIVE_ARTIFACT="$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
+BUILD_STAMP="$(artifact_mtime_ms "$PKG_DIR/dist/launcher-bin.js").$(artifact_mtime_ms "$MAIN_ARTIFACT").$(artifact_mtime_ms "$NATIVE_ARTIFACT")-$(cat "$PKG_DIR/dist/launcher-bin.js" "$MAIN_ARTIFACT" "$NATIVE_ARTIFACT" | shasum -a 1 | awk '{ print substr($1, 1, 12) }')"
 printf '%s\n' "$BUILD_STAMP" > "$PKG_DIR/BUILD_STAMP"
 
 if [ "$PLATFORM" = "darwin" ]; then
@@ -99,6 +103,7 @@ fi
 )
 
 chmod +x "$PKG_DIR/bin/aimux"
+chmod +x "$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
 chmod +x "$PKG_DIR/scripts/"*.sh 2>/dev/null || true
 chmod +x "$PKG_DIR/node_modules/node-pty/prebuilds/darwin-"*/spawn-helper 2>/dev/null || true
 

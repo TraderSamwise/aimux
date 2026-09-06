@@ -146,12 +146,14 @@ NODE_BIN_QUOTED="$(shell_quote "$NODE_BIN")"
 DEST_QUOTED="$(shell_quote "$DEST")"
 BIN_SHIM_QUOTED="$(shell_quote "$BIN_DIR/aimux")"
 INSTALL_ROOT_QUOTED="$(shell_quote "$INSTALL_ROOT")"
+NATIVE_BIN_QUOTED="$(shell_quote "$DEST/native/$PLATFORM-$ARCH/aimux")"
 cat > "$DEST/bin/aimux" <<EOF
 #!/usr/bin/env sh
 set -eu
 
 AIMUX_NODE_BIN=$NODE_BIN_QUOTED
 AIMUX_ROOT=$DEST_QUOTED
+AIMUX_NATIVE_BIN=$NATIVE_BIN_QUOTED
 
 if [ -z "\${AIMUX_CLI_BIN:-}" ]; then AIMUX_CLI_BIN=$BIN_SHIM_QUOTED; export AIMUX_CLI_BIN; fi
 if [ -z "\${AIMUX_INSTALL_ROOT:-}" ]; then AIMUX_INSTALL_ROOT=$INSTALL_ROOT_QUOTED; export AIMUX_INSTALL_ROOT; fi
@@ -159,8 +161,11 @@ if [ -z "\${AIMUX_HOME:-}" ]; then AIMUX_HOME="\$HOME/.aimux"; export AIMUX_HOME
 if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMUX_DAEMON_PORT; fi
 if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
 if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
-export AIMUX_NODE_BIN AIMUX_ROOT
+export AIMUX_NODE_BIN AIMUX_ROOT AIMUX_NATIVE_BIN
 
+if [ -x "\$AIMUX_NATIVE_BIN" ]; then
+  exec "\$AIMUX_NATIVE_BIN" "\$@"
+fi
 exec "\$AIMUX_ROOT/scripts/installed-aimux-shim.sh" "\$@"
 EOF
 chmod +x "$DEST/bin/aimux"

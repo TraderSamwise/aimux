@@ -6,9 +6,10 @@ use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
 use std::process::ExitCode;
 
 #[derive(Debug, Parser)]
@@ -95,7 +96,11 @@ fn main() -> Result<ExitCode> {
             };
             return Ok(ExitCode::from(run_tmux_expose(options) as u8));
         }
-        CliEntry::Main => {}
+        CliEntry::Main => {
+            if !is_native_main_command(&stripped_args) {
+                return run_node_fallback(&raw_args);
+            }
+        }
     }
     let cli = Cli::parse_from(std::iter::once("aimux".to_owned()).chain(stripped_args));
     match cli.command {
@@ -124,6 +129,58 @@ fn main() -> Result<ExitCode> {
         }
     }?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn is_native_main_command(args: &[String]) -> bool {
+    match args {
+        [command, ..] if command == "build-info" => true,
+        [command, subcommand, ..] if command == "daemon" && subcommand == "run" => true,
+        [command, subcommand, ..] if command == "contracts" && subcommand == "list" => true,
+        [command, subcommand, ..] if command == "rewrite" && subcommand == "status" => true,
+        [command, ..] if command == "__project-service-internal" => true,
+        _ => false,
+    }
+}
+
+fn run_node_fallback(args: &[String]) -> Result<ExitCode> {
+    let Some(root) = std::env::var_os("AIMUX_ROOT") else {
+        let cli = Cli::parse_from(std::iter::once("aimux".to_owned()).chain(args.iter().cloned()));
+        drop(cli);
+        return Ok(ExitCode::SUCCESS);
+    };
+    let script = PathBuf::from(root).join("dist/launcher-bin.js");
+    if !script.is_file() {
+        let cli = Cli::parse_from(std::iter::once("aimux".to_owned()).chain(args.iter().cloned()));
+        drop(cli);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let node = std::env::var_os("AIMUX_NODE_BIN").unwrap_or_else(|| "node".into());
+    exec_or_wait_node(node, script, args)
+}
+
+#[cfg(unix)]
+fn exec_or_wait_node(
+    node: std::ffi::OsString,
+    script: PathBuf,
+    args: &[String],
+) -> Result<ExitCode> {
+    use std::os::unix::process::CommandExt;
+    Err(ProcessCommand::new(node).arg(script).args(args).exec())
+        .context("exec node launcher fallback")
+}
+
+#[cfg(not(unix))]
+fn exec_or_wait_node(
+    node: std::ffi::OsString,
+    script: PathBuf,
+    args: &[String],
+) -> Result<ExitCode> {
+    let status = ProcessCommand::new(node)
+        .arg(script)
+        .args(args)
+        .status()
+        .context("run node launcher fallback")?;
+    Ok(ExitCode::from(status.code().unwrap_or(1) as u8))
 }
 
 fn print_value<T>(value: T, json: bool) -> Result<()>

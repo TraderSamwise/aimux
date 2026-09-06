@@ -1,6 +1,7 @@
 use aimux::project_api_contract::routes;
 use aimux::project_service::reads::route_read_request;
 use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::project_service::router::route_project_service_request;
 use serde_json::Value;
 use serde_json::json;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -78,11 +79,13 @@ fn diagnostics_lifecycle_route_reports_empty_rust_queue() {
 }
 
 #[test]
-fn read_split_returns_unimplemented_for_known_unported_reads() {
+fn desktop_state_is_owned_by_router_not_legacy_read_split() {
     let context = ProjectServiceRequestContext::with_project_state_dir("/repo", "/state/repo");
-    let response = route_read_request(&context, "GET", routes::DESKTOP_STATE).expect("known read");
-    assert_eq!(response.status, 501);
-    assert_eq!(response.body["group"], "reads");
+    assert!(route_read_request(&context, "GET", routes::DESKTOP_STATE).is_none());
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
 }
 
 #[test]
