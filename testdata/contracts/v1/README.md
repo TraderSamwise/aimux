@@ -546,6 +546,9 @@ Priority fixture groups:
 - `runtime-state/session-viewed.json`: session-viewed metadata attention,
   activity, notification read-state, explicit-project, and config override
   behavior captured by running TypeScript `session-viewed`.
+- `runtime-state/tool-output-watchers.json`: tool pane prompt, active error,
+  interrupted, and update-prompt classification captured by running TypeScript
+  `classifyToolPane`.
 - `runtime-state/drift.json`: local-build drift error classification captured
   by running TypeScript `runtime-drift`.
 - `runtime-state/repair-events.json`: durable repair event JSONL logging
