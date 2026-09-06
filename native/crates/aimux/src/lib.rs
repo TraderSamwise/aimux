@@ -66,6 +66,7 @@ pub mod install_cleanup;
 pub mod install_config;
 pub mod interaction_requests_contract;
 pub mod launcher_env;
+pub mod lifecycle_orphans_contract;
 pub mod local_ui_server;
 pub mod logs;
 pub mod managed_launch_env;

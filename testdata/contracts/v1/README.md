@@ -503,6 +503,10 @@ Priority fixture groups:
 - `runtime-state/last-used.json`: last-used recency ordering, monotonic
   timestamp updates, per-client isolation, pruning, and legacy seeding captured
   by running TypeScript `last-used`.
+- `runtime-state/lifecycle-orphans.json`: lifecycle-validation process and
+  tmux-session orphan classification, dashboard orphan reaping, pid-reread
+  guards, and killed-process/session side effects captured by running
+  TypeScript `lifecycle-orphans` helpers.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
