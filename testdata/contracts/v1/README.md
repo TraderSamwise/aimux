@@ -251,6 +251,12 @@ Priority fixture groups:
 - `session/runtime.json`: SessionRuntime transport data and exit event
   forwarding captured by running TypeScript `session-runtime`.
 
+## Launch
+
+- `launch/managed-env.json`: managed launch environment allowlist, terminal
+  normalization, proxy passthrough, extra env injection, and `env -i` wrapper
+  behavior captured by running TypeScript `managed-launch-env`.
+
 ## Proxy
 
 - `proxy/project-binding.json`: proxy path parsing and project-service target

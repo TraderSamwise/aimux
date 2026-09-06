@@ -71,7 +71,20 @@ pub fn wrap_command_with_managed_launch_env_extra(
     args: Vec<String>,
     extra_env: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
 ) -> (String, Vec<String>) {
-    let managed_env = build_managed_launch_env(std::env::vars());
+    wrap_command_with_managed_launch_env_from_env(command, args, std::env::vars(), extra_env)
+}
+
+pub fn wrap_command_with_managed_launch_env_from_env(
+    command: impl Into<String>,
+    args: Vec<String>,
+    base_env: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    extra_env: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+) -> (String, Vec<String>) {
+    let managed_env = build_managed_launch_env(
+        base_env
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into())),
+    );
     let mut env_args = vec!["-i".to_owned()];
     env_args.extend(
         managed_env
@@ -88,7 +101,7 @@ pub fn wrap_command_with_managed_launch_env_extra(
     ("env".to_owned(), env_args)
 }
 
-fn build_managed_launch_env(
+pub fn build_managed_launch_env(
     base_env: impl IntoIterator<Item = (String, String)>,
 ) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
