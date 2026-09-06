@@ -39,6 +39,11 @@ export interface DesktopSession {
   role?: string;
   activity?: string;
   attention?: string;
+  lastUsedAt?: string;
+  lastOutputAt?: string;
+  becameIdleAt?: string;
+  recencyAt?: string;
+  recencyLabel?: string;
   unseenCount?: number;
   previewLine?: string;
   pendingAction?: string;
@@ -63,6 +68,7 @@ export interface DesktopService {
   status: DesktopServiceStatus;
   active?: boolean;
   label?: string;
+  lastUsedAt?: string;
   shellCommand?: string;
   shellCommandState?: "running" | "prompt";
   previewLine?: string;

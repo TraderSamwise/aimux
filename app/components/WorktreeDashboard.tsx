@@ -15,6 +15,7 @@ import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
+import { formatLabeledRecency, formatRelativeRecency } from "@/lib/recency";
 import {
   agentStatusKind,
   appStatusClasses,
@@ -133,6 +134,33 @@ function TrailingHint({ text }: { text?: string }) {
   );
 }
 
+function joinHints(...parts: Array<string | null | undefined>): string | undefined {
+  const text = parts.filter((part): part is string => Boolean(part)).join(" · ");
+  return text || undefined;
+}
+
+function agentRecencyText(session: DesktopSession): string | null {
+  return formatLabeledRecency(session.recencyLabel, session.recencyAt);
+}
+
+function serviceRecencyText(service: DesktopService): string | null {
+  const relative = formatRelativeRecency(service.lastUsedAt);
+  return relative ? `used ${relative}` : null;
+}
+
+function CompactRecency({ text }: { text?: string | null }) {
+  if (!text) return null;
+  return (
+    <Text
+      className="ml-20 mt-0.5 font-mono text-[11px] text-[#565862]"
+      numberOfLines={1}
+      ellipsizeMode="tail"
+    >
+      {text}
+    </Text>
+  );
+}
+
 function AgentRow({
   session,
   digit,
@@ -159,6 +187,8 @@ function AgentRow({
   const shortName = agentShortName(session);
   const role = agentRoleLabel(session);
   const state = deriveAgentState(session);
+  const recency = agentRecencyText(session);
+  const fullHint = joinHints(recency, session.headline || session.previewLine);
   const identity = (
     <>
       <SelectMark selected={selected} />
@@ -188,9 +218,7 @@ function AgentRow({
           </Text>
         ) : null}
       </View>
-      {compact ? null : (
-        <TrailingHint text={session.headline || session.previewLine || undefined} />
-      )}
+      {compact ? null : <TrailingHint text={fullHint} />}
     </>
   );
 
@@ -200,12 +228,10 @@ function AgentRow({
     return (
       <Pressable
         onPress={onPress}
-        className={cn(
-          "flex-row items-center gap-2 rounded-md px-2.5 py-2",
-          selected ? "bg-[#232733]" : PRESS,
-        )}
+        className={cn("rounded-md px-2.5 py-2", selected ? "bg-[#232733]" : PRESS)}
       >
-        {identity}
+        <View className="flex-row items-center gap-2">{identity}</View>
+        <CompactRecency text={recency} />
       </Pressable>
     );
   }
@@ -259,6 +285,8 @@ function ServiceRow({
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   const stateKind = serviceStatusKind(service);
   const tone = appStatusClasses(stateKind);
+  const recency = serviceRecencyText(service);
+  const fullHint = joinHints(recency, detail);
   const identity = (
     <>
       <SelectMark selected={false} />
@@ -284,7 +312,7 @@ function ServiceRow({
           svc
         </Text>
       </View>
-      {compact ? null : <TrailingHint text={detail || undefined} />}
+      {compact ? null : <TrailingHint text={fullHint} />}
     </>
   );
 
@@ -292,9 +320,10 @@ function ServiceRow({
     return (
       <Pressable
         onPress={onPress}
-        className="flex-row items-center gap-2 rounded-md px-2.5 py-2 hover:bg-[#1f2025] active:opacity-70"
+        className="rounded-md px-2.5 py-2 hover:bg-[#1f2025] active:opacity-70"
       >
-        {identity}
+        <View className="flex-row items-center gap-2">{identity}</View>
+        <CompactRecency text={recency} />
       </Pressable>
     );
   }
