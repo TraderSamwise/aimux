@@ -651,6 +651,13 @@ Priority fixture groups:
   construction, and update posting captured by running TypeScript
   `registerWorkOutlineCommand` with recorded dependencies.
 
+## Shell
+
+- `shell/hooks.json`: shell integration argv wrapping, zsh/bash integration
+  file generation, zshenv preservation, protected control environment ordering,
+  shell quoting, and suppression marker behavior captured by running TypeScript
+  `shell-hooks`.
+
 ## Paths
 
 - `paths/behavior.json`: path identity, runtime-private log/state location, and

@@ -116,6 +116,7 @@ pub mod session_runtime;
 pub mod session_viewed;
 pub mod shell_args;
 pub mod shell_hooks;
+pub mod shell_hooks_contract;
 pub mod statusline_model_contract;
 pub mod team_contract;
 pub mod terminal_key_parser;
