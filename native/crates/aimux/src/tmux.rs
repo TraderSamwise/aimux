@@ -1,4 +1,8 @@
 use crate::paths::{PathResolver, basename_like_node_posix, compute_project_id};
+use crate::tmux_query_memo::{
+    is_non_caching_tmux_read, is_read_only_tmux_verb, memoized_tmux_query, reset_tmux_query_memo,
+    tmux_query_key,
+};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeSet;
@@ -1768,6 +1772,18 @@ impl TmuxRuntimeManager {
         args: Vec<String>,
         options: Option<TmuxExecOptions>,
     ) -> Result<String, String> {
+        let verb = args.first().map(String::as_str).unwrap_or("");
+        if is_read_only_tmux_verb(verb) {
+            let key = tmux_query_key(
+                &args,
+                options.as_ref().and_then(|options| options.cwd.as_deref()),
+            );
+            return memoized_tmux_query(key, || (self.exec)(&args, options.as_ref()));
+        }
+        if is_non_caching_tmux_read(&args) {
+            return (self.exec)(&args, options.as_ref());
+        }
+        reset_tmux_query_memo();
         (self.exec)(&args, options.as_ref())
     }
 

@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-query-memo-contract.mjs",
+  "source": "src/tmux/query-memo.test.ts",
+  "subject": "src/tmux/query-memo.ts",
+  "description": "Tmux query memo behavior captured by running TypeScript.",
+  "caseCount": 13,
+  "cases": [
+    {
+      "id": "tmux-query-memo-001",
+      "name": "is inert outside a scope",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "is inert outside a scope" },
+      "output": { "thrown": null, "snapshot": { "calls": 2, "inScope": false } },
+      "inputSha256": "fbae126a3ffacf38035feae0242b8b3b30a58f7a105cc3f0f75bf96d1e071cf7"
+    },
+    {
+      "id": "tmux-query-memo-002",
+      "name": "answers a repeated question once inside one scope",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "answers a repeated question once inside one scope" },
+      "output": {
+        "thrown": null,
+        "snapshot": { "result": ["windows", "windows", "windows"], "calls": 1, "inScope": false }
+      },
+      "inputSha256": "7b03897196563856d142fac1363ab5402768c8ba5930accdb6d8aabf6cf2a38e"
+    },
+    {
+      "id": "tmux-query-memo-003",
+      "name": "keys separately and includes cwd",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "keys separately and includes cwd" },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "keys": [
+            "[\"\",\"list-windows\",\"-t\",\"s\"]",
+            "[\"/repo/a\",\"list-windows\",\"-t\",\"s\"]",
+            "[\"/repo/b\",\"list-windows\",\"-t\",\"s\"]"
+          ]
+        }
+      },
+      "inputSha256": "c2302ad6b9cb0a6f520d987ed623a0c2c060b74a23f5d9e20377abacc8be45a9"
+    },
+    {
+      "id": "tmux-query-memo-004",
+      "name": "clears even when the scope throws",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "clears even when the scope throws" },
+      "output": { "thrown": null, "snapshot": { "thrown": "snapshot failed", "inScope": false } },
+      "inputSha256": "bd20c5a826a2b580f30d87058b4978a413f4c96cc429606366a6619f0850f196"
+    },
+    {
+      "id": "tmux-query-memo-005",
+      "name": "inherits an outer scope rather than nesting a fresh one",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "inherits an outer scope rather than nesting a fresh one" },
+      "output": {
+        "thrown": null,
+        "snapshot": { "innerScope": { "value": "x", "inScope": true }, "calls": 1, "inScope": false }
+      },
+      "inputSha256": "32b5a939f500125add7a5dc6e154caf18943f7301f596df7ee12bcf6adbab037"
+    },
+    {
+      "id": "tmux-query-memo-006",
+      "name": "memoizes a failure",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "memoizes a failure" },
+      "output": { "thrown": null, "snapshot": { "calls": 1, "thrown": ["no server", "no server"] } },
+      "inputSha256": "f21577fd035af18645c3597aa142c76f2daa14368e2427c41493b77d71a2e105"
+    },
+    {
+      "id": "tmux-query-memo-007",
+      "name": "re-asks after a reset",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "re-asks after a reset" },
+      "output": { "thrown": null, "snapshot": { "calls": 2 } },
+      "inputSha256": "4b171b2b6657bf80d9b39e0707da268499079309187bdf033ff2a2e0beed3402"
+    },
+    {
+      "id": "tmux-query-memo-008",
+      "name": "asks tmux once for a repeated read inside a scope",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "asks tmux once for a repeated read inside a scope" },
+      "output": { "thrown": null, "snapshot": { "log": [["has-session", "-t", "s"]] } },
+      "inputSha256": "c2f993d122835848e6bef426885c915e2e05677377af4fe8e613c5323b515f7f"
+    },
+    {
+      "id": "tmux-query-memo-009",
+      "name": "re-reads after a mutation",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "re-reads after a mutation" },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "log": [
+            ["has-session", "-t", "s"],
+            ["rename-window", "-t", "@1", "renamed"],
+            ["has-session", "-t", "s"]
+          ]
+        }
+      },
+      "inputSha256": "2f05015a06894afecfd17f089f30a115c59e37597dfc7689b53a2b6d6073a11e"
+    },
+    {
+      "id": "tmux-query-memo-010",
+      "name": "never memoizes pane contents",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "never memoizes pane contents" },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "captures": ["capture-1", "capture-2"],
+          "log": [
+            ["capture-pane", "-p", "-J", "-t", "@1", "-S", "-"],
+            ["capture-pane", "-p", "-J", "-t", "@1", "-S", "-"]
+          ]
+        }
+      },
+      "inputSha256": "3fdb7d6d18642afd38f833462d1da46db3913a7e7f87d544da6ad1f57883fca2"
+    },
+    {
+      "id": "tmux-query-memo-011",
+      "name": "keeps the memo across a pane capture",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "keeps the memo across a pane capture" },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "log": [
+            ["has-session", "-t", "s"],
+            ["capture-pane", "-p", "-J", "-t", "@1", "-S", "-"]
+          ]
+        }
+      },
+      "inputSha256": "e60ab47d54fd384f993383e4323cec39dbc70e5e25777f676737e3e1417d5a45"
+    },
+    {
+      "id": "tmux-query-memo-012",
+      "name": "re-reads on every poll after reset",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "re-reads on every poll after reset" },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "log": [
+            ["has-session", "-t", "s"],
+            ["has-session", "-t", "s"],
+            ["has-session", "-t", "s"]
+          ]
+        }
+      },
+      "inputSha256": "7608d1234491d1b791fb44581b2e4d025ee9ae73af1c32ba9c691d23712fde9b"
+    },
+    {
+      "id": "tmux-query-memo-013",
+      "name": "is inert with no scope open",
+      "source": "src/tmux/query-memo.test.ts",
+      "api": "query-memo",
+      "input": { "name": "is inert with no scope open" },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "log": [
+            ["has-session", "-t", "s"],
+            ["has-session", "-t", "s"]
+          ]
+        }
+      },
+      "inputSha256": "5fc65d9a1c6d73df5cfdefcee886d5d4088287a19544b68c47264e44fa98a9eb"
+    }
+  ]
+}
