@@ -15,6 +15,12 @@ Priority fixture groups:
 5. `tmux`: command argv, inventory rows, pane captures, statusline artifacts.
 6. `project-catalog`: registry, topology, desktop-state project summaries.
 
+## ANSI
+
+- `ansi/sgr-spans.json`: ANSI SGR span cases, including adversarial color,
+  reset, inverse, multiline, unsupported-code, and malformed-escape inputs,
+  captured by running the TypeScript `app/lib/ansi.ts` parser.
+
 ## Agent Output
 
 - `agent-output/parser-adversarial.json`: golden `{ input, output }` cases
