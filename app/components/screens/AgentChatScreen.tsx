@@ -1906,7 +1906,7 @@ export default function ChatScreen() {
               }}
               visible={effectiveChatChromeVisible}
             >
-              <View className="border-b border-border px-4 py-3 flex-row items-center justify-between">
+              <View className="border-b border-border bg-background px-4 py-3 flex-row items-center justify-between">
                 {useScrollableNativeHeader ? (
                   <ScrollView
                     horizontal
