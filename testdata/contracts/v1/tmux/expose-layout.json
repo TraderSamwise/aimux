@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-expose-layout-contract.mjs",
+  "source": "src/tmux/expose.ts",
+  "subject": "src/tmux/expose.ts",
+  "description": "Expose layout, client-size matching, and preview row selection captured by running TypeScript.",
+  "caseCount": 24,
+  "cases": [
+    {
+      "id": "tmux-expose-layout-001",
+      "name": "balanced columns for 0 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 0 items", "count": 0 },
+      "output": { "cols": 1 },
+      "inputSha256": "073be31630323771e64538b93278801ac9c5f5c04f5874684e75a97d33e3e6da"
+    },
+    {
+      "id": "tmux-expose-layout-002",
+      "name": "balanced columns for 1 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 1 items", "count": 1 },
+      "output": { "cols": 1 },
+      "inputSha256": "dbae10a2ecc21f6e9a3cbfa1505f0e990c11b4e2fbe8f3098a6155bb2e7e8bbd"
+    },
+    {
+      "id": "tmux-expose-layout-003",
+      "name": "balanced columns for 3 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 3 items", "count": 3 },
+      "output": { "cols": 3 },
+      "inputSha256": "6a4ce2708bb5ca7943581e68a5a64a7c0bfbcdb69ee1c42cc80801bbad5110f2"
+    },
+    {
+      "id": "tmux-expose-layout-004",
+      "name": "balanced columns for 4 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 4 items", "count": 4 },
+      "output": { "cols": 2 },
+      "inputSha256": "87a21f713c8ff093954effd72178b05f46b89e70e350195bb30f78bf7a2f442c"
+    },
+    {
+      "id": "tmux-expose-layout-005",
+      "name": "balanced columns for 5 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 5 items", "count": 5 },
+      "output": { "cols": 3 },
+      "inputSha256": "2f108e38efe38c057d47c029f2efdda6acb04d575d22a8153502a0b080fc9328"
+    },
+    {
+      "id": "tmux-expose-layout-006",
+      "name": "balanced columns for 8 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 8 items", "count": 8 },
+      "output": { "cols": 3 },
+      "inputSha256": "9269390e4b5ba9f0f344e987703f3d21d1974c51e28bd4b7e8fb47052647ccf6"
+    },
+    {
+      "id": "tmux-expose-layout-007",
+      "name": "balanced columns for 9 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 9 items", "count": 9 },
+      "output": { "cols": 3 },
+      "inputSha256": "78bdf9d74bcb7dfcc12853436c253641d7a1fbe43c7e1a4c7bf5fda593074bf2"
+    },
+    {
+      "id": "tmux-expose-layout-008",
+      "name": "balanced columns for 10 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 10 items", "count": 10 },
+      "output": { "cols": 4 },
+      "inputSha256": "a1f1ffed18faa7008a2f470b4de57160b4b6042185b67a8ca27d6f8cf0d6e980"
+    },
+    {
+      "id": "tmux-expose-layout-009",
+      "name": "balanced columns for 16 items",
+      "source": "src/tmux/expose.ts",
+      "api": "balancedCols",
+      "input": { "name": "balanced columns for 16 items", "count": 16 },
+      "output": { "cols": 4 },
+      "inputSha256": "5a056550f7bfd172988f62c8c73d80f14d1b7564640c9180e16d2628086a5b8c"
+    },
+    {
+      "id": "tmux-expose-layout-010",
+      "name": "grid layout for 0 items at 80x24",
+      "source": "src/tmux/expose.ts",
+      "api": "computeLayout",
+      "input": { "name": "grid layout for 0 items at 80x24", "itemCount": 0, "cols": 80, "rows": 24 },
+      "output": {
+        "tileCols": 1,
+        "tileWidth": 80,
+        "tileHeight": 22,
+        "bodyLines": 19,
+        "visibleCount": 0,
+        "gridTopRow": 1,
+        "gridHeight": 22
+      },
+      "inputSha256": "2efb7bf25a9f56ec54b4d40a26f705f9ef04fa38228133c3b63c241e1899c559"
+    },
+    {
+      "id": "tmux-expose-layout-011",
+      "name": "grid layout for 1 items at 80x24",
+      "source": "src/tmux/expose.ts",
+      "api": "computeLayout",
+      "input": { "name": "grid layout for 1 items at 80x24", "itemCount": 1, "cols": 80, "rows": 24 },
+      "output": {
+        "tileCols": 1,
+        "tileWidth": 80,
+        "tileHeight": 22,
+        "bodyLines": 19,
+        "visibleCount": 1,
+        "gridTopRow": 1,
+        "gridHeight": 22
+      },
+      "inputSha256": "e73c0afaadaf2d5d006c46625d1cb8111f64ec585955cf3af0120c7d4038d8bd"
+    },
+    {
+      "id": "tmux-expose-layout-012",
+      "name": "grid layout for 4 items at 80x24",
+      "source": "src/tmux/expose.ts",
+      "api": "computeLayout",
+      "input": { "name": "grid layout for 4 items at 80x24", "itemCount": 4, "cols": 80, "rows": 24 },
+      "output": {
+        "tileCols": 2,
+        "tileWidth": 39,
+        "tileHeight": 11,
+        "bodyLines": 8,
+        "visibleCount": 4,
+        "gridTopRow": 1,
+        "gridHeight": 22
+      },
+      "inputSha256": "89fb265f1c06a6b3178a21ec4ef7f38e8c7b455706e0a11a7e3101d04bcd2dc1"
+    },
+    {
+      "id": "tmux-expose-layout-013",
+      "name": "grid layout for 6 items at 100x30",
+      "source": "src/tmux/expose.ts",
+      "api": "computeLayout",
+      "input": { "name": "grid layout for 6 items at 100x30", "itemCount": 6, "cols": 100, "rows": 30 },
+      "output": {
+        "tileCols": 3,
+        "tileWidth": 32,
+        "tileHeight": 14,
+        "bodyLines": 11,
+        "visibleCount": 6,
+        "gridTopRow": 1,
+        "gridHeight": 28
+      },
+      "inputSha256": "5f57c786b240c45bbb2cca8f05f3cd84dc3ed04957269582aaf967ced8263f7d"
+    },
+    {
+      "id": "tmux-expose-layout-014",
+      "name": "grid layout for 12 items at 80x24",
+      "source": "src/tmux/expose.ts",
+      "api": "computeLayout",
+      "input": { "name": "grid layout for 12 items at 80x24", "itemCount": 12, "cols": 80, "rows": 24 },
+      "output": {
+        "tileCols": 2,
+        "tileWidth": 39,
+        "tileHeight": 5,
+        "bodyLines": 2,
+        "visibleCount": 8,
+        "gridTopRow": 1,
+        "gridHeight": 22
+      },
+      "inputSha256": "95cb273d73a62f493e1cad4f210c93650a379e25fe873b8e5309f5ace0324a59"
+    },
+    {
+      "id": "tmux-expose-layout-015",
+      "name": "grid layout for 12 items at 60x15",
+      "source": "src/tmux/expose.ts",
+      "api": "computeLayout",
+      "input": { "name": "grid layout for 12 items at 60x15", "itemCount": 12, "cols": 60, "rows": 15 },
+      "output": {
+        "tileCols": 1,
+        "tileWidth": 60,
+        "tileHeight": 6,
+        "bodyLines": 3,
+        "visibleCount": 2,
+        "gridTopRow": 1,
+        "gridHeight": 13
+      },
+      "inputSha256": "8f806c03b0439fe6b2f2c4751216e33915f7089e1483f89ed81a266abe214c9e"
+    },
+    {
+      "id": "tmux-expose-layout-016",
+      "name": "grid layout for 99 items at 40x10",
+      "source": "src/tmux/expose.ts",
+      "api": "computeLayout",
+      "input": { "name": "grid layout for 99 items at 40x10", "itemCount": 99, "cols": 40, "rows": 10 },
+      "output": {
+        "tileCols": 1,
+        "tileWidth": 40,
+        "tileHeight": 8,
+        "bodyLines": 5,
+        "visibleCount": 1,
+        "gridTopRow": 1,
+        "gridHeight": 8
+      },
+      "inputSha256": "583d54be31daacfe2ac6ea4c4e34e318a42e232356bf81754c2c1c8de3aca9d6"
+    },
+    {
+      "id": "tmux-expose-layout-017",
+      "name": "matches client size by exact tty",
+      "source": "src/tmux/expose.ts",
+      "api": "matchClientSize",
+      "input": {
+        "name": "matches client size by exact tty",
+        "listing": "/dev/ttys001 120x40\n/dev/ttys002 80x24\n",
+        "clientTty": "/dev/ttys002"
+      },
+      "output": { "size": "80x24" },
+      "inputSha256": "a597344f094c1dd062c203df6cb62852dc24edc21e60112b2cf7465e5b01c88a"
+    },
+    {
+      "id": "tmux-expose-layout-018",
+      "name": "matches client size by basename",
+      "source": "src/tmux/expose.ts",
+      "api": "matchClientSize",
+      "input": { "name": "matches client size by basename", "listing": "/dev/ttys003 90x30\n", "clientTty": "ttys003" },
+      "output": { "size": "90x30" },
+      "inputSha256": "32171c0c93cd2ae10beae2cada59f16d2d7925de45f6ee33e364f46f26d2d0af"
+    },
+    {
+      "id": "tmux-expose-layout-019",
+      "name": "returns empty size when no client matches",
+      "source": "src/tmux/expose.ts",
+      "api": "matchClientSize",
+      "input": {
+        "name": "returns empty size when no client matches",
+        "listing": "/dev/ttys004 90x30\nmalformed\n",
+        "clientTty": "/dev/ttys005"
+      },
+      "output": { "size": "" },
+      "inputSha256": "7d107d75ff44f0d497ff8711f63c70d4bdaef090686def7321ecd340bb5bd554"
+    },
+    {
+      "id": "tmux-expose-layout-020",
+      "name": "tile preview with 5 visible rows",
+      "source": "src/tmux/expose.ts",
+      "api": "tilePreview",
+      "input": {
+        "name": "tile preview with 5 visible rows",
+        "raw": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+        "count": 5
+      },
+      "output": { "lines": ["three", "four", "five", "six", "seven"] },
+      "inputSha256": "cb34caeab458b4ac8b77a95b62e8a1b11706e16be5ac7d62a369e5fee4db54f5"
+    },
+    {
+      "id": "tmux-expose-layout-021",
+      "name": "tile preview with 9 visible rows",
+      "source": "src/tmux/expose.ts",
+      "api": "tilePreview",
+      "input": {
+        "name": "tile preview with 9 visible rows",
+        "raw": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\n",
+        "count": 9
+      },
+      "output": { "lines": ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"] },
+      "inputSha256": "c87f815c6c73749836288592a4d71417bec7825924698c8a239dc5967eae7738"
+    },
+    {
+      "id": "tmux-expose-layout-022",
+      "name": "tile preview with 4 visible rows",
+      "source": "src/tmux/expose.ts",
+      "api": "tilePreview",
+      "input": {
+        "name": "tile preview with 4 visible rows",
+        "raw": "red \u001b[31mline\u001b[0m\ncursor\u001b[2Kgone\n\n",
+        "count": 4
+      },
+      "output": { "lines": ["red \u001b[31mline\u001b[0m", "cursorgone", "", ""] },
+      "inputSha256": "e065ccb0b11ed7ea9fadab25b48dd73bb93d87b9ba1693489aa11a45973841d7"
+    },
+    {
+      "id": "tmux-expose-layout-023",
+      "name": "tile preview with 3 visible rows",
+      "source": "src/tmux/expose.ts",
+      "api": "tilePreview",
+      "input": { "name": "tile preview with 3 visible rows", "raw": "short\n", "count": 3 },
+      "output": { "lines": ["short", "", ""] },
+      "inputSha256": "1b2cd334222b2e0a62f4cc25950a6f053d7b488cfd0fa8e3c102f110547b398c"
+    },
+    {
+      "id": "tmux-expose-layout-024",
+      "name": "tile preview with 0 visible rows",
+      "source": "src/tmux/expose.ts",
+      "api": "tilePreview",
+      "input": { "name": "tile preview with 0 visible rows", "raw": "ignored\n", "count": 0 },
+      "output": { "lines": [] },
+      "inputSha256": "820ac4f51ace871fffa257d0cecb0796d4adddf5bca1fef9bb85a4de822dcc2f"
+    }
+  ]
+}

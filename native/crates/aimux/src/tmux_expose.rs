@@ -6,6 +6,7 @@ use crate::core_command_transport::{
 use crate::daemon_state::get_daemon_base_url;
 use crate::expose_socket::parse_positive_header_integer;
 use crate::project_api_contract::routes;
+use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -15,6 +16,9 @@ use std::path::{Path, PathBuf};
 
 pub const EXPOSE_HTTP_TIMEOUT_MS: u64 = 4_000;
 pub const EXPOSE_CLIENT_TTL_MS: &str = "10000";
+const GAP: i64 = 1;
+const MIN_TILE_WIDTH: i64 = 30;
+const MIN_TILE_HEIGHT: i64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -101,6 +105,18 @@ pub struct ExposeHttpRequest {
     pub timeout_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridLayout {
+    pub tile_cols: i64,
+    pub tile_width: i64,
+    pub tile_height: i64,
+    pub body_lines: i64,
+    pub visible_count: i64,
+    pub grid_top_row: i64,
+    pub grid_height: i64,
+}
+
 pub trait ExposeHttpClient {
     fn request_json(&mut self, url: &str, request: ExposeHttpRequest) -> Result<Value, String>;
 }
@@ -173,6 +189,89 @@ pub fn next_expose_scope(scope: ExposeScope) -> ExposeScope {
         ExposeScope::Worktree => ExposeScope::Project,
         ExposeScope::Project | ExposeScope::Global => ExposeScope::Global,
     }
+}
+
+pub fn balanced_cols(count: i64) -> i64 {
+    if count <= 3 {
+        return count.max(1);
+    }
+    (count as f64).sqrt().ceil() as i64
+}
+
+pub fn compute_layout(item_count: i64, cols: i64, rows: i64) -> GridLayout {
+    let grid_top_row = 1;
+    let footer_row = rows - 1;
+    let grid_height = (footer_row - grid_top_row).max(1);
+    let fit_cols = ((cols + GAP) / (MIN_TILE_WIDTH + GAP)).max(1);
+    let tile_cols = balanced_cols(item_count).min(fit_cols).max(1);
+    let needed_rows = ((item_count as f64) / (tile_cols as f64)).ceil() as i64;
+    let max_tile_rows = (grid_height / MIN_TILE_HEIGHT).max(1);
+    let tile_rows = needed_rows.min(max_tile_rows).max(1);
+    let tile_width = ((cols - (tile_cols - 1) * GAP) / tile_cols).max(4);
+    let tile_height = grid_height / tile_rows;
+    GridLayout {
+        tile_cols,
+        tile_width,
+        tile_height,
+        body_lines: (tile_height - 3).max(1),
+        visible_count: item_count.min(tile_cols * tile_rows),
+        grid_top_row,
+        grid_height,
+    }
+}
+
+pub fn match_client_size(listing: &str, client_tty: &str) -> String {
+    let wanted = path_basename(client_tty);
+    for line in listing.split('\n') {
+        let mut parts = line.split_whitespace();
+        let Some(tty) = parts.next() else {
+            continue;
+        };
+        let Some(size) = parts.next() else {
+            continue;
+        };
+        if tty == client_tty || path_basename(tty) == wanted {
+            return size.to_owned();
+        }
+    }
+    String::new()
+}
+
+pub fn expose_preview_footer_crop_rows(visible_line_count: i64) -> i64 {
+    if visible_line_count <= 0 {
+        return 0;
+    }
+    if visible_line_count <= 8 {
+        return 3;
+    }
+    if visible_line_count <= 11 {
+        return 2;
+    }
+    if visible_line_count <= 14 {
+        return 1;
+    }
+    0
+}
+
+pub fn crop_expose_preview_footer<T: Clone>(lines: &[T], visible_line_count: i64) -> Vec<T> {
+    let count = visible_line_count.max(0) as usize;
+    if count == 0 {
+        return Vec::new();
+    }
+    let desired_drop = expose_preview_footer_crop_rows(count as i64) as usize;
+    let drop = desired_drop.min(lines.len().saturating_sub(count));
+    let source_len = lines.len().saturating_sub(drop);
+    lines[source_len.saturating_sub(count)..source_len].to_vec()
+}
+
+pub fn tile_preview(raw: &str, count: i64) -> Vec<String> {
+    let lines = sanitize_expose_preview_output(raw);
+    let mut tail = crop_expose_preview_footer(&lines, count);
+    let target = count.max(0) as usize;
+    while tail.len() < target {
+        tail.push(String::new());
+    }
+    tail
 }
 
 pub fn parse_expose_args<S: AsRef<str>>(raw_args: &[S]) -> Result<TmuxExposeOptions, String> {
@@ -914,6 +1013,10 @@ fn encode_uri_component(value: &str) -> String {
         }
     }
     output
+}
+
+fn path_basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 fn expose_ui_state_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
