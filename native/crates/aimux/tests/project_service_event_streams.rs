@@ -26,6 +26,7 @@ fn project_events_stream_returns_ready_snapshot() {
     assert_eq!(stream.session_id.as_deref(), Some("codex-1"));
     assert_eq!(stream.start_line, Some(-2000));
     assert_eq!(stream.interval_ms, 250);
+    assert!(stream.mode.is_none());
     let body = String::from_utf8(response.bytes.unwrap()).unwrap();
     assert!(body.starts_with("event: ready\n"));
     assert!(body.contains("\"sessionId\":\"codex-1\""));
@@ -53,6 +54,7 @@ fn output_and_interaction_streams_return_ready_snapshots() {
     assert_eq!(output_stream.session_id.as_deref(), Some("codex-1"));
     assert_eq!(output_stream.start_line, Some(5));
     assert_eq!(output_stream.interval_ms, 500);
+    assert_eq!(output_stream.mode.as_deref(), Some("full"));
     assert!(output_body.contains("\"sessionId\":\"codex-1\""));
     assert!(output_body.contains("\"startLine\":5"));
     assert!(output_body.contains("\"endLine\":2004"));
@@ -70,6 +72,7 @@ fn output_and_interaction_streams_return_ready_snapshots() {
     );
     assert!(interaction_stream.session_id.is_none());
     assert_eq!(interaction_stream.interval_ms, 500);
+    assert!(interaction_stream.mode.is_none());
     assert_eq!(
         String::from_utf8(interaction.bytes.unwrap()).unwrap(),
         "event: ready\ndata: {\"pending\":[]}\n\n"

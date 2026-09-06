@@ -23,7 +23,12 @@ use crate::tmux_expose::{
     SystemExposeHttpClient, run_tmux_expose_with_client, tmux_expose_options_from_socket_header,
 };
 
-use super::event_streams::encode_sse_keepalive;
+use super::agent_output::{
+    AgentOutputCaptureRuntime, AgentOutputResponseMode, SystemAgentOutputCaptureRuntime,
+    read_agent_output_payload,
+};
+use super::dispatcher::ProjectServiceStreamKind;
+use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::PreparedProjectServiceResponse;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::server::{ProjectServiceHttpRequest, handle_project_service_http_request};
@@ -122,12 +127,23 @@ where
         project_request_from_daemon(request),
         |method, path, body| route_project_service_request(context, method, path, body),
     );
-    write_project_service_response(stream, &response)
+    let mut runtime = SystemAgentOutputCaptureRuntime;
+    write_project_service_response_with_runtime(stream, &response, Some(context), &mut runtime)
 }
 
 pub fn write_project_service_response(
     writer: &mut impl std::io::Write,
     response: &PreparedProjectServiceResponse,
+) -> Result<(), DaemonListenerError> {
+    let mut runtime = SystemAgentOutputCaptureRuntime;
+    write_project_service_response_with_runtime(writer, response, None, &mut runtime)
+}
+
+pub fn write_project_service_response_with_runtime(
+    writer: &mut impl std::io::Write,
+    response: &PreparedProjectServiceResponse,
+    context: Option<&ProjectServiceRequestContext>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
 ) -> Result<(), DaemonListenerError> {
     writer.write_all(&prepared_response_bytes(
         &prepared_project_response_to_daemon(response),
@@ -137,11 +153,36 @@ pub fn write_project_service_response(
         let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
         loop {
             thread::sleep(Duration::from_millis(interval_ms));
-            writer.write_all(&encode_sse_keepalive())?;
+            if stream.kind == ProjectServiceStreamKind::AgentOutput {
+                writer.write_all(&encode_agent_output_stream_frame(stream, context, runtime))?;
+            } else {
+                writer.write_all(&encode_sse_keepalive())?;
+            }
             writer.flush()?;
         }
     }
     Ok(())
+}
+
+fn encode_agent_output_stream_frame(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: Option<&ProjectServiceRequestContext>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> Vec<u8> {
+    let Some(context) = context else {
+        return encode_sse_keepalive();
+    };
+    let Some(session_id) = stream.session_id.as_deref() else {
+        return encode_sse_keepalive();
+    };
+    let mode = match stream.mode.as_deref() {
+        Some("chat") => AgentOutputResponseMode::Chat,
+        _ => AgentOutputResponseMode::Full,
+    };
+    match read_agent_output_payload(context, session_id, stream.start_line, mode, runtime) {
+        Ok(payload) => encode_sse_event("output", &payload),
+        Err(response) => encode_sse_event("error", &response.body),
+    }
 }
 
 fn serve_project_service_listener(listener: TcpListener, startup: ProjectServiceStartup) {

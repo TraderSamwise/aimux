@@ -4,7 +4,8 @@ use crate::paths::compute_project_id;
 use crate::project_api_contract::routes;
 
 use super::agent_output::{
-    agent_output_capture_window, parse_agent_output_read_purpose, parse_agent_output_response_mode,
+    AgentOutputResponseMode, agent_output_capture_window, parse_agent_output_read_purpose,
+    parse_agent_output_response_mode,
 };
 use super::dispatcher::{
     ProjectServiceDispatchResponse, ProjectServiceStreamKind, ProjectServiceStreamPlan,
@@ -61,6 +62,7 @@ fn route_project_events_stream(
             session_id: parsed.session_id,
             start_line: Some(capture_window.start_line),
             interval_ms: parsed.interval_ms,
+            mode: None,
         }),
     )
 }
@@ -91,6 +93,7 @@ fn route_agent_output_stream(path: &str) -> ProjectServiceDispatchResponse {
             session_id: parsed.session_id,
             start_line: Some(capture_window.start_line),
             interval_ms: parsed.interval_ms,
+            mode: Some(response_mode_name(parsed.mode).to_owned()),
         }),
     )
 }
@@ -108,6 +111,7 @@ fn route_interaction_stream(
             session_id: None,
             start_line: None,
             interval_ms: 500,
+            mode: None,
         }),
     )
 }
@@ -117,13 +121,14 @@ struct AgentStreamParams {
     session_id: Option<String>,
     start_line: Option<i64>,
     interval_ms: i64,
+    mode: AgentOutputResponseMode,
 }
 
 fn parse_agent_stream_params(
     params: &std::collections::BTreeMap<String, String>,
     require_session: bool,
 ) -> Result<AgentStreamParams, String> {
-    parse_agent_output_response_mode(trimmed_query(params, "mode").as_deref())?;
+    let mode = parse_agent_output_response_mode(trimmed_query(params, "mode").as_deref())?;
     parse_agent_output_read_purpose(trimmed_query(params, "purpose").as_deref())?;
     let session_id = trimmed_query(params, "sessionId");
     if require_session && session_id.is_none() {
@@ -136,7 +141,15 @@ fn parse_agent_stream_params(
         session_id,
         start_line,
         interval_ms,
+        mode,
     })
+}
+
+fn response_mode_name(mode: AgentOutputResponseMode) -> &'static str {
+    match mode {
+        AgentOutputResponseMode::Full => "full",
+        AgentOutputResponseMode::Chat => "chat",
+    }
 }
 
 fn parse_interval_ms(raw: Option<&str>) -> Result<i64, String> {

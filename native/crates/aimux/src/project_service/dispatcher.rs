@@ -27,6 +27,7 @@ pub struct ProjectServiceStreamPlan {
     pub session_id: Option<String>,
     pub start_line: Option<i64>,
     pub interval_ms: i64,
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

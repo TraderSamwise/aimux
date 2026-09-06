@@ -341,7 +341,7 @@ fn read_agent_output_route(
     }
 }
 
-fn read_agent_output_payload(
+pub(super) fn read_agent_output_payload(
     context: &ProjectServiceRequestContext,
     session_id: &str,
     start_line: Option<i64>,

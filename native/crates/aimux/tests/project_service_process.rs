@@ -1,6 +1,7 @@
-use aimux::daemon_state::load_metadata_endpoint;
+use aimux::daemon_state::{MetadataState, load_metadata_endpoint, save_metadata_state};
 #[cfg(unix)]
 use aimux::expose_socket::{expose_socket_path, expose_socket_path_file};
+use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::dispatcher::{ProjectServiceStreamKind, ProjectServiceStreamPlan};
 use aimux::project_service::http::prepare_project_service_sse_response;
 #[cfg(unix)]
@@ -8,14 +9,36 @@ use aimux::project_service::process::start_project_expose_socket;
 use aimux::project_service::process::{
     ProjectServiceStartup, desired_project_service_port, handle_project_service_connection,
     publish_project_service_endpoint, write_project_service_response,
+    write_project_service_response_with_runtime,
 };
 use aimux::project_service::router::ProjectServiceRequestContext;
-use std::fs::{read_to_string, remove_dir_all};
+use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::tmux::CapturePaneOptions;
+use serde_json::json;
+use std::collections::BTreeMap;
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct FakeStreamRuntime {
+    output: String,
+    calls: Vec<(String, CapturePaneOptions)>,
+}
+
+impl AgentOutputCaptureRuntime for FakeStreamRuntime {
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.calls.push((window_id.to_owned(), options));
+        Ok(self.output.clone())
+    }
+}
 
 #[test]
 fn desired_project_service_port_matches_project_id_hash_lane() {
@@ -84,6 +107,7 @@ fn stream_response_writer_keeps_sse_connection_alive_until_client_disconnects() 
             session_id: None,
             start_line: None,
             interval_ms: 100,
+            mode: None,
         }),
         Default::default(),
     );
@@ -100,6 +124,55 @@ fn stream_response_writer_keeps_sse_connection_alive_until_client_disconnects() 
     assert!(output.contains("content-type: text/event-stream\r\n"));
     assert!(output.contains("event: ready\ndata: {\"ok\":true}\n\n"));
     assert!(output.contains(": keepalive\n\n"));
+}
+
+#[test]
+fn output_stream_writer_emits_native_chat_output_frames() {
+    let project = temp_project("output-stream");
+    let state_dir = project.join("state");
+    write_output_stream_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = prepare_project_service_sse_response(
+        200,
+        b"event: ready\ndata: {\"sessionId\":\"codex-1\"}\n\n".to_vec(),
+        Some(ProjectServiceStreamPlan {
+            kind: ProjectServiceStreamKind::AgentOutput,
+            session_id: Some("codex-1".into()),
+            start_line: Some(-120),
+            interval_ms: 100,
+            mode: Some("chat".into()),
+        }),
+        Default::default(),
+    );
+    let mut writer = DisconnectAfterWrites::new(2);
+    let mut runtime = FakeStreamRuntime {
+        output: "› Build it\n• Working (12s • esc to interrupt)\n• Built it.".into(),
+        calls: Vec::new(),
+    };
+
+    let error = write_project_service_response_with_runtime(
+        &mut writer,
+        &response,
+        Some(&context),
+        &mut runtime,
+    )
+    .expect_err("disconnect");
+
+    assert!(matches!(
+        error,
+        aimux::daemon::listener::DaemonListenerError::Io(_)
+    ));
+    assert!(!runtime.calls.is_empty());
+    assert_eq!(runtime.calls[0].0, "@1");
+    let output = String::from_utf8(writer.output).expect("sse response");
+    assert!(output.contains("event: ready\ndata: {\"sessionId\":\"codex-1\"}\n\n"));
+    assert!(output.contains("event: output\n"));
+    assert!(output.contains("\"sessionId\":\"codex-1\""));
+    assert!(output.contains("\"activityText\":\"Working (12s)\""));
+    assert!(output.contains("\"messages\":["));
+    assert!(!output.contains("\"parsed\""));
+    assert!(!output.contains("\"outputAnsi\""));
+    cleanup(project);
 }
 
 #[cfg(unix)]
@@ -213,4 +286,48 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn write_output_stream_state(state_dir: &PathBuf) {
+    create_dir_all(state_dir).unwrap();
+    write(
+        runtime_topology_path(state_dir),
+        serde_yaml::to_string(
+            &coerce_runtime_topology(&json!({
+                "version": 1,
+                "generatedAt": "2026-09-05T00:00:00.000Z",
+                "rigs": [
+                    { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+                ],
+                "nodes": [
+                    { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-1", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" }
+                ],
+                "edges": [],
+                "bindings": [
+                    { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }
+                ],
+                "sessions": [
+                    { "id": "codex-1", "nodeId": "node-live", "status": "running", "command": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+                ],
+                "services": [],
+                "worktrees": [],
+                "worktreeGraveyard": [],
+                "teamRoles": [],
+                "remoteClients": [],
+                "lifecycleOperations": [],
+                "exchangeRefs": []
+            }))
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::new(),
+        },
+    )
+    .unwrap();
 }
