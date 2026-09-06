@@ -76,6 +76,10 @@ pub fn read_process_args(pid: i32) -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()).filter(|args| !args.is_empty())
 }
 
+pub fn read_process_args_from_ps_output(stdout: &str) -> Option<String> {
+    Some(stdout.trim().to_owned()).filter(|args| !args.is_empty())
+}
+
 pub fn list_process_args() -> Vec<ProcessArgsEntry> {
     let Ok(output) = Command::new("ps").args(["-axo", "pid=,args="]).output() else {
         return Vec::new();
@@ -83,10 +87,12 @@ pub fn list_process_args() -> Vec<ProcessArgsEntry> {
     if !output.status.success() {
         return Vec::new();
     }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(parse_process_args_line)
-        .collect()
+    let text = String::from_utf8_lossy(&output.stdout);
+    list_process_args_from_ps_output(&text)
+}
+
+pub fn list_process_args_from_ps_output(stdout: &str) -> Vec<ProcessArgsEntry> {
+    stdout.lines().filter_map(parse_process_args_line).collect()
 }
 
 fn parse_process_args_line(line: &str) -> Option<ProcessArgsEntry> {
@@ -123,7 +129,12 @@ pub fn read_process_cwd(pid: i32) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&output.stdout)
+    let text = String::from_utf8_lossy(&output.stdout);
+    read_process_cwd_from_lsof_output(&text)
+}
+
+pub fn read_process_cwd_from_lsof_output(stdout: &str) -> Option<String> {
+    stdout
         .lines()
         .find_map(|line| line.strip_prefix('n').map(str::trim))
         .filter(|cwd| !cwd.is_empty())

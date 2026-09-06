@@ -153,6 +153,12 @@ Priority fixture groups:
   because there is no public scanner API outside the daemon/project catalog
   implementation.
 
+## Process
+
+- `process/inspector.json`: process args, process-list, cwd, exited-state, and
+  project-service identity contracts captured by running TypeScript
+  `process-inspector` helpers against fake `ps`/`lsof` commands.
+
 ## Project Topology
 
 - `project-topology/topology.json`: project topology health, rollup, worktree
