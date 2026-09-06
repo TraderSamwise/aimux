@@ -1,5 +1,7 @@
+pub mod alert_display_contract;
 pub mod ansi_sgr_spans;
 pub mod atomic_write;
+pub mod attachment_text_contract;
 pub mod backend_session_ids;
 pub mod build_info;
 pub mod cli_launcher;
@@ -58,6 +60,7 @@ pub mod runtime_migration;
 pub mod runtime_topology;
 pub mod session_bootstrap;
 pub mod shell_hooks;
+pub mod statusline_model_contract;
 pub mod tmux;
 pub mod tmux_expose;
 pub mod tool_hooks;
