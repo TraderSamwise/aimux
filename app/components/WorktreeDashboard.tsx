@@ -43,7 +43,7 @@ import {
 // dashboard's card/dot/[n]/pill language. Palette: card #15161a · border
 // #26272d · hairline #202127 · text #edeef0 / muted #7c7e88 / faint #565862.
 const PRESS = "hover:bg-[#1f2025] active:bg-[#232733]";
-const WORKTREE_CARD_MIN_WIDTH = 500;
+const WORKTREE_CARD_MIN_WIDTH = 420;
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -121,10 +121,11 @@ function SelectMark({ selected }: { selected: boolean }) {
 }
 
 function TrailingHint({ text }: { text?: string }) {
-  if (!text) return <View className="min-w-0 flex-1" />;
+  if (!text) return null;
   return (
     <Text
-      className="min-w-0 flex-1 font-mono text-[12px] text-[#565862]"
+      className="min-w-0 shrink font-mono text-[12px] text-[#565862]"
+      style={{ maxWidth: 220 }}
       numberOfLines={1}
       ellipsizeMode="tail"
     >
@@ -234,11 +235,11 @@ function AgentRow({
     >
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
+        className="min-w-0 shrink flex-row items-center gap-2 active:opacity-70"
       >
         {identity}
       </Pressable>
-      <View className="shrink-0 flex-row items-center gap-3 pl-2">
+      <View className="shrink-0 flex-row items-center gap-3 pl-3">
         <StatusCell state={state} />
         <AgentActions
           session={session}
@@ -321,11 +322,11 @@ function ServiceRow({
     <View className="flex-row items-center gap-2 rounded-md px-2.5 py-2 hover:bg-[#1f2025]">
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
+        className="min-w-0 shrink flex-row items-center gap-2 active:opacity-70"
       >
         {identity}
       </Pressable>
-      <View className="shrink-0 flex-row items-center gap-3 pl-2">
+      <View className="shrink-0 flex-row items-center gap-3 pl-3">
         <Text
           className={cn("font-mono text-[12px]", tone.text)}
           style={{ color: tone.hex }}
