@@ -400,6 +400,7 @@ fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"f"), DashboardKey::Printable('f'));
     assert_eq!(parse_dashboard_key(b"S"), DashboardKey::Printable('S'));
     assert_eq!(parse_dashboard_key(b"\t"), DashboardKey::Tab);
+    assert_eq!(parse_dashboard_key(b"\x1b[I"), DashboardKey::FocusIn);
     assert_eq!(parse_dashboard_key(b"\x7f"), DashboardKey::Backspace);
     assert_eq!(parse_dashboard_key(b"4"), DashboardKey::Printable('4'));
 }

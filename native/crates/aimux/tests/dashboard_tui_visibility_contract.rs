@@ -2,7 +2,8 @@ use aimux::dashboard_tui_visibility::{
     DashboardTuiVisibilityState, TuiVisibilityReason, consume_dashboard_tui_visibility_wake,
     find_tmux_pane_for_process, mark_dashboard_tui_visible, parse_process_parent_rows,
     parse_process_parents, parse_tmux_pane_rows, parse_tmux_visibility,
-    read_dashboard_tui_visibility_for_state, read_tmux_tui_visibility_from_values,
+    read_dashboard_tui_visibility_for_loop, read_dashboard_tui_visibility_for_state,
+    read_tmux_tui_visibility_from_values,
 };
 use serde_json::{Value, json};
 
@@ -203,4 +204,53 @@ fn non_dashboard_host_matches_typescript_fallback() {
         }),
         aimux::dashboard_tui_visibility::visible_fallback(None, TuiVisibilityReason::NotTmux)
     );
+}
+
+#[test]
+fn dashboard_loop_throttles_visible_visibility_checks() {
+    let mut calls = 0;
+    let mut state = DashboardTuiVisibilityState::default();
+
+    read_dashboard_tui_visibility_for_loop(&mut state, 0, || {
+        calls += 1;
+        parse_tmux_visibility(Some("1\t1"), Some("%1"))
+    });
+    read_dashboard_tui_visibility_for_loop(&mut state, 500, || {
+        calls += 1;
+        parse_tmux_visibility(Some("1\t0"), Some("%1"))
+    });
+    read_dashboard_tui_visibility_for_loop(&mut state, 1000, || {
+        calls += 1;
+        parse_tmux_visibility(Some("1\t1"), Some("%1"))
+    });
+
+    assert_eq!(calls, 2);
+    assert_eq!(state.dashboard_hidden_visibility_skip_ticks, 0);
+}
+
+#[test]
+fn dashboard_loop_backs_off_hidden_visibility_checks_and_wakes() {
+    let mut calls = 0;
+    let mut state = DashboardTuiVisibilityState::default();
+
+    let first = read_dashboard_tui_visibility_for_loop(&mut state, 0, || {
+        calls += 1;
+        parse_tmux_visibility(Some("1\t0"), Some("%1"))
+    });
+    let skipped = read_dashboard_tui_visibility_for_loop(&mut state, 5_000, || {
+        calls += 1;
+        parse_tmux_visibility(Some("1\t1"), Some("%1"))
+    });
+    let woke = read_dashboard_tui_visibility_for_loop(&mut state, 10_000, || {
+        calls += 1;
+        parse_tmux_visibility(Some("1\t1"), Some("%1"))
+    });
+
+    assert!(!first.visible);
+    assert!(!skipped.visible);
+    assert!(woke.visible);
+    assert_eq!(calls, 2);
+    assert_eq!(state.dashboard_hidden_visibility_recheck_at, 0);
+    assert_eq!(state.dashboard_hidden_visibility_skip_ticks, 0);
+    assert!(consume_dashboard_tui_visibility_wake(&mut state));
 }

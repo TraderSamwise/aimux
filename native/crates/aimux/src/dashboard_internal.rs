@@ -20,8 +20,8 @@ use crate::dashboard_service_input::render_service_input_overlay;
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use crate::dashboard_tui_visibility::{
-    DashboardTuiVisibilityState, consume_dashboard_tui_visibility_wake,
-    read_dashboard_tui_visibility_for_state, read_tmux_tui_visibility,
+    DashboardTuiVisibilityState, consume_dashboard_tui_visibility_wake, mark_dashboard_tui_visible,
+    read_dashboard_tui_visibility_for_loop, read_tmux_tui_visibility,
 };
 use anyhow::{Context, Result};
 use std::fs;
@@ -84,17 +84,24 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             render_now = true;
         }
 
-        let dashboard_visible = if visibility_state.started_in_dashboard {
-            read_dashboard_tui_visibility_for_state(
+        let now = elapsed_millis(clock_start);
+        let mut dashboard_visible = if visibility_state.started_in_dashboard {
+            read_dashboard_tui_visibility_for_loop(
                 &mut visibility_state,
-                false,
-                elapsed_millis(clock_start),
+                now,
                 read_tmux_tui_visibility,
             )
             .visible
         } else {
             true
         };
+        if !dashboard_visible {
+            let keys = read_dashboard_keys(&mut stdin).context("read dashboard key")?;
+            if keys.iter().any(|key| key.is_focus_in()) {
+                mark_dashboard_tui_visible(&mut visibility_state, now, None);
+                dashboard_visible = true;
+            }
+        }
         if !dashboard_visible {
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
             continue;
@@ -156,7 +163,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
-            for key in keys {
+            for key in keys.into_iter().filter(|key| !key.is_focus_in()) {
                 match controller.handle_key(snapshot, key) {
                     DashboardControllerEffect::Quit => return Ok(()),
                     DashboardControllerEffect::Request(request) => {

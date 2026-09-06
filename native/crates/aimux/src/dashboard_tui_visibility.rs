@@ -3,6 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 pub const DASHBOARD_TUI_VISIBILITY_CACHE_MS: i64 = 250;
+pub const DASHBOARD_VISIBLE_VISIBILITY_RECHECK_MS: i64 = 1_000;
+pub const DASHBOARD_HIDDEN_VISIBILITY_RECHECK_MS: i64 = 10_000;
+pub const DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS: i64 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -291,6 +294,48 @@ pub fn read_dashboard_tui_visibility_for_state(
         state.dashboard_tui_visibility_wake_pending = true;
     }
     snapshot
+}
+
+pub fn read_dashboard_tui_visibility_for_loop(
+    state: &mut DashboardTuiVisibilityState,
+    now: i64,
+    read_visibility: impl FnOnce() -> TuiVisibilitySnapshot,
+) -> TuiVisibilitySnapshot {
+    if !state.started_in_dashboard {
+        return visible_fallback(None, TuiVisibilityReason::NotTmux);
+    }
+    if let Some(cached) = &state.dashboard_tui_visibility {
+        if cached.visible {
+            if now - state.dashboard_tui_visibility_checked_at
+                < DASHBOARD_VISIBLE_VISIBILITY_RECHECK_MS
+            {
+                return cached.clone();
+            }
+        } else if should_skip_hidden_visibility_check(state, now) {
+            if state.dashboard_hidden_visibility_skip_ticks > 0 {
+                state.dashboard_hidden_visibility_skip_ticks -= 1;
+            }
+            return cached.clone();
+        }
+    }
+
+    let snapshot = read_dashboard_tui_visibility_for_state(state, true, now, read_visibility);
+    if snapshot.visible {
+        state.dashboard_hidden_visibility_recheck_at = 0;
+        state.dashboard_hidden_visibility_skip_ticks = 0;
+    } else {
+        state.dashboard_hidden_visibility_recheck_at = now + DASHBOARD_HIDDEN_VISIBILITY_RECHECK_MS;
+        state.dashboard_hidden_visibility_skip_ticks = DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS;
+    }
+    snapshot
+}
+
+fn should_skip_hidden_visibility_check(state: &DashboardTuiVisibilityState, now: i64) -> bool {
+    if state.dashboard_hidden_visibility_recheck_at > now {
+        return true;
+    }
+    state.dashboard_hidden_visibility_recheck_at == 0
+        && state.dashboard_hidden_visibility_skip_ticks > 0
 }
 
 pub fn mark_dashboard_tui_visible(

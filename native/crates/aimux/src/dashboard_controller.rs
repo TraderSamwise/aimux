@@ -130,6 +130,7 @@ impl DashboardController {
             | DashboardKey::Home
             | DashboardKey::End
             | DashboardKey::Delete
+            | DashboardKey::FocusIn
             | DashboardKey::Ctrl(_) => DashboardControllerEffect::Ignored,
         }
     }
@@ -182,6 +183,7 @@ impl DashboardController {
             | DashboardKey::Delete
             | DashboardKey::Ctrl(_)
             | DashboardKey::Printable(_)
+            | DashboardKey::FocusIn
             | DashboardKey::Other => DashboardToolPickerEffect::Render,
         };
         match effect {
@@ -298,6 +300,7 @@ impl DashboardController {
             | DashboardKey::End
             | DashboardKey::Delete
             | DashboardKey::Ctrl(_)
+            | DashboardKey::FocusIn
             | DashboardKey::Other => DashboardServiceInputEffect::Render,
         };
         match effect {
@@ -444,7 +447,14 @@ pub enum DashboardKey {
     Delete,
     Ctrl(char),
     Printable(char),
+    FocusIn,
     Other,
+}
+
+impl DashboardKey {
+    pub fn is_focus_in(&self) -> bool {
+        matches!(self, Self::FocusIn)
+    }
 }
 
 pub fn parse_dashboard_key(bytes: &[u8]) -> DashboardKey {
@@ -486,6 +496,9 @@ pub fn parse_dashboard_keys(bytes: &[u8]) -> Vec<DashboardKey> {
         } else if remaining.starts_with(b"\x1b[3~") {
             keys.push(DashboardKey::Delete);
             index += 4;
+        } else if remaining.starts_with(b"\x1b[I") {
+            keys.push(DashboardKey::FocusIn);
+            index += 3;
         } else {
             keys.push(match bytes[index] {
                 b'\r' | b'\n' => DashboardKey::Enter,
