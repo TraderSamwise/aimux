@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "source": "src/osc-notifications.test.ts + src/osc-notifications.ts",
+  "generatedBy": "scripts/capture-routing-notification-contracts.mjs",
+  "description": "OSC terminal notification parse and clean-output contracts captured by running the TypeScript parser.",
+  "cases": [
+    {
+      "id": "notifications-osc-001",
+      "name": "parses OSC 777 notifications and strips them from output",
+      "source": "src/osc-notifications.test.ts",
+      "api": "OscNotificationParser.parseChunk",
+      "input": { "chunks": ["before \u001b]777;notify;Title;Body\u0007 after"] },
+      "output": [
+        { "cleaned": "before  after", "notifications": [{ "source": "osc777", "title": "Title", "body": "Body" }] }
+      ],
+      "inputSha256": "d3aa225030205ba9a2167896ed2842f2c0ac0c6833ed344e52835d263cbdb9e8"
+    },
+    {
+      "id": "notifications-osc-002",
+      "name": "parses OSC 9 iTerm-style notifications",
+      "source": "src/osc-notifications.test.ts",
+      "api": "OscNotificationParser.parseChunk",
+      "input": { "chunks": ["\u001b]9;Hello world\u0007"] },
+      "output": [{ "cleaned": "", "notifications": [{ "source": "osc9", "title": "", "body": "Hello world" }] }],
+      "inputSha256": "cebe15e0f4d5bb4679cc063cf71dafb30987f6110bac5937d47461f967c33540"
+    },
+    {
+      "id": "notifications-osc-003",
+      "name": "ignores ConEmu OSC 9 subcommands",
+      "source": "src/osc-notifications.test.ts",
+      "api": "OscNotificationParser.parseChunk",
+      "input": { "chunks": ["\u001b]9;12\u0007prompt"] },
+      "output": [{ "cleaned": "prompt", "notifications": [] }],
+      "inputSha256": "e6afbd7442d8b73909e69a1ddd5216bfadef3bfea5665f2ba19c7ee90ebc4382"
+    },
+    {
+      "id": "notifications-osc-004",
+      "name": "parses OSC 99 Kitty title and body chunks",
+      "source": "src/osc-notifications.test.ts",
+      "api": "OscNotificationParser.parseChunk",
+      "input": {
+        "chunks": ["\u001b]99;i=abc:d=0:p=title;Kitty Title\u0007", "\u001b]99;i=abc:p=body;Kitty Body\u0007"]
+      },
+      "output": [
+        { "cleaned": "", "notifications": [] },
+        { "cleaned": "", "notifications": [{ "source": "osc99", "title": "Kitty Title", "body": "Kitty Body" }] }
+      ],
+      "inputSha256": "7139e4d927e246db444e724e256bf5be0b79d247d768612af92dd83c629351dd"
+    },
+    {
+      "id": "notifications-osc-005",
+      "name": "buffers incomplete OSC sequences across chunks",
+      "source": "src/osc-notifications.test.ts",
+      "api": "OscNotificationParser.parseChunk",
+      "input": { "chunks": ["hello \u001b]777;notify;Ti", "tle;Body\u0007 world"] },
+      "output": [
+        { "cleaned": "hello ", "notifications": [] },
+        { "cleaned": " world", "notifications": [{ "source": "osc777", "title": "Title", "body": "Body" }] }
+      ],
+      "inputSha256": "5ff13b62997b2b2017f8dbbf1c348918c020157b9f681555d09724eb4b99ea08"
+    },
+    {
+      "id": "notifications-osc-006",
+      "name": "accepts ST terminators and Kitty base64 body payloads",
+      "source": "src/osc-notifications.ts",
+      "api": "OscNotificationParser.parseChunk",
+      "input": {
+        "chunks": ["\u001b]99;i=b64:p=title;Encoded\u001b\\", "\u001b]99;i=b64:p=body:e=1;c25vd21hbiBib2R5\u001b\\"]
+      },
+      "output": [
+        { "cleaned": "", "notifications": [{ "source": "osc99", "title": "Encoded", "body": "" }] },
+        { "cleaned": "", "notifications": [{ "source": "osc99", "title": "snowman body", "body": "" }] }
+      ],
+      "inputSha256": "a9ae66621ebca8b2f17b7831eaff7020875bd1b6acf5d35a4825ee58dc4abc31"
+    },
+    {
+      "id": "notifications-osc-007",
+      "name": "ignores unsupported and malformed OSC notification payloads",
+      "source": "src/osc-notifications.ts",
+      "api": "OscNotificationParser.parseChunk",
+      "input": {
+        "chunks": [
+          "a\u001b]0;Window title\u0007b",
+          "c\u001b]777;bad;Title;Body\u0007d",
+          "e\u001b]99;p=unknown;ignored\u0007f"
+        ]
+      },
+      "output": [
+        { "cleaned": "ab", "notifications": [] },
+        { "cleaned": "cd", "notifications": [] },
+        { "cleaned": "ef", "notifications": [] }
+      ],
+      "inputSha256": "c22d654902869614775682686a6563d4b25203c3910244a48d68ad0e6ab24b20"
+    }
+  ]
+}

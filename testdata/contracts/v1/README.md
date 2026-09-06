@@ -99,6 +99,12 @@ Priority fixture groups:
   reachability, sorting, and view composition cases captured by running the
   TypeScript coordination model functions.
 
+## Notifications
+
+- `notifications/osc.json`: OSC 9, OSC 99, OSC 777, chunk buffering, ST
+  terminator, base64, and malformed-payload behavior captured by running the
+  TypeScript `OscNotificationParser`.
+
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
@@ -127,6 +133,12 @@ Priority fixture groups:
   field scrubbing, loop/control-session flags, no-op writes, statusline segment
   replacement/expiry/drop/rejection, and malformed rail cases captured by
   running the TypeScript metadata store against temporary project state.
+
+## Orchestration
+
+- `orchestration/routing.json`: direct, role, tool, worktree, liveness, and
+  workflow-pressure recipient routing captured by running TypeScript
+  `orchestration-routing` helpers.
 
 ## Runtime Coherence
 
