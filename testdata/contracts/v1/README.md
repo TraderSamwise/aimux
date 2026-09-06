@@ -198,6 +198,12 @@ Priority fixture groups:
   unavailable live-source contracts captured by running TypeScript
   `buildDebugStateReport`.
 
+## Error Display
+
+- `error-display/display.json`: user-facing error redaction, tmux failure
+  collapsing, multiline filtering, line-count caps, and truncation captured by
+  running TypeScript `error-display` helpers.
+
 ## Fast Control
 
 - `fast-control/switching.json`: switchable agent filtering, project-control

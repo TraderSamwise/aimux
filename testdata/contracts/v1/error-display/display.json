@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "source": "src/error-display.test.ts",
+  "generatedBy": "scripts/capture-error-display-contract.mjs",
+  "description": "User-facing error redaction, tmux failure collapsing, multiline filtering, line-count caps, and truncation captured by running TypeScript error-display helpers.",
+  "cases": [
+    {
+      "id": "error-display-001",
+      "name": "collapses raw tmux command failures before dashboard display",
+      "source": "src/error-display.test.ts",
+      "api": "userFacingErrorDisplay",
+      "input": { "error": "Command failed: tmux new-window env -i OPENAI_API_KEY=sk-real SECRET_TOKEN=abc" },
+      "output": {
+        "lines": [
+          "tmux failed while updating the managed runtime.",
+          "Run aimux restart if it does not recover automatically."
+        ],
+        "message": "tmux failed while updating the managed runtime.\nRun aimux restart if it does not recover automatically."
+      },
+      "inputSha256": "4e9981ef8940dc1308863075991434efba8d57e7717464e90d76276038f6524c"
+    },
+    {
+      "id": "error-display-002",
+      "name": "redacts sensitive assignments in ordinary messages",
+      "source": "src/error-display.test.ts",
+      "api": "userFacingErrorDisplay",
+      "input": { "error": "failed TOKEN=abc ok=1" },
+      "output": { "lines": ["failed TOKEN=<redacted> ok=1"], "message": "failed TOKEN=<redacted> ok=1" },
+      "inputSha256": "6658090736e03af907558668d50db7f9e0c0a201c9f82fb1ac9454fe6e6a7022"
+    },
+    {
+      "id": "error-display-003",
+      "name": "trims blank multiline errors and caps at six lines",
+      "source": "src/error-display.test.ts",
+      "api": "userFacingErrorDisplay",
+      "input": { "error": "\n one \n\n two\n three\n four\n five\n six\n seven\n" },
+      "output": {
+        "lines": ["one", "two", "three", "four", "five", "six"],
+        "message": "one\ntwo\nthree\nfour\nfive\nsix"
+      },
+      "inputSha256": "22c6884842221dfd6ebc47522d7d3b01b3bb78aa7c169300efd048ec42a5bddc"
+    },
+    {
+      "id": "error-display-004",
+      "name": "redacts quoted sensitive assignments",
+      "source": "src/error-display.test.ts",
+      "api": "userFacingErrorDisplay",
+      "input": { "error": "AUTH_KEY=\"abc 123\" password='secret' visible=yes" },
+      "output": {
+        "lines": ["AUTH_KEY=<redacted> password=<redacted> visible=yes"],
+        "message": "AUTH_KEY=<redacted> password=<redacted> visible=yes"
+      },
+      "inputSha256": "4186dffeb3b5617b65efb5e626f2a3af2c7fe0952ea9c58006daff4e0eaa728d"
+    },
+    {
+      "id": "error-display-005",
+      "name": "truncates very long lines",
+      "source": "src/error-display.test.ts",
+      "api": "userFacingErrorDisplay",
+      "input": {
+        "error": "prefix xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "output": {
+        "lines": [
+          "prefix xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."
+        ],
+        "message": "prefix xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."
+      },
+      "inputSha256": "3c203513055238bdae81d9a8e02f27f033b221f259b8189be91b94ab0f7f5dca"
+    },
+    {
+      "id": "error-display-006",
+      "name": "falls back for empty messages",
+      "source": "src/error-display.test.ts",
+      "api": "userFacingErrorDisplay",
+      "input": { "error": "   \n\t" },
+      "output": { "lines": [], "message": "unknown error" },
+      "inputSha256": "55b23468959ce84ab1db7fd110668684a3771bc9d0738a4d7d534f6270d7b326"
+    }
+  ]
+}
