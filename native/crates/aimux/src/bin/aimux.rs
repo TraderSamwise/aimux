@@ -318,6 +318,7 @@ fn is_reserved_main_word(word: &str) -> bool {
             | "loop"
             | "message"
             | "migrate"
+            | "migration"
             | "notifications"
             | "notify"
             | "overseer"

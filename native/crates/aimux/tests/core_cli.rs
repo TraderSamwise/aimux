@@ -1074,6 +1074,60 @@ fn debug_state_plans_native_local_report() {
 }
 
 #[test]
+fn migration_commands_plan_native_local_actions() {
+    let audit = classify_core_cli_with_project_resolver(
+        &["migration", "audit", "--project", "./child"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("migration audit plan");
+    assert_eq!(audit.operation, CoreCliOperation::RuntimeMigrationAudit);
+    assert_eq!(
+        audit.action,
+        CoreCliAction::RuntimeMigrationAudit {
+            project_root: "/resolved/./child".into(),
+        }
+    );
+
+    let import = classify_core_cli_with_project_resolver(
+        &["migration", "import", "--project=./child"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("migration import plan");
+    assert_eq!(import.operation, CoreCliOperation::RuntimeMigrationImport);
+    assert_eq!(
+        import.action,
+        CoreCliAction::RuntimeMigrationImport {
+            project_root: "/resolved/./child".into(),
+        }
+    );
+
+    let rollback = classify_core_cli(
+        &["migration", "rollback", "backups/manifest.json"],
+        &context(true, true),
+    )
+    .expect("migration rollback plan");
+    assert_eq!(
+        rollback.operation,
+        CoreCliOperation::RuntimeMigrationRollback
+    );
+    assert_eq!(
+        rollback.action,
+        CoreCliAction::RuntimeMigrationRollback {
+            manifest: "backups/manifest.json".into(),
+        }
+    );
+
+    assert_eq!(
+        classify_core_cli(&["migration", "rollback"], &context(true, true))
+            .expect_err("migration rollback missing manifest")
+            .exit_code(),
+        2
+    );
+}
+
+#[test]
 fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
     let disk = classify_core_cli_with_project_resolver(
         &[

@@ -8,11 +8,12 @@ use crate::core_cli_routing::{
     parse_core_host_agent_stream_args_result, parse_core_host_restart_args,
     parse_core_host_topology_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
-    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
-    parse_core_project_ensure_args, parse_core_repair_args, parse_core_restart_args,
-    parse_core_runtime_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
-    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_migration_args,
+    parse_core_notification_args, parse_core_outline_args, parse_core_overseer_clear_args,
+    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_repair_args,
+    parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
+    parse_core_scribe_start_args, parse_core_task_args, parse_core_team_args,
+    parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,9 @@ pub enum CoreCliOperation {
     DaemonEnsure,
     DaemonStop,
     DaemonKill,
+    RuntimeMigrationAudit,
+    RuntimeMigrationImport,
+    RuntimeMigrationRollback,
     DaemonRestart,
     DaemonStatus,
     DaemonProjects,
@@ -405,6 +409,15 @@ pub enum CoreCliAction {
         fix: bool,
         retention_days: Option<String>,
         keep_recent: Option<String>,
+    },
+    RuntimeMigrationAudit {
+        project_root: String,
+    },
+    RuntimeMigrationImport {
+        project_root: String,
+    },
+    RuntimeMigrationRollback {
+        manifest: String,
     },
 }
 
@@ -2136,6 +2149,48 @@ where
                 )),
                 CoreCliFallback::None,
             )
+        }
+        ("migration", "audit" | "import" | "rollback") => {
+            let parsed = parse_core_migration_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid migration arguments",
+                }
+            })?;
+            match parsed.subcommand.as_str() {
+                "audit" => {
+                    let project_root = parsed
+                        .project
+                        .as_deref()
+                        .map(&resolve_project_root)
+                        .unwrap_or_else(|| context.current_project_root.clone());
+                    (
+                        CoreCliOperation::RuntimeMigrationAudit,
+                        CoreCliAction::RuntimeMigrationAudit { project_root },
+                        CoreCliFallback::None,
+                    )
+                }
+                "import" => {
+                    let project_root = parsed
+                        .project
+                        .as_deref()
+                        .map(&resolve_project_root)
+                        .unwrap_or_else(|| context.current_project_root.clone());
+                    (
+                        CoreCliOperation::RuntimeMigrationImport,
+                        CoreCliAction::RuntimeMigrationImport { project_root },
+                        CoreCliFallback::None,
+                    )
+                }
+                "rollback" => (
+                    CoreCliOperation::RuntimeMigrationRollback,
+                    CoreCliAction::RuntimeMigrationRollback {
+                        manifest: parsed.manifest.unwrap_or_default(),
+                    },
+                    CoreCliFallback::None,
+                ),
+                _ => unreachable!("validated migration command"),
+            }
         }
         ("doctor", "versions") => (
             CoreCliOperation::DoctorVersions,

@@ -217,6 +217,39 @@ fn doctor_installs_stays_native_even_when_node_fallback_is_configured() {
     cleanup(root);
 }
 
+#[test]
+fn migration_audit_stays_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-migration-audit");
+    let repo = root.join("repo");
+    let home = root.join("home");
+    fs::create_dir_all(repo.join(".git")).expect("create repo marker");
+    fs::create_dir_all(&home).expect("create aimux home");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .current_dir(&repo)
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_HOME", &home)
+        .env("AIMUX_NODE_BIN", node)
+        .args(["migration", "audit"])
+        .output()
+        .expect("run native aimux");
+
+    assert!(output.status.success());
+    assert!(
+        !log.exists(),
+        "migration audit should not invoke node fallback"
+    );
+    let body: Value = serde_json::from_slice(&output.stdout).expect("migration audit json");
+    assert_eq!(body["status"], "clean");
+    assert_eq!(
+        body["project"]["repoRoot"],
+        repo.canonicalize().unwrap().to_str().unwrap()
+    );
+    cleanup(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {

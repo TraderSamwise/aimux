@@ -331,6 +331,60 @@ pub fn parse_core_agent_migrate_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAg
     })
 }
 
+pub fn parse_core_migration_args<S: AsRef<str>>(args: &[S]) -> Option<CoreMigrationArgs> {
+    if args.first().map(AsRef::as_ref) != Some("migration") {
+        return None;
+    }
+    let subcommand = args.get(1)?.as_ref();
+    match subcommand {
+        "audit" | "import" => {
+            let mut project = None;
+            let mut index = 2;
+            while index < args.len() {
+                let arg = args[index].as_ref();
+                if arg == "--project" {
+                    let value = required_value(args, index)?;
+                    if value.starts_with('-') {
+                        return None;
+                    }
+                    project = Some(value.to_owned());
+                    index += 2;
+                    continue;
+                }
+                if let Some(value) = arg.strip_prefix("--project=") {
+                    if value.is_empty() || value.starts_with('-') {
+                        return None;
+                    }
+                    project = Some(value.to_owned());
+                    index += 1;
+                    continue;
+                }
+                return None;
+            }
+            Some(CoreMigrationArgs {
+                subcommand: subcommand.to_owned(),
+                project,
+                manifest: None,
+            })
+        }
+        "rollback" => {
+            if args.len() != 3 {
+                return None;
+            }
+            let manifest = args[2].as_ref();
+            if manifest.is_empty() || manifest.starts_with('-') {
+                return None;
+            }
+            Some(CoreMigrationArgs {
+                subcommand: subcommand.to_owned(),
+                project: None,
+                manifest: Some(manifest.to_owned()),
+            })
+        }
+        _ => None,
+    }
+}
+
 pub fn parse_core_lifecycle_status_args<S: AsRef<str>>(
     args: &[S],
     command: &str,
@@ -3067,6 +3121,9 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("input"), _) => true,
         (Some("rename"), _) => true,
         (Some("migrate"), _) => true,
+        (Some("migration"), Some("audit" | "import" | "rollback")) => {
+            parse_core_migration_args(args).is_some()
+        }
         (Some("spawn"), _) => true,
         (Some("fork"), _) => true,
         (Some("kill"), _) => true,

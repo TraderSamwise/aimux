@@ -46,6 +46,16 @@ pub struct CoreAgentMigrateArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreMigrationArgs {
+    pub subcommand: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreLifecycleStatusArgs {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

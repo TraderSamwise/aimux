@@ -34,6 +34,11 @@ use crate::logs::{
 use crate::paths::PathResolver;
 use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 use crate::remote_login::{LoginAction, run_login_flow};
+use crate::runtime_migration::{
+    build_runtime_migration_report, import_runtime_migration,
+    render_runtime_migration_import_result, render_runtime_migration_report,
+    render_runtime_migration_rollback_result, rollback_runtime_migration,
+};
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{attach_session_argv, switch_client_argv};
 use serde_json::{Map, Value, json};
@@ -95,6 +100,9 @@ pub trait CoreCliRuntime {
     ) -> Result<RestartControlPlaneTextResult, String>;
     fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String>;
     fn debug_state_report(&self, target: &str) -> Result<String, String>;
+    fn runtime_migration_audit(&self, project_root: &str) -> Result<String, String>;
+    fn runtime_migration_import(&self, project_root: &str) -> Result<String, String>;
+    fn runtime_migration_rollback(&self, manifest: &str) -> Result<String, String>;
 }
 
 #[derive(Debug, Default)]
@@ -293,6 +301,24 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         let report = build_debug_state_report(self.cwd(), target);
         render_debug_state_report(&report).map_err(|error| error.to_string())
     }
+
+    fn runtime_migration_audit(&self, project_root: &str) -> Result<String, String> {
+        let report = build_runtime_migration_report(project_root, None);
+        render_runtime_migration_report(&report).map_err(|error| error.to_string())
+    }
+
+    fn runtime_migration_import(&self, project_root: &str) -> Result<String, String> {
+        let result =
+            import_runtime_migration(project_root, None).map_err(|error| error.to_string())?;
+        render_runtime_migration_import_result(&result).map_err(|error| error.to_string())
+    }
+
+    fn runtime_migration_rollback(&self, manifest: &str) -> Result<String, String> {
+        let manifest_path = resolve_path_from(&self.cwd(), manifest);
+        let manifest =
+            rollback_runtime_migration(manifest_path).map_err(|error| error.to_string())?;
+        render_runtime_migration_rollback_result(&manifest).map_err(|error| error.to_string())
+    }
 }
 
 pub fn run_core_cli(raw_args: &[String]) -> CoreCliExecution {
@@ -449,6 +475,24 @@ fn run_plan(
             retention_days,
             keep_recent,
         } => run_install_cleanup_action(output_mode, fix, retention_days, keep_recent),
+        CoreCliAction::RuntimeMigrationAudit { project_root } => Ok(CoreCliExecution::ok(vec![
+            runtime.runtime_migration_audit(&project_root)?,
+        ])),
+        CoreCliAction::RuntimeMigrationImport { project_root } => Ok(CoreCliExecution::ok(vec![
+            runtime.runtime_migration_import(&project_root)?,
+        ])),
+        CoreCliAction::RuntimeMigrationRollback { manifest } => Ok(CoreCliExecution::ok(vec![
+            runtime.runtime_migration_rollback(&manifest)?,
+        ])),
+    }
+}
+
+fn resolve_path_from(cwd: &str, path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        path
+    } else {
+        PathBuf::from(cwd).join(path)
     }
 }
 

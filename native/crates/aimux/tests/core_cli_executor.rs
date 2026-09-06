@@ -278,6 +278,18 @@ impl CoreCliRuntime for FakeRuntime {
             "{{\n  \"version\": 1,\n  \"target\": \"{target}\"\n}}"
         ))
     }
+
+    fn runtime_migration_audit(&self, project_root: &str) -> Result<String, String> {
+        Ok(format!("migration audit {project_root}"))
+    }
+
+    fn runtime_migration_import(&self, project_root: &str) -> Result<String, String> {
+        Ok(format!("migration import {project_root}"))
+    }
+
+    fn runtime_migration_rollback(&self, manifest: &str) -> Result<String, String> {
+        Ok(format!("migration rollback {manifest}"))
+    }
 }
 
 fn args(values: &[&str]) -> Vec<String> {
@@ -795,6 +807,33 @@ fn agent_rename_and_migrate_execute_native_text_routes_without_core_command_fall
         ]
     );
     assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn migration_commands_execute_native_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let audit = run_core_cli_with(
+        &args(&["migration", "audit", "--project", "./child"]),
+        &mut runtime,
+    );
+    let import = run_core_cli_with(
+        &args(&["migration", "import", "--project=./child"]),
+        &mut runtime,
+    );
+    let rollback = run_core_cli_with(
+        &args(&["migration", "rollback", "backups/manifest.json"]),
+        &mut runtime,
+    );
+
+    assert_eq!(audit.stdout, ["migration audit /resolved/./child"]);
+    assert_eq!(import.stdout, ["migration import /resolved/./child"]);
+    assert_eq!(
+        rollback.stdout,
+        ["migration rollback backups/manifest.json"]
+    );
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
 }
 
 #[test]
