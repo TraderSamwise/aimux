@@ -446,6 +446,27 @@ fn dashboard_reload_and_runtime_restart_execute_native_text_routes() {
 }
 
 #[test]
+fn invalid_dashboard_and_runtime_restart_args_fail_before_io() {
+    let mut runtime = FakeRuntime::default();
+
+    let reload = run_core_cli_with(&args(&["dashboard-reload", "--json"]), &mut runtime);
+    assert_eq!(reload.code, 1);
+    assert_eq!(reload.stderr, ["error: invalid dashboard-reload arguments"]);
+
+    let restart = run_core_cli_with(
+        &args(&["restart-runtime", "--open", "--json"]),
+        &mut runtime,
+    );
+    assert_eq!(restart.code, 1);
+    assert_eq!(
+        restart.stderr,
+        ["Error: restart-runtime --open cannot be combined with --json"]
+    );
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
+}
+
+#[test]
 fn unsupported_runtime_features_fail_before_side_effects() {
     let mut runtime = FakeRuntime::default();
 

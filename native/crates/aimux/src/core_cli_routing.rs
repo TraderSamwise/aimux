@@ -454,9 +454,8 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     let subcommand = args.get(1).map(AsRef::as_ref);
     match (command, subcommand) {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
-        (Some("dashboard-reload"), _) => parse_core_dashboard_reload_args(args).is_some(),
-        (Some("restart-runtime"), _) => parse_core_runtime_restart_args(args)
-            .is_some_and(|parsed| !(parsed.open && parsed.json)),
+        (Some("dashboard-reload"), _) => true,
+        (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,
         (Some("host"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("host"), Some("stop" | "kill")) => args.len() == 2,

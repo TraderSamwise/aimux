@@ -203,6 +203,11 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["restart-runtime"],
         vec!["restart-runtime", "--project-root=/repo", "--json"],
         vec!["restart-runtime", "--open", "--client-tty", "/dev/ttys001"],
+        // Core claims malformed dashboard/runtime commands to reject them before fallback.
+        vec!["restart-runtime", "--open", "--json"],
+        vec!["dashboard-reload", "--json"],
+        vec!["dashboard-reload", "--client-tty=-x"],
+        vec!["restart-runtime", "--project-root=-x"],
         vec!["serve"],
         vec!["host", "status", "--json"],
         vec!["host", "stop"],
@@ -231,10 +236,6 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
     }
 
     let rejected = [
-        vec!["restart-runtime", "--open", "--json"],
-        vec!["dashboard-reload", "--json"],
-        vec!["dashboard-reload", "--client-tty=-x"],
-        vec!["restart-runtime", "--project-root=-x"],
         vec!["serve", "--json"],
         vec!["host", "stop", "--open"],
         vec!["daemon", "restart", "--project", "/repo"],
