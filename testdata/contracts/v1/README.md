@@ -744,6 +744,10 @@ Priority fixture groups:
   merging, stale compatibility state clearing, topology service demotion, and
   missing-worktree filtering captured by running TypeScript
   `multiplexer/service-state-snapshot`.
+- `multiplexer/services.json`: service launch-command recovery, service-state
+  metadata projection, and service-label derivation captured by running
+  TypeScript `multiplexer/services` helpers; tmux-backed mutation flows are
+  fenced out.
 - `runtime-state/guard-repair-history.json`: dashboard runtime-guard repair
   attempt persistence, project-key normalization, window pruning, clearing, and
   corrupt-history recovery captured by running TypeScript

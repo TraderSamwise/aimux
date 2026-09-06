@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/services.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-services-contract.mjs",
+  "description": "Multiplexer service launch metadata helper contracts captured by running TypeScript services helpers; tmux-backed mutation flows are fenced out.",
+  "cases": [
+    {
+      "id": "multiplexer-services-001",
+      "name": "recovers launch commands from shell -lc metadata",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "getServiceLaunchCommandLine",
+      "input": {
+        "name": "recovers launch commands from shell -lc metadata",
+        "api": "getServiceLaunchCommandLine",
+        "metadata": { "command": "shell", "args": ["-lc", "yarn dev"] }
+      },
+      "output": "yarn dev",
+      "inputSha256": "091c863c628426187a8994daf615e22890d03b4d080f2120d1e388a2409bcbab"
+    },
+    {
+      "id": "multiplexer-services-002",
+      "name": "returns empty launch command for non -lc shell metadata",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "getServiceLaunchCommandLine",
+      "input": {
+        "name": "returns empty launch command for non -lc shell metadata",
+        "api": "getServiceLaunchCommandLine",
+        "metadata": { "command": "shell", "args": ["-l"] }
+      },
+      "output": "",
+      "inputSha256": "2de50cd008539e8d6eef73b640bbf6694024c337ae6435ca6cd97d77de857e80"
+    },
+    {
+      "id": "multiplexer-services-003",
+      "name": "derives service state from explicit launch command metadata",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "buildServiceStateFromMetadata",
+      "input": {
+        "name": "derives service state from explicit launch command metadata",
+        "api": "buildServiceStateFromMetadata",
+        "serviceId": "svc-1",
+        "metadata": {
+          "command": "zsh",
+          "args": ["-lc", "ignored"],
+          "createdAt": "2026-05-02T00:00:00.000Z",
+          "worktreePath": "/repo/apps/web",
+          "label": "web",
+          "launchCommandLine": " yarn web "
+        },
+        "options": {
+          "cwd": "/repo/apps/web",
+          "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@9", "windowIndex": 9, "windowName": "web" },
+          "retained": true
+        }
+      },
+      "output": {
+        "id": "svc-1",
+        "createdAt": "2026-05-02T00:00:00.000Z",
+        "worktreePath": "/repo/apps/web",
+        "cwd": "/repo/apps/web",
+        "label": "web",
+        "launchCommandLine": "yarn web",
+        "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@9", "windowIndex": 9, "windowName": "web" },
+        "retained": true
+      },
+      "inputSha256": "0f1f6411ebc5dd1d6bacd2a4a1eb7bb1eae4b7a4b4c26df125cc2e7482b5b251"
+    },
+    {
+      "id": "multiplexer-services-004",
+      "name": "falls back to shell -lc args while deriving service state",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "buildServiceStateFromMetadata",
+      "input": {
+        "name": "falls back to shell -lc args while deriving service state",
+        "api": "buildServiceStateFromMetadata",
+        "serviceId": "svc-2",
+        "metadata": { "command": "shell", "args": ["-lc", "pnpm dev"], "label": "pnpm" },
+        "options": {}
+      },
+      "output": { "id": "svc-2", "label": "pnpm", "launchCommandLine": "pnpm dev" },
+      "inputSha256": "4e52ead46417579cf418dcaf9b5d1410efb6c78f8622179121a669aabe9929cf"
+    },
+    {
+      "id": "multiplexer-services-005",
+      "name": "labels blank service commands as shell",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "serviceLabelForCommand",
+      "input": {
+        "name": "labels blank service commands as shell",
+        "api": "serviceLabelForCommand",
+        "commandLine": "   "
+      },
+      "output": "shell",
+      "inputSha256": "80796afe1135bea340d473e8f74aeb1ec07cb2f044f4c934ab5263afbdd82f2e"
+    },
+    {
+      "id": "multiplexer-services-006",
+      "name": "labels path commands by basename",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "serviceLabelForCommand",
+      "input": {
+        "name": "labels path commands by basename",
+        "api": "serviceLabelForCommand",
+        "commandLine": "/opt/bin/custom-server --port 3000"
+      },
+      "output": "custom-server",
+      "inputSha256": "8056e490cd797fbfe9552927a1f1f9cdb117ccce8cf1a394931a0f4b2bb3c886"
+    }
+  ]
+}
