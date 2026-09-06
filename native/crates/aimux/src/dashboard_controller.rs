@@ -14,6 +14,7 @@ use crate::dashboard_tool_picker::{
     DashboardToolPickerState,
 };
 use crate::project_api_contract::routes;
+use crate::terminal_key_parser::{KeyEvent, parse_keys};
 use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1610,60 +1611,42 @@ pub fn parse_dashboard_key(bytes: &[u8]) -> DashboardKey {
 }
 
 pub fn parse_dashboard_keys(bytes: &[u8]) -> Vec<DashboardKey> {
-    let mut keys = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        let remaining = &bytes[index..];
-        if remaining.starts_with(b"\x1b[A") {
-            keys.push(DashboardKey::Up);
-            index += 3;
-        } else if remaining.starts_with(b"\x1b[B") {
-            keys.push(DashboardKey::Down);
-            index += 3;
-        } else if remaining.starts_with(b"\x1b[C") {
-            keys.push(DashboardKey::Right);
-            index += 3;
-        } else if remaining.starts_with(b"\x1b[D") {
-            keys.push(DashboardKey::Left);
-            index += 3;
-        } else if remaining.starts_with(b"\x1b[H") {
-            keys.push(DashboardKey::Home);
-            index += 3;
-        } else if remaining.starts_with(b"\x1b[1~") {
-            keys.push(DashboardKey::Home);
-            index += 4;
-        } else if remaining.starts_with(b"\x1b[F") {
-            keys.push(DashboardKey::End);
-            index += 3;
-        } else if remaining.starts_with(b"\x1b[4~") {
-            keys.push(DashboardKey::End);
-            index += 4;
-        } else if remaining.starts_with(b"\x1b[3~") {
-            keys.push(DashboardKey::Delete);
-            index += 4;
-        } else if remaining.starts_with(b"\x1b[I") {
-            keys.push(DashboardKey::FocusIn);
-            index += 3;
-        } else {
-            keys.push(match bytes[index] {
-                b'\r' | b'\n' => DashboardKey::Enter,
-                b'\x1b' => DashboardKey::Back,
-                b'\t' => DashboardKey::Tab,
-                1 => DashboardKey::Ctrl('a'),
-                5 => DashboardKey::Ctrl('e'),
-                11 => DashboardKey::Ctrl('k'),
-                21 => DashboardKey::Ctrl('u'),
-                23 => DashboardKey::Ctrl('w'),
-                b'\x7f' | b'\x08' => DashboardKey::Backspace,
-                byte if byte.is_ascii_graphic() || byte == b' ' => {
-                    DashboardKey::Printable(byte as char)
-                }
-                _ => DashboardKey::Other,
-            });
-            index += 1;
-        }
+    parse_keys(bytes)
+        .into_iter()
+        .flat_map(dashboard_keys_from_event)
+        .collect()
+}
+
+fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
+    if event.ctrl && !event.alt && event.name.chars().count() == 1 {
+        return vec![DashboardKey::Ctrl(
+            event.name.chars().next().unwrap_or_default(),
+        )];
     }
-    keys
+    let key = match event.name.as_str() {
+        "" | "paste" => {
+            return event
+                .char
+                .chars()
+                .filter(|character| !matches!(*character as u32, 0x00..=0x1f | 0x7f))
+                .map(DashboardKey::Printable)
+                .collect();
+        }
+        "up" => DashboardKey::Up,
+        "down" => DashboardKey::Down,
+        "right" => DashboardKey::Right,
+        "left" => DashboardKey::Left,
+        "home" => DashboardKey::Home,
+        "end" => DashboardKey::End,
+        "delete" => DashboardKey::Delete,
+        "enter" => DashboardKey::Enter,
+        "escape" => DashboardKey::Back,
+        "tab" => DashboardKey::Tab,
+        "backspace" => DashboardKey::Backspace,
+        "focusin" => DashboardKey::FocusIn,
+        _ => DashboardKey::Other,
+    };
+    vec![key]
 }
 
 fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
