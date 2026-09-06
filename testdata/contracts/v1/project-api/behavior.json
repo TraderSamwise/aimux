@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "source": "src/project-api-contract.test.ts",
+  "generatedBy": "scripts/capture-project-api-contract-behavior.mjs",
+  "description": "Project API route, event, view, and invalidation behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "project-api-behavior-001",
+      "name": "defines unique absolute routes",
+      "source": "src/project-api-contract.test.ts",
+      "api": "routeInvariants",
+      "input": {},
+      "output": { "count": 123, "allAbsolute": true, "uniqueCount": 123 },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "project-api-behavior-002",
+      "name": "keeps shared TUI/app screen routes stable",
+      "source": "src/project-api-contract.test.ts",
+      "api": "sharedRoutes",
+      "input": {},
+      "output": {
+        "desktopState": "/desktop-state",
+        "diagnosticsLifecycle": "/diagnostics/lifecycle",
+        "coordinationWorklist": "/coordination-worklist",
+        "projectObservability": "/project-observability",
+        "topology": "/topology",
+        "library": "/library",
+        "resurrectWorktree": "/graveyard/worktrees/resurrect",
+        "livePaneOutput": "/live-pane/output",
+        "livePaneInput": "/live-pane/input",
+        "livePaneInterrupt": "/live-pane/interrupt",
+        "livePaneResize": "/live-pane/resize",
+        "livePaneAttach": "/live-pane/attach"
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "project-api-behavior-003",
+      "name": "defines shared SSE event names and API-backed views",
+      "source": "src/project-api-contract.test.ts",
+      "api": "eventsAndViews",
+      "input": {},
+      "output": {
+        "projectUpdate": "project_update",
+        "agentOutput": "agent_output",
+        "views": [
+          "agents",
+          "coordination-worklist",
+          "desktop-state",
+          "graveyard",
+          "library",
+          "notifications",
+          "plans",
+          "project-observability",
+          "services",
+          "team",
+          "tasks",
+          "threads",
+          "topology",
+          "work-outline",
+          "worktrees"
+        ],
+        "containsCoordinationWorklist": true,
+        "containsDesktopState": true,
+        "containsNotifications": true,
+        "containsPlans": true,
+        "containsInbox": false
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "project-api-behavior-004",
+      "name": "keeps invalidation groups within the shared view set",
+      "source": "src/project-api-contract.test.ts",
+      "api": "invalidationGroups",
+      "input": {},
+      "output": {
+        "all": [
+          "agents",
+          "coordination-worklist",
+          "desktop-state",
+          "graveyard",
+          "library",
+          "notifications",
+          "plans",
+          "project-observability",
+          "services",
+          "team",
+          "tasks",
+          "threads",
+          "topology",
+          "work-outline",
+          "worktrees"
+        ],
+        "agentLifecycle": [
+          "agents",
+          "coordination-worklist",
+          "desktop-state",
+          "graveyard",
+          "project-observability",
+          "team",
+          "topology",
+          "worktrees"
+        ],
+        "serviceLifecycle": ["desktop-state", "project-observability", "services", "topology", "worktrees"],
+        "worktreeLifecycle": [
+          "agents",
+          "desktop-state",
+          "graveyard",
+          "library",
+          "project-observability",
+          "topology",
+          "worktrees"
+        ],
+        "workflow": ["coordination-worklist", "project-observability", "tasks", "threads"],
+        "notifications": ["coordination-worklist", "notifications", "project-observability"],
+        "team": ["coordination-worklist", "project-observability", "tasks", "team", "threads"],
+        "library": ["library"],
+        "plans": ["plans"],
+        "workOutline": ["work-outline"],
+        "runtime": [
+          "agents",
+          "coordination-worklist",
+          "desktop-state",
+          "project-observability",
+          "topology",
+          "worktrees"
+        ],
+        "operationFailures": ["desktop-state", "project-observability"],
+        "repair": [
+          "agents",
+          "coordination-worklist",
+          "desktop-state",
+          "graveyard",
+          "library",
+          "notifications",
+          "plans",
+          "project-observability",
+          "services",
+          "team",
+          "tasks",
+          "threads",
+          "topology",
+          "work-outline",
+          "worktrees"
+        ]
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "project-api-behavior-005",
+      "name": "maps mutation routes to shared client invalidations",
+      "source": "src/project-api-contract.test.ts",
+      "api": "viewsForMutationRoutes",
+      "input": {
+        "items": [
+          { "method": "PUT", "pathname": "/plans/codex-1" },
+          { "method": "POST", "pathname": "/notifications/read" },
+          { "method": "POST", "pathname": "/agents/spawn" },
+          { "method": "POST", "pathname": "/live-pane/interrupt" },
+          { "method": "POST", "pathname": "/tasks/assign" },
+          { "method": "GET", "pathname": "/control/switch-next" },
+          { "method": "POST", "pathname": "/future-mutation" },
+          { "method": "GET", "pathname": "/agents" }
+        ]
+      },
+      "output": [
+        { "method": "PUT", "pathname": "/plans/codex-1", "views": ["plans"] },
+        {
+          "method": "POST",
+          "pathname": "/notifications/read",
+          "views": ["coordination-worklist", "notifications", "project-observability"]
+        },
+        {
+          "method": "POST",
+          "pathname": "/agents/spawn",
+          "views": [
+            "agents",
+            "coordination-worklist",
+            "desktop-state",
+            "graveyard",
+            "project-observability",
+            "team",
+            "topology",
+            "worktrees"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathname": "/live-pane/interrupt",
+          "views": [
+            "agents",
+            "coordination-worklist",
+            "desktop-state",
+            "graveyard",
+            "project-observability",
+            "team",
+            "topology",
+            "worktrees"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathname": "/tasks/assign",
+          "views": ["coordination-worklist", "project-observability", "tasks", "threads"]
+        },
+        {
+          "method": "GET",
+          "pathname": "/control/switch-next",
+          "views": [
+            "agents",
+            "coordination-worklist",
+            "desktop-state",
+            "project-observability",
+            "topology",
+            "worktrees"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathname": "/future-mutation",
+          "views": [
+            "agents",
+            "coordination-worklist",
+            "desktop-state",
+            "graveyard",
+            "library",
+            "notifications",
+            "plans",
+            "project-observability",
+            "services",
+            "team",
+            "tasks",
+            "threads",
+            "topology",
+            "work-outline",
+            "worktrees"
+          ]
+        },
+        { "method": "GET", "pathname": "/agents", "views": null }
+      ],
+      "inputSha256": "3179c883927a22b9abf67ea11d910336b26880f073cfb7614fc8f43a3b5f656b"
+    },
+    {
+      "id": "project-api-behavior-006",
+      "name": "formats mutation reasons",
+      "source": "src/project-api-contract.test.ts",
+      "api": "mutationReasons",
+      "input": {
+        "items": [
+          { "method": "post", "pathname": "/tasks/assign" },
+          { "method": "", "pathname": "" },
+          { "method": "GET", "pathname": "/control/switch-next" }
+        ]
+      },
+      "output": [
+        { "method": "post", "pathname": "/tasks/assign", "reason": "POST /tasks/assign" },
+        { "method": "", "pathname": "", "reason": "REQUEST /" },
+        { "method": "GET", "pathname": "/control/switch-next", "reason": "GET /control/switch-next" }
+      ],
+      "inputSha256": "247ff46d619fd04ef742045c8a8d5a0d1fa3b4e1c03d9e4a35ba36224404d376"
+    }
+  ]
+}

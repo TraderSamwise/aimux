@@ -9,6 +9,9 @@ that intentionally support rewriting expected outputs.
 Priority fixture groups:
 
 1. `project-api`: route shapes, mutation invalidations, HTTP/SSE payloads.
+   `project-api/behavior.json` captures route invariants, shared event/view
+   names, invalidation groups, and mutation-route invalidation mapping by
+   running TypeScript `project-api-contract`.
 2. `core-command`: daemon command names and core HTTP route shapes.
 3. `agent-output`: parser fixtures, streaming diffs, liveness transitions.
 4. `ansi`: SGR spans and terminal display formatting.
