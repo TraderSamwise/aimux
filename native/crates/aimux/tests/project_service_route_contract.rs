@@ -10,6 +10,7 @@ use aimux::project_service::routes::{
 #[test]
 fn code_split_registry_covers_every_canonical_project_route_once() {
     let canonical: BTreeSet<_> = collect_project_api_routes().into_iter().collect();
+    let dynamic_route_bases = BTreeSet::from([routes::PLANS]);
     let specs = project_service_route_specs();
     let mut groups_by_path: BTreeMap<&str, BTreeSet<Group>> = BTreeMap::new();
 
@@ -24,6 +25,9 @@ fn code_split_registry_covers_every_canonical_project_route_once() {
     }
 
     for route in canonical {
+        if dynamic_route_bases.contains(route) {
+            continue;
+        }
         let groups = groups_by_path
             .get(route)
             .unwrap_or_else(|| panic!("missing project-service split owner for {route}"));

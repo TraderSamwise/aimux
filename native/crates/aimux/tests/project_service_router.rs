@@ -1,5 +1,8 @@
 use aimux::project_api_contract::routes;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::routes::{
+    ProjectServiceHttpMethod, ProjectServiceRoutePattern, project_service_route_specs,
+};
 use serde_json::json;
 use std::fs::remove_dir_all;
 use std::path::PathBuf;
@@ -53,6 +56,27 @@ fn router_keeps_fallback_errors_explicit() {
             "allowed": ["POST"],
         })
     );
+    cleanup(project);
+}
+
+#[test]
+fn every_declared_project_service_route_is_claimed_by_rust() {
+    let project = temp_project("route-coverage");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for spec in project_service_route_specs() {
+        let method = spec.method.as_str();
+        let path = sample_path(spec.pattern);
+        let body = mutation_body(spec.method);
+        let response = route_project_service_request(&context, method, path, body.as_ref());
+        assert_ne!(
+            response.status, 501,
+            "{} {} fell through to the unported route handler",
+            method, path
+        );
+    }
+
     cleanup(project);
 }
 
@@ -160,4 +184,25 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn sample_path(pattern: ProjectServiceRoutePattern) -> &'static str {
+    match pattern {
+        ProjectServiceRoutePattern::Exact(path) => path,
+        ProjectServiceRoutePattern::Prefix("/threads/") => "/threads/thread-1",
+        ProjectServiceRoutePattern::Prefix("/tasks/") => "/tasks/task-1",
+        ProjectServiceRoutePattern::Prefix("/plans/") => "/plans/session-1",
+        ProjectServiceRoutePattern::Prefix(prefix) => prefix,
+        ProjectServiceRoutePattern::AttachmentMetadata => "/attachments/attachment-1",
+        ProjectServiceRoutePattern::AttachmentContent => "/attachments/attachment-1/content",
+    }
+}
+
+fn mutation_body(method: ProjectServiceHttpMethod) -> Option<serde_json::Value> {
+    match method {
+        ProjectServiceHttpMethod::Post
+        | ProjectServiceHttpMethod::Put
+        | ProjectServiceHttpMethod::Delete => Some(json!({})),
+        ProjectServiceHttpMethod::Get => None,
+    }
 }
