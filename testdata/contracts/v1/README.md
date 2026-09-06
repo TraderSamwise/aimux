@@ -791,6 +791,12 @@ Priority fixture groups:
   focused-control-session, metadata projection, and semantic badge cases
   captured by running TypeScript `statusline-model` exports.
 
+## Terminal
+
+- `terminal/host.json`: raw-mode and terminal-state restore escape-sequence
+  writes, including focus-reporting disable/enable behavior, captured by
+  running TypeScript `TerminalHost`.
+
 ## Transcript
 
 - `transcript/turn-state.json`: Claude/Codex transcript turn-state parsing,

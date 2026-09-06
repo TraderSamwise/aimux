@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "source": "src/terminal-host.test.ts",
+  "generatedBy": "scripts/capture-terminal-host-contract.mjs",
+  "description": "TerminalHost raw-mode and restore escape-sequence behavior captured by running the TypeScript TerminalHost implementation with stdout write recording.",
+  "cases": [
+    {
+      "id": "terminal-host-001",
+      "name": "does not enable terminal focus reporting globally when entering raw mode",
+      "source": "src/terminal-host.test.ts",
+      "sourceName": "does not enable terminal focus reporting globally when entering raw mode",
+      "api": "TerminalHost",
+      "input": { "op": "enterRawMode" },
+      "output": { "writes": [], "joined": "", "containsFocusEnable": false, "containsFocusDisable": false },
+      "inputSha256": "8466ab53d7199c38ec41124ec73f8f524a4038e7b260c4ca0fe61e71da513dbe"
+    },
+    {
+      "id": "terminal-host-002",
+      "name": "disables terminal focus reporting during restore as defensive cleanup",
+      "source": "src/terminal-host.test.ts",
+      "sourceName": "disables terminal focus reporting during restore as defensive cleanup",
+      "api": "TerminalHost",
+      "input": { "op": "restoreTerminalState" },
+      "output": {
+        "writes": [
+          "\u001b[0m\u001b[?25h\u001b[?1l\u001b>\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1004l\u001b[?1005l\u001b[?1006l\u001b[?1015l\u001b[?2004l\u001b[?1049l"
+        ],
+        "joined": "\u001b[0m\u001b[?25h\u001b[?1l\u001b>\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1004l\u001b[?1005l\u001b[?1006l\u001b[?1015l\u001b[?2004l\u001b[?1049l",
+        "containsFocusEnable": false,
+        "containsFocusDisable": true
+      },
+      "inputSha256": "f1a3914ec5d8ee489afa7e720a7acdfb9a53a34580c2d2377cf024aa011034eb"
+    }
+  ]
+}
