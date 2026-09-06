@@ -6,19 +6,25 @@ use crate::core_command_transport::{
 use crate::daemon_state::get_daemon_base_url;
 use crate::expose_socket::parse_positive_header_integer;
 use crate::project_api_contract::routes;
+use crate::project_service::switchable_agents::agent_status_chip;
+use crate::project_service::usage::parse_recency_timestamp;
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
+use crate::tui_render::text::{truncate_ansi, wrap_text};
+use crate::tui_render::theme::{Tone, pill, style, visible_width};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const EXPOSE_HTTP_TIMEOUT_MS: u64 = 4_000;
 pub const EXPOSE_CLIENT_TTL_MS: &str = "10000";
 const GAP: i64 = 1;
 const MIN_TILE_WIDTH: i64 = 30;
 const MIN_TILE_HEIGHT: i64 = 5;
+const RESET: &str = "\x1b[0m";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -105,7 +111,7 @@ pub struct ExposeHttpRequest {
     pub timeout_ms: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GridLayout {
     pub tile_cols: i64,
@@ -115,6 +121,37 @@ pub struct GridLayout {
     pub visible_count: i64,
     pub grid_top_row: i64,
     pub grid_height: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TileContext {
+    pub worktree: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TileHeader {
+    pub rule_title: String,
+    pub header_rows: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DrawTileInput<'a> {
+    pub item: &'a Value,
+    pub preview: &'a [String],
+    pub badge: i64,
+    pub selected: bool,
+    pub top: i64,
+    pub left: i64,
+    pub width: i64,
+    pub layout: &'a GridLayout,
+    pub context: &'a TileContext,
+    pub options: &'a TmuxExposeOptions,
 }
 
 pub trait ExposeHttpClient {
@@ -272,6 +309,242 @@ pub fn tile_preview(raw: &str, count: i64) -> Vec<String> {
         tail.push(String::new());
     }
     tail
+}
+
+pub fn build_tile_header(
+    text_w: i64,
+    width: i64,
+    title_left: &str,
+    context: &str,
+    pill_str: &str,
+    detail: &str,
+    inset: i64,
+) -> TileHeader {
+    let pad = " ".repeat(inset.max(0) as usize);
+    let content_w = (text_w - inset).max(1) as usize;
+    let title_max = (width - 6).max(0) as usize;
+    let mut header_rows = Vec::new();
+    let mut rule_title = title_left.to_owned();
+    if !context.is_empty() {
+        let wide = format!("{title_left}  {}", style(context, Tone::Muted));
+        if visible_width(&wide) <= title_max {
+            rule_title = wide;
+        } else {
+            for line in wrap_text(context, content_w) {
+                header_rows.push(format!("{pad}{}", style(&line, Tone::Muted)));
+            }
+        }
+    }
+    rule_title = truncate_ansi(&rule_title, title_max);
+    let status_row = [pill_str, if detail.is_empty() { "" } else { detail }]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            if value == detail {
+                style(value, Tone::Muted)
+            } else {
+                value.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("  ");
+    if !status_row.is_empty() {
+        header_rows.push(format!("{pad}{status_row}"));
+    }
+    TileHeader {
+        rule_title,
+        header_rows,
+    }
+}
+
+pub fn fit_header_rows(header_rows: &[String], capacity: i64, has_pill: bool) -> Vec<String> {
+    let capacity = capacity.max(0) as usize;
+    if header_rows.len() <= capacity {
+        return header_rows.to_vec();
+    }
+    if !has_pill {
+        return header_rows.iter().take(capacity).cloned().collect();
+    }
+    let Some(pill_row) = header_rows.last() else {
+        return Vec::new();
+    };
+    let mut fitted = header_rows
+        .iter()
+        .take(header_rows.len().saturating_sub(1))
+        .take(capacity.saturating_sub(1))
+        .cloned()
+        .collect::<Vec<_>>();
+    if capacity > 0 {
+        fitted.push(pill_row.clone());
+    }
+    fitted
+}
+
+pub fn draw_tile(input: DrawTileInput<'_>) -> String {
+    let DrawTileInput {
+        item,
+        preview,
+        badge,
+        selected,
+        top,
+        left,
+        width,
+        layout,
+        context,
+        options,
+    } = input;
+    let inner_w = (width - 2).max(1);
+    let text_w = (inner_w - 1).max(0);
+    let metadata = item.get("metadata").unwrap_or(&Value::Null);
+    let kind = agent_status_kind(metadata);
+    let tone = kind.as_deref().and_then(state_border).unwrap_or("38;5;39");
+    let bd = if selected {
+        format!("\x1b[1;{tone}m")
+    } else {
+        format!("\x1b[{tone}m")
+    };
+    let box_chars = if selected {
+        ("╔", "╗", "╚", "╝", "═", "║")
+    } else {
+        ("╭", "╮", "╰", "╯", "─", "│")
+    };
+    let badge_label = if badge <= 9 {
+        badge.to_string()
+    } else {
+        "·".to_owned()
+    };
+    let marker = if selected {
+        format!("{} ", style("▸", Tone::Accent))
+    } else {
+        "  ".to_owned()
+    };
+    let window_id = item
+        .get("target")
+        .and_then(|target| target.get("windowId"))
+        .and_then(Value::as_str);
+    let here = if window_id == options.current_window_id.as_deref() {
+        style(" (here)", Tone::Muted)
+    } else {
+        String::new()
+    };
+    let badge_str = if selected {
+        style(&badge_label, Tone::Accent)
+    } else {
+        toned(&badge_label, context.tone)
+    };
+    let project_str = context
+        .project
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(|project| style(&format!("{project} / "), Tone::Muted))
+        .unwrap_or_default();
+    let label = item.get("label").and_then(Value::as_str).unwrap_or("?");
+    let lead = if !context.worktree.is_empty() {
+        format!("{project_str}{}", toned(&context.worktree, context.tone))
+    } else {
+        style(label, Tone::Strong)
+    };
+    let trailing = if !context.worktree.is_empty() {
+        label
+    } else {
+        ""
+    };
+    let title_left = format!("{marker}{badge_str} {lead}{here}");
+    let pill_str = render_agent_status_pill(metadata);
+    let rel = metadata
+        .get("recencyAt")
+        .and_then(Value::as_str)
+        .and_then(format_relative_recency)
+        .unwrap_or_default();
+    let recency = if !rel.is_empty() {
+        metadata
+            .get("recencyLabel")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(|label| format!("{label} {rel}"))
+            .unwrap_or(rel)
+    } else {
+        String::new()
+    };
+    let status_text = metadata
+        .get("statusText")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .replace(['\r', '\n'], " ")
+        .trim()
+        .to_owned();
+    let detail = [recency.as_str(), status_text.as_str()]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let inset = visible_width(&marker) as i64;
+    let header = build_tile_header(
+        text_w,
+        width,
+        &title_left,
+        trailing,
+        &pill_str,
+        &detail,
+        inset,
+    );
+    let body_capacity = (layout.tile_height - 2).max(1);
+    let fitted_header = fit_header_rows(
+        &header.header_rows,
+        body_capacity,
+        !pill_str.is_empty() || !detail.is_empty(),
+    );
+    let preview_limit = (body_capacity - fitted_header.len() as i64).max(0) as usize;
+    let mut body_rows = fitted_header;
+    body_rows.extend(preview.iter().take(preview_limit).cloned());
+    while body_rows.len() < body_capacity as usize {
+        body_rows.push(String::new());
+    }
+
+    let title_sep = if visible_width(&header.rule_title) > 0 {
+        " "
+    } else {
+        ""
+    };
+    let dash_count =
+        (width - 3 - visible_width(&header.rule_title) as i64 - title_sep.len() as i64).max(0);
+    let mut rows = Vec::new();
+    rows.push(format!(
+        "{}{} {RESET}{}{}{}{}{}{RESET}",
+        bd,
+        box_chars.0,
+        header.rule_title,
+        title_sep,
+        bd,
+        box_chars.4.repeat(dash_count as usize),
+        box_chars.1
+    ));
+    for content in body_rows {
+        let text = truncate_ansi(&content, text_w.max(0) as usize);
+        let pad = (text_w - visible_width(&text) as i64).max(0);
+        rows.push(format!(
+            "{}{}{RESET} {}{}{}{}{RESET}",
+            bd,
+            box_chars.5,
+            text,
+            " ".repeat(pad as usize),
+            bd,
+            box_chars.5
+        ));
+    }
+    rows.push(format!(
+        "{}{}{}{}{RESET}",
+        bd,
+        box_chars.2,
+        box_chars.4.repeat(inner_w as usize),
+        box_chars.3
+    ));
+
+    let mut output = String::new();
+    for (index, row) in rows.iter().enumerate() {
+        output.push_str(&format!("\x1b[{};{}H{}", top + index as i64, left, row));
+    }
+    output
 }
 
 pub fn parse_expose_args<S: AsRef<str>>(raw_args: &[S]) -> Result<TmuxExposeOptions, String> {
@@ -1013,6 +1286,108 @@ fn encode_uri_component(value: &str) -> String {
         }
     }
     output
+}
+
+fn toned(text: &str, tone: Option<i64>) -> String {
+    tone.map_or_else(
+        || style(text, Tone::Strong),
+        |tone| {
+            format!(
+                "\x1b[1;{}m{text}{RESET}",
+                worktree_color_ansi_for_code(tone)
+            )
+        },
+    )
+}
+
+fn worktree_color_ansi_for_code(code: i64) -> String {
+    let r = (code >> 16) & 0xff;
+    let g = (code >> 8) & 0xff;
+    let b = code & 0xff;
+    format!("38;2;{r};{g};{b}")
+}
+
+fn agent_status_kind(metadata: &Value) -> Option<String> {
+    agent_status_chip(metadata)
+        .and_then(|chip| chip.get("kind").and_then(Value::as_str).map(str::to_owned))
+}
+
+fn render_agent_status_pill(metadata: &Value) -> String {
+    let Some(chip) = agent_status_chip(metadata) else {
+        return String::new();
+    };
+    let Some(kind) = chip.get("kind").and_then(Value::as_str) else {
+        return String::new();
+    };
+    let Some(label) = chip.get("label").and_then(Value::as_str) else {
+        return String::new();
+    };
+    pill(&label.to_uppercase(), status_tone(kind))
+}
+
+fn status_tone(kind: &str) -> Tone {
+    match kind {
+        "working" => Tone::Work,
+        "ready" => Tone::Ready,
+        "idle" => Tone::Idle,
+        "offline" | "serviceOff" => Tone::Muted,
+        "needs" => Tone::Attention,
+        "error" => Tone::Danger,
+        "done" | "service" => Tone::Done,
+        "blocked" => Tone::Blocked,
+        _ => Tone::Muted,
+    }
+}
+
+fn state_border(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "working" => "38;5;38",
+        "ready" => "38;5;75",
+        "idle" => "38;5;108",
+        "offline" => "38;5;244",
+        "needs" => "38;5;179",
+        "error" => "38;5;174",
+        "done" => "38;5;71",
+        "blocked" => "38;5;176",
+        _ => return None,
+    })
+}
+
+fn format_relative_recency(value: &str) -> Option<String> {
+    let timestamp = parse_recency_timestamp(value)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let delta_seconds = now.saturating_sub(timestamp) / 1000;
+    if delta_seconds < 15 {
+        return Some("just now".into());
+    }
+    if delta_seconds < 60 {
+        return Some(format!("{delta_seconds}s ago"));
+    }
+    let minutes = delta_seconds / 60;
+    if minutes < 60 {
+        return Some(format!("{minutes}m ago"));
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return Some(format!("{hours}h ago"));
+    }
+    let days = hours / 24;
+    if days < 7 {
+        return Some(format!("{days}d ago"));
+    }
+    let weeks = days / 7;
+    if weeks < 5 {
+        return Some(format!("{weeks}w ago"));
+    }
+    let months = days / 30;
+    if months < 12 {
+        return Some(format!("{months}mo ago"));
+    }
+    Some(format!("{}y ago", days / 365))
 }
 
 fn path_basename(path: &str) -> &str {

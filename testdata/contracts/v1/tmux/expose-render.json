@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-expose-render-contract.mjs",
+  "source": "src/tmux/expose.ts",
+  "subject": "src/tmux/expose.ts",
+  "description": "Expose tile header fitting and ANSI tile rendering captured by running TypeScript.",
+  "caseCount": 7,
+  "cases": [
+    {
+      "id": "tmux-expose-render-001",
+      "name": "keeps compact context in the rule title",
+      "source": "src/tmux/expose.ts",
+      "api": "buildTileHeader",
+      "input": {
+        "name": "keeps compact context in the rule title",
+        "textW": 30,
+        "width": 40,
+        "titleLeft": "  1 main",
+        "context": "codex",
+        "pillStr": "",
+        "detail": "",
+        "inset": 2
+      },
+      "output": { "header": { "ruleTitle": "  1 main  \u001b[2mcodex\u001b[0m\u001b[0m", "headerRows": [] } },
+      "inputSha256": "a4426e9cdc1fc77946e475663822663ec339033d34972b86a40270b971adc692"
+    },
+    {
+      "id": "tmux-expose-render-002",
+      "name": "wraps context rows and keeps status detail",
+      "source": "src/tmux/expose.ts",
+      "api": "buildTileHeader",
+      "input": {
+        "name": "wraps context rows and keeps status detail",
+        "textW": 18,
+        "width": 28,
+        "titleLeft": "  2 feature",
+        "context": "Claude Overseer Assistant",
+        "pillStr": "\u001b[36;7m WORKING \u001b[0m",
+        "detail": "output just now · reading files",
+        "inset": 2
+      },
+      "output": {
+        "header": {
+          "ruleTitle": "  2 feature",
+          "headerRows": [
+            "  \u001b[2mClaude Overseer\u001b[0m",
+            "  \u001b[2mAssistant\u001b[0m",
+            "  \u001b[36;7m WORKING \u001b[0m  \u001b[2moutput just now · reading files\u001b[0m"
+          ]
+        }
+      },
+      "inputSha256": "b5a6334a12b40585d6d0496d8b519eab7cbc9745d44e8faf6be17966e759313f"
+    },
+    {
+      "id": "tmux-expose-render-003",
+      "name": "truncates header rows without a pill",
+      "source": "src/tmux/expose.ts",
+      "api": "fitHeaderRows",
+      "input": {
+        "name": "truncates header rows without a pill",
+        "rows": ["a", "b", "c", "d"],
+        "capacity": 2,
+        "hasPill": false
+      },
+      "output": { "rows": ["a", "b"] },
+      "inputSha256": "e9d9988bca52619cb064b00b71202a1007494c7f135e958110168dec0f8abdfa"
+    },
+    {
+      "id": "tmux-expose-render-004",
+      "name": "preserves the pill row under capacity pressure",
+      "source": "src/tmux/expose.ts",
+      "api": "fitHeaderRows",
+      "input": {
+        "name": "preserves the pill row under capacity pressure",
+        "rows": ["context one", "context two", "pill"],
+        "capacity": 2,
+        "hasPill": true
+      },
+      "output": { "rows": ["context one", "pill"] },
+      "inputSha256": "e90042a8937d2bd6e00919682f416f02a08f62171647c8bde5eaa6621ab72818"
+    },
+    {
+      "id": "tmux-expose-render-005",
+      "name": "draws selected local tile with here marker, status pill, and preview",
+      "source": "src/tmux/expose.ts",
+      "api": "drawTile",
+      "input": {
+        "name": "draws selected local tile with here marker, status pill, and preview",
+        "item": {
+          "label": "Codex",
+          "target": { "windowId": "@1" },
+          "metadata": { "userLabel": "ready", "statusText": "Waiting\nfor input" }
+        },
+        "preview": ["line one", "ansi \u001b[31mred\u001b[0m"],
+        "badge": 1,
+        "selected": true,
+        "top": 2,
+        "left": 3,
+        "width": 40,
+        "layout": {
+          "tileCols": 1,
+          "tileWidth": 80,
+          "tileHeight": 22,
+          "bodyLines": 19,
+          "visibleCount": 1,
+          "gridTopRow": 1,
+          "gridHeight": 22
+        },
+        "context": { "worktree": "" },
+        "options": { "projectRoot": "/repo", "projectStateDir": "/repo/.aimux", "currentWindowId": "@1" }
+      },
+      "output": {
+        "text": "\u001b[2;3H\u001b[1;38;5;75m╔ \u001b[0m\u001b[1;33m▸\u001b[0m \u001b[1;33m1\u001b[0m \u001b[1mCodex\u001b[0m\u001b[2m (here)\u001b[0m\u001b[0m \u001b[1;38;5;75m════════════════════╗\u001b[0m\u001b[3;3H\u001b[1;38;5;75m║\u001b[0m   \u001b[38;5;75;7m READY \u001b[0m  \u001b[2mWaiting for input\u001b[0m\u001b[0m         \u001b[1;38;5;75m║\u001b[0m\u001b[4;3H\u001b[1;38;5;75m║\u001b[0m line one                             \u001b[1;38;5;75m║\u001b[0m\u001b[5;3H\u001b[1;38;5;75m║\u001b[0m ansi \u001b[31mred\u001b[0m\u001b[0m                             \u001b[1;38;5;75m║\u001b[0m\u001b[6;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[7;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[8;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[9;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[10;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[11;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[12;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[13;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[14;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[15;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[16;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[17;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[18;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[19;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[20;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[21;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[22;3H\u001b[1;38;5;75m║\u001b[0m                                      \u001b[1;38;5;75m║\u001b[0m\u001b[23;3H\u001b[1;38;5;75m╚══════════════════════════════════════╝\u001b[0m"
+      },
+      "inputSha256": "7f73b8cc1c4a419d64de4831c92a84c2b369f57b2f96182df9d62f216305e3ea"
+    },
+    {
+      "id": "tmux-expose-render-006",
+      "name": "draws unselected global tile with project worktree tone and overflow badge",
+      "source": "src/tmux/expose.ts",
+      "api": "drawTile",
+      "input": {
+        "name": "draws unselected global tile with project worktree tone and overflow badge",
+        "item": {
+          "label": "Aider",
+          "target": { "windowId": "@2" },
+          "metadata": { "attention": "blocked", "statusText": "Blocked on review" }
+        },
+        "preview": ["review says no", "needs patch"],
+        "badge": 12,
+        "selected": false,
+        "top": 4,
+        "left": 10,
+        "width": 34,
+        "layout": {
+          "tileCols": 3,
+          "tileWidth": 32,
+          "tileHeight": 14,
+          "bodyLines": 11,
+          "visibleCount": 6,
+          "gridTopRow": 1,
+          "gridHeight": 28
+        },
+        "context": { "project": "aimux", "worktree": "rust-v1", "tone": 5387754 },
+        "options": { "projectRoot": "/repo", "projectStateDir": "/repo/.aimux", "currentWindowId": "@1" }
+      },
+      "output": {
+        "text": "\u001b[4;10H\u001b[38;5;176m╭ \u001b[0m  \u001b[1;38;2;82;53;234m·\u001b[0m \u001b[2maimux / \u001b[0m\u001b[1;38;2;82;53;234mrust-v1\u001b[0m  \u001b[2mAider\u001b[0m\u001b[0m \u001b[38;5;176m────╮\u001b[0m\u001b[5;10H\u001b[38;5;176m│\u001b[0m   \u001b[35;7m BLOCKED \u001b[0m  \u001b[2mBlocked on review\u001b[0m\u001b[0m \u001b[38;5;176m│\u001b[0m\u001b[6;10H\u001b[38;5;176m│\u001b[0m review says no                 \u001b[38;5;176m│\u001b[0m\u001b[7;10H\u001b[38;5;176m│\u001b[0m needs patch                    \u001b[38;5;176m│\u001b[0m\u001b[8;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[9;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[10;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[11;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[12;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[13;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[14;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[15;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[16;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[17;10H\u001b[38;5;176m╰────────────────────────────────╯\u001b[0m"
+      },
+      "inputSha256": "11b48a4de8ef245917562108a23d9f67b48f342f2e7762fcc78ab05808010f4f"
+    },
+    {
+      "id": "tmux-expose-render-007",
+      "name": "draws narrow tile with wrapped title context and clipped preview",
+      "source": "src/tmux/expose.ts",
+      "api": "drawTile",
+      "input": {
+        "name": "draws narrow tile with wrapped title context and clipped preview",
+        "item": {
+          "label": "Claude Overseer Assistant",
+          "target": { "windowId": "@3" },
+          "metadata": { "activity": "running", "statusText": "Working through tmux expose render parity" }
+        },
+        "preview": ["first", "second", "third", "fourth"],
+        "badge": 2,
+        "selected": true,
+        "top": 1,
+        "left": 1,
+        "width": 30,
+        "layout": {
+          "tileCols": 1,
+          "tileWidth": 60,
+          "tileHeight": 6,
+          "bodyLines": 3,
+          "visibleCount": 2,
+          "gridTopRow": 1,
+          "gridHeight": 13
+        },
+        "context": { "worktree": "very-long-worktree-name", "tone": 8339133 },
+        "options": { "projectRoot": "/repo", "projectStateDir": "/repo/.aimux", "currentWindowId": "@1" }
+      },
+      "output": {
+        "text": "\u001b[1;1H\u001b[1;38;5;38m╔ \u001b[0m\u001b[1;33m▸\u001b[0m \u001b[1;33m2\u001b[0m \u001b[1;38;2;127;62;189mvery-long-worktree-…\u001b[0m \u001b[1;38;5;38m══╗\u001b[0m\u001b[2;1H\u001b[1;38;5;38m║\u001b[0m   \u001b[2mClaude Overseer Assistant\u001b[0m\u001b[0m\u001b[1;38;5;38m║\u001b[0m\u001b[3;1H\u001b[1;38;5;38m║\u001b[0m   \u001b[36;7m WORKING \u001b[0m  \u001b[2mWorking throu…\u001b[0m\u001b[1;38;5;38m║\u001b[0m\u001b[4;1H\u001b[1;38;5;38m║\u001b[0m first                      \u001b[1;38;5;38m║\u001b[0m\u001b[5;1H\u001b[1;38;5;38m║\u001b[0m second                     \u001b[1;38;5;38m║\u001b[0m\u001b[6;1H\u001b[1;38;5;38m╚════════════════════════════╝\u001b[0m"
+      },
+      "inputSha256": "0767ebbf4a315223c006d57baa4e870ca30c5f06e27a9b58751dc6ed9c534b05"
+    }
+  ]
+}
