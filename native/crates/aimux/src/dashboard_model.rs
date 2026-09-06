@@ -167,6 +167,10 @@ pub struct DashboardService {
     pub status: ServiceStatus,
     pub active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tmux_window_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tmux_window_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_name: Option<String>,

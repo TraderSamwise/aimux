@@ -3,7 +3,8 @@ use crate::core_command_transport::{
     execute_loopback_json_request, request_daemon_json,
 };
 use crate::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
-use crate::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
+use crate::dashboard_navigation::{DashboardEntryRef, DashboardNavigationState};
+use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use crate::project_api_contract::routes;
 use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
@@ -23,19 +24,26 @@ pub struct NativeDashboardOptions {
 }
 
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
+    let mut navigation = None;
     loop {
         let snapshot = load_dashboard_snapshot(&options)?;
+        let navigation = navigation.get_or_insert_with(|| DashboardNavigationState::new(&snapshot));
+        navigation.clamp(&snapshot);
+        let (selected_session_id, selected_service_id) = match navigation.selected_entry(&snapshot)
+        {
+            Some(DashboardEntryRef::Session(session)) => (Some(session.id.as_str()), None),
+            Some(DashboardEntryRef::Service(service)) => (None, Some(service.id.as_str())),
+            None => (None, None),
+        };
+        let focused_worktree_path = navigation.focused_worktree_path(&snapshot);
         let frame = render_dashboard_frame(&DashboardRenderInput {
             snapshot: &snapshot,
             cols: options.cols,
             rows: options.rows,
-            nav_level: DashboardNavLevel::Worktrees,
-            selected_session_id: None,
-            selected_service_id: None,
-            focused_worktree_path: snapshot
-                .worktree_groups
-                .first()
-                .and_then(|group| group.path.as_deref()),
+            nav_level: navigation.level,
+            selected_session_id,
+            selected_service_id,
+            focused_worktree_path,
             runtime_label: Some("native"),
             version: None,
             is_dev_runtime: cfg!(debug_assertions),
