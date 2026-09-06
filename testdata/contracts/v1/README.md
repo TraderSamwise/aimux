@@ -12,6 +12,9 @@ Priority fixture groups:
    `project-api/behavior.json` captures route invariants, shared event/view
    names, invalidation groups, and mutation-route invalidation mapping by
    running TypeScript `project-api-contract`.
+   `project-api/refresh.json` captures serialized project API refresh
+   coalescing timelines by running TypeScript
+   `createSerializedProjectApiRefresh` with deferred refresh callbacks.
 2. `core-command`: daemon command names and core HTTP route shapes.
    `core-command/behavior.json` captures daemon route responses for ping,
    status, unknown command, and missing-project-root errors by running
