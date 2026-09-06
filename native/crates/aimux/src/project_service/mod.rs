@@ -1,5 +1,6 @@
 pub mod agent_controls;
 pub mod agent_output;
+pub mod agent_output_projection;
 pub mod agents;
 pub mod attachments;
 pub mod controls;

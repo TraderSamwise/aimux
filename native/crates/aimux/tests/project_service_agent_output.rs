@@ -6,6 +6,8 @@ use aimux::project_service::agent_output::{
     normalize_submitted_prompt, parse_agent_output_read_purpose, parse_agent_output_response_mode,
     project_agent_output_payload, route_agent_output_request_with_runtime, strip_sgr,
 };
+use aimux::project_service::agent_output_projection::project_agent_output;
+use aimux::project_service::metadata::update_session_metadata;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
@@ -159,6 +161,51 @@ fn output_mode_purpose_sgr_and_payload_projection_match_http_contract() {
 }
 
 #[test]
+fn output_projection_reads_tool_progress_activity_text() {
+    assert_eq!(
+        project_agent_output("✻ Jitterbugging… (2m 23s · ↓ 8.1k tokens)", Some("claude"))
+            .activity_text,
+        "Jitterbugging… (2m 23s · ↓ 8.1k tokens)"
+    );
+    for frame in ["✢", "✳", "✶", "✻", "✽", "·"] {
+        assert_eq!(
+            project_agent_output(&format!("{frame} Transfiguring… (14s)"), Some("claude"))
+                .activity_text,
+            "Transfiguring… (14s)"
+        );
+    }
+    assert_eq!(
+        project_agent_output(
+            "* Indexing… (running stop hook · 11s · ↓ 16 tokens)",
+            Some("codex")
+        )
+        .activity_text,
+        "Indexing… (running stop hook · 11s · ↓ 16 tokens)"
+    );
+    assert_eq!(
+        project_agent_output("• Working (4s • esc to interrupt)", Some("codex")).activity_text,
+        "Working (4s)"
+    );
+    assert_eq!(
+        project_agent_output("- Worked for 20m 16s", Some("codex")).activity_text,
+        ""
+    );
+    assert_eq!(
+        project_agent_output(
+            &[
+                "✻ Booting… (1s)",
+                "⏺ Did a thing.",
+                "✻ Jitterbugging… (2m 23s)",
+            ]
+            .join("\n"),
+            Some("claude")
+        )
+        .activity_text,
+        "Jitterbugging… (2m 23s)"
+    );
+}
+
+#[test]
 fn output_routes_validate_query_params_before_touching_tmux() {
     let project = temp_project("validation");
     let context =
@@ -259,6 +306,52 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
             include_escapes: true,
         }
     );
+    cleanup(project);
+}
+
+#[test]
+fn output_route_projects_parsed_status_and_activity_text_from_capture() {
+    let project = temp_project("parsed");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "running",
+                "attention": "normal"
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "• Working (12s • esc to interrupt)\nplain response".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["activityText"], "Working (12s)");
+    assert_eq!(response.body["parsed"]["parser"]["tool"], "codex");
+    assert_eq!(response.body["parsed"]["parser"]["version"], 1);
+    assert_eq!(response.body["parsed"]["blocks"][0]["type"], "status");
+    assert_eq!(
+        response.body["parsed"]["blocks"][0]["text"],
+        "• Working (12s • esc to interrupt)"
+    );
+    assert_eq!(response.body["parsed"]["blocks"][1]["type"], "raw");
     cleanup(project);
 }
 

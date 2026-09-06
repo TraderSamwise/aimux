@@ -14,6 +14,7 @@ use crate::tmux::{
     split_text_for_tmux_send_keys,
 };
 
+use super::agent_output_projection::insert_projection_fields;
 use super::attachments::get_attachment_record;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{
@@ -405,6 +406,8 @@ fn read_agent_output_payload(
             insert_value(&mut result, key, derived.get(key).cloned());
         }
     }
+    let tool = resolve_session_tool(&topology, session_id);
+    insert_projection_fields(&mut result, &output, tool.as_deref());
     let mut body = Map::new();
     body.insert("ok".into(), Value::Bool(true));
     let payload = project_agent_output_payload(
@@ -721,6 +724,17 @@ fn resolve_session_window_id(topology: &Value, session_id: &str) -> Option<Strin
             session
                 .get("tmuxTarget")
                 .and_then(|target| string_field(target, "windowId"))
+                .map(str::to_owned)
+        })
+}
+
+fn resolve_session_tool(topology: &Value, session_id: &str) -> Option<String> {
+    list_topology_session_states(topology, Some(ACTIVE_OUTPUT_SESSION_STATUSES))
+        .into_iter()
+        .find(|session| string_field(session, "id") == Some(session_id))
+        .and_then(|session| {
+            string_field(&session, "toolConfigKey")
+                .or_else(|| string_field(&session, "command"))
                 .map(str::to_owned)
         })
 }
