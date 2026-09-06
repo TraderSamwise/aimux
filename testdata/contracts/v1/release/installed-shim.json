@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "source": "src/installed-shim.test.ts",
+  "generatedBy": "scripts/capture-installed-shim-contract.mjs",
+  "description": "Installed native shim delegation, AIMUX_ROOT native binary resolution, and missing-binary failure behavior captured by running scripts/installed-aimux-shim.sh.",
+  "cases": [
+    {
+      "id": "release-installed-shim-001",
+      "name": "delegates to AIMUX_NATIVE_BIN when it is set",
+      "source": "src/installed-shim.test.ts",
+      "sourceName": "delegates to AIMUX_NATIVE_BIN when it is set",
+      "api": "scripts/installed-aimux-shim.sh",
+      "input": { "mode": "explicit-native", "args": ["daemon", "status"] },
+      "output": { "status": 0, "stdout": "native-explicit daemon status\n", "stderr": "" },
+      "inputSha256": "d80312ff6454b8c38522575325ec0c9712fe0b8a424559657f6927e2adc33e49"
+    },
+    {
+      "id": "release-installed-shim-002",
+      "name": "resolves the installed native binary from AIMUX_ROOT",
+      "source": "src/installed-shim.test.ts",
+      "sourceName": "resolves the installed native binary from AIMUX_ROOT",
+      "api": "scripts/installed-aimux-shim.sh",
+      "input": { "mode": "root-native", "args": ["--version"] },
+      "output": { "status": 0, "stdout": "native-root --version\n", "stderr": "" },
+      "inputSha256": "0a8399e16177205da79c387c4ec38cc18fb01230b10f401e004d6f727cdd0e81"
+    },
+    {
+      "id": "release-installed-shim-003",
+      "name": "fails when no native binary is available",
+      "source": "src/installed-shim.test.ts",
+      "sourceName": "fails when no native binary is available",
+      "api": "scripts/installed-aimux-shim.sh",
+      "input": { "mode": "missing-native", "args": ["daemon", "ensure"] },
+      "output": {
+        "status": 127,
+        "stdout": "",
+        "stderr": "aimux: native binary not found or not executable: <tmp>/native/darwin-arm64/aimux\n"
+      },
+      "inputSha256": "ccb7403e56a01ba07d3b9192d20762f3196f8cf2a9fb5eebc3cbd8fe5b7c499d"
+    }
+  ]
+}

@@ -321,6 +321,9 @@ Priority fixture groups:
 - `release/asset.json`: release asset shell packaging checks for Rust CLI
   build/copy/chmod, build-stamp native-artifact coherence, and Node payload
   exclusion captured by evaluating the TypeScript release-asset contract.
+- `release/installed-shim.json`: installed shell shim delegation to
+  `AIMUX_NATIVE_BIN`, native binary resolution from `AIMUX_ROOT`, and
+  missing-binary failure behavior captured by running the shim.
 - `release/package-manifest.json`: package `files` allowlist for installed
   runtime scripts/native assets and retired Node payload exclusions captured by
   evaluating the TypeScript package-manifest contract.
