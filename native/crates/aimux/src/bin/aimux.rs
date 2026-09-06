@@ -1,7 +1,15 @@
+use aimux::core_cli::CoreCommandRequestOptions;
 use aimux::core_cli_executor::run_core_cli;
 use aimux::core_cli_routing::core_command_args;
+use aimux::core_command_client::request_core_command;
+use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::runtime::run_daemon_internal;
+use aimux::daemon_state::get_daemon_base_url;
 use aimux::launcher_env::{CliEntry, cli_entry_for};
+use aimux::local_ui_server::{
+    DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
+    open_url_in_browser, resolve_default_local_ui_root, start_local_ui_server,
+};
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
@@ -37,6 +45,18 @@ enum Command {
     Rewrite {
         #[command(subcommand)]
         command: RewriteCommand,
+    },
+    Ui {
+        #[arg(long, default_value = DEFAULT_LOCAL_UI_HOST)]
+        host: String,
+        #[arg(long, default_value_t = DEFAULT_LOCAL_UI_PORT)]
+        port: u16,
+        #[arg(long = "daemon-url")]
+        daemon_url: Option<String>,
+        #[arg(long = "no-daemon")]
+        no_daemon: bool,
+        #[arg(long)]
+        open: bool,
     },
     #[command(name = "__project-service-internal", hide = true)]
     ProjectServiceInternal {
@@ -117,6 +137,13 @@ fn main() -> Result<ExitCode> {
         Command::Rewrite {
             command: RewriteCommand::Status { json },
         } => print_value(aimux::rewrite_status(), json),
+        Command::Ui {
+            host,
+            port,
+            daemon_url,
+            no_daemon,
+            open,
+        } => run_local_ui_command(host, port, daemon_url, no_daemon, open),
         Command::ProjectServiceInternal {
             project_id,
             project_root,
@@ -137,8 +164,58 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, subcommand, ..] if command == "daemon" && subcommand == "run" => true,
         [command, subcommand, ..] if command == "contracts" && subcommand == "list" => true,
         [command, subcommand, ..] if command == "rewrite" && subcommand == "status" => true,
+        [command, ..] if command == "ui" => true,
         [command, ..] if command == "__project-service-internal" => true,
         _ => false,
+    }
+}
+
+fn run_local_ui_command(
+    host: String,
+    port: u16,
+    daemon_url: Option<String>,
+    no_daemon: bool,
+    open: bool,
+) -> Result<()> {
+    let daemon_url = match daemon_url
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value,
+        None if no_daemon => get_daemon_base_url(None).map_err(anyhow::Error::msg)?,
+        None => {
+            let response = request_core_command(
+                CORE_COMMAND_NAMES.status,
+                None,
+                CoreCommandRequestOptions::default(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let port = response
+                .result
+                .get("daemon")
+                .and_then(|daemon| daemon.get("port"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|port| u16::try_from(port).ok());
+            get_daemon_base_url(port).map_err(anyhow::Error::msg)?
+        }
+    };
+    let server = start_local_ui_server(LocalUiServerOptions {
+        host,
+        port,
+        ui_root: resolve_default_local_ui_root(),
+        config: LocalUiConfig {
+            connection_mode: "local".into(),
+            daemon_url: daemon_url.clone(),
+        },
+    })?;
+    println!("aimux UI: {}", server.url);
+    println!("Daemon: {daemon_url}");
+    println!("Press Ctrl-C to stop.");
+    if open {
+        open_url_in_browser(&server.url)?;
+    }
+    loop {
+        std::thread::park();
     }
 }
 

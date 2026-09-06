@@ -17,6 +17,7 @@ pub mod daemon_supervisor;
 pub mod debug_state;
 pub mod expose_socket;
 pub mod launcher_env;
+pub mod local_ui_server;
 pub mod logs;
 pub mod managed_launch_env;
 pub mod paths;

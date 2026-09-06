@@ -33,6 +33,28 @@ fn build_info_stays_native_even_when_node_fallback_is_configured() {
     cleanup(root);
 }
 
+#[test]
+fn ui_command_stays_native_even_when_node_fallback_is_configured() {
+    let root = temp_root("native-ui");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .args(["ui", "--no-daemon"])
+        .output()
+        .expect("run native aimux");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Local UI build not found"),
+        "stderr should report missing UI build"
+    );
+    assert!(!log.exists(), "ui command should not invoke node fallback");
+    cleanup(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
@@ -45,7 +67,7 @@ fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
     let status = Command::new(env!("CARGO_BIN_EXE_aimux"))
         .env("AIMUX_ROOT", &root)
         .env("AIMUX_NODE_BIN", node)
-        .args(["task", "list", "--json"])
+        .args(["unknown-command", "--json"])
         .status()
         .expect("run native aimux");
 
@@ -54,7 +76,7 @@ fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
     assert_eq!(
         recorded,
         format!(
-            "{}\ntask\nlist\n--json\n",
+            "{}\nunknown-command\n--json\n",
             root.join("dist/launcher-bin.js").display()
         )
     );
