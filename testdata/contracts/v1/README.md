@@ -237,6 +237,9 @@ Priority fixture groups:
 - `runtime-state/session-semantics.json`: session semantic labels, attention
   scores, compact hints, notification projection, and display-label precedence
   captured by running TypeScript `session-semantics`.
+- `runtime-state/session-viewed.json`: session-viewed metadata attention,
+  activity, notification read-state, explicit-project, and config override
+  behavior captured by running TypeScript `session-viewed`.
 - `runtime-state/drift.json`: local-build drift error classification captured
   by running TypeScript `runtime-drift`.
 - `runtime-state/repair-events.json`: durable repair event JSONL logging
