@@ -5,7 +5,10 @@ use aimux::tmux::{
 };
 use serde_json::json;
 use std::cell::RefCell;
+use std::future::Future;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
 
 #[test]
 fn treats_missing_tmux_server_state_as_empty_lists() {
@@ -496,6 +499,113 @@ fn writes_window_metadata_and_agent_policy_options() {
 }
 
 #[test]
+fn async_named_runtime_methods_use_the_same_tmux_commands() {
+    let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
+        calls_for_exec.borrow_mut().push((
+            args.to_vec(),
+            options.and_then(|options| options.cwd.clone()),
+        ));
+        if args.first().map(String::as_str) == Some("new-window") {
+            return Ok("@10\t10\tcodex".to_owned());
+        }
+        if args.first().map(String::as_str) == Some("capture-pane") {
+            return Ok("screen".to_owned());
+        }
+        Ok(String::new())
+    });
+    let target = target();
+
+    assert!(block_on(manager.has_session_async("aimux-mobile-abc")));
+    assert_eq!(
+        block_on(manager.create_window_async(
+            "aimux-mobile-abc",
+            "codex",
+            "/repo/mobile",
+            "codex",
+            &["--model".to_owned(), "gpt-5".to_owned()],
+            true,
+        ))
+        .expect("create async")
+        .window_id,
+        "@10"
+    );
+    assert_eq!(
+        block_on(manager.capture_target_async(
+            &target,
+            CapturePaneOptions {
+                start_line: Some(0),
+                end_line: Some(10),
+                include_escapes: false,
+            },
+        ))
+        .expect("capture async"),
+        "screen"
+    );
+    block_on(manager.clear_target_history_async(&target)).expect("clear async");
+    block_on(manager.kill_window_async(&target)).expect("kill async");
+    block_on(manager.set_window_metadata_async("@9", &json!({ "sessionId": "codex-1" })))
+        .expect("metadata async");
+    block_on(manager.set_window_option_async("@9", "@aimux-tool", "codex"))
+        .expect("window option async");
+    block_on(manager.set_session_option_async(
+        "aimux-mobile-abc",
+        "@aimux-project-root",
+        "/repo/mobile",
+    ))
+    .expect("session option async");
+    block_on(manager.apply_managed_agent_window_policy_async("@9", "codex")).expect("policy async");
+
+    let calls = calls.borrow();
+    assert!(calls.iter().any(|(args, _)| args
+        == &vec![
+            "has-session".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-abc".to_owned(),
+        ]));
+    assert!(calls.iter().any(|(args, cwd)| {
+        cwd.as_deref() == Some("/repo/mobile")
+            && args
+                == &vec![
+                    "new-window".to_owned(),
+                    "-d".to_owned(),
+                    "-P".to_owned(),
+                    "-t".to_owned(),
+                    "aimux-mobile-abc".to_owned(),
+                    "-c".to_owned(),
+                    "/repo/mobile".to_owned(),
+                    "-n".to_owned(),
+                    "codex".to_owned(),
+                    "-F".to_owned(),
+                    "#{window_id}\t#{window_index}\t#{window_name}".to_owned(),
+                    "codex".to_owned(),
+                    "--model".to_owned(),
+                    "gpt-5".to_owned(),
+                ]
+    }));
+    assert!(calls.iter().any(|(args, _)| args
+        == &vec![
+            "capture-pane".to_owned(),
+            "-p".to_owned(),
+            "-J".to_owned(),
+            "-t".to_owned(),
+            "@9".to_owned(),
+            "-S".to_owned(),
+            "0".to_owned(),
+            "-E".to_owned(),
+            "10".to_owned(),
+        ]));
+    assert!(
+        calls.iter().any(|(args, _)| args
+            == &vec!["clear-history".to_owned(), "-t".to_owned(), "@9".to_owned(),])
+    );
+    assert!(calls.iter().any(
+        |(args, _)| args == &vec!["kill-window".to_owned(), "-t".to_owned(), "@9".to_owned(),]
+    ));
+}
+
+#[test]
 fn ensure_project_session_creates_and_configures_missing_session() {
     let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
     let calls_for_exec = calls.clone();
@@ -860,5 +970,21 @@ fn target() -> TmuxTarget {
         window_index: 9,
         window_name: "codex".to_owned(),
         pane_dead: None,
+    }
+}
+
+fn block_on<T>(future: impl Future<Output = T>) -> T {
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    let waker = Waker::from(Arc::new(NoopWake));
+    let mut context = Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("test future unexpectedly pending"),
     }
 }

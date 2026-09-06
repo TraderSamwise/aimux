@@ -290,6 +290,10 @@ impl TmuxRuntimeManager {
         self.exec_tmux(&["has-session", "-t", session_name]).is_ok()
     }
 
+    pub async fn has_session_async(&mut self, session_name: &str) -> bool {
+        self.has_session(session_name)
+    }
+
     pub fn ensure_project_session(
         &mut self,
         project_root: impl AsRef<Path>,
@@ -342,6 +346,14 @@ impl TmuxRuntimeManager {
             return Ok(session);
         }
         Ok(session)
+    }
+
+    pub async fn ensure_project_session_async(
+        &mut self,
+        project_root: impl AsRef<Path>,
+        config: Option<TmuxRuntimeConfig>,
+    ) -> Result<TmuxSessionRef, String> {
+        self.ensure_project_session(project_root, None, config)
     }
 
     pub fn list_session_names(&mut self) -> Vec<String> {
@@ -424,9 +436,25 @@ impl TmuxRuntimeManager {
         parse_window_target(session_name, &raw)
     }
 
+    pub async fn create_window_async(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+        detached: bool,
+    ) -> Result<TmuxTarget, String> {
+        self.create_window(session_name, name, cwd, command, args, detached)
+    }
+
     pub fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
         self.exec_owned(kill_window_argv(&target.window_id), None)
             .map(|_| ())
+    }
+
+    pub async fn kill_window_async(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.kill_window(target)
     }
 
     pub fn unlink_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
@@ -511,6 +539,10 @@ impl TmuxRuntimeManager {
     pub fn clear_target_history(&mut self, target: &TmuxTarget) -> Result<(), String> {
         self.exec_owned(clear_history_argv(&target.window_id), None)
             .map(|_| ())
+    }
+
+    pub async fn clear_target_history_async(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.clear_target_history(target)
     }
 
     pub fn replace_window_when_ready(
@@ -642,6 +674,14 @@ impl TmuxRuntimeManager {
         self.exec_owned(capture_pane_argv(&target.window_id, options), None)
     }
 
+    pub async fn capture_target_async(
+        &mut self,
+        target: &TmuxTarget,
+        options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.capture_target(target, options)
+    }
+
     pub fn start_pane_pipe(
         &mut self,
         target: &TmuxTarget,
@@ -764,6 +804,14 @@ impl TmuxRuntimeManager {
         self.set_window_option(window_id, "@aimux-meta", &value)
     }
 
+    pub async fn set_window_metadata_async(
+        &mut self,
+        window_id: &str,
+        metadata: &Value,
+    ) -> Result<(), String> {
+        self.set_window_metadata(window_id, metadata)
+    }
+
     pub fn set_window_option(
         &mut self,
         window_id: &str,
@@ -774,6 +822,15 @@ impl TmuxRuntimeManager {
             .map(|_| ())
     }
 
+    pub async fn set_window_option_async(
+        &mut self,
+        window_id: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        self.set_window_option(window_id, key, value)
+    }
+
     pub fn set_session_option(
         &mut self,
         session_name: &str,
@@ -782,6 +839,15 @@ impl TmuxRuntimeManager {
     ) -> Result<(), String> {
         self.exec_owned(set_session_option_argv(session_name, key, value), None)
             .map(|_| ())
+    }
+
+    pub async fn set_session_option_async(
+        &mut self,
+        session_name: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        self.set_session_option(session_name, key, value)
     }
 
     pub fn configure_managed_session(
@@ -1086,6 +1152,14 @@ impl TmuxRuntimeManager {
             "aggressive-resize",
             MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressive_resize,
         )
+    }
+
+    pub async fn apply_managed_agent_window_policy_async(
+        &mut self,
+        window_id: &str,
+        tool_config_key: &str,
+    ) -> Result<(), String> {
+        self.apply_managed_agent_window_policy(window_id, tool_config_key)
     }
 
     pub fn list_clients(&mut self) -> Vec<TmuxClientInfo> {
