@@ -11,7 +11,6 @@
     "dist",
     "dist-ui",
     "docs",
-    "scripts/installed-aimux-shim.sh",
     "scripts/tmux-control.sh",
     "scripts/tmux-open-hyperlink.sh",
     "scripts/tmux-statusline.sh",

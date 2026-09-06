@@ -18,11 +18,17 @@ describe("release asset native contract", () => {
     const body = script();
 
     expect(body).toContain('NATIVE_ARTIFACT="$PKG_DIR/native/$PLATFORM-$ARCH/aimux"');
-    expect(body).toContain('MAIN_ARTIFACT_NAME="main.js"');
-    expect(body).toContain('MAIN_ARTIFACT="$PKG_DIR/dist/$MAIN_ARTIFACT_NAME"');
-    expect(body).toContain(
-      'BUILD_STAMP="$(artifact_mtime_ms "$PKG_DIR/dist/launcher-bin.js").$(artifact_mtime_ms "$MAIN_ARTIFACT").$(artifact_mtime_ms "$NATIVE_ARTIFACT")',
-    );
-    expect(body).toContain('cat "$PKG_DIR/dist/launcher-bin.js" "$MAIN_ARTIFACT" "$NATIVE_ARTIFACT"');
+    expect(body).toContain('BUILD_STAMP="$(artifact_mtime_ms "$NATIVE_ARTIFACT")-$(shasum -a 1 "$NATIVE_ARTIFACT"');
+    expect(body).not.toContain("PKG_DIR/dist/launcher-bin.js");
+    expect(body).not.toContain('MAIN_ARTIFACT_NAME="main.js"');
+  });
+
+  it("keeps the release tarball on the native runtime surface", () => {
+    const body = script();
+
+    expect(body).not.toContain("yarn install --production");
+    expect(body).not.toContain("node_modules/node-pty");
+    expect(body).not.toContain("cp -R bin dist");
+    expect(body).not.toContain("scripts/installed-aimux-shim.sh");
   });
 });

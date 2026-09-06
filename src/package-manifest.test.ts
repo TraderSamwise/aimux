@@ -11,11 +11,11 @@ describe("package manifest", () => {
 
     expect(packageJson.files).toEqual(
       expect.arrayContaining([
-        "scripts/installed-aimux-shim.sh",
         "scripts/tmux-control.sh",
         "scripts/tmux-open-hyperlink.sh",
         "scripts/tmux-statusline.sh",
       ]),
     );
+    expect(packageJson.files).not.toContain("scripts/installed-aimux-shim.sh");
   });
 });

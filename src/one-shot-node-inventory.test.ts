@@ -3,17 +3,18 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { childProcessImportPattern } from "./source-inventory-test-utils.js";
 
-const cliBootstrapInventory = [
-  { id: "bin-shim", path: "bin/aimux", pattern: /node/ },
-  { id: "release-shim", path: "scripts/install.sh", pattern: /installed-aimux-shim\.sh/ },
+const retiredCliBootstrapInventory = [
+  { id: "bin-shim", path: "bin/aimux", pattern: /\bnode\b/ },
+  { id: "release-shim", path: "scripts/install.sh", pattern: /installed-aimux-shim\.sh|AIMUX_NODE_BIN/ },
   { id: "installed-shim", path: "scripts/installed-aimux-shim.sh", pattern: /dist\/launcher-bin\.js/ },
 ] as const;
 
 const scanRoots = ["bin", "scripts", "src"] as const;
 const runtimeBoundaryFiles = ["package.json", "app/package.json"] as const;
 const skippedDirectories = new Set([".git", "coverage", "dist", "dist-ui", "node_modules", "release"]);
-const skippedFiles = [/\.test\.[cm]?[jt]sx?$/, /\.d\.ts$/];
-const skippedDeclarationFiles = [/\.d\.ts$/];
+const skippedFixtureHarnessFiles = [/^scripts\/capture-.*-contract(?:s)?\.mjs$/];
+const skippedFiles = [/\.test\.[cm]?[jt]sx?$/, /\.d\.ts$/, ...skippedFixtureHarnessFiles];
+const skippedDeclarationFiles = [/\.d\.ts$/, ...skippedFixtureHarnessFiles];
 // Keep split so this test file does not match its own retired-entrypoint scan.
 const retiredMainSlashPath = "dist/" + "main.js";
 const retiredMainPatterns = [
@@ -54,6 +55,7 @@ const allowedChildProcessFiles = new Set([
   "src/daemon-supervisor.ts",
   "src/default-plugins/gh-pr-context.ts",
   "src/desktop-notifier.ts",
+  "src/full/login-flow.ts",
   "src/lifecycle-orphans.ts",
   "src/local-ui-server.ts",
   "src/login-flow.ts",
@@ -158,11 +160,11 @@ describe("one-shot Node runtime inventory", () => {
     }
   });
 
-  it("keeps the CLI bootstrap boundaries explicit", () => {
-    expect(cliBootstrapInventory).toHaveLength(3);
-    for (const entry of cliBootstrapInventory) {
+  it("keeps retired Node CLI bootstraps out of the active runtime", () => {
+    expect(retiredCliBootstrapInventory).toHaveLength(3);
+    for (const entry of retiredCliBootstrapInventory) {
       const text = readFileSync(join(process.cwd(), entry.path), "utf8");
-      expect(text, entry.id).toMatch(entry.pattern);
+      expect(text, entry.id).not.toMatch(entry.pattern);
     }
   });
 

@@ -374,9 +374,8 @@ describe("core command ownership inventory", () => {
       "security unlock",
     ]);
 
-    // The installed shim serves these over HTTP, but the Node fallback for them lives
-    // in the full CLI only — core has no dispatch branch, so claiming them here means
-    // "unsupported core command" whenever the shim route is unavailable.
+    // These native commands are handled by core. The full CLI path is no longer a
+    // runtime fallback for dashboard lifecycle commands.
     const mainOnly = new Set(["dashboard-reload", "restart-runtime"]);
     for (const entry of coreCommandDispositions) {
       expect(isCoreCliCommand(entry.args), entry.command).toBe(!mainOnly.has(entry.args[0]!));
@@ -389,14 +388,12 @@ describe("core command ownership inventory", () => {
     expect(isCoreCliCommand(["restart-runtime", "--current-client-session=-x"])).toBe(false);
   });
 
-  it("keeps shim-fast-path commands backed by explicit installed shell routes", () => {
+  it("keeps retired installed shell routes out of the native dispatch shim", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
-    const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(40);
-    for (const entry of [...installedShimFastPaths, ...fastPaths]) {
-      expect(entry.shimNeedle, entry.command).toBeTruthy();
-      expect(shim, entry.command).toContain(entry.shimNeedle);
+    expect(shim).not.toContain("AIMUX_NODE_BIN");
+    for (const entry of installedShimFastPaths) {
+      expect(shim, entry.command).not.toContain(entry.shimNeedle);
     }
   });
 

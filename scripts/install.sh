@@ -17,18 +17,6 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-need_node_fallback() {
-  need node
-  NODE_VERSION="$(node -v 2>/dev/null || true)"
-  NODE_MAJOR="${NODE_VERSION#v}"
-  NODE_MAJOR="${NODE_MAJOR%%.*}"
-  case "$NODE_MAJOR" in
-    '' | *[!0-9]*) fail "Node.js >= 24 is required" ;;
-    *) [ "$NODE_MAJOR" -ge 24 ] || fail "Node.js >= 24 is required" ;;
-  esac
-  NODE_BIN="$(command -v node)"
-}
-
 detect_platform() {
   case "$(uname -s)" in
     Darwin) printf 'darwin' ;;
@@ -134,26 +122,18 @@ fi
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -d "$TMP_DIR/aimux" ] || fail "release archive did not contain aimux/"
 [ -f "$TMP_DIR/aimux/BUILD_STAMP" ] || fail "release archive is missing BUILD_STAMP; install a current aimux release"
-[ -f "$TMP_DIR/aimux/scripts/installed-aimux-shim.sh" ] \
-  || fail "release archive is missing scripts/installed-aimux-shim.sh; install a current aimux release"
 
 INSTALLED_VERSION="$(cat "$TMP_DIR/aimux/VERSION" 2>/dev/null || printf '%s' "$VERSION_LABEL")"
 DEST="$INSTALL_ROOT/$INSTALLED_VERSION"
 NATIVE_PAYLOAD="$TMP_DIR/aimux/native/$PLATFORM-$ARCH/aimux"
-if [ -f "$NATIVE_PAYLOAD" ]; then
-  chmod +x "$NATIVE_PAYLOAD" 2>/dev/null || true
-fi
-if [ -x "$NATIVE_PAYLOAD" ]; then
-  NODE_BIN="$(command -v node 2>/dev/null || printf 'node')"
-else
-  need_node_fallback
-fi
+[ -f "$NATIVE_PAYLOAD" ] || fail "release archive is missing native aimux binary for $PLATFORM-$ARCH"
+chmod +x "$NATIVE_PAYLOAD" 2>/dev/null || true
+[ -x "$NATIVE_PAYLOAD" ] || fail "native aimux binary is not executable for $PLATFORM-$ARCH"
 
 mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
 rm -rf "$DEST"
 mv "$TMP_DIR/aimux" "$DEST"
 mkdir -p "$DEST/bin"
-NODE_BIN_QUOTED="$(shell_quote "$NODE_BIN")"
 DEST_QUOTED="$(shell_quote "$DEST")"
 BIN_SHIM_QUOTED="$(shell_quote "$BIN_DIR/aimux")"
 INSTALL_ROOT_QUOTED="$(shell_quote "$INSTALL_ROOT")"
@@ -162,7 +142,6 @@ cat > "$DEST/bin/aimux" <<EOF
 #!/usr/bin/env sh
 set -eu
 
-AIMUX_NODE_BIN=$NODE_BIN_QUOTED
 AIMUX_ROOT=$DEST_QUOTED
 AIMUX_NATIVE_BIN=$NATIVE_BIN_QUOTED
 
@@ -172,15 +151,15 @@ if [ -z "\${AIMUX_HOME:-}" ]; then AIMUX_HOME="\$HOME/.aimux"; export AIMUX_HOME
 if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMUX_DAEMON_PORT; fi
 if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
 if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
-export AIMUX_NODE_BIN AIMUX_ROOT AIMUX_NATIVE_BIN
+export AIMUX_ROOT AIMUX_NATIVE_BIN
 
 if [ -x "\$AIMUX_NATIVE_BIN" ]; then
   exec "\$AIMUX_NATIVE_BIN" "\$@"
 fi
-exec "\$AIMUX_ROOT/scripts/installed-aimux-shim.sh" "\$@"
+printf 'aimux: native binary not found or not executable: %s\n' "\$AIMUX_NATIVE_BIN" >&2
+exit 127
 EOF
 chmod +x "$DEST/bin/aimux"
-chmod +x "$DEST/scripts/installed-aimux-shim.sh"
 ln -sfn "$DEST/bin/aimux" "$BIN_DIR/aimux"
 
 printf 'Installed aimux %s to %s\n' "$INSTALLED_VERSION" "$DEST"
