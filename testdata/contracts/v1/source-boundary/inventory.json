@@ -1,0 +1,378 @@
+{
+  "version": 1,
+  "sources": [
+    "src/core-sidecar-boundary.test.ts",
+    "src/runtime-exchange-boundary.test.ts",
+    "src/multiplexer/tui-api-boundary.test.ts",
+    "src/tui/render/overlay-viewport-contract.test.ts",
+    "src/one-shot-node-inventory.test.ts"
+  ],
+  "generatedBy": "scripts/capture-source-boundary-contracts.mjs",
+  "description": "Source-boundary inventories captured by running the TypeScript boundary scan logic.",
+  "cases": [
+    {
+      "id": "core-sidecar-001",
+      "name": "keeps daemon implementation separate from supervisor bootstrap helpers",
+      "source": "src/core-sidecar-boundary.test.ts",
+      "input": {
+        "api": "forbiddenSubstrings",
+        "file": "src/daemon.ts",
+        "forbidden": [
+          "from \"./daemon-supervisor.js\"",
+          "export async function ensureDaemonRunning",
+          "export async function stopDaemon",
+          "export async function requestDaemonJson",
+          "export async function ensureProjectService",
+          "export async function stopProjectService",
+          "export async function projectServiceStatus"
+        ]
+      },
+      "output": [],
+      "inputSha256": "6e284eaf24d0490cec50f38de4b7b4226c701671fd9f0ebaf30af9ba7c738a8c"
+    },
+    {
+      "id": "core-sidecar-002",
+      "name": "keeps daemon HTTP transport separate from supervisor bootstrap",
+      "source": "src/core-sidecar-boundary.test.ts",
+      "input": {
+        "api": "substringPolicy",
+        "checks": [
+          { "file": "src/daemon-supervisor.ts", "forbidden": ["export async function requestDaemonJson"] },
+          { "file": "src/daemon-client.ts", "required": ["export async function requestDaemonJson"] }
+        ]
+      },
+      "output": [],
+      "inputSha256": "1ce505c83e53be60e96d31f0e43dc01b984e09786a8c41fa6f007d690afc6e14"
+    },
+    {
+      "id": "core-sidecar-003",
+      "name": "keeps core command HTTP transport separate from lifecycle startup",
+      "source": "src/core-sidecar-boundary.test.ts",
+      "input": {
+        "api": "substringPolicy",
+        "checks": [
+          { "file": "src/core-command-transport.ts", "forbidden": ["daemon-supervisor.js"] },
+          {
+            "file": "src/core-command-client.ts",
+            "required": ["ensureDaemonRunning", "sendCoreCommand"],
+            "forbidden": ["CORE_API_ROUTES", "requestDaemonJson"]
+          }
+        ]
+      },
+      "output": [],
+      "inputSha256": "d473b3efd564d80655399e138941d5984176daf9caf506c252c9f56917ec404a"
+    },
+    {
+      "id": "core-sidecar-004",
+      "name": "keeps the routed core CLI out of the full runtime and TUI graph",
+      "source": "src/core-sidecar-boundary.test.ts",
+      "input": {
+        "api": "forbiddenSubstrings",
+        "file": "src/core-cli.ts",
+        "forbidden": ["./main.js", "./multiplexer/", "./tmux/", "./dashboard/", "./local-ui-server.js"]
+      },
+      "output": [],
+      "inputSha256": "4aab9d54ab5d7029678a1cf5734f9e49cac8f25f18c27f75711a25c747575fa5"
+    },
+    {
+      "id": "core-sidecar-005",
+      "name": "keeps ordinary clients out of daemon supervisor lifecycle code",
+      "source": "src/core-sidecar-boundary.test.ts",
+      "input": {
+        "api": "daemonSupervisorImportInventory",
+        "allowed": [
+          "cli/project-service.ts",
+          "control-plane-restart-client.ts",
+          "core-command-client.ts",
+          "daemon-supervisor.ts",
+          "main.ts",
+          "runtime-restart.ts"
+        ]
+      },
+      "output": ["full/main.ts"],
+      "inputSha256": "6f689f6b805d37d85c78dfe290bc2a039fa976c70fb587e7ee2dcb883d6b9cb4"
+    },
+    {
+      "id": "core-sidecar-006",
+      "name": "keeps multiplexer clients out of daemon-starting core command wrappers",
+      "source": "src/core-sidecar-boundary.test.ts",
+      "input": { "api": "multiplexerCoreCommandClientImports" },
+      "output": [],
+      "inputSha256": "3cbe62ddaa8ebc24925d29ffa810c0246b252fec1f0221d6e53755ccda5ea418"
+    },
+    {
+      "id": "core-sidecar-007",
+      "name": "keeps routine multiplexer client screens out of child process launches",
+      "source": "src/core-sidecar-boundary.test.ts",
+      "input": {
+        "api": "multiplexerChildProcessImports",
+        "allowed": [
+          "src/multiplexer/dashboard-interaction.ts",
+          "src/multiplexer/persistence-methods.ts",
+          "src/multiplexer/tui-visibility.ts"
+        ]
+      },
+      "output": [],
+      "inputSha256": "2ca9d4e8052c68cf1e904fd1a644da3527900e2d23a181affb1f381d4bc067eb"
+    },
+    {
+      "id": "runtime-exchange-boundary-001",
+      "name": "keeps legacy thread/task directories quarantined to explicit import tooling",
+      "source": "src/runtime-exchange-boundary.test.ts",
+      "input": {
+        "api": "legacyExchangePathInventory",
+        "allowed": [
+          "src/paths.ts",
+          "src/runtime-core/exchange-import.test.ts",
+          "src/runtime-core/exchange-import.ts",
+          "src/runtime-exchange-boundary.test.ts",
+          "src/runtime-migration.test.ts",
+          "src/runtime-migration.ts",
+          "src/tasks.test.ts"
+        ]
+      },
+      "output": [],
+      "inputSha256": "275ba6b0b823fe92cdb1e94cd36506637fe93ade70ab4e3da7b19207b8bc9665"
+    },
+    {
+      "id": "runtime-exchange-boundary-002",
+      "name": "keeps generic legacy exchange dir helpers deleted",
+      "source": "src/runtime-exchange-boundary.test.ts",
+      "input": {
+        "api": "forbiddenSubstrings",
+        "file": "src/paths.ts",
+        "forbidden": ["function getThreadsDir", "function getTasksDir"]
+      },
+      "output": [],
+      "inputSha256": "86010caf905988a27ee064c8c9c2e1d2fd58f5105a6429f6d55c9c98782dfe49"
+    },
+    {
+      "id": "runtime-exchange-boundary-003",
+      "name": "keeps exchange alert recipient routing out of the metadata server",
+      "source": "src/runtime-exchange-boundary.test.ts",
+      "input": {
+        "api": "forbiddenSubstrings",
+        "file": "src/metadata-server.ts",
+        "forbidden": ["resolveAlertRecipients", "payload?.deliveredTo"]
+      },
+      "output": [],
+      "inputSha256": "bc98321fc2482fce89b6b59ffc13e88746c1b037bbcddd1f1ed21ddb4c6c9394"
+    },
+    {
+      "id": "runtime-exchange-boundary-004",
+      "name": "keeps plan markdown authority behind explicit plan-authority APIs",
+      "source": "src/runtime-exchange-boundary.test.ts",
+      "input": {
+        "api": "planAuthorityPathInventory",
+        "allowed": [
+          "src/builtin-metadata-watchers.test.ts",
+          "src/graveyard-cleanup.test.ts",
+          "src/graveyard-cleanup.ts",
+          "src/metadata-server.test.ts",
+          "src/multiplexer/persistence-methods.test.ts",
+          "src/paths.ts",
+          "src/runtime-core/exchange-import.test.ts",
+          "src/runtime-core/exchange-import.ts",
+          "src/runtime-core/exchange-store.test.ts",
+          "src/runtime-core/plan-authority.ts",
+          "src/runtime-exchange-boundary.test.ts"
+        ]
+      },
+      "output": [],
+      "inputSha256": "5d9ff32d98f659a871d6cd53838234e692ad3a97a6c449354383ba54dcd2bf37"
+    },
+    {
+      "id": "tui-api-boundary-001",
+      "name": "keeps production TUI code behind the shared API runtime",
+      "source": "src/multiplexer/tui-api-boundary.test.ts",
+      "input": {
+        "api": "tuiApiBoundaryInventory",
+        "allowed": [
+          "src/multiplexer/dashboard-actions-methods.ts",
+          "src/multiplexer/dashboard-api-client.ts",
+          "src/multiplexer/dashboard-control.ts",
+          "src/multiplexer/tui-api-runtime.ts"
+        ]
+      },
+      "output": [],
+      "inputSha256": "121c3c4ab60808eac99745bd41ba800117746473600121ba1a557cfe4af18af0"
+    },
+    {
+      "id": "overlay-viewport-001",
+      "name": "src/tui/screens/overlay-renderers.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/tui/screens/overlay-renderers.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "23727c3dbe7c6a47024c1e2b1e02f33b232673fb2dbbe65b2e1b0a62fe6b42b0"
+    },
+    {
+      "id": "overlay-viewport-002",
+      "name": "src/tui/screens/subscreen-renderers.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/tui/screens/subscreen-renderers.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "0921ce3cb7cb36df788ae6c7489af9915e394bc5125421d9ce4595078da7f3f1"
+    },
+    {
+      "id": "overlay-viewport-003",
+      "name": "src/multiplexer/tool-picker.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/multiplexer/tool-picker.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "37afb4dde79164a2939ec89975ba59360e23924f9ceb2985d8b7e92be4f8a097"
+    },
+    {
+      "id": "overlay-viewport-004",
+      "name": "src/multiplexer/dashboard-control.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/multiplexer/dashboard-control.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "169132130e5429a693362434faa1d4ad10669899fbad4459df6477d26ff7d708"
+    },
+    {
+      "id": "overlay-viewport-005",
+      "name": "src/multiplexer/subscreens.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/multiplexer/subscreens.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "2bdd27f659c431f4ade42c1b5ef9f2455fdd72f37b4bd37169ef899cbb122bf2"
+    },
+    {
+      "id": "overlay-viewport-006",
+      "name": "src/multiplexer/worktrees.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/multiplexer/worktrees.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "15c07243b0c112610cd383da0dca90a0f5e90aae3f2460812429ee6ddd60ea11"
+    },
+    {
+      "id": "overlay-viewport-007",
+      "name": "src/multiplexer/navigation.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/multiplexer/navigation.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "a6601b8b587182dd42ab77c0ef17ef2c1d020e2af0fc9a5c20321bf379add519"
+    },
+    {
+      "id": "overlay-viewport-008",
+      "name": "src/multiplexer/dashboard-view-methods.ts does not read process.stdout dimensions",
+      "source": "src/tui/render/overlay-viewport-contract.test.ts",
+      "input": { "api": "stdoutDimensions", "file": "src/multiplexer/dashboard-view-methods.ts" },
+      "output": { "readsStdoutDimensions": false },
+      "inputSha256": "22325390ed26a069f247fb9674faebe8a2d2d4e5f0a3615b13dd16f408a9b4a2"
+    },
+    {
+      "id": "one-shot-node-inventory-001",
+      "name": "keeps public package entrypoints on the bin shim",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": { "api": "packageEntrypoints" },
+      "output": { "main": "bin/aimux", "binAimux": "./bin/aimux", "start": "./bin/aimux" },
+      "inputSha256": "1c7bca1a991bb76492f0f28016dfecdf1e070ee4c8337b0a151e41588df00324"
+    },
+    {
+      "id": "one-shot-node-inventory-002",
+      "name": "keeps command configs from invoking local Node tools through node",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": { "api": "localNodeToolInventory" },
+      "output": { "probes": [true, true], "violations": [] },
+      "inputSha256": "d0dee7c4ce6c2ca7fcfc809a11b10bf4cb0d61371c9038e36e48cb05eaecac36"
+    },
+    {
+      "id": "one-shot-node-inventory-003",
+      "name": "keeps retired Node CLI bootstraps out of the active runtime",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": {
+        "api": "retiredCliBootstrapInventory",
+        "entries": [
+          { "id": "bin-shim", "path": "bin/aimux" },
+          { "id": "release-shim", "path": "scripts/install.sh" },
+          { "id": "installed-shim", "path": "scripts/installed-aimux-shim.sh" }
+        ]
+      },
+      "output": [],
+      "inputSha256": "d743811f13c88163c36d2ad253d5c2a005379663d1c179a83617bfe9a58c3e08"
+    },
+    {
+      "id": "one-shot-node-inventory-004",
+      "name": "keeps runtime Node launch sites in an explicit allowlist",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": { "api": "runtimeNodeLaunchInventory" },
+      "output": [],
+      "inputSha256": "c8d18a9f15fabd4ec44780958580a6a21c84d1b44296d4d822116a8d3b83ddf0"
+    },
+    {
+      "id": "one-shot-node-inventory-005",
+      "name": "keeps child process launch sites explicit",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": {
+        "api": "childProcessImportInventory",
+        "allowed": [
+          "scripts/captest.mjs",
+          "scripts/hosted-check.mjs",
+          "src/context/compactor.ts",
+          "src/core-project-actor.ts",
+          "src/daemon-supervisor.ts",
+          "src/default-plugins/gh-pr-context.ts",
+          "src/desktop-notifier.ts",
+          "src/full/login-flow.ts",
+          "src/lifecycle-orphans.ts",
+          "src/local-ui-server.ts",
+          "src/login-flow.ts",
+          "src/multiplexer/dashboard-interaction.ts",
+          "src/multiplexer/persistence-methods.ts",
+          "src/multiplexer/tui-visibility.ts",
+          "src/paths.ts",
+          "src/process-inspector.ts",
+          "src/tmux/doctor.ts",
+          "src/tmux/expose.ts",
+          "src/tmux/runtime-manager.ts",
+          "src/worktree.ts"
+        ]
+      },
+      "output": [],
+      "inputSha256": "532bf9c8adc0997f42b07d77e731c49204ebf163452fc162245265b86303f25c"
+    },
+    {
+      "id": "one-shot-node-inventory-006",
+      "name": "recognizes node heredoc variants",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": {
+        "api": "nodeDashHeredocProbes",
+        "probes": ["node - <<'NODE'\n", "AIMUX_INPUT=\"$value\" node - \"$arg\" <<'NODE'\n"]
+      },
+      "output": [true, true],
+      "inputSha256": "48528e54e8c75c6737b81d9a1a89e1925cb2a437655c8e5a9f3a571130c777ef"
+    },
+    {
+      "id": "one-shot-node-inventory-007",
+      "name": "recognizes child-process node command variants",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": {
+        "api": "childProcessNodeCommandProbes",
+        "probes": {
+          "fileCommand": ["spawn(\"node\", [\"script.js\"])", "execFileSync(\"node\", [\"script.js\"])"],
+          "shellCommand": ["execSync(\"node scripts/tool.js\")"],
+          "forkCommand": ["fork(\"scripts/tool.js\")", "fork(scriptPath)", "cp.fork(join(root, 'script.js'))"]
+        }
+      },
+      "output": { "fileCommand": [true, true], "shellCommand": [true], "forkCommand": [true, true, true] },
+      "inputSha256": "c6fbfb7d3958cb7b5ddcec40a8f0e40c8853e28ba8d1b274d872235d8aa60c8b"
+    },
+    {
+      "id": "one-shot-node-inventory-008",
+      "name": "keeps the retired main entrypoint quarantined",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": { "api": "retiredMainEntrypointInventory" },
+      "output": [],
+      "inputSha256": "4a8ce828164db119ebbb674e6aa504f15120300e5c5df409347708c002c612f9"
+    },
+    {
+      "id": "one-shot-node-inventory-009",
+      "name": "keeps OS process inspection behind the shared inspector",
+      "source": "src/one-shot-node-inventory.test.ts",
+      "input": { "api": "processInspectionInventory" },
+      "output": [],
+      "inputSha256": "03142cd27fdd175952763bb590be5ba6dd9d4ae10c5c7843f0b357f092dbbda0"
+    }
+  ]
+}

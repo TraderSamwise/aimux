@@ -899,6 +899,12 @@ Priority fixture groups:
   focused-control-session, metadata projection, and semantic badge cases
   captured by running TypeScript `statusline-model` exports.
 
+## Source Boundary
+
+- `source-boundary/inventory.json`: core sidecar, runtime-exchange,
+  TUI API, overlay viewport, and one-shot Node inventory violation lists
+  captured by running TypeScript source-boundary scan logic.
+
 ## Terminal
 
 - `terminal/host.json`: raw-mode and terminal-state restore escape-sequence
