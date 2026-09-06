@@ -138,10 +138,12 @@ pub struct TmuxExecOptions {
 }
 
 type TmuxExecFn = dyn FnMut(&[String], Option<&TmuxExecOptions>) -> Result<String, String>;
+type TmuxInteractiveExecFn = dyn FnMut(&[String], Option<&TmuxExecOptions>) -> Result<(), String>;
 
 pub struct TmuxRuntimeManager {
     session_prefix: String,
     exec: Box<TmuxExecFn>,
+    interactive_exec: Box<TmuxInteractiveExecFn>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,9 +183,18 @@ impl TmuxRuntimeManager {
     pub fn with_exec(
         exec: impl FnMut(&[String], Option<&TmuxExecOptions>) -> Result<String, String> + 'static,
     ) -> Self {
+        Self::with_exec_and_interactive(exec, default_interactive_exec)
+    }
+
+    pub fn with_exec_and_interactive(
+        exec: impl FnMut(&[String], Option<&TmuxExecOptions>) -> Result<String, String> + 'static,
+        interactive_exec: impl FnMut(&[String], Option<&TmuxExecOptions>) -> Result<(), String>
+        + 'static,
+    ) -> Self {
         Self {
             session_prefix: "aimux".to_owned(),
             exec: Box::new(exec),
+            interactive_exec: Box::new(interactive_exec),
         }
     }
 
@@ -1272,18 +1283,15 @@ impl TmuxRuntimeManager {
                 "cannot attach to tmux session {target} without a terminal; run \"tmux attach -t {target}\" yourself"
             ));
         }
-        self.exec_owned(attach_session_argv(session_name, window_index), None)
-            .map(|_| ())
+        self.exec_interactive_owned(attach_session_argv(session_name, window_index), None)
     }
 
     pub fn detach_client(&mut self) -> Result<(), String> {
-        self.exec_owned(vec!["detach-client".to_owned()], None)
-            .map(|_| ())
+        self.exec_interactive_owned(vec!["detach-client".to_owned()], None)
     }
 
     pub fn switch_to_last_client_session(&mut self) -> Result<(), String> {
-        self.exec_owned(vec!["switch-client".to_owned(), "-l".to_owned()], None)
-            .map(|_| ())
+        self.exec_interactive_owned(vec!["switch-client".to_owned(), "-l".to_owned()], None)
     }
 
     pub fn leave_managed_session(
@@ -1305,7 +1313,7 @@ impl TmuxRuntimeManager {
             });
             if is_external_return
                 && self
-                    .exec_owned(
+                    .exec_interactive_owned(
                         vec![
                             "switch-client".to_owned(),
                             "-t".to_owned(),
@@ -1327,11 +1335,10 @@ impl TmuxRuntimeManager {
         window_index: i64,
         client_tty: Option<&str>,
     ) -> Result<(), String> {
-        self.exec_owned(
+        self.exec_interactive_owned(
             switch_client_argv(session_name, window_index, client_tty),
             None,
         )
-        .map(|_| ())
     }
 
     pub fn link_window_to_session(
@@ -1790,6 +1797,15 @@ impl TmuxRuntimeManager {
         }
         reset_tmux_query_memo();
         (self.exec)(&args, options.as_ref())
+    }
+
+    fn exec_interactive_owned(
+        &mut self,
+        args: Vec<String>,
+        options: Option<TmuxExecOptions>,
+    ) -> Result<(), String> {
+        reset_tmux_query_memo();
+        (self.interactive_exec)(&args, options.as_ref())
     }
 
     fn set_current_runtime_contract(&mut self, session_name: &str) -> Result<(), String> {
@@ -2735,6 +2751,25 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     } else {
         stderr
     })
+}
+
+fn default_interactive_exec(
+    args: &[String],
+    options: Option<&TmuxExecOptions>,
+) -> Result<(), String> {
+    let mut command = Command::new("tmux");
+    command.args(args);
+    if let Some(cwd) = options.and_then(|options| options.cwd.as_deref()) {
+        command.current_dir(cwd);
+    }
+    let status = command
+        .status()
+        .map_err(|error| format!("failed to run tmux: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("tmux {} failed", args.join(" ")))
+    }
 }
 
 fn slugify_project_name(name: &str) -> String {

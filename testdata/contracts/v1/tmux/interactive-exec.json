@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-interactive-exec-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "TmuxRuntimeManager foreground/client-changing interactive exec behavior captured by running TypeScript.",
+  "caseCount": 6,
+  "cases": [
+    {
+      "id": "tmux-interactive-exec-001",
+      "name": "detachClient uses interactive exec",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager interactive exec",
+      "input": { "name": "detachClient uses interactive exec" },
+      "output": { "thrown": null, "snapshot": { "execCalls": [], "interactiveCalls": [["detach-client"]] } },
+      "inputSha256": "a03f0a513578380c2597f2dfdd7ed7cc52586f3041f8d29e36a5ed8bd260b83c"
+    },
+    {
+      "id": "tmux-interactive-exec-002",
+      "name": "switchToLastClientSession uses interactive exec",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager interactive exec",
+      "input": { "name": "switchToLastClientSession uses interactive exec" },
+      "output": { "thrown": null, "snapshot": { "execCalls": [], "interactiveCalls": [["switch-client", "-l"]] } },
+      "inputSha256": "b47f60ded964110cefe8003162eb02c4d112f4d91b4c0ce281144202a4bf8310"
+    },
+    {
+      "id": "tmux-interactive-exec-003",
+      "name": "switchClient uses interactive exec with explicit tty",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager interactive exec",
+      "input": { "name": "switchClient uses interactive exec with explicit tty" },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "execCalls": [],
+          "interactiveCalls": [["switch-client", "-c", "/dev/ttys001", "-t", "aimux-repo-client-deadbeef:3"]]
+        }
+      },
+      "inputSha256": "c8ca0c772b11e562ce2c226c4c93937eda199c8fe30a117735e03448193767c9"
+    },
+    {
+      "id": "tmux-interactive-exec-004",
+      "name": "leaveManagedSession switches to external return session",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager interactive exec",
+      "input": {
+        "name": "leaveManagedSession switches to external return session",
+        "currentClientSession": "aimux-repo-client-deadbeef",
+        "returnSession": "user-main"
+      },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "execCalls": [
+            ["display-message", "-p", "#{client_session}"],
+            ["show-options", "-v", "-t", "aimux-repo-client-deadbeef", "@aimux-return-session"]
+          ],
+          "interactiveCalls": [["switch-client", "-t", "user-main"]]
+        }
+      },
+      "inputSha256": "2090bdb5afc25000d9f5489b0a037f9f10156a7b0cf137ec2d0791ccd6d11cb6"
+    },
+    {
+      "id": "tmux-interactive-exec-005",
+      "name": "leaveManagedSession detaches without external return session",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager interactive exec",
+      "input": {
+        "name": "leaveManagedSession detaches without external return session",
+        "currentClientSession": "aimux-repo-client-deadbeef",
+        "returnSession": "aimux-repo-client-deadbeef"
+      },
+      "output": {
+        "thrown": null,
+        "snapshot": {
+          "execCalls": [
+            ["display-message", "-p", "#{client_session}"],
+            ["show-options", "-v", "-t", "aimux-repo-client-deadbeef", "@aimux-return-session"]
+          ],
+          "interactiveCalls": [["detach-client"]]
+        }
+      },
+      "inputSha256": "66cc89bb4d4a78467efee7a80ea5edd969a1ea65cb5fa37f465c315319b82355"
+    },
+    {
+      "id": "tmux-interactive-exec-006",
+      "name": "attachSession refuses without a terminal",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager interactive exec",
+      "input": { "name": "attachSession refuses without a terminal" },
+      "output": {
+        "thrown": "cannot attach to tmux session aimux-repo:2 without a terminal; run \"tmux attach -t aimux-repo:2\" yourself",
+        "snapshot": { "execCalls": [], "interactiveCalls": [] }
+      },
+      "inputSha256": "f9fe92b7f64585c4e336e321b49193c1f4719ae1d795a9d002df78148b588c1c"
+    }
+  ]
+}
