@@ -219,6 +219,12 @@ Priority fixture groups:
   merging, stale compatibility state clearing, topology service demotion, and
   missing-worktree filtering captured by running TypeScript
   `multiplexer/service-state-snapshot`.
+- `runtime-state/guard-repair-history.json`: dashboard runtime-guard repair
+  attempt persistence, project-key normalization, window pruning, clearing, and
+  corrupt-history recovery captured by running TypeScript
+  `runtime-guard-repair-history`.
+- `runtime-state/drift.json`: local-build drift error classification captured
+  by running TypeScript `runtime-drift`.
 - `runtime-migration/migration.json`: report, explicit import, rollback,
   corrupt legacy file, global agent-dir copy avoidance, and blocked existing
   exchange behavior captured by running TypeScript `runtime-migration` helpers
