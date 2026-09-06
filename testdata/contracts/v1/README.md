@@ -316,6 +316,12 @@ Priority fixture groups:
   transient disconnect classification captured by running TypeScript
   `app/lib/request-errors` helpers.
 
+## Release
+
+- `release/asset.json`: release asset shell packaging checks for Rust CLI
+  build/copy/chmod, build-stamp native-artifact coherence, and Node payload
+  exclusion captured by evaluating the TypeScript release-asset contract.
+
 ## Relay
 
 - `relay/client.json`: RelayClient missing-WebSocket status, auth-failure
