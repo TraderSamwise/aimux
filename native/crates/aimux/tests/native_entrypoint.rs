@@ -425,29 +425,26 @@ fn malformed_known_auxiliary_commands_fail_native_without_node_fallback() {
 
 #[cfg(unix)]
 #[test]
-fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
-    let root = temp_root("native-node-fallback");
+fn unknown_main_commands_fail_native_without_node_fallback() {
+    let root = temp_root("native-no-node-fallback");
     fs::create_dir_all(root.join("dist")).expect("create dist");
     fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
     let log = root.join("node.log");
     let node = fake_node(&root, &log, 7);
 
-    let status = Command::new(env!("CARGO_BIN_EXE_aimux"))
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
         .env("AIMUX_ROOT", &root)
         .env("AIMUX_NODE_BIN", node)
         .args(["unknown-command", "--json"])
-        .status()
+        .output()
         .expect("run native aimux");
 
-    assert_eq!(status.code(), Some(7));
-    let recorded = fs::read_to_string(&log).expect("node fallback log");
-    assert_eq!(
-        recorded,
-        format!(
-            "{}\nunknown-command\n--json\n",
-            root.join("dist/launcher-bin.js").display()
-        )
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        !log.exists(),
+        "unknown command should not invoke node fallback"
     );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"));
     cleanup(root);
 }
 
