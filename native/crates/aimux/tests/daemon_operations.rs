@@ -20,6 +20,7 @@ struct Call {
     session_name: Option<String>,
     window_id: Option<String>,
     issued_at: Option<String>,
+    route_path: Option<String>,
 }
 
 impl Call {
@@ -34,6 +35,7 @@ impl Call {
             session_name: None,
             window_id: None,
             issued_at: None,
+            route_path: None,
         }
     }
 }
@@ -147,6 +149,104 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
         ))
     }
 
+    fn get_project_service_json(
+        &mut self,
+        project_root: &str,
+        route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        self.calls.push(Call {
+            name: "get",
+            project_root: Some(project_root.into()),
+            route_path: Some(route_path.into()),
+            ..Call::simple("get")
+        });
+        match route_path {
+            project_routes::DIAGNOSTICS => ProjectServiceJsonResult::ok(
+                project_root,
+                json!({
+                    "ok": true,
+                    "projectRoot": project_root,
+                    "runtimeExchange": {
+                        "path": "/repo/.aimux/runtime-exchange.yaml",
+                        "bytes": 600,
+                        "counts": { "totalRecords": 10, "threads": 2, "messages": 5, "tasks": 3, "inbox": 1 },
+                        "byteCounts": {
+                            "totalStoredTextBytes": 120,
+                            "totalOriginalTextBytes": 220,
+                            "messageBodyBytes": 70,
+                            "taskPromptBytes": 10,
+                            "taskResultBytes": 20,
+                            "taskErrorBytes": 30,
+                            "compactedMessageBodies": 1,
+                            "compactedTasks": 2
+                        },
+                        "compactableByteCounts": { "totalStoredTextBytes": 90 },
+                        "retainedCounts": { "totalRecords": 8, "threads": 2, "messages": 4, "tasks": 2 },
+                        "retainedByteCounts": { "totalStoredTextBytes": 100 },
+                        "messageDelivery": {
+                            "pendingMessageBodyBytes": 11,
+                            "deliveredMessageBodyBytes": 22,
+                            "noRecipientMessageBodyBytes": 33
+                        },
+                        "retainedMessageDelivery": {
+                            "pendingMessageBodyBytes": 1,
+                            "deliveredMessageBodyBytes": 2,
+                            "noRecipientMessageBodyBytes": 3
+                        },
+                        "largestRetainedThreads": [
+                            {
+                                "id": "thread-1",
+                                "kind": "task",
+                                "status": "waiting",
+                                "messageCount": 2,
+                                "messageBodyBytes": 44,
+                                "pendingMessageBodyBytes": 5,
+                                "title": "Review"
+                            }
+                        ],
+                        "telemetry": {
+                            "reads": 9,
+                            "parses": 8,
+                            "compactions": 7,
+                            "compactedRecords": 6,
+                            "readCacheHits": 5,
+                            "readCacheMisses": 4,
+                            "slowReads": 3,
+                            "slowReadSuppressed": 2,
+                            "writes": 1,
+                            "writeNoops": 0
+                        }
+                    }
+                }),
+            ),
+            project_routes::DIAGNOSTICS_LIFECYCLE => ProjectServiceJsonResult::ok(
+                project_root,
+                json!({
+                    "projectRoot": project_root,
+                    "queuedCount": 2,
+                    "queueLimit": 8,
+                    "telemetry": {
+                        "enqueued": 11,
+                        "started": 10,
+                        "succeeded": 9,
+                        "failed": 1,
+                        "released": 8,
+                        "maxQueuedCount": 3,
+                        "maxQueuedMs": 120,
+                        "maxDurationMs": 450,
+                        "rejectedConflicts": 2,
+                        "rejectedQueueFull": 1,
+                        "lastError": "boom"
+                    },
+                    "activeTargets": [
+                        { "operation": "agent.spawn", "key": "session:claude-1" }
+                    ]
+                }),
+            ),
+            _ => ProjectServiceJsonResult::error(DaemonRouteResponse::text(404, "not found\n")),
+        }
+    }
+
     fn post_project_service_json(
         &mut self,
         project_root: &str,
@@ -156,6 +256,7 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
         self.calls.push(Call {
             name: "post",
             project_root: Some(project_root.into()),
+            route_path: Some(route_path.into()),
             ..Call::simple("post")
         });
         assert_eq!(route_path, project_routes::runtime::COMPACT_EXCHANGE);
@@ -297,6 +398,102 @@ fn text_body(response: DaemonRouteResponse) -> String {
 
 fn json_text(response: DaemonRouteResponse) -> Value {
     serde_json::from_str(&text_body(response)).expect("json text")
+}
+
+#[test]
+fn doctor_exchange_route_reads_project_diagnostics_and_renders_exchange() {
+    let mut runtime = FakeOperationsRuntime::default();
+    let response = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?project=/repo", CORE_API_ROUTES.doctor_exchange_text),
+        None,
+    )
+    .expect("doctor exchange route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        text_body(response),
+        concat!(
+            "Project: /repo\n",
+            "Path: /repo/.aimux/runtime-exchange.yaml\n",
+            "Bytes: 600\n",
+            "Records: total=10 threads=2 messages=5 tasks=3 inbox=1\n",
+            "Text bytes: stored=120 original=220 messages=70 tasks=60 compactedMessages=1 compactedTasks=2\n",
+            "Compactable text bytes: 90\n",
+            "Retained records after compaction: total=8 threads=2 messages=4 tasks=2\n",
+            "Retained text bytes after compaction: 100\n",
+            "Message delivery bytes: pending=11 delivered=22 noRecipient=33\n",
+            "Retained message delivery bytes: pending=1 delivered=2 noRecipient=3\n",
+            "Large retained thread: thread-1 task/waiting messages=2 bytes=44 pendingBytes=5 title=Review\n",
+            "Store: reads=9 parses=8 compactions=7 compactedRecords=6\n",
+            "Cache: hits=5 misses=4 slowReads=3 suppressedSlowReadLogs=2\n",
+            "Writes: total=1 noops=0\n",
+        )
+    );
+    assert_eq!(runtime.calls[0].name, "get");
+    assert_eq!(
+        runtime.calls[0].route_path.as_deref(),
+        Some(project_routes::DIAGNOSTICS)
+    );
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?project=/repo&json=1",
+            CORE_API_ROUTES.doctor_exchange_text
+        ),
+        None,
+    )
+    .expect("doctor exchange json route");
+    assert_eq!(
+        json_text(json)["path"],
+        json!("/repo/.aimux/runtime-exchange.yaml")
+    );
+}
+
+#[test]
+fn doctor_lifecycle_route_reads_project_diagnostics_and_renders_queue() {
+    let mut runtime = FakeOperationsRuntime::default();
+    let response = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?project=/repo", CORE_API_ROUTES.doctor_lifecycle_text),
+        None,
+    )
+    .expect("doctor lifecycle route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        text_body(response),
+        concat!(
+            "Project: /repo\n",
+            "Queue: 2/8\n",
+            "Lifecycle: enqueued=11 started=10 succeeded=9 failed=1 released=8\n",
+            "Max: queued=3 wait=120ms duration=450ms\n",
+            "Rejected: conflicts=2 queueFull=1\n",
+            "Last error: boom\n",
+            "Active targets:\n",
+            "  agent.spawn session:claude-1\n",
+        )
+    );
+    assert_eq!(
+        runtime.calls[0].route_path.as_deref(),
+        Some(project_routes::DIAGNOSTICS_LIFECYCLE)
+    );
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?project=/repo&json=1",
+            CORE_API_ROUTES.doctor_lifecycle_text
+        ),
+        None,
+    )
+    .expect("doctor lifecycle json route");
+    assert_eq!(json_text(json)["queuedCount"], json!(2));
 }
 
 #[test]

@@ -938,6 +938,32 @@ fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
         }
     );
 
+    let exchange = classify_core_cli_with_project_resolver(
+        &["doctor", "exchange", "--project=./child", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("doctor exchange plan");
+    assert_eq!(exchange.operation, CoreCliOperation::DoctorExchange);
+    assert_eq!(
+        exchange.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/exchange-text?projectRoot=%2Fresolved%2F.%2Fchild&json=1".into(),
+            body: None,
+        }
+    );
+
+    let lifecycle = classify_core_cli(&["doctor", "lifecycle"], &context(true, true))
+        .expect("doctor lifecycle plan");
+    assert_eq!(lifecycle.operation, CoreCliOperation::DoctorLifecycle);
+    assert_eq!(
+        lifecycle.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/lifecycle-text?projectRoot=%2Frepo".into(),
+            body: None,
+        }
+    );
+
     let tmux = classify_core_cli_with_project_resolver(
         &[
             "doctor",

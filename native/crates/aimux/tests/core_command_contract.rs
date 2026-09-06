@@ -7,6 +7,8 @@ fn core_api_routes_match_the_typescript_contract() {
         ("daemonEnsureText", "/core/daemon-ensure-text"),
         ("daemonProjectsText", "/core/daemon-projects-text"),
         ("daemonStatusText", "/core/daemon-status-text"),
+        ("doctorExchangeText", "/core/doctor/exchange-text"),
+        ("doctorLifecycleText", "/core/doctor/lifecycle-text"),
         ("doctorTmuxText", "/core/doctor/tmux-text"),
         ("doctorVersionsText", "/core/doctor/versions-text"),
         ("doctorDiskText", "/core/doctor/disk-text"),
@@ -196,6 +198,8 @@ fn constant_objects_serialize_with_typescript_keys() {
     let routes = serde_json::to_value(CORE_API_ROUTES).expect("routes serialize");
     let commands = serde_json::to_value(CORE_COMMAND_NAMES).expect("commands serialize");
 
+    assert_eq!(routes["doctorExchangeText"], "/core/doctor/exchange-text");
+    assert_eq!(routes["doctorLifecycleText"], "/core/doctor/lifecycle-text");
     assert_eq!(routes["doctorTmuxText"], "/core/doctor/tmux-text");
     assert_eq!(
         routes["worktreeResurrectText"],

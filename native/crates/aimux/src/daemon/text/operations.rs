@@ -157,6 +157,11 @@ pub trait DaemonOperationsTextRuntime {
         project_root: &str,
         open: bool,
     ) -> Result<(Value, String), String>;
+    fn get_project_service_json(
+        &mut self,
+        project_root: &str,
+        route_path: &str,
+    ) -> ProjectServiceJsonResult;
     fn post_project_service_json(
         &mut self,
         project_root: &str,
@@ -194,6 +199,12 @@ pub fn route_operations_text_request(
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_disk_text {
         return Some(doctor_disk_text_route(runtime, &route_url));
+    }
+    if method == "GET" && pathname == CORE_API_ROUTES.doctor_exchange_text {
+        return Some(doctor_exchange_text_route(runtime, &route_url, body));
+    }
+    if method == "GET" && pathname == CORE_API_ROUTES.doctor_lifecycle_text {
+        return Some(doctor_lifecycle_text_route(runtime, &route_url, body));
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_tmux_text {
         return Some(doctor_tmux_text_route(runtime, &route_url));
@@ -283,6 +294,48 @@ pub fn doctor_tmux_text_route(
             text_or_json_lines(route_url, report, &split_rendered_report_lines(&text))
         }
         Err(error) => text_error(500, format!("Error: {error}")),
+    }
+}
+
+pub fn doctor_exchange_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project_root = route_project_root_or_cwd(runtime, route_url, body);
+    match runtime.get_project_service_json(&project_root, project_routes::DIAGNOSTICS) {
+        ProjectServiceJsonResult::Ok { json, .. } => {
+            let json_payload = json
+                .get("runtimeExchange")
+                .cloned()
+                .unwrap_or_else(|| json.clone());
+            let mut diagnostics = json;
+            if let Value::Object(object) = &mut diagnostics {
+                object.insert("projectRoot".into(), Value::String(project_root));
+            }
+            text_or_json_lines(
+                route_url,
+                json_payload,
+                &render_exchange_diagnostics_lines(&diagnostics),
+            )
+        }
+        ProjectServiceJsonResult::Err { response } => response,
+    }
+}
+
+pub fn doctor_lifecycle_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project_root = route_project_root_or_cwd(runtime, route_url, body);
+    match runtime.get_project_service_json(&project_root, project_routes::DIAGNOSTICS_LIFECYCLE) {
+        ProjectServiceJsonResult::Ok { json, .. } => text_or_json_lines(
+            route_url,
+            json.clone(),
+            &render_lifecycle_diagnostics_lines(&json),
+        ),
+        ProjectServiceJsonResult::Err { response } => response,
     }
 }
 
@@ -469,6 +522,68 @@ fn render_repair_exchange_lines(project_root: &str, result: &Value) -> Vec<Strin
     lines
 }
 
+fn render_lifecycle_diagnostics_lines(diagnostics: &Value) -> Vec<String> {
+    let telemetry = diagnostics.get("telemetry").unwrap_or(&Value::Null);
+    let mut lines = vec![
+        format!(
+            "Project: {}",
+            diagnostics
+                .get("projectRoot")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ),
+        format!(
+            "Queue: {}/{}",
+            display_jsonish(diagnostics.get("queuedCount").unwrap_or(&Value::Null), "?"),
+            display_jsonish(diagnostics.get("queueLimit").unwrap_or(&Value::Null), "?")
+        ),
+        format!(
+            "Lifecycle: enqueued={} started={} succeeded={} failed={} released={}",
+            display_i64(telemetry, "enqueued", 0),
+            display_i64(telemetry, "started", 0),
+            display_i64(telemetry, "succeeded", 0),
+            display_i64(telemetry, "failed", 0),
+            display_i64(telemetry, "released", 0)
+        ),
+        format!(
+            "Max: queued={} wait={}ms duration={}ms",
+            display_i64(telemetry, "maxQueuedCount", 0),
+            display_i64(telemetry, "maxQueuedMs", 0),
+            display_i64(telemetry, "maxDurationMs", 0)
+        ),
+        format!(
+            "Rejected: conflicts={} queueFull={}",
+            display_i64(telemetry, "rejectedConflicts", 0),
+            display_i64(telemetry, "rejectedQueueFull", 0)
+        ),
+    ];
+    if let Some(last_error) = telemetry.get("lastError").and_then(Value::as_str) {
+        lines.push(format!("Last error: {last_error}"));
+    }
+    let active_targets = diagnostics
+        .get("activeTargets")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !active_targets.is_empty() {
+        lines.push("Active targets:".into());
+        for target in active_targets {
+            let target_value = target
+                .get("key")
+                .or_else(|| target.get("targetId"))
+                .or_else(|| target.get("targetPath"))
+                .map(|value| display_jsonish(value, "?"))
+                .unwrap_or_else(|| "?".into());
+            lines.push(format!(
+                "  {} {}",
+                display_string(&target, "operation", "?"),
+                target_value
+            ));
+        }
+    }
+    lines
+}
+
 fn render_exchange_diagnostics_lines(diagnostics: &Value) -> Vec<String> {
     let exchange = diagnostics.get("runtimeExchange").unwrap_or(diagnostics);
     let counts = exchange.get("counts").unwrap_or(&Value::Null);
@@ -590,6 +705,29 @@ fn display_string(value: &Value, key: &str, fallback: &str) -> String {
 
 fn display_i64(value: &Value, key: &str, fallback: i64) -> i64 {
     value.get(key).and_then(Value::as_i64).unwrap_or(fallback)
+}
+
+fn display_jsonish(value: &Value, fallback: &str) -> String {
+    match value {
+        Value::Null => fallback.to_owned(),
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        _ => fallback.to_owned(),
+    }
+}
+
+fn route_project_root_or_cwd(
+    runtime: &impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> String {
+    let project_root = string_param(route_url, body, "projectRoot")
+        .or_else(|| string_param(route_url, body, "project"))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| path_resolve("."));
+    runtime.resolve_project_root(&project_root)
 }
 
 fn restart_failure_count(restart: &Value) -> Option<i64> {

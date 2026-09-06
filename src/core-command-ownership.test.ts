@@ -27,6 +27,8 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "team default <role>", shimNeedle: "/core/team/default-text" },
   { command: "doctor versions", shimNeedle: "/core/doctor/versions-text" },
   { command: "doctor disk", shimNeedle: "/core/doctor/disk-text" },
+  { command: "doctor exchange", shimNeedle: "/core/doctor/exchange-text" },
+  { command: "doctor lifecycle", shimNeedle: "/core/doctor/lifecycle-text" },
   { command: "doctor tmux", shimNeedle: "/core/doctor/tmux-text" },
   { command: "logs path", shimNeedle: "/core/logs/path-text" },
   { command: "logs tail", shimNeedle: "/core/logs/tail-text" },

@@ -266,6 +266,30 @@ fn doctor_disk_and_tmux_parsers_match_cli_forms() {
         })
     );
     assert_eq!(
+        parse_core_doctor_args(&["doctor", "exchange", "--project", "./child", "--json",]),
+        Some(CoreDoctorArgs {
+            subcommand: "exchange".into(),
+            project: Some("./child".into()),
+            project_root: None,
+            session: None,
+            window_id: None,
+            include_active: false,
+            json: true,
+        })
+    );
+    assert_eq!(
+        parse_core_doctor_args(&["doctor", "lifecycle", "--project=./child", "--json",]),
+        Some(CoreDoctorArgs {
+            subcommand: "lifecycle".into(),
+            project: Some("./child".into()),
+            project_root: None,
+            session: None,
+            window_id: None,
+            include_active: false,
+            json: true,
+        })
+    );
+    assert_eq!(
         parse_core_doctor_args(&[
             "doctor",
             "tmux",
@@ -288,6 +312,10 @@ fn doctor_disk_and_tmux_parsers_match_cli_forms() {
     );
     assert_eq!(
         parse_core_doctor_args(&["doctor", "disk", "--session", "x"]),
+        None
+    );
+    assert_eq!(
+        parse_core_doctor_args(&["doctor", "exchange", "--include-active"]),
         None
     );
     assert_eq!(
@@ -1092,6 +1120,9 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["daemon", "restart", "--json"],
         vec!["doctor", "versions"],
         vec!["doctor", "versions", "--json"],
+        vec!["doctor", "exchange", "--project=/repo", "--json"],
+        vec!["doctor", "lifecycle"],
+        vec!["doctor", "lifecycle", "--project", "/repo"],
         vec!["logs", "path", "--daemon"],
         vec!["notify", "--title", "Heads up"],
         vec!["notify", "--body", "Ready"],
@@ -1142,6 +1173,8 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["daemon", "restart", "--project", "/repo"],
         vec!["daemon", "status", "extra"],
         vec!["doctor", "versions", "extra"],
+        vec!["doctor", "exchange", "--project"],
+        vec!["doctor", "lifecycle", "--include-active"],
         vec!["projects", "list", "extra", "--json"],
         vec!["remote", "enable", "--json"],
         vec!["remote", "disable", "extra"],

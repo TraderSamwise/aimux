@@ -705,6 +705,40 @@ aimux_try_doctor() {
         aimux_get_query_text_route "$path" 120 --data-urlencode "includeActive=$include_active"
       fi
       ;;
+    exchange|lifecycle)
+      route_subcommand="$subcommand"
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project)
+            shift
+            aimux_require_arg_value "$@" || return 1
+            project_root="$AIMUX_ARG_VALUE"
+            ;;
+          --project=*)
+            aimux_require_inline_value "${1#--project=}" || return 1
+            project_root="$AIMUX_ARG_VALUE"
+            ;;
+          --json)
+            json=1
+            ;;
+          *)
+            return 1
+            ;;
+        esac
+        shift
+      done
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      case "$route_subcommand" in
+        exchange) path="/core/doctor/exchange-text" ;;
+        lifecycle) path="/core/doctor/lifecycle-text" ;;
+        *) return 1 ;;
+      esac
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_get_query_text_route "$path" 120 --data-urlencode "projectRoot=$project_root"
+      ;;
     tmux)
       shift
       project_root="$(pwd -P 2>/dev/null)" || return 1
@@ -2877,7 +2911,7 @@ case "${1:-} ${2:-}" in
     fi
     aimux_handle_fast_path_failure "$*" 1
     ;;
-  "doctor versions" | "doctor disk" | "doctor tmux")
+  "doctor versions" | "doctor disk" | "doctor exchange" | "doctor lifecycle" | "doctor tmux")
     if aimux_try_doctor "$@"; then
       exit 0
     else

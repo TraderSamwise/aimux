@@ -265,6 +265,8 @@ const LOCAL_AUTH_ROUTES: &[&str] = &[
 
 const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.doctor_disk_text,
+    crate::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+    crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
     crate::core_command_contract::CORE_API_ROUTES.doctor_tmux_text,
     crate::core_command_contract::CORE_API_ROUTES.doctor_versions_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_cleanup_text,

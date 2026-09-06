@@ -5,6 +5,8 @@ export const CORE_API_ROUTES = {
   daemonEnsureText: "/core/daemon-ensure-text",
   daemonProjectsText: "/core/daemon-projects-text",
   daemonStatusText: "/core/daemon-status-text",
+  doctorExchangeText: "/core/doctor/exchange-text",
+  doctorLifecycleText: "/core/doctor/lifecycle-text",
   doctorTmuxText: "/core/doctor/tmux-text",
   doctorVersionsText: "/core/doctor/versions-text",
   doctorDiskText: "/core/doctor/disk-text",

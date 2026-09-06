@@ -272,6 +272,8 @@ const LOCAL_AUTH_ROUTES = new Set<string>([
 ]);
 const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.doctorDiskText,
+  CORE_API_ROUTES.doctorExchangeText,
+  CORE_API_ROUTES.doctorLifecycleText,
   CORE_API_ROUTES.doctorTmuxText,
   CORE_API_ROUTES.doctorVersionsText,
   CORE_API_ROUTES.graveyardCleanupText,
@@ -3349,6 +3351,54 @@ export class AimuxDaemon {
     }
   }
 
+  private async doctorLifecycleTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.resolveProjectRoot(
+      pathResolve(
+        this.stringParam(routeUrl, body, "projectRoot") ?? this.stringParam(routeUrl, body, "project") ?? process.cwd(),
+      ),
+    );
+    const result = await this.getProjectServiceJson(projectRoot, PROJECT_API_ROUTES.diagnosticsLifecycle);
+    if (!result.ok) return result.response;
+    const diagnostics = result.json as any;
+    const telemetry = diagnostics.telemetry ?? {};
+    const lines = [
+      `Project: ${diagnostics.projectRoot ?? projectRoot}`,
+      `Queue: ${diagnostics.queuedCount ?? "?"}/${diagnostics.queueLimit ?? "?"}`,
+      `Lifecycle: enqueued=${telemetry.enqueued ?? 0} started=${telemetry.started ?? 0} succeeded=${
+        telemetry.succeeded ?? 0
+      } failed=${telemetry.failed ?? 0} released=${telemetry.released ?? 0}`,
+      `Max: queued=${telemetry.maxQueuedCount ?? 0} wait=${telemetry.maxQueuedMs ?? 0}ms duration=${
+        telemetry.maxDurationMs ?? 0
+      }ms`,
+      `Rejected: conflicts=${telemetry.rejectedConflicts ?? 0} queueFull=${telemetry.rejectedQueueFull ?? 0}`,
+    ];
+    if (telemetry.lastError) lines.push(`Last error: ${telemetry.lastError}`);
+    const activeTargets = Array.isArray(diagnostics.activeTargets) ? diagnostics.activeTargets : [];
+    if (activeTargets.length > 0) {
+      lines.push("Active targets:");
+      for (const target of activeTargets) {
+        lines.push(`  ${target.operation ?? "?"} ${target.key ?? target.targetId ?? target.targetPath ?? "?"}`);
+      }
+    }
+    return this.textOrJsonLines(routeUrl, diagnostics, lines);
+  }
+
+  private async doctorExchangeTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.resolveProjectRoot(
+      pathResolve(
+        this.stringParam(routeUrl, body, "projectRoot") ?? this.stringParam(routeUrl, body, "project") ?? process.cwd(),
+      ),
+    );
+    const result = await this.getProjectServiceJson(projectRoot, PROJECT_API_ROUTES.diagnostics);
+    if (!result.ok) return result.response;
+    const diagnostics = result.json as any;
+    return this.textOrJsonLines(
+      routeUrl,
+      diagnostics.runtimeExchange ?? diagnostics,
+      this.exchangeDiagnosticsLines({ ...diagnostics, projectRoot }),
+    );
+  }
+
   private async repairTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const projectParam = this.stringParam(routeUrl, body, "projectRoot");
     if (!projectParam) {
@@ -3835,6 +3885,14 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === CORE_API_ROUTES.doctorDiskText) {
       return this.doctorDiskTextRoute(routeUrl);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.doctorExchangeText) {
+      return this.doctorExchangeTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.doctorLifecycleText) {
+      return this.doctorLifecycleTextRoute(routeUrl, body);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.doctorTmuxText) {

@@ -245,6 +245,14 @@ impl DaemonOperationsTextRuntime for FakeRouterRuntime {
         ))
     }
 
+    fn get_project_service_json(
+        &mut self,
+        project_root: &str,
+        route_path: &str,
+    ) -> aimux::daemon::text::params::ProjectServiceJsonResult {
+        self.project_json_result(project_root, route_path)
+    }
+
     fn post_project_service_json(
         &mut self,
         project_root: &str,

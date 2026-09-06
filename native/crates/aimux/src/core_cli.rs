@@ -91,6 +91,8 @@ pub enum CoreCliOperation {
     Repair,
     RepairExchange,
     DoctorDisk,
+    DoctorExchange,
+    DoctorLifecycle,
     DoctorTmux,
     DashboardReload,
     RuntimeRestart,
@@ -710,6 +712,15 @@ fn doctor_disk_text_path(project: Option<&str>, include_active: bool, json: bool
     if include_active {
         push_text_query(&mut path, "includeActive", "1");
     }
+    if json {
+        push_text_query(&mut path, "json", "1");
+    }
+    path
+}
+
+fn doctor_project_text_path(route: &str, project_root: &str, json: bool) -> String {
+    let mut path = route.to_owned();
+    push_text_query(&mut path, "projectRoot", project_root);
     if json {
         push_text_query(&mut path, "json", "1");
     }
@@ -1859,7 +1870,7 @@ where
             },
             CoreCliFallback::None,
         ),
-        ("doctor", "disk" | "tmux") => {
+        ("doctor", "disk" | "exchange" | "lifecycle" | "tmux") => {
             let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
             if parsed.subcommand == "disk" {
                 let project_root = parsed.project.as_deref().map(&resolve_project_root);
@@ -1869,6 +1880,42 @@ where
                         path: doctor_disk_text_path(
                             project_root.as_deref(),
                             parsed.include_active,
+                            parsed.json,
+                        ),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "exchange" {
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::DoctorExchange,
+                    CoreCliAction::TextRoute {
+                        path: doctor_project_text_path(
+                            CORE_API_ROUTES.doctor_exchange_text,
+                            &project_root,
+                            parsed.json,
+                        ),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "lifecycle" {
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::DoctorLifecycle,
+                    CoreCliAction::TextRoute {
+                        path: doctor_project_text_path(
+                            CORE_API_ROUTES.doctor_lifecycle_text,
+                            &project_root,
                             parsed.json,
                         ),
                         body: None,
