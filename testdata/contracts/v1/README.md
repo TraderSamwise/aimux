@@ -638,6 +638,8 @@ Priority fixture groups:
 
 ## CLI
 
+- `cli/agent-id.json`: agent identity JSON payload and human-readable identity
+  line rendering captured by running TypeScript `cli/agent-id` helpers.
 - `cli/parsing.json`: process command-line flag value matching and shell/env
   assignment parsing captured by running TypeScript `process-args` and
   `shell-args`.

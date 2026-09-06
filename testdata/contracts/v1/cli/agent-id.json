@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "source": "src/cli/agent-id.test.ts",
+  "generatedBy": "scripts/capture-cli-agent-id-contract.mjs",
+  "description": "CLI agent identity JSON payload and human-readable line rendering captured by running TypeScript cli/agent-id helpers.",
+  "cases": [
+    {
+      "id": "cli-agent-id-001",
+      "name": "builds the JSON payload for a resolved agent identity",
+      "source": "src/cli/agent-id.test.ts",
+      "api": "buildAgentIdentityPayload",
+      "input": {
+        "name": "builds the JSON payload for a resolved agent identity",
+        "api": "buildAgentIdentityPayload",
+        "projectRoot": "/repo",
+        "identity": {
+          "ok": true,
+          "sessionId": "claude-abc123",
+          "backendSessionId": "native-session",
+          "source": "topology",
+          "tool": "claude",
+          "toolConfigKey": "claude",
+          "command": "claude",
+          "status": "graveyard",
+          "worktreePath": "/repo/.aimux/worktrees/feature"
+        }
+      },
+      "output": {
+        "ok": true,
+        "projectRoot": "/repo",
+        "canonical": "claude",
+        "aimuxId": "claude-abc123",
+        "backendSessionId": "native-session",
+        "source": "topology",
+        "status": "graveyard",
+        "worktreePath": "/repo/.aimux/worktrees/feature"
+      },
+      "inputSha256": "48f62e69a5b74ce0065698d95b5506787e420d0e755b6da296acf40811befda8"
+    },
+    {
+      "id": "cli-agent-id-002",
+      "name": "renders stable human-readable identity lines",
+      "source": "src/cli/agent-id.test.ts",
+      "api": "renderAgentIdentityLines",
+      "input": {
+        "name": "renders stable human-readable identity lines",
+        "api": "renderAgentIdentityLines",
+        "payload": {
+          "ok": true,
+          "projectRoot": "/repo",
+          "canonical": "codex",
+          "aimuxId": "codex-abc123",
+          "backendSessionId": "native-session",
+          "source": "discovered",
+          "status": "offline",
+          "worktreePath": "/repo"
+        }
+      },
+      "output": [
+        "codex-abc123  canonical=codex  backend=native-session  status=offline  source=discovered",
+        "worktree: /repo"
+      ],
+      "inputSha256": "1b47411703145b58d573d979357c5b3ee7e7582e4cedb5f3b38d9cc175233214"
+    },
+    {
+      "id": "cli-agent-id-003",
+      "name": "builds the JSON payload for a failed identity lookup",
+      "source": "src/cli/agent-id.test.ts",
+      "api": "buildAgentIdentityErrorPayload",
+      "input": {
+        "name": "builds the JSON payload for a failed identity lookup",
+        "api": "buildAgentIdentityErrorPayload",
+        "projectRoot": "/repo",
+        "identity": {
+          "ok": false,
+          "sessionId": "missing",
+          "reason": "Agent \"missing\" is not managed in runtime topology"
+        }
+      },
+      "output": {
+        "ok": false,
+        "projectRoot": "/repo",
+        "sessionId": "missing",
+        "error": "Agent \"missing\" is not managed in runtime topology"
+      },
+      "inputSha256": "4ccdfcad5ec1fbff906b73976df3796d73d0dbca1455bdd8e0091f64662fe747"
+    }
+  ]
+}
