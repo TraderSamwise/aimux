@@ -64,6 +64,7 @@ fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
     assert!(stdout.contains("Native CLI agent multiplexer"));
     assert!(stdout.contains("compact"));
     assert!(stdout.contains("doctor"));
+    assert!(!stdout.contains("--tmux-dashboard-internal"));
     assert!(!log.exists(), "root --help should not invoke node fallback");
     cleanup(root);
 }
