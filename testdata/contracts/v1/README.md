@@ -257,6 +257,13 @@ Priority fixture groups:
   byte accounting, and diagnostics captured by running TypeScript
   `runtime-core/exchange-store`.
 
+## Visual Client Leases
+
+- `visual-client-leases/leases.json`: visual client lease kind parsing,
+  identity sanitization, TTL clamping, renewal, pruning, preview counts, and
+  snapshot ordering captured by running TypeScript `visual-client-leases`
+  helpers.
+
 ## Worktrees
 
 - `worktrees/colors.json`: worktree color key, hash, RGB, hex, ANSI, palette

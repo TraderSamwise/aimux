@@ -111,6 +111,7 @@ pub mod tool_hooks_contract;
 pub mod transcript_turn_state;
 pub mod translation_plan;
 pub mod tui_render;
+pub mod visual_client_leases_contract;
 
 pub use build_info::{BuildInfo, build_info};
 pub use contracts::{ContractArea, ContractManifest, contract_manifest};
