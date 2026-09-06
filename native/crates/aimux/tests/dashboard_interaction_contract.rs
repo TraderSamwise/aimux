@@ -62,6 +62,9 @@ fn run_case(case: &Value) -> Value {
                 }
                 DashboardControllerEffect::Quit
                 | DashboardControllerEffect::OpenAgentToolPicker(_)
+                | DashboardControllerEffect::WorktreeCacheCleanupPreview(_)
+                | DashboardControllerEffect::WorktreeCacheCleanupApply(_)
+                | DashboardControllerEffect::LoadOrchestrationRoutes { .. }
                 | DashboardControllerEffect::Ignored => {}
             }
         }

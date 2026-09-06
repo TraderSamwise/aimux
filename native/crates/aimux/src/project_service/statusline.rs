@@ -1484,6 +1484,7 @@ mod tests {
                 current_window: Some("coder"),
                 current_window_id: Some("@1"),
                 current_path: Some("/repo"),
+                ..RenderOptions::default()
             },
         );
 
@@ -1549,6 +1550,7 @@ mod tests {
                 current_window: Some("claude"),
                 current_window_id: Some("@1"),
                 current_path: Some("/repo"),
+                ..RenderOptions::default()
             },
         );
 
@@ -1637,6 +1639,7 @@ mod tests {
                 current_window: Some("codex"),
                 current_window_id: Some("@9"),
                 current_path: Some("/repo"),
+                ..RenderOptions::default()
             },
         );
 

@@ -24,26 +24,38 @@ fn routes_core_expose_and_main_like_launcher_env() {
     );
     assert_eq!(
         cli_entry_for(&["node", "aimux", "dashboard-reload"]),
-        CliEntry::Core
+        CliEntry::Main
     );
     assert_eq!(cli_entry_for(&["node", "aimux", "unknown"]), CliEntry::Main);
 }
 
 #[test]
-fn global_logging_flags_are_stripped_before_native_core_dispatch() {
+fn global_logging_flags_match_launcher_env_fixture() {
     assert_eq!(
-        cli_entry_for(&["node", "aimux", "--debug", "daemon", "status"]),
-        CliEntry::Core
+        cli_entry_for(&["node", "aimux", "--debug", "remote", "status"]),
+        CliEntry::Main
     );
     assert_eq!(
         cli_entry_for(&[
             "node",
             "aimux",
-            "--trace",
             "daemon",
             "project-ensure",
             "--project",
-            "--json"
+            "/p",
+            "--trace"
+        ]),
+        CliEntry::Main
+    );
+    assert_eq!(
+        cli_entry_for(&[
+            "node",
+            "aimux",
+            "daemon",
+            "project-ensure",
+            "--project",
+            "--json",
+            "--debug"
         ]),
         CliEntry::Core
     );
