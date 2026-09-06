@@ -751,6 +751,10 @@ Priority fixture groups:
 - `multiplexer/worktrees.json`: dashboard worktree settle-poll backoff table
   captured by running TypeScript `worktreeSettlePollDelay` over the tested
   attempt ranges.
+- `multiplexer/runtime-lifecycle-methods.json`: runtime lifecycle legacy
+  instruction-file managed-block cleanup and tracking reset side effects
+  captured by running TypeScript `runtimeLifecycleMethods` against temporary
+  project files.
 - `runtime-state/guard-repair-history.json`: dashboard runtime-guard repair
   attempt persistence, project-key normalization, window pruning, clearing, and
   corrupt-history recovery captured by running TypeScript

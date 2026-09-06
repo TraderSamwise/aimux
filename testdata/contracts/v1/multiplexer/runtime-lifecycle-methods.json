@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+  "generatedBy": "scripts/capture-runtime-lifecycle-methods-contract.mjs",
+  "description": "Runtime lifecycle instruction-file cleanup contracts captured by running TypeScript runtimeLifecycleMethods against temporary project files.",
+  "cases": [
+    {
+      "id": "runtime-lifecycle-methods-001",
+      "name": "does not create AGENTS by default",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": { "name": "does not create AGENTS by default", "files": {}, "operations": ["writeInstructionFiles"] },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": false },
+          "CLAUDE.md": { "exists": false },
+          "CODEX.md": { "exists": false },
+          "notes.md": { "exists": false }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "25a2b6f4e1f51b64502e81ed8fe2c2020662d1361ec49a2722970eb3ec23f60d"
+    },
+    {
+      "id": "runtime-lifecycle-methods-002",
+      "name": "ignores legacy configured instruction files without overwriting user content",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": {
+        "name": "ignores legacy configured instruction files without overwriting user content",
+        "config": { "tools": { "codex": { "instructionsFile": "AGENTS.md" } } },
+        "files": { "AGENTS.md": "# Project Rules\n\nKeep this user rule.\n" },
+        "operations": ["writeInstructionFiles"]
+      },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": true, "content": "# Project Rules\n\nKeep this user rule.\n" },
+          "CLAUDE.md": { "exists": false },
+          "CODEX.md": { "exists": false },
+          "notes.md": { "exists": false }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "ef99705a42741fa0c7fe54117a7378bc48854d7e2776283aa3457d2e90d34f35"
+    },
+    {
+      "id": "runtime-lifecycle-methods-003",
+      "name": "does not create configured generated-only instruction files",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": {
+        "name": "does not create configured generated-only instruction files",
+        "config": { "tools": { "codex": { "instructionsFile": "AGENTS.md" } } },
+        "files": {},
+        "operations": ["writeInstructionFiles"]
+      },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": false },
+          "CLAUDE.md": { "exists": false },
+          "CODEX.md": { "exists": false },
+          "notes.md": { "exists": false }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "681e3e46fea230be05283b5343777a29b8e0880b432af20e0ff5d8ad9423e052"
+    },
+    {
+      "id": "runtime-lifecycle-methods-004",
+      "name": "removes stale default managed block while preserving user content",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": {
+        "name": "removes stale default managed block while preserving user content",
+        "files": {
+          "AGENTS.md": "# Project Rules\n\nKeep this user rule.\n\n<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->\n# aimux Agent Instructions\nold generated content\n<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->\n"
+        },
+        "operations": ["writeInstructionFiles"]
+      },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": true, "content": "# Project Rules\n\nKeep this user rule.\n" },
+          "CLAUDE.md": { "exists": false },
+          "CODEX.md": { "exists": false },
+          "notes.md": { "exists": false }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "e306a3159a85ce804ca65dda82863a8e3721019f00f0b92d777d84782a0476e0"
+    },
+    {
+      "id": "runtime-lifecycle-methods-005",
+      "name": "leaves user-authored AGENTS without managed block untouched",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": {
+        "name": "leaves user-authored AGENTS without managed block untouched",
+        "files": { "AGENTS.md": "# Project Rules\n\nKeep this user rule.\n\n" },
+        "operations": ["writeInstructionFiles"]
+      },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": true, "content": "# Project Rules\n\nKeep this user rule.\n\n" },
+          "CLAUDE.md": { "exists": false },
+          "CODEX.md": { "exists": false },
+          "notes.md": { "exists": false }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "8a3d9e58bcbfad288cacebac70a74595f853f416c710ebdd704ec654602a5da7"
+    },
+    {
+      "id": "runtime-lifecycle-methods-006",
+      "name": "deletes generated-only AGENTS when projection is no longer configured",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": {
+        "name": "deletes generated-only AGENTS when projection is no longer configured",
+        "files": {
+          "AGENTS.md": "<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->\n# aimux Agent Instructions\nold generated content\n<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->\n"
+        },
+        "operations": ["writeInstructionFiles"]
+      },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": false },
+          "CLAUDE.md": { "exists": false },
+          "CODEX.md": { "exists": false },
+          "notes.md": { "exists": false }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "ab29525e2720ed9814fc0b2f349941700633d75008aff96c454f13a43bb7fb7d"
+    },
+    {
+      "id": "runtime-lifecycle-methods-007",
+      "name": "removes stale managed blocks from legacy adapter docs",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": {
+        "name": "removes stale managed blocks from legacy adapter docs",
+        "files": {
+          "CLAUDE.md": "# Adapter\n\n<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->\n# aimux Agent Instructions\nold generated content\n<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->\n",
+          "CODEX.md": "# Adapter\n\n<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->\n# aimux Agent Instructions\nold generated content\n<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->\n"
+        },
+        "operations": ["writeInstructionFiles"]
+      },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": false },
+          "CLAUDE.md": { "exists": true, "content": "# Adapter\n" },
+          "CODEX.md": { "exists": true, "content": "# Adapter\n" },
+          "notes.md": { "exists": false }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "b691e7ce8b7b228c20e568295aa40c2cd7d4fab125e857bf1b8b2a846af5ec7e"
+    },
+    {
+      "id": "runtime-lifecycle-methods-008",
+      "name": "removeInstructionFiles cleans tracked managed files and clears tracking",
+      "source": "src/multiplexer/runtime-lifecycle-methods.test.ts",
+      "input": {
+        "name": "removeInstructionFiles cleans tracked managed files and clears tracking",
+        "files": {
+          "CLAUDE.md": "# Adapter\n\n<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->\n# aimux Agent Instructions\nold generated content\n<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->\n",
+          "notes.md": "# Notes\n\nKeep me.\n"
+        },
+        "initialWrittenInstructionFiles": ["CLAUDE.md", "notes.md"],
+        "operations": ["removeInstructionFiles"]
+      },
+      "output": {
+        "files": {
+          "AGENTS.md": { "exists": false },
+          "CLAUDE.md": { "exists": true, "content": "# Adapter\n" },
+          "CODEX.md": { "exists": false },
+          "notes.md": { "exists": true, "content": "# Notes\n\nKeep me.\n" }
+        },
+        "writtenInstructionFiles": []
+      },
+      "inputSha256": "650cf9c34bf4bd14532dc83cdbe934720a7138f62fbb9d010f8215629efae9f3"
+    }
+  ]
+}
