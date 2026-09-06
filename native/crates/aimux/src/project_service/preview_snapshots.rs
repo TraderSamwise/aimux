@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 
 use crate::tmux::CapturePaneOptions;
+use crate::tmux_expose::ExposeScope;
+use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
 
 use super::agent_output::AgentOutputCaptureRuntime;
 use super::output_cache::AgentOutputCaptureCacheKey;
@@ -16,6 +18,9 @@ pub fn capture_preview_snapshot(
     line_count: i64,
     max_chars: usize,
 ) -> Option<Value> {
+    if let Some(snapshot) = hot_preview_snapshot(context, window_id, max_chars) {
+        return Some(snapshot);
+    }
     let options = CapturePaneOptions {
         start_line: Some(-line_count),
         end_line: None,
@@ -39,6 +44,43 @@ pub fn capture_preview_snapshot(
         "startLine": -line_count,
         "lineCount": line_count,
     }))
+}
+
+pub fn hot_preview_snapshot(
+    context: &ProjectServiceRequestContext,
+    window_id: &str,
+    max_chars: usize,
+) -> Option<Value> {
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    let view = read_hot_expose_scope_view(
+        context.project_state_dir(),
+        &HotExposeScopeKey {
+            project_root,
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+    )?;
+    for item in view.items {
+        let item_window_id = item
+            .get("target")
+            .and_then(|target| target.get("windowId"))
+            .and_then(Value::as_str);
+        if item_window_id != Some(window_id) {
+            continue;
+        }
+        let mut snapshot = item.get("previewSnapshot")?.clone();
+        if let Some(output) = snapshot
+            .get("output")
+            .and_then(Value::as_str)
+            .map(|output| trailing_chars(output, max_chars))
+            && let Some(object) = snapshot.as_object_mut()
+        {
+            object.insert("output".into(), Value::String(output));
+        }
+        return Some(snapshot);
+    }
+    None
 }
 
 fn trailing_chars(value: &str, max_chars: usize) -> String {

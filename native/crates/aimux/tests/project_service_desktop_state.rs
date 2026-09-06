@@ -8,6 +8,8 @@ use aimux::project_service::router::{ProjectServiceRequestContext, route_project
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
+use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
+use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -335,6 +337,75 @@ fn desktop_state_previews_reuse_cached_capture_per_window() {
     assert_eq!(
         find(second.body["sessions"].as_array().unwrap(), "codex-live")["previewSnapshot"]["output"],
         "first"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn desktop_state_previews_use_hot_snapshot_before_live_capture() {
+    let (project, state_dir) = write_desktop_state_fixtures("preview-hot-cache");
+    let hot_preview = json!({
+        "output": "hot preview",
+        "capturedAt": "2026-09-07T00:00:00.000Z",
+        "source": "capture",
+        "windowId": "@1",
+        "startLine": -40,
+        "lineCount": 40,
+    });
+    write_hot_expose_scope_view(
+        &state_dir,
+        HotExposeScopeKey {
+            project_root: project.to_string_lossy().into_owned(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+        ExposeScopeView {
+            scope: ExposeScope::Project,
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+            items: vec![json!({
+                "id": "codex-live",
+                "target": {
+                    "sessionName": "aimux-repo",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "codex",
+                },
+                "metadata": {},
+                "label": "codex-live",
+                "urgency": 0,
+                "activity": 1,
+                "recentRank": 9007199254740991_i64,
+                "previewSnapshot": hot_preview.clone(),
+            })],
+        },
+        None,
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakePreviewRuntime {
+        output: "live".into(),
+        calls: Vec::new(),
+    };
+
+    let response = route_desktop_state_request_with_runtime(
+        &context,
+        "GET",
+        &format!("{}?includePreview=1", routes::DESKTOP_STATE),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let sessions = response.body["sessions"].as_array().unwrap();
+    assert_eq!(find(sessions, "codex-live")["previewSnapshot"], hot_preview);
+    assert_eq!(
+        runtime
+            .calls
+            .iter()
+            .map(|(window_id, _)| window_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["@3"]
     );
     cleanup(project);
 }
