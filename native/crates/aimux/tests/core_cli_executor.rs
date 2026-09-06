@@ -161,6 +161,8 @@ impl CoreCliRuntime for FakeRuntime {
             "loop ok\n".into()
         } else if path.starts_with("/core/overseer/") {
             "overseer ok\n".into()
+        } else if path.starts_with("/core/team/") {
+            "team ok\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -791,6 +793,71 @@ fn overseer_commands_execute_native_text_routes_without_core_command_fallback() 
             (
                 "/core/overseer/clear-text".into(),
                 Some(json!({ "project": "/repo", "sessionId": "boss" })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn team_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let show = run_core_cli_with(&args(&["team", "show", "--project=/repo"]), &mut runtime);
+    let init = run_core_cli_with(&args(&["team", "init", "--json"]), &mut runtime);
+    let add = run_core_cli_with(
+        &args(&[
+            "team",
+            "add",
+            "planner",
+            "-d",
+            "Plans work",
+            "--reviewed-by",
+            "reviewer",
+            "--can-edit",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    let default_role = run_core_cli_with(
+        &args(&["team", "default", "--project=/repo", "planner"]),
+        &mut runtime,
+    );
+    let remove = run_core_cli_with(
+        &args(&["team", "remove", "--json", "--project=/repo", "planner"]),
+        &mut runtime,
+    );
+
+    assert_eq!(show.stdout, ["team ok"]);
+    assert_eq!(init.stdout, ["team ok"]);
+    assert_eq!(add.stdout, ["team ok"]);
+    assert_eq!(default_role.stdout, ["team ok"]);
+    assert_eq!(remove.stdout, ["team ok"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            ("/core/team/show-text?project=%2Frepo".into(), None),
+            (
+                "/core/team/init-text?json=1".into(),
+                Some(json!({ "project": "/repo" })),
+            ),
+            (
+                "/core/team/add-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "role": "planner",
+                    "description": "Plans work",
+                    "reviewedBy": "reviewer",
+                    "canEdit": true,
+                })),
+            ),
+            (
+                "/core/team/default-text".into(),
+                Some(json!({ "project": "/repo", "role": "planner" })),
+            ),
+            (
+                "/core/team/remove-text?json=1".into(),
+                Some(json!({ "project": "/repo", "role": "planner" })),
             ),
         ]
     );

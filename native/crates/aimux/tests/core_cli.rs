@@ -639,6 +639,71 @@ fn overseer_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn team_commands_plan_native_text_routes() {
+    let show = classify_core_cli(&["team", "show", "--project=/repo"], &context(true, true))
+        .expect("team show plan");
+    assert_eq!(show.operation, CoreCliOperation::TeamShow);
+    assert_eq!(
+        show.action,
+        CoreCliAction::TextRoute {
+            path: "/core/team/show-text?project=%2Frepo".into(),
+            body: None,
+        }
+    );
+
+    let init = classify_core_cli(&["team", "init", "--json"], &context(true, true))
+        .expect("team init plan");
+    assert_eq!(init.operation, CoreCliOperation::TeamInit);
+    assert_eq!(
+        init.action,
+        CoreCliAction::TextRoute {
+            path: "/core/team/init-text?json=1".into(),
+            body: Some(json!({ "project": "/repo" })),
+        }
+    );
+
+    let add = classify_core_cli(
+        &[
+            "team",
+            "add",
+            "planner",
+            "-d",
+            "Plans work",
+            "--reviewed-by",
+            "reviewer",
+            "--can-edit",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("team add plan");
+    assert_eq!(add.operation, CoreCliOperation::TeamAdd);
+    assert_eq!(
+        add.action,
+        CoreCliAction::TextRoute {
+            path: "/core/team/add-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "role": "planner",
+                "description": "Plans work",
+                "reviewedBy": "reviewer",
+                "canEdit": true,
+            })),
+        }
+    );
+
+    let default_role = classify_core_cli(&["team", "default", "planner"], &context(true, true))
+        .expect("team default plan");
+    assert_eq!(default_role.operation, CoreCliOperation::TeamDefault);
+    let remove = classify_core_cli(
+        &["team", "remove", "--json", "planner"],
+        &context(true, true),
+    )
+    .expect("team remove plan");
+    assert_eq!(remove.operation, CoreCliOperation::TeamRemove);
+}
+
+#[test]
 fn invalid_host_agent_stream_args_fail_before_node_fallback() {
     let invalid_lines = classify_core_cli(
         &["host", "agent-stream", "claude-1", "--lines", "-5"],

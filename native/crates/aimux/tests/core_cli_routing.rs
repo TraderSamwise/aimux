@@ -10,6 +10,7 @@ use aimux::core_cli_routing::{
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_team_args,
 };
 
 #[test]
@@ -348,6 +349,42 @@ fn overseer_parsers_match_start_and_clear_forms() {
 
     assert!(parse_core_overseer_start_args(&["overseer", "start", "--tool"]).is_none());
     assert!(parse_core_overseer_clear_args(&["overseer", "clear"]).is_none());
+}
+
+#[test]
+fn team_parser_matches_show_init_role_mutation_forms() {
+    let show = parse_core_team_args(&["team", "show", "--project=/repo"]).expect("team show");
+    assert_eq!(show.subcommand, "show");
+    assert_eq!(show.project.as_deref(), Some("/repo"));
+
+    let init = parse_core_team_args(&["team", "init", "--json"]).expect("team init");
+    assert_eq!(init.subcommand, "init");
+    assert!(init.json);
+
+    let add = parse_core_team_args(&[
+        "team",
+        "add",
+        "planner",
+        "-d",
+        "Plans work",
+        "--reviewed-by",
+        "reviewer",
+        "--can-edit",
+    ])
+    .expect("team add");
+    assert_eq!(add.role.as_deref(), Some("planner"));
+    assert_eq!(add.description.as_deref(), Some("Plans work"));
+    assert_eq!(add.reviewed_by.as_deref(), Some("reviewer"));
+    assert!(add.can_edit);
+
+    let remove =
+        parse_core_team_args(&["team", "remove", "--json", "planner"]).expect("team remove");
+    assert_eq!(remove.role.as_deref(), Some("planner"));
+    assert!(remove.json);
+
+    assert!(parse_core_team_args(&["team", "add"]).is_none());
+    assert!(parse_core_team_args(&["team", "show", "planner"]).is_none());
+    assert!(parse_core_team_args(&["team", "default", "--project"]).is_none());
 }
 
 #[test]

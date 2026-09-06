@@ -863,6 +863,97 @@ pub fn parse_core_overseer_clear_args<S: AsRef<str>>(args: &[S]) -> Option<CoreO
     })
 }
 
+pub fn parse_core_team_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTeamArgs> {
+    if args.first().map(AsRef::as_ref) != Some("team") {
+        return None;
+    }
+    let subcommand = args.get(1).map(AsRef::as_ref)?;
+    if !matches!(subcommand, "show" | "init" | "add" | "default" | "remove") {
+        return None;
+    }
+    let mut role = None;
+    let mut project = None;
+    let mut description = None;
+    let mut reviewed_by = None;
+    let mut can_edit = false;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if subcommand == "add" && arg == "--can-edit" {
+            can_edit = true;
+            index += 1;
+            continue;
+        }
+        if subcommand == "add" && matches!(arg, "-d" | "--description") {
+            description = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "add"
+            && let Some(value) = arg.strip_prefix("--description=")
+        {
+            description = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if subcommand == "add" && arg == "--reviewed-by" {
+            reviewed_by = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "add"
+            && let Some(value) = arg.strip_prefix("--reviewed-by=")
+        {
+            reviewed_by = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || role.is_some() {
+            return None;
+        }
+        role = Some(arg.to_owned());
+        index += 1;
+    }
+    if matches!(subcommand, "add" | "default" | "remove") && role.is_none() {
+        return None;
+    }
+    if matches!(subcommand, "show" | "init") && role.is_some() {
+        return None;
+    }
+    Some(CoreTeamArgs {
+        subcommand: subcommand.to_owned(),
+        role,
+        project,
+        description,
+        reviewed_by,
+        can_edit,
+        json,
+    })
+}
+
 #[allow(clippy::collapsible_if)]
 pub fn parse_core_logs_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLogsArgs> {
     if args.first().map(AsRef::as_ref) != Some("logs") {
@@ -1354,6 +1445,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("stop"), _) => stop_has_session_or_invalid_agent_shape(args),
         (Some("loop"), Some("add" | "remove" | "done" | "block")) => true,
         (Some("overseer"), Some("start" | "clear")) => true,
+        (Some("team"), Some("show" | "init" | "add" | "default" | "remove")) => true,
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,

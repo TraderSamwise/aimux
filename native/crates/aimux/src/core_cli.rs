@@ -8,6 +8,7 @@ use crate::core_cli_routing::{
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_team_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,11 @@ pub enum CoreCliOperation {
     LoopBlock,
     OverseerStart,
     OverseerClear,
+    TeamShow,
+    TeamInit,
+    TeamAdd,
+    TeamRemove,
+    TeamDefault,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -910,6 +916,70 @@ where
                         "sessionId": parsed.session_id,
                     })),
                 },
+                CoreCliFallback::None,
+            )
+        }
+        ("team", "show" | "init" | "add" | "default" | "remove") => {
+            let parsed =
+                parse_core_team_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid team arguments",
+                })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let (operation, route, body) = match parsed.subcommand.as_str() {
+                "show" => (
+                    CoreCliOperation::TeamShow,
+                    CORE_API_ROUTES.team_show_text,
+                    None,
+                ),
+                "init" => (
+                    CoreCliOperation::TeamInit,
+                    CORE_API_ROUTES.team_init_text,
+                    Some(json!({ "project": project_root.clone() })),
+                ),
+                "add" => (
+                    CoreCliOperation::TeamAdd,
+                    CORE_API_ROUTES.team_add_text,
+                    Some(json!({
+                        "project": project_root.clone(),
+                        "role": parsed.role,
+                        "description": parsed.description,
+                        "reviewedBy": parsed.reviewed_by,
+                        "canEdit": parsed.can_edit,
+                    })),
+                ),
+                "remove" => (
+                    CoreCliOperation::TeamRemove,
+                    CORE_API_ROUTES.team_remove_text,
+                    Some(json!({ "project": project_root.clone(), "role": parsed.role })),
+                ),
+                "default" => (
+                    CoreCliOperation::TeamDefault,
+                    CORE_API_ROUTES.team_default_text,
+                    Some(json!({ "project": project_root.clone(), "role": parsed.role })),
+                ),
+                _ => unreachable!("validated team subcommand"),
+            };
+            let path = if parsed.subcommand == "show" {
+                let mut path = format!(
+                    "{}?project={}",
+                    CORE_API_ROUTES.team_show_text,
+                    encode_query_component(&project_root)
+                );
+                if parsed.json {
+                    path.push_str("&json=1");
+                }
+                path
+            } else {
+                text_route_path(route, parsed.json)
+            };
+            (
+                operation,
+                CoreCliAction::TextRoute { path, body },
                 CoreCliFallback::None,
             )
         }
