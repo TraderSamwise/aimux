@@ -24,9 +24,9 @@ use crate::dashboard_renderer::{
     render_dashboard_subscreen_frame,
 };
 use crate::dashboard_service_input::{
-    render_service_input_overlay, render_worktree_cache_cleanup_confirm_overlay,
-    render_worktree_input_overlay, render_worktree_list_overlay,
-    render_worktree_remove_confirm_overlay,
+    render_service_input_overlay, render_teammate_picker_overlay,
+    render_worktree_cache_cleanup_confirm_overlay, render_worktree_input_overlay,
+    render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
@@ -521,6 +521,25 @@ fn render_dashboard_snapshot(
             frame: output,
             scroll_offset: frame.scroll_offset,
         };
+    }
+    if let Some(teammate_picker) = controller.teammate_picker.as_ref() {
+        let teammates = crate::dashboard_controller::sorted_teammates_for_parent(
+            snapshot,
+            &teammate_picker.parent_session_id,
+        );
+        if let Some(overlay) = render_teammate_picker_overlay(
+            &teammates,
+            teammate_picker.index,
+            options.cols,
+            options.rows,
+        ) {
+            let mut output = frame.frame;
+            output.push_str(&overlay);
+            return crate::tui_render::screen_frame::ScreenFrameResult {
+                frame: output,
+                scroll_offset: frame.scroll_offset,
+            };
+        }
     }
     frame
 }

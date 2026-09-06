@@ -2,7 +2,9 @@ use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardSubscreenAction,
     parse_dashboard_key, parse_dashboard_keys,
 };
-use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
+use aimux::dashboard_model::{
+    DesktopStateGoldenFixture, DesktopStateSnapshot, SessionTeamMetadata,
+};
 use aimux::dashboard_renderer::DashboardNavLevel;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
 use aimux::project_api_contract::routes;
@@ -770,6 +772,80 @@ fn shifted_d_requests_worktree_cache_cleanup_preview_and_confirm_apply() {
         json!({ "dryRun": false, "includeActive": false })
     );
     assert!(controller.worktree_cache_cleanup_confirm.is_none());
+}
+
+#[test]
+fn teammate_picker_opens_for_selected_parent_and_activates_sorted_teammate() {
+    let mut snapshot = snapshot();
+    let mut first = snapshot.worktree_groups[0].sessions[1].clone();
+    first.id = "first".into();
+    first.command = "codex".into();
+    first.tmux_window_id = Some("@first".into());
+    first.team = Some(SessionTeamMetadata {
+        team_id: "team-1".into(),
+        parent_session_id: "claude-0".into(),
+        role: Some("reviewer".into()),
+        label: None,
+        order: Some(1),
+        extra: Default::default(),
+    });
+    let mut second = first.clone();
+    second.id = "second".into();
+    second.tmux_window_id = Some("@second".into());
+    second.team.as_mut().unwrap().order = Some(2);
+    snapshot.teammates = vec![second, first];
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('e')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .teammate_picker
+            .as_ref()
+            .map(|state| (state.parent_session_id.as_str(), state.index)),
+        Some(("claude-0", 0))
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('1'))
+    else {
+        panic!("expected teammate activation request");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(request.body, json!({ "windowId": "@first", "focus": true }));
+    assert!(controller.teammate_picker.is_none());
+}
+
+#[test]
+fn teammate_picker_handles_missing_parent_and_empty_teammates() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('e')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("label-claude-0 has no teammates")
+    );
+
+    controller.teammate_picker = Some(aimux::dashboard_controller::DashboardTeammatePickerState {
+        parent_session_id: "missing-parent".into(),
+        index: 0,
+    });
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.teammate_picker.is_none());
 }
 
 #[test]

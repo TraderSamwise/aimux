@@ -34,6 +34,7 @@ pub struct DashboardController {
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
+    pub teammate_picker: Option<DashboardTeammatePickerState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +67,7 @@ impl DashboardController {
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
+            teammate_picker: None,
         }
     }
 
@@ -98,6 +100,9 @@ impl DashboardController {
         }
         if self.worktree_cache_cleanup_confirm.is_some() {
             return self.handle_worktree_cache_cleanup_confirm_key(key);
+        }
+        if self.teammate_picker.is_some() {
+            return self.handle_teammate_picker_key(snapshot, key);
         }
         if self.service_input.is_some() {
             return self.handle_service_input_key(snapshot, key);
@@ -161,6 +166,7 @@ impl DashboardController {
                     body: json!({ "dryRun": true, "includeActive": false }),
                 })
             }
+            DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
             DashboardKey::Digit(digit) => match self.navigation.handle_digit(snapshot, digit) {
                 DashboardNavigationOutcome::EntrySelected(entry) => {
                     match plan_dashboard_action(Some(entry), DashboardActionKind::Enter) {
@@ -327,6 +333,7 @@ impl DashboardController {
         self.worktree_remove_confirm = None;
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
+        self.teammate_picker = None;
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
     }
@@ -892,6 +899,116 @@ impl DashboardController {
         DashboardControllerEffect::Ignored
     }
 
+    fn open_teammate_picker(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(parent) = self.teammate_parent_session(snapshot) else {
+            self.footer_message = Some("Select an agent with teammates".into());
+            return DashboardControllerEffect::Render;
+        };
+        let teammates = sorted_teammates_for_parent(snapshot, &parent.id);
+        if teammates.is_empty() {
+            self.footer_message = Some(format!("{} has no teammates", session_label(parent)));
+            return DashboardControllerEffect::Render;
+        }
+        self.teammate_picker = Some(DashboardTeammatePickerState {
+            parent_session_id: parent.id.clone(),
+            index: 0,
+        });
+        DashboardControllerEffect::Render
+    }
+
+    fn handle_teammate_picker_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        if matches!(key, DashboardKey::Back) {
+            self.teammate_picker = None;
+            return DashboardControllerEffect::Render;
+        }
+        let Some(parent_session_id) = self
+            .teammate_picker
+            .as_ref()
+            .map(|state| state.parent_session_id.clone())
+        else {
+            return DashboardControllerEffect::Ignored;
+        };
+        let teammates = sorted_teammates_for_parent(snapshot, &parent_session_id);
+        if teammates.is_empty() {
+            self.teammate_picker = None;
+            return DashboardControllerEffect::Render;
+        }
+        match key {
+            DashboardKey::Down | DashboardKey::Printable('j') => {
+                if let Some(state) = self.teammate_picker.as_mut() {
+                    state.index = (state.index + 1) % teammates.len();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Up | DashboardKey::Printable('k') => {
+                if let Some(state) = self.teammate_picker.as_mut() {
+                    state.index = (state.index + teammates.len() - 1) % teammates.len();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => {
+                let index = self
+                    .teammate_picker
+                    .as_ref()
+                    .map(|state| state.index.min(teammates.len() - 1))
+                    .unwrap_or(0);
+                self.activate_teammate(teammates[index])
+            }
+            DashboardKey::Digit(digit) | DashboardKey::Printable(digit)
+                if digit.is_ascii_digit() && digit != '0' =>
+            {
+                let Some(index) = digit.to_digit(10).map(|digit| digit as usize - 1) else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                let Some(teammate) = teammates.get(index) else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                self.activate_teammate(teammate)
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn activate_teammate(&mut self, teammate: &DashboardSession) -> DashboardControllerEffect {
+        self.teammate_picker = None;
+        match plan_dashboard_action(
+            Some(DashboardEntryRef::Session(teammate)),
+            DashboardActionKind::Enter,
+        ) {
+            DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Blocked(message) => {
+                self.footer_message = Some(message);
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn teammate_parent_session<'a>(
+        &self,
+        snapshot: &'a DesktopStateSnapshot,
+    ) -> Option<&'a DashboardSession> {
+        if let Some(parent_id) = self
+            .teammate_picker
+            .as_ref()
+            .map(|state| state.parent_session_id.as_str())
+        {
+            return snapshot
+                .sessions
+                .iter()
+                .find(|session| session.id == parent_id && !is_teammate_session(session));
+        }
+        self.selected_session_for_tool_action(snapshot)
+            .filter(|session| !is_teammate_session(session))
+    }
+
     fn handle_launch_options_key(
         &mut self,
         snapshot: &DesktopStateSnapshot,
@@ -1157,6 +1274,12 @@ pub struct DashboardWorktreeRemoveConfirm {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardTeammatePickerState {
+    pub parent_session_id: String,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardSubscreenAction {
     None,
     Session(String),
@@ -1342,6 +1465,50 @@ fn is_live_session(session: &DashboardSession) -> bool {
         session.status,
         SessionStatus::Offline | SessionStatus::Exited
     )
+}
+
+pub fn is_teammate_session(session: &DashboardSession) -> bool {
+    session
+        .team
+        .as_ref()
+        .is_some_and(|team| !team.parent_session_id.is_empty())
+}
+
+pub fn sorted_teammates_for_parent<'a>(
+    snapshot: &'a DesktopStateSnapshot,
+    parent_session_id: &str,
+) -> Vec<&'a DashboardSession> {
+    let mut teammates = snapshot
+        .teammates
+        .iter()
+        .filter(|session| {
+            session
+                .team
+                .as_ref()
+                .is_some_and(|team| team.parent_session_id == parent_session_id)
+        })
+        .collect::<Vec<_>>();
+    teammates.sort_by(|left, right| {
+        let left_order = left.team.as_ref().and_then(|team| team.order);
+        let right_order = right.team.as_ref().and_then(|team| team.order);
+        left_order
+            .unwrap_or(usize::MAX)
+            .cmp(&right_order.unwrap_or(usize::MAX))
+            .then_with(|| {
+                compare_optional_created_at(left.created_at.as_deref(), right.created_at.as_deref())
+            })
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    teammates
+}
+
+fn compare_optional_created_at(left: Option<&str>, right: Option<&str>) -> std::cmp::Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left.cmp(right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 fn session_label(session: &DashboardSession) -> &str {

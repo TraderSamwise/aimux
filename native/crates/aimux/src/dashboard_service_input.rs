@@ -1,7 +1,7 @@
 use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
 };
-use crate::dashboard_model::WorktreeGroup;
+use crate::dashboard_model::{DashboardSession, WorktreeGroup};
 use crate::tui_render::theme::{Tone, footer_hints, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 
@@ -263,4 +263,86 @@ fn worktree_cache_cleanup_lines(result: &serde_json::Value) -> Vec<String> {
         }
     }
     lines
+}
+
+pub fn render_teammate_picker_overlay(
+    teammates: &[&DashboardSession],
+    selected_index: usize,
+    cols: usize,
+    rows: usize,
+) -> Option<String> {
+    if teammates.is_empty() {
+        return None;
+    }
+    let visible_count = teammates.len().min(usize::max(3, rows.saturating_sub(10)));
+    let visible = &teammates[..visible_count];
+    let selected_index = selected_index.min(visible.len().saturating_sub(1));
+    let mut body = visible
+        .iter()
+        .enumerate()
+        .map(|(index, teammate)| {
+            let marker = if index == selected_index {
+                style(">", Tone::Accent)
+            } else {
+                " ".into()
+            };
+            let number = if index < 9 {
+                format!("[{}]", index + 1)
+            } else {
+                "   ".into()
+            };
+            let status = format!("{:?}", teammate.status).to_lowercase();
+            let label = teammate_label(teammate);
+            let summary = teammate.headline.as_deref().or_else(|| {
+                teammate
+                    .extra
+                    .get("previewLine")
+                    .and_then(serde_json::Value::as_str)
+            });
+            let suffix = summary
+                .map(|summary| format!(" - {}", style(summary, Tone::Muted)))
+                .unwrap_or_default();
+            format!(
+                "  {marker} {} {} {}{suffix}",
+                style(&number, Tone::Muted),
+                style(&label, Tone::Strong),
+                style(&format!("- {status}"), Tone::Muted),
+            )
+        })
+        .collect::<Vec<_>>();
+    if teammates.len() > visible.len() {
+        body.push(format!(
+            "  {}",
+            style(
+                &format!("{} more", teammates.len() - visible.len()),
+                Tone::Muted
+            )
+        ));
+    }
+    body.push(String::new());
+    body.push(footer_hints(
+        "[up/down] select  [1-9/Enter] open  [Esc] back",
+    ));
+    Some(render_overlay_box(&OverlayBoxSpec {
+        title: "Team",
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
+        icon: None,
+    }))
+}
+
+fn teammate_label(teammate: &DashboardSession) -> String {
+    let label = teammate
+        .team
+        .as_ref()
+        .and_then(|team| team.label.as_deref())
+        .or(teammate.label.as_deref())
+        .unwrap_or(teammate.command.as_str());
+    if let Some(role) = teammate.team.as_ref().and_then(|team| team.role.as_deref()) {
+        format!("{label} ({role})")
+    } else {
+        label.to_owned()
+    }
 }
