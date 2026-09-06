@@ -293,6 +293,12 @@ Priority fixture groups:
   project registry mutation/pruning/failure behavior captured by running
   TypeScript `paths`.
 
+## Daemon Supervisor
+
+- `daemon-supervisor/build-generation.json`: build-stamp generation ordering,
+  stale-client error text, and unresponsive daemon keep/restart decisions
+  captured by running TypeScript `daemon-supervisor-build-generation`.
+
 ## Team
 
 - `team/semantics.json`: orphan teammate selection and project-control session

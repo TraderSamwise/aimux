@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "source": "src/daemon-supervisor-build-generation.test.ts",
+  "generatedBy": "scripts/capture-daemon-supervisor-build-contract.mjs",
+  "description": "Daemon supervisor build-stamp ordering, stale-client error, and unresponsive daemon restart-loop behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "daemon-supervisor-build-001",
+      "name": "reads ordered build stamp generations and rejects unorderable stamps",
+      "source": "src/daemon-supervisor-build-generation.test.ts",
+      "api": "buildStampGenerationBatch",
+      "input": {
+        "stamps": [
+          "1786180016000.1786180016000-35f055a7caff",
+          "1786237306000.1786237306000-35f055a7caff",
+          null,
+          null,
+          "",
+          "-onlyhash",
+          "nan.nan-abc",
+          0,
+          "0.0-abc"
+        ]
+      },
+      "output": [
+        { "stamp": "1786180016000.1786180016000-35f055a7caff", "generation": 1786180016000 },
+        { "stamp": "1786237306000.1786237306000-35f055a7caff", "generation": 1786237306000 },
+        { "generation": null },
+        { "stamp": null, "generation": null },
+        { "stamp": "", "generation": null },
+        { "stamp": "-onlyhash", "generation": null },
+        { "stamp": "nan.nan-abc", "generation": null },
+        { "stamp": 0, "generation": null },
+        { "stamp": "0.0-abc", "generation": null }
+      ],
+      "inputSha256": "dd2565ec2cf127cafed406c6fda3d986193d2af7c5cc8c3f00a6980f6cf783d2"
+    },
+    {
+      "id": "daemon-supervisor-build-002",
+      "name": "detects staleness only when daemon generation is strictly newer",
+      "source": "src/daemon-supervisor-build-generation.test.ts",
+      "api": "isStaleAgainstDaemonBatch",
+      "input": {
+        "items": [
+          {
+            "daemonStamp": "1786237306000.1786237306000-35f055a7caff",
+            "ownStamp": "1786180016000.1786180016000-35f055a7caff"
+          },
+          {
+            "daemonStamp": "1786180016000.1786180016000-35f055a7caff",
+            "ownStamp": "1786237306000.1786237306000-35f055a7caff"
+          },
+          {
+            "daemonStamp": "1786237306000.1786237306000-35f055a7caff",
+            "ownStamp": "1786237306000.1786237306000-35f055a7caff"
+          },
+          { "ownStamp": "1786180016000.1786180016000-35f055a7caff" },
+          { "daemonStamp": "1786237306000.1786237306000-35f055a7caff" },
+          { "daemonStamp": "garbage", "ownStamp": "garbage" }
+        ]
+      },
+      "output": [
+        {
+          "daemonStamp": "1786237306000.1786237306000-35f055a7caff",
+          "ownStamp": "1786180016000.1786180016000-35f055a7caff",
+          "stale": true
+        },
+        {
+          "daemonStamp": "1786180016000.1786180016000-35f055a7caff",
+          "ownStamp": "1786237306000.1786237306000-35f055a7caff",
+          "stale": false
+        },
+        {
+          "daemonStamp": "1786237306000.1786237306000-35f055a7caff",
+          "ownStamp": "1786237306000.1786237306000-35f055a7caff",
+          "stale": false
+        },
+        { "ownStamp": "1786180016000.1786180016000-35f055a7caff", "stale": false },
+        { "daemonStamp": "1786237306000.1786237306000-35f055a7caff", "stale": false },
+        { "daemonStamp": "garbage", "ownStamp": "garbage", "stale": false }
+      ],
+      "inputSha256": "981832e8358063bd12ef1c30e84a3bc8ff13f251ddf3b6466a53e814320b3975"
+    },
+    {
+      "id": "daemon-supervisor-build-003",
+      "name": "names stale client build errors and points at reloading the client",
+      "source": "src/daemon-supervisor-build-generation.test.ts",
+      "api": "StaleClientBuildError",
+      "input": {
+        "daemonBuildStamp": "1786237306000.1786237306000-35f055a7caff",
+        "clientBuildStamp": "1786180016000.1786180016000-35f055a7caff"
+      },
+      "output": {
+        "name": "StaleClientBuildError",
+        "daemonBuildStamp": "1786237306000.1786237306000-35f055a7caff",
+        "clientBuildStamp": "1786180016000.1786180016000-35f055a7caff",
+        "message": "aimux daemon is a newer build (1786237306000.1786237306000-35f055a7caff) than this process (1786180016000.1786180016000-35f055a7caff); reload this client instead of restarting the daemon"
+      },
+      "inputSha256": "67f71f429f7320253f7731be37d193945a707fffd13220226a97af0ed02cbeb6"
+    },
+    {
+      "id": "daemon-supervisor-build-004",
+      "name": "keeps only alive adopted unresponsive daemons",
+      "source": "src/daemon-supervisor-build-generation.test.ts",
+      "api": "shouldKeepUnresponsiveDaemonBatch",
+      "input": {
+        "items": [
+          { "options": {}, "daemonPidAlive": true },
+          { "options": { "adoptExisting": true }, "daemonPidAlive": true },
+          { "options": {}, "daemonPidAlive": false },
+          { "options": { "adoptExisting": false }, "daemonPidAlive": true }
+        ]
+      },
+      "output": [
+        { "options": {}, "daemonPidAlive": true, "keep": true },
+        { "options": { "adoptExisting": true }, "daemonPidAlive": true, "keep": true },
+        { "options": {}, "daemonPidAlive": false, "keep": false },
+        { "options": { "adoptExisting": false }, "daemonPidAlive": true, "keep": false }
+      ],
+      "inputSha256": "b95b8606bc346305b8ad0741feb9621fd01e1a95a93c54bcefb2dd5db0124c72"
+    }
+  ]
+}
