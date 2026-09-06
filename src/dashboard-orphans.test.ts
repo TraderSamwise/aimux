@@ -12,6 +12,11 @@ const dashboard = (pid: number, build: string): DashboardProcess => ({
   args: `/Users/sam/.volta/bin/node /Users/sam/.aimux/native/${build}/dist/launcher-bin.js --tmux-dashboard-internal`,
 });
 
+const nativeDashboard = (pid: number, build: string): DashboardProcess => ({
+  pid,
+  args: `/Users/sam/.aimux/native/${build}/bin/aimux __dashboard-internal-native`,
+});
+
 describe("dashboardBuildOf", () => {
   it("reads the install directory out of argv", () => {
     expect(dashboardBuildOf(dashboard(1, "local-490049e4").args)).toBe("local-490049e4");
@@ -25,6 +30,7 @@ describe("dashboardBuildOf", () => {
 describe("isDashboardProcessArgs", () => {
   it("matches only the internal dashboard entrypoint", () => {
     expect(isDashboardProcessArgs(dashboard(1, "local-a").args)).toBe(true);
+    expect(isDashboardProcessArgs(nativeDashboard(1, "local-a").args)).toBe(true);
     expect(isDashboardProcessArgs("node launcher-bin.js daemon run")).toBe(false);
   });
 });
@@ -34,7 +40,7 @@ describe("selectStaleDashboards", () => {
 
   it("selects dashboards from builds that are no longer installed", () => {
     const stale = selectStaleDashboards(
-      [dashboard(1, "local-94088499"), dashboard(2, "local-06ce8ffe"), dashboard(3, current)],
+      [dashboard(1, "local-94088499"), nativeDashboard(2, "local-06ce8ffe"), dashboard(3, current)],
       current,
     );
     expect(stale.map((entry) => entry.pid)).toEqual([1, 2]);
@@ -104,6 +110,15 @@ describe("selectOrphanedDashboards", () => {
       [110, 1],
     ]);
     expect(selectOrphanedDashboards([dash(10)], parents, 999).map((e) => e.pid)).toEqual([10]);
+  });
+
+  it("selects a native dashboard whose shell was reparented to init", () => {
+    const parents = new Map([
+      [1, 0],
+      [10, 110],
+      [110, 1],
+    ]);
+    expect(selectOrphanedDashboards([nativeDashboard(10, "local-a")], parents, 999).map((e) => e.pid)).toEqual([10]);
   });
 
   it("leaves a dashboard whose shell still descends from tmux", () => {

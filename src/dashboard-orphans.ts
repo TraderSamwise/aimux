@@ -21,7 +21,7 @@
  * holding an opinion about which daemon should be running.
  */
 
-const DASHBOARD_ARG = "--tmux-dashboard-internal";
+const DASHBOARD_ARGS = ["--tmux-dashboard-internal", "__dashboard-internal-native"];
 const NATIVE_BUILD_PATTERN = /\/\.aimux\/native\/([^/\s]+)\//;
 
 export interface DashboardProcess {
@@ -35,7 +35,7 @@ export function dashboardBuildOf(args: string): string | null {
 }
 
 export function isDashboardProcessArgs(args: string): boolean {
-  return args.includes(DASHBOARD_ARG);
+  return DASHBOARD_ARGS.some((entrypoint) => args.includes(entrypoint));
 }
 
 /**
