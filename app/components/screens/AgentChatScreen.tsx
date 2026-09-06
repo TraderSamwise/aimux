@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -145,6 +152,9 @@ const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
 const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 type ChatScrollHandle = Pick<ScrollView, "scrollToEnd">;
+type ChatSessionViewportHandle = {
+  showNewest: () => void;
+};
 type ChatScrollDebugSnapshot = {
   contentHeight: number;
   distanceFromEnd: number;
@@ -507,11 +517,6 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [visibleChatTranscript, setVisibleChatTranscript] = useState<
-    ChatVisibleTranscript<ChatMessage>
-  >(() => chatVisibleTranscriptForPinned({ liveMessages: [], sessionKey: "" }));
-  const [chatScrollDebugSnapshot, setChatScrollDebugSnapshot] =
-    useState<ChatScrollDebugSnapshot | null>(null);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
@@ -618,24 +623,7 @@ export default function ChatScreen() {
   );
   const sendBusyRef = useRef(false);
   const composerInputRef = useRef<TextInput | null>(null);
-  const chatScrollRef = useRef<ChatScrollHandle | null>(null);
-  const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
-    contentHeight: 0,
-    offsetY: 0,
-    viewportHeight: 0,
-  });
-  const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
-  const chatScrollDebugLastPublishAtRef = useRef(0);
-  const chatScrollDebugSnapshotRef = useRef<ChatScrollDebugSnapshot | null>(null);
-  const chatScrollFrameRef = useRef<number | null>(null);
-  const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
-  const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(
-    chatVisibleTranscriptForPinned({ liveMessages: [], sessionKey: "" }),
-  );
-  const visibleChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(
-    chatVisibleTranscriptForPinned({ liveMessages: [], sessionKey: "" }),
-  );
-  const chatInitialLayoutKeyRef = useRef<string | null>(null);
+  const chatViewportRef = useRef<ChatSessionViewportHandle | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
   const interruptInFlightRef = useRef(false);
@@ -782,162 +770,6 @@ export default function ChatScreen() {
     ),
   );
 
-  const applyVisibleChatTranscript = useCallback((next: ChatVisibleTranscript<ChatMessage>) => {
-    const current = visibleChatTranscriptRef.current;
-    if (current.sessionKey === next.sessionKey && current.messages === next.messages) return;
-    visibleChatTranscriptRef.current = next;
-    setVisibleChatTranscript(next);
-  }, []);
-
-  const showLiveChatTranscript = useCallback(() => {
-    const live = liveChatTranscriptRef.current;
-    if (live.sessionKey !== sessionKey) return;
-    applyVisibleChatTranscript(live);
-  }, [applyVisibleChatTranscript, sessionKey]);
-
-  const publishChatScrollDebugSnapshot = useCallback(
-    (event: string, metrics = chatScrollMetricsRef.current, force = false) => {
-      if (!__DEV__) return;
-      const previousSnapshot = chatScrollDebugSnapshotRef.current;
-      const snapshot: ChatScrollDebugSnapshot = {
-        contentHeight: metrics.contentHeight,
-        distanceFromEnd: chatDistanceFromEnd(metrics),
-        event,
-        intent: chatScrollPolicyRef.current.intent,
-        lastCommandReason: previousSnapshot?.lastCommandReason ?? null,
-        liveMessageCount: liveChatTranscriptRef.current.messages.length,
-        offsetY: metrics.offsetY,
-        visibleMessageCount: visibleChatTranscriptRef.current.messages.length,
-        viewportHeight: metrics.viewportHeight,
-      };
-      const commandPrefix = "scrollToEnd:";
-      if (event.startsWith(commandPrefix)) {
-        snapshot.lastCommandReason = event.slice(commandPrefix.length);
-      }
-      chatScrollDebugSnapshotRef.current = snapshot;
-      const now = Date.now();
-      if (
-        !force &&
-        now - chatScrollDebugLastPublishAtRef.current < CHAT_SCROLL_DEBUG_UPDATE_INTERVAL_MS
-      ) {
-        return;
-      }
-      chatScrollDebugLastPublishAtRef.current = now;
-      setChatScrollDebugSnapshot(snapshot);
-    },
-    [],
-  );
-
-  const cancelPendingChatScroll = useCallback(() => {
-    if (chatScrollFrameRef.current === null) return;
-    const reason = chatScrollPendingCommandReasonRef.current ?? "unknown";
-    cancelAnimationFrame(chatScrollFrameRef.current);
-    chatScrollFrameRef.current = null;
-    chatScrollPendingCommandReasonRef.current = null;
-    publishChatScrollDebugSnapshot(`scrollToEnd:canceled:${reason}`);
-  }, [publishChatScrollDebugSnapshot]);
-
-  const executeChatScrollCommand = useCallback(
-    (command: ChatScrollCommand, noneReason = "unknown") => {
-      if (command.kind === "none") {
-        publishChatScrollDebugSnapshot(`scrollToEnd:none:${noneReason}`);
-        return;
-      }
-      cancelPendingChatScroll();
-      chatScrollPendingCommandReasonRef.current = command.reason;
-      publishChatScrollDebugSnapshot(`scrollToEnd:scheduled:${command.reason}`);
-      chatScrollFrameRef.current = requestAnimationFrame(() => {
-        chatScrollFrameRef.current = null;
-        chatScrollPendingCommandReasonRef.current = null;
-        if (
-          command.reason !== "initial" &&
-          command.reason !== "navigation" &&
-          chatScrollPolicyRef.current.intent !== "pinned"
-        ) {
-          publishChatScrollDebugSnapshot(`scrollToEnd:skipped:${command.reason}`);
-          return;
-        }
-        chatScrollRef.current?.scrollToEnd({ animated: command.animated });
-        publishChatScrollDebugSnapshot(`scrollToEnd:executed:${command.reason}`);
-      });
-    },
-    [cancelPendingChatScroll, publishChatScrollDebugSnapshot],
-  );
-
-  useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
-
-  useFocusEffect(
-    useCallback(() => {
-      chatInitialLayoutKeyRef.current = sessionKey || null;
-      chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
-      showLiveChatTranscript();
-      const interaction = InteractionManager.runAfterInteractions(() => {
-        executeChatScrollCommand(chatCommandForNavigationFocus());
-      });
-      return () => interaction.cancel();
-    }, [executeChatScrollCommand, sessionKey, showLiveChatTranscript]),
-  );
-
-  const handleChatLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      chatScrollMetricsRef.current = {
-        ...chatScrollMetricsRef.current,
-        viewportHeight: event.nativeEvent.layout.height,
-      };
-      publishChatScrollDebugSnapshot("layout");
-      const layoutKey = sessionKey || "unscoped";
-      if (chatInitialLayoutKeyRef.current !== layoutKey) {
-        chatInitialLayoutKeyRef.current = layoutKey;
-        executeChatScrollCommand(chatCommandForInitialLayout());
-        return;
-      }
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
-    },
-    [executeChatScrollCommand, publishChatScrollDebugSnapshot, sessionKey],
-  );
-
-  const handleChatContentSizeChange = useCallback(
-    (_contentWidth: number, contentHeight: number) => {
-      chatScrollMetricsRef.current = {
-        ...chatScrollMetricsRef.current,
-        contentHeight,
-      };
-      publishChatScrollDebugSnapshot("content-size");
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
-    },
-    [executeChatScrollCommand, publishChatScrollDebugSnapshot],
-  );
-
-  const handleChatScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const metrics: ChatScrollMetrics = {
-        contentHeight: event.nativeEvent.contentSize.height,
-        offsetY: event.nativeEvent.contentOffset.y,
-        viewportHeight: event.nativeEvent.layoutMeasurement.height,
-      };
-      chatScrollMetricsRef.current = metrics;
-      const previousIntent = chatScrollPolicyRef.current.intent;
-      const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
-      if (nextPolicy.intent === "reading") {
-        cancelPendingChatScroll();
-      }
-      chatScrollPolicyRef.current = nextPolicy;
-      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
-        showLiveChatTranscript();
-      }
-      const transitionEvent =
-        previousIntent === nextPolicy.intent
-          ? "scroll"
-          : `policy:${previousIntent}->${nextPolicy.intent}`;
-      publishChatScrollDebugSnapshot(
-        transitionEvent,
-        metrics,
-        previousIntent !== nextPolicy.intent,
-      );
-    },
-    [cancelPendingChatScroll, publishChatScrollDebugSnapshot, showLiveChatTranscript],
-  );
-
   useEffect(() => {
     if (!endpointHost || !endpointPort) return;
     const timer = setTimeout(() => {
@@ -978,24 +810,6 @@ export default function ChatScreen() {
   const allMessages = useMemo<ChatMessage[]>(() => {
     return mergeAcceptedComposerMessages(parsedMessages, acceptedComposerMessages);
   }, [acceptedComposerMessages, parsedMessages]);
-  const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
-    liveMessages: allMessages,
-    sessionKey,
-  });
-
-  useEffect(() => {
-    const live = chatVisibleTranscriptForPinned({
-      liveMessages: allMessages,
-      sessionKey,
-    });
-    liveChatTranscriptRef.current = live;
-    const next = chatVisibleTranscriptForLiveChange(visibleChatTranscriptRef.current, {
-      intent: chatScrollPolicyRef.current.intent,
-      liveMessages: allMessages,
-      sessionKey,
-    });
-    applyVisibleChatTranscript(next);
-  }, [allMessages, applyVisibleChatTranscript, sessionKey]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
@@ -1156,9 +970,7 @@ export default function ChatScreen() {
     clearLocalInterruptHold(sessionId);
     const baselineUserMessageCount = userMessageCount;
     const baselineMessageCount = allMessages.length;
-    chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
-    showLiveChatTranscript();
-    executeChatScrollCommand(chatCommandForNavigationFocus());
+    chatViewportRef.current?.showNewest();
     setSendBusy(true);
     setSendError(null);
     const sendStillOwnsActiveComposer = () =>
@@ -2208,21 +2020,15 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-              <View className="flex-1 bg-background">
-                <AgentChatTranscript
-                  messages={visibleMessages}
-                  onContentSizeChange={handleChatContentSizeChange}
-                  onLayout={handleChatLayout}
-                  onScroll={handleChatScroll}
-                  ref={chatScrollRef}
-                  serviceEndpoint={displayServiceEndpoint}
-                  dividerWidth={chatDividerWidth}
-                />
-                {__DEV__ && chatScrollDebugSnapshot ? (
-                  <ChatScrollDebugOverlay snapshot={chatScrollDebugSnapshot} />
-                ) : null}
-                {composerFooter}
-              </View>
+              <AgentChatSessionViewport
+                key={sessionKey}
+                allMessages={allMessages}
+                composerFooter={composerFooter}
+                dividerWidth={chatDividerWidth}
+                ref={chatViewportRef}
+                serviceEndpoint={displayServiceEndpoint}
+                sessionKey={sessionKey}
+              />
             )}
           </View>
         </View>
@@ -2230,6 +2036,253 @@ export default function ChatScreen() {
     </View>
   );
 }
+
+const AgentChatSessionViewport = React.forwardRef<
+  ChatSessionViewportHandle,
+  {
+    allMessages: readonly ChatMessage[];
+    composerFooter: React.ReactNode;
+    dividerWidth: number;
+    serviceEndpoint: ServiceEndpoint;
+    sessionKey: string;
+  }
+>(function AgentChatSessionViewport(
+  { allMessages, composerFooter, dividerWidth, serviceEndpoint, sessionKey },
+  ref,
+) {
+  const liveChatTranscript = useMemo(
+    () =>
+      chatVisibleTranscriptForPinned({
+        liveMessages: allMessages,
+        sessionKey,
+      }),
+    [allMessages, sessionKey],
+  );
+  const [visibleChatTranscript, setVisibleChatTranscript] = useState<
+    ChatVisibleTranscript<ChatMessage>
+  >(() => liveChatTranscript);
+  const [chatScrollDebugSnapshot, setChatScrollDebugSnapshot] =
+    useState<ChatScrollDebugSnapshot | null>(null);
+  const chatScrollRef = useRef<ChatScrollHandle | null>(null);
+  const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
+    contentHeight: 0,
+    offsetY: 0,
+    viewportHeight: 0,
+  });
+  const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+  const chatScrollDebugLastPublishAtRef = useRef(0);
+  const chatScrollDebugSnapshotRef = useRef<ChatScrollDebugSnapshot | null>(null);
+  const chatScrollFrameRef = useRef<number | null>(null);
+  const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
+  const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
+  const visibleChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
+  const chatInitialLayoutKeyRef = useRef<string | null>(null);
+
+  const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
+    liveMessages: allMessages,
+    sessionKey,
+  });
+
+  const applyVisibleChatTranscript = useCallback((next: ChatVisibleTranscript<ChatMessage>) => {
+    const current = visibleChatTranscriptRef.current;
+    if (current.sessionKey === next.sessionKey && current.messages === next.messages) return;
+    visibleChatTranscriptRef.current = next;
+    setVisibleChatTranscript(next);
+  }, []);
+
+  const showLiveChatTranscript = useCallback(() => {
+    const live = liveChatTranscriptRef.current;
+    if (live.sessionKey !== sessionKey) return;
+    applyVisibleChatTranscript(live);
+  }, [applyVisibleChatTranscript, sessionKey]);
+
+  const publishChatScrollDebugSnapshot = useCallback(
+    (event: string, metrics = chatScrollMetricsRef.current, force = false) => {
+      if (!__DEV__) return;
+      const previousSnapshot = chatScrollDebugSnapshotRef.current;
+      const snapshot: ChatScrollDebugSnapshot = {
+        contentHeight: metrics.contentHeight,
+        distanceFromEnd: chatDistanceFromEnd(metrics),
+        event,
+        intent: chatScrollPolicyRef.current.intent,
+        lastCommandReason: previousSnapshot?.lastCommandReason ?? null,
+        liveMessageCount: liveChatTranscriptRef.current.messages.length,
+        offsetY: metrics.offsetY,
+        visibleMessageCount: visibleChatTranscriptRef.current.messages.length,
+        viewportHeight: metrics.viewportHeight,
+      };
+      const commandPrefix = "scrollToEnd:";
+      if (event.startsWith(commandPrefix)) {
+        snapshot.lastCommandReason = event.slice(commandPrefix.length);
+      }
+      chatScrollDebugSnapshotRef.current = snapshot;
+      const now = Date.now();
+      if (
+        !force &&
+        now - chatScrollDebugLastPublishAtRef.current < CHAT_SCROLL_DEBUG_UPDATE_INTERVAL_MS
+      ) {
+        return;
+      }
+      chatScrollDebugLastPublishAtRef.current = now;
+      setChatScrollDebugSnapshot(snapshot);
+    },
+    [],
+  );
+
+  const cancelPendingChatScroll = useCallback(() => {
+    if (chatScrollFrameRef.current === null) return;
+    const reason = chatScrollPendingCommandReasonRef.current ?? "unknown";
+    cancelAnimationFrame(chatScrollFrameRef.current);
+    chatScrollFrameRef.current = null;
+    chatScrollPendingCommandReasonRef.current = null;
+    publishChatScrollDebugSnapshot(`scrollToEnd:canceled:${reason}`);
+  }, [publishChatScrollDebugSnapshot]);
+
+  const executeChatScrollCommand = useCallback(
+    (command: ChatScrollCommand, noneReason = "unknown") => {
+      if (command.kind === "none") {
+        publishChatScrollDebugSnapshot(`scrollToEnd:none:${noneReason}`);
+        return;
+      }
+      cancelPendingChatScroll();
+      chatScrollPendingCommandReasonRef.current = command.reason;
+      publishChatScrollDebugSnapshot(`scrollToEnd:scheduled:${command.reason}`);
+      chatScrollFrameRef.current = requestAnimationFrame(() => {
+        chatScrollFrameRef.current = null;
+        chatScrollPendingCommandReasonRef.current = null;
+        if (
+          command.reason !== "initial" &&
+          command.reason !== "navigation" &&
+          chatScrollPolicyRef.current.intent !== "pinned"
+        ) {
+          publishChatScrollDebugSnapshot(`scrollToEnd:skipped:${command.reason}`);
+          return;
+        }
+        chatScrollRef.current?.scrollToEnd({ animated: command.animated });
+        publishChatScrollDebugSnapshot(`scrollToEnd:executed:${command.reason}`);
+      });
+    },
+    [cancelPendingChatScroll, publishChatScrollDebugSnapshot],
+  );
+
+  const showNewest = useCallback(() => {
+    const live = chatVisibleTranscriptForPinned({
+      liveMessages: allMessages,
+      sessionKey,
+    });
+    liveChatTranscriptRef.current = live;
+    chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+    applyVisibleChatTranscript(live);
+    executeChatScrollCommand(chatCommandForNavigationFocus());
+  }, [allMessages, applyVisibleChatTranscript, executeChatScrollCommand, sessionKey]);
+
+  useImperativeHandle(ref, () => ({ showNewest }), [showNewest]);
+
+  useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
+
+  useFocusEffect(
+    useCallback(() => {
+      chatInitialLayoutKeyRef.current = sessionKey || null;
+      chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+      showLiveChatTranscript();
+      const interaction = InteractionManager.runAfterInteractions(() => {
+        executeChatScrollCommand(chatCommandForNavigationFocus());
+      });
+      return () => {
+        interaction.cancel();
+        cancelPendingChatScroll();
+      };
+    }, [cancelPendingChatScroll, executeChatScrollCommand, sessionKey, showLiveChatTranscript]),
+  );
+
+  const handleChatLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      chatScrollMetricsRef.current = {
+        ...chatScrollMetricsRef.current,
+        viewportHeight: event.nativeEvent.layout.height,
+      };
+      publishChatScrollDebugSnapshot("layout");
+      const layoutKey = sessionKey || "unscoped";
+      if (chatInitialLayoutKeyRef.current !== layoutKey) {
+        chatInitialLayoutKeyRef.current = layoutKey;
+        executeChatScrollCommand(chatCommandForInitialLayout());
+        return;
+      }
+      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
+    },
+    [executeChatScrollCommand, publishChatScrollDebugSnapshot, sessionKey],
+  );
+
+  const handleChatContentSizeChange = useCallback(
+    (_contentWidth: number, contentHeight: number) => {
+      chatScrollMetricsRef.current = {
+        ...chatScrollMetricsRef.current,
+        contentHeight,
+      };
+      publishChatScrollDebugSnapshot("content-size");
+      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
+    },
+    [executeChatScrollCommand, publishChatScrollDebugSnapshot],
+  );
+
+  const handleChatScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const metrics: ChatScrollMetrics = {
+        contentHeight: event.nativeEvent.contentSize.height,
+        offsetY: event.nativeEvent.contentOffset.y,
+        viewportHeight: event.nativeEvent.layoutMeasurement.height,
+      };
+      chatScrollMetricsRef.current = metrics;
+      const previousIntent = chatScrollPolicyRef.current.intent;
+      const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
+      if (nextPolicy.intent === "reading") {
+        cancelPendingChatScroll();
+      }
+      chatScrollPolicyRef.current = nextPolicy;
+      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+        showLiveChatTranscript();
+      }
+      const transitionEvent =
+        previousIntent === nextPolicy.intent
+          ? "scroll"
+          : `policy:${previousIntent}->${nextPolicy.intent}`;
+      publishChatScrollDebugSnapshot(
+        transitionEvent,
+        metrics,
+        previousIntent !== nextPolicy.intent,
+      );
+    },
+    [cancelPendingChatScroll, publishChatScrollDebugSnapshot, showLiveChatTranscript],
+  );
+
+  useEffect(() => {
+    liveChatTranscriptRef.current = liveChatTranscript;
+    const next = chatVisibleTranscriptForLiveChange(visibleChatTranscriptRef.current, {
+      intent: chatScrollPolicyRef.current.intent,
+      liveMessages: allMessages,
+      sessionKey,
+    });
+    applyVisibleChatTranscript(next);
+  }, [allMessages, applyVisibleChatTranscript, liveChatTranscript, sessionKey]);
+
+  return (
+    <View className="flex-1 bg-background">
+      <AgentChatTranscript
+        messages={visibleMessages}
+        onContentSizeChange={handleChatContentSizeChange}
+        onLayout={handleChatLayout}
+        onScroll={handleChatScroll}
+        ref={chatScrollRef}
+        serviceEndpoint={serviceEndpoint}
+        dividerWidth={dividerWidth}
+      />
+      {__DEV__ && chatScrollDebugSnapshot ? (
+        <ChatScrollDebugOverlay snapshot={chatScrollDebugSnapshot} />
+      ) : null}
+      {composerFooter}
+    </View>
+  );
+});
 
 function ChatScrollDebugOverlay({ snapshot }: { snapshot: ChatScrollDebugSnapshot }) {
   if (!__DEV__) return null;
