@@ -7,7 +7,7 @@ use crate::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
     MANAGED_TMUX_SESSION_OPTIONS, MANAGED_TMUX_TERMINAL_FEATURES, TMUX_RUNTIME_CONTRACT_OPTION,
     TMUX_RUNTIME_OWNER_OPTION, TmuxCommandSpec, WINDOW_LIST_FORMAT, append_session_option_argv,
-    build_default_root_mouse_bindings_config, is_dashboard_window_name,
+    build_default_root_mouse_bindings_install_config_for_command, is_dashboard_window_name,
     is_tmux_client_session_for_host, legacy_project_session_name, new_dashboard_window_argv,
     new_session_argv, project_session, refresh_status_argv, rename_session_argv,
     respawn_window_argv, set_session_option_argv, set_window_option_argv, switch_client_argv,
@@ -671,12 +671,6 @@ fn configure_statusline(
     session_name: &str,
     project_state_dir: &str,
 ) -> Result<(), String> {
-    if !input.statusline_script_path.is_file() {
-        return Err(format!(
-            "missing script: {}",
-            input.statusline_script_path.to_string_lossy()
-        ));
-    }
     for (key, value) in [
         ("status", "2"),
         ("status-interval", "0"),
@@ -751,19 +745,12 @@ fn source_default_mouse_bindings(
     ));
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let file = dir.join("mouse-bindings.conf");
-    let open_hyperlink_script = resolve_tmux_open_hyperlink_script_path();
-    let open_pane_link_command = format!(
-        "AIMUX_HYPERLINK=#{{q:mouse_hyperlink}} AIMUX_MOUSE_WORD=#{{q:mouse_word}} AIMUX_MOUSE_LINE=#{{q:mouse_line}} sh {} >/dev/null 2>&1",
-        shell_quote(&path_text(&open_hyperlink_script))
-    );
-    let open_status_pr_command = format!(
-        "AIMUX_STATUS_LINE=#{{q:mouse_status_line}} AIMUX_PROJECT_STATE_DIR={} AIMUX_CURRENT_WINDOW_ID=#{{q:window_id}} sh {} >/dev/null 2>&1",
-        shell_quote(project_state_dir),
-        shell_quote(&path_text(&open_hyperlink_script))
-    );
     fs::write(
         &file,
-        build_default_root_mouse_bindings_config(&open_pane_link_command, &open_status_pr_command),
+        build_default_root_mouse_bindings_install_config_for_command(
+            project_state_dir,
+            &native_tmux_open_hyperlink_command(),
+        ),
     )
     .map_err(|error| error.to_string())?;
     let result = run_tmux_owned(runner, &["source-file".to_owned(), path_text(&file)]);
@@ -894,11 +881,8 @@ fn prefix_binding_commands(input: &TmuxRepairInput, session_name: &str) -> Vec<V
     commands
 }
 
-fn control_command(input: &TmuxRepairInput, action: &str, args: &str) -> String {
-    let control_script = format!(
-        "sh {}",
-        shell_quote(&path_text(&input.tmux_control_script_path))
-    );
+fn control_command(_input: &TmuxRepairInput, action: &str, args: &str) -> String {
+    let control_script = native_tmux_control_command();
     let control_context_args = [
         "--project-root #{q:@aimux-project-root}",
         "--current-session #{q:session_name}",
@@ -937,10 +921,10 @@ fn control_plane_args() -> String {
     .join(" ")
 }
 
-fn statusline_command(input: &TmuxRepairInput, line: &str, project_state_dir: &str) -> String {
+fn statusline_command(_input: &TmuxRepairInput, line: &str, project_state_dir: &str) -> String {
     format!(
-        "sh {} --line {line} --project-state-dir {} --current-session '#{{session_name}}' --current-window '#{{window_name}}' --current-window-id '#{{window_id}}'",
-        shell_quote(&path_text(&input.statusline_script_path)),
+        "{} --line {line} --project-state-dir {} --current-session '#{{session_name}}' --current-window '#{{window_name}}' --current-window-id '#{{window_id}}'",
+        native_tmux_statusline_command(),
         shell_quote(project_state_dir)
     )
 }
@@ -1570,10 +1554,6 @@ fn resolve_tmux_control_script_path() -> PathBuf {
     resolve_repo_script_path("scripts/tmux-control.sh")
 }
 
-fn resolve_tmux_open_hyperlink_script_path() -> PathBuf {
-    resolve_repo_script_path("scripts/tmux-open-hyperlink.sh")
-}
-
 fn resolve_repo_script_path(relative: &str) -> PathBuf {
     let candidate = std::env::var_os("AIMUX_ROOT")
         .filter(|root| !root.is_empty())
@@ -1581,6 +1561,25 @@ fn resolve_repo_script_path(relative: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
         .join(relative);
     fs::canonicalize(&candidate).unwrap_or(candidate)
+}
+
+fn native_tmux_control_command() -> String {
+    native_aimux_internal_command("__tmux-control-internal")
+}
+
+fn native_tmux_statusline_command() -> String {
+    native_aimux_internal_command("__tmux-statusline-internal")
+}
+
+fn native_tmux_open_hyperlink_command() -> String {
+    native_aimux_internal_command("__tmux-open-hyperlink-internal")
+}
+
+fn native_aimux_internal_command(command: &str) -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|path| format!("{} {command}", shell_quote(&path_text(&path))))
+        .unwrap_or_else(|| format!("aimux {command}"))
 }
 
 fn is_managed_session(session_name: &str, prefix: &str) -> bool {

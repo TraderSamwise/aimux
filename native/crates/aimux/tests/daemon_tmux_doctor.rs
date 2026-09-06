@@ -15,6 +15,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 struct FakeRunner {
     responses: HashMap<(String, Vec<String>), Result<String, String>>,
     calls: Vec<(String, Vec<String>)>,
+    sourced_files: Vec<String>,
     pass_mutations: bool,
 }
 
@@ -44,6 +45,13 @@ impl TmuxDoctorCommandRunner for FakeRunner {
     fn run(&mut self, program: &str, args: &[String]) -> Result<String, String> {
         let key = (program.to_owned(), args.to_vec());
         self.calls.push(key.clone());
+        if program == "tmux"
+            && args.first().map(String::as_str) == Some("source-file")
+            && let Some(path) = args.get(1)
+            && let Ok(contents) = fs::read_to_string(path)
+        {
+            self.sourced_files.push(contents);
+        }
         if self.pass_mutations && is_mutating_tmux_command(program, args) {
             return Ok(String::new());
         }
@@ -439,6 +447,20 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
             "@aimux-project-root".to_owned(),
             canonical_project_root.to_string_lossy().into_owned(),
         ]));
+    let repaired_commands = runner
+        .calls
+        .iter()
+        .flat_map(|(_, args)| args.iter())
+        .cloned()
+        .chain(runner.sourced_files.iter().cloned())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(repaired_commands.contains("__tmux-control-internal"));
+    assert!(repaired_commands.contains("__tmux-statusline-internal"));
+    assert!(repaired_commands.contains("__tmux-open-hyperlink-internal"));
+    assert!(!repaired_commands.contains("tmux-control.sh"));
+    assert!(!repaired_commands.contains("tmux-statusline.sh"));
+    assert!(!repaired_commands.contains("tmux-open-hyperlink.sh"));
     assert!(runner.calls.iter().any(|(_, args)| args
         == &[
             "set-window-option".to_owned(),
