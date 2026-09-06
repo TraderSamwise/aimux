@@ -462,6 +462,10 @@ Priority fixture groups:
 
 ## Expose
 
+- `expose/control.json`: global expose-control project/session flattening,
+  project-name ordering, session-root normalization, and list-failure handling
+  captured by running TypeScript `listAllProjectsExposeItems` with deterministic
+  dependency doubles.
 - `expose/pane-output-tap.json`: pane output tap ownership, adoption, renewal,
   pending-start retry, expiry, compaction, lost-ownership, and tmux failure
   cases captured by running TypeScript `ExposePaneOutputTap` with mocked tmux
