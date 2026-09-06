@@ -22,6 +22,7 @@ pub mod dashboard_focus;
 pub mod dashboard_internal;
 pub mod dashboard_model;
 pub mod dashboard_navigation;
+pub mod dashboard_processes;
 pub mod dashboard_readiness;
 pub mod dashboard_renderer;
 pub mod dashboard_terminal;
