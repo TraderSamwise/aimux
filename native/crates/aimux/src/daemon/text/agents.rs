@@ -187,6 +187,12 @@ pub fn lifecycle_spawn_text_route(
     if let Some(worktree_path) = worktree_path.as_ref() {
         request.insert("worktreePath".into(), Value::String(worktree_path.clone()));
     }
+    if let Some(extra_args) = string_array_body_field(body, "extraArgs") {
+        request.insert(
+            "extraArgs".into(),
+            Value::Array(extra_args.into_iter().map(Value::String).collect()),
+        );
+    }
     request.insert("open".into(), Value::Bool(open));
     let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
         &project,
@@ -214,6 +220,16 @@ pub fn lifecycle_spawn_text_route(
         payload.clone(),
         &render_core_lifecycle_spawn_lines(&payload),
     )
+}
+
+fn string_array_body_field(body: Option<&Value>, key: &str) -> Option<Vec<String>> {
+    let values = body?.get(key)?.as_array()?;
+    let strings = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    (!strings.is_empty()).then_some(strings)
 }
 
 pub fn lifecycle_status_text_route(

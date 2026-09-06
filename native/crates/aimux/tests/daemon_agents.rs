@@ -144,7 +144,7 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
             "{}?project=.&tool=claude&worktreePath=wt&open=0",
             CORE_API_ROUTES.lifecycle_spawn_text
         ),
-        None,
+        Some(&json!({ "extraArgs": ["--model", "gpt-5"] })),
     )
     .expect("spawn route");
     assert_eq!(text_body(spawned), "spawned claude-1\n");
@@ -154,7 +154,12 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
     assert_eq!(spawn_call.ensure_project, Some(true));
     assert_eq!(
         spawn_call.body.as_ref().unwrap(),
-        &json!({ "tool": "claude", "worktreePath": "/repo/wt", "open": false })
+        &json!({
+            "tool": "claude",
+            "worktreePath": "/repo/wt",
+            "extraArgs": ["--model", "gpt-5"],
+            "open": false
+        })
     );
 
     let stopped = route_agent_text_request(
