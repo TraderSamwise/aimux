@@ -481,7 +481,7 @@ fn dashboard_screen_actions(
         DashboardScreen::Project => json_array(resource, &["project", "story"]),
         DashboardScreen::Library => json_array(resource, &["entries"]),
         DashboardScreen::Topology => json_array(resource, &["topology", "rows"]),
-        DashboardScreen::Graveyard => json_array(resource, &["viewModel", "rows"]),
+        DashboardScreen::Graveyard => json_array(resource, &["viewModel", "selectableRows"]),
     };
     rows.iter()
         .map(|row| dashboard_screen_action(screen, row))
@@ -522,10 +522,18 @@ fn dashboard_screen_action(
             .map(DashboardSubscreenAction::Session)
             .or_else(|| json_string(row, &["serviceId"]).map(DashboardSubscreenAction::Service))
             .unwrap_or(DashboardSubscreenAction::None),
-        DashboardScreen::Project
-        | DashboardScreen::Graveyard
-        | DashboardScreen::Dashboard
-        | DashboardScreen::Help => DashboardSubscreenAction::None,
+        DashboardScreen::Graveyard => match json_string(row, &["kind"]).as_deref() {
+            Some("worktree") => json_string(row, &["entry", "path"])
+                .map(DashboardSubscreenAction::GraveyardWorktree)
+                .unwrap_or(DashboardSubscreenAction::None),
+            Some("standalone-agent") | Some("orphan-agent") => json_string(row, &["entry", "id"])
+                .map(DashboardSubscreenAction::GraveyardAgent)
+                .unwrap_or(DashboardSubscreenAction::None),
+            _ => DashboardSubscreenAction::None,
+        },
+        DashboardScreen::Project | DashboardScreen::Dashboard | DashboardScreen::Help => {
+            DashboardSubscreenAction::None
+        }
     }
 }
 

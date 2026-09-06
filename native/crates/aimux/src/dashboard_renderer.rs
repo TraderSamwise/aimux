@@ -372,7 +372,13 @@ fn render_graveyard_content(resource: Option<&Value>, selected_index: usize) -> 
         return lines;
     }
     for (index, row) in rows.iter().take(40).enumerate() {
-        let selected = index == selected_index;
+        let action_index = row.get("actionIndex").and_then(Value::as_u64);
+        let selected = action_index == Some(selected_index as u64);
+        let number = row
+            .get("actionNumber")
+            .and_then(Value::as_u64)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| (index + 1).to_string());
         let kind = string_at(row, &["kind"]).unwrap_or("entry");
         let label = string_at(row, &["label"])
             .or_else(|| string_at(row, &["entry", "label"]))
@@ -382,7 +388,7 @@ fn render_graveyard_content(resource: Option<&Value>, selected_index: usize) -> 
         lines.push(format!(
             "{} {} {} {}",
             selector(selected),
-            style(&format!("[{}]", index + 1), Tone::Muted),
+            style(&format!("[{number}]"), Tone::Muted),
             style(kind, Tone::Work),
             truncate_plain(label, 64),
         ));

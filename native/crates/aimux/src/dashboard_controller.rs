@@ -29,6 +29,7 @@ pub struct DashboardController {
     pub subscreen_index: usize,
     pub subscreen_item_count: usize,
     pub subscreen_actions: Vec<DashboardSubscreenAction>,
+    pub graveyard_worktree_delete_confirm: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +55,7 @@ impl DashboardController {
             subscreen_index: 0,
             subscreen_item_count: 0,
             subscreen_actions: Vec::new(),
+            graveyard_worktree_delete_confirm: None,
         }
     }
 
@@ -168,6 +170,7 @@ impl DashboardController {
         if self.screen != DashboardScreen::Dashboard {
             return Some(self.handle_subscreen_key(snapshot, key));
         }
+        self.graveyard_worktree_delete_confirm = None;
         match key {
             DashboardKey::Printable('?') => Some(self.switch_screen(DashboardScreen::Help)),
             DashboardKey::Printable('c') => Some(self.switch_screen(DashboardScreen::Coordination)),
@@ -184,6 +187,11 @@ impl DashboardController {
         snapshot: &DesktopStateSnapshot,
         key: DashboardKey,
     ) -> DashboardControllerEffect {
+        if self.screen == DashboardScreen::Graveyard
+            && self.graveyard_worktree_delete_confirm.is_some()
+        {
+            return self.handle_graveyard_delete_confirm_key(key);
+        }
         match key {
             DashboardKey::Printable('q') => DashboardControllerEffect::Quit,
             DashboardKey::Back | DashboardKey::Printable('d') => {
@@ -198,7 +206,11 @@ impl DashboardController {
             DashboardKey::Digit(digit) | DashboardKey::Printable(digit)
                 if digit.is_ascii_digit() =>
             {
-                self.select_subscreen_digit(digit)
+                if self.screen == DashboardScreen::Graveyard {
+                    self.resurrect_graveyard_digit(digit)
+                } else {
+                    self.select_subscreen_digit(digit)
+                }
             }
             DashboardKey::Printable('R') if self.screen == DashboardScreen::Coordination => {
                 self.coordination_notification_request(routes::notifications::READ, None)
@@ -223,6 +235,12 @@ impl DashboardController {
             }
             DashboardKey::Printable('x') if self.screen == DashboardScreen::Coordination => {
                 self.selected_coordination_thread_status_request("done")
+            }
+            DashboardKey::Printable('x') if self.screen == DashboardScreen::Graveyard => {
+                self.confirm_selected_graveyard_worktree_delete()
+            }
+            DashboardKey::Delete if self.screen == DashboardScreen::Graveyard => {
+                self.confirm_selected_graveyard_worktree_delete()
             }
             DashboardKey::Printable('P') if self.screen == DashboardScreen::Coordination => {
                 self.selected_coordination_review_request(routes::reviews::APPROVE)
@@ -266,6 +284,7 @@ impl DashboardController {
         self.subscreen_index = 0;
         self.subscreen_item_count = 0;
         self.subscreen_actions.clear();
+        self.graveyard_worktree_delete_confirm = None;
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
     }
@@ -359,6 +378,14 @@ impl DashboardController {
                 self.footer_message = Some(path);
                 DashboardControllerEffect::Render
             }
+            DashboardSubscreenAction::GraveyardWorktree(path) => self.graveyard_request(
+                routes::graveyard_actions::RESURRECT_WORKTREE,
+                json!({ "path": path }),
+            ),
+            DashboardSubscreenAction::GraveyardAgent(session_id) => self.graveyard_request(
+                routes::graveyard_actions::RESURRECT_AGENT,
+                json!({ "sessionId": session_id }),
+            ),
             DashboardSubscreenAction::Notification {
                 session_id: Some(session_id),
                 ..
@@ -405,6 +432,83 @@ impl DashboardController {
             DashboardSubscreenAction::Notification { .. }
             | DashboardSubscreenAction::Thread { .. } => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn resurrect_graveyard_digit(&mut self, digit: char) -> DashboardControllerEffect {
+        if digit == '0' {
+            return DashboardControllerEffect::Ignored;
+        }
+        let Some(index) = digit
+            .to_digit(10)
+            .map(|digit| digit.saturating_sub(1) as usize)
+        else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if index >= self.subscreen_item_count {
+            return DashboardControllerEffect::Ignored;
+        }
+        self.subscreen_index = index;
+        self.selected_graveyard_resurrect_request()
+    }
+
+    fn selected_graveyard_resurrect_request(&self) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::GraveyardWorktree(path) => self.graveyard_request(
+                routes::graveyard_actions::RESURRECT_WORKTREE,
+                json!({ "path": path }),
+            ),
+            DashboardSubscreenAction::GraveyardAgent(session_id) => self.graveyard_request(
+                routes::graveyard_actions::RESURRECT_AGENT,
+                json!({ "sessionId": session_id }),
+            ),
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn confirm_selected_graveyard_worktree_delete(&mut self) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::GraveyardWorktree(path) => {
+                self.graveyard_worktree_delete_confirm = Some(path);
+                self.footer_message =
+                    Some("Delete graveyarded worktree? Enter/y confirms, n/Esc cancels.".into());
+                DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn handle_graveyard_delete_confirm_key(
+        &mut self,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back | DashboardKey::Printable('n') => {
+                self.graveyard_worktree_delete_confirm = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter | DashboardKey::Printable('y') => {
+                let Some(path) = self.graveyard_worktree_delete_confirm.take() else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                self.graveyard_request(
+                    routes::graveyard_actions::DELETE_WORKTREE,
+                    json!({ "path": path }),
+                )
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn graveyard_request(
+        &self,
+        path: &'static str,
+        body: serde_json::Value,
+    ) -> DashboardControllerEffect {
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path,
+            body,
+        })
     }
 
     fn selected_subscreen_action(&self) -> DashboardSubscreenAction {
@@ -870,6 +974,8 @@ pub enum DashboardSubscreenAction {
     Session(String),
     Service(String),
     Path(String),
+    GraveyardWorktree(String),
+    GraveyardAgent(String),
     Notification {
         session_id: Option<String>,
         ids: Vec<String>,

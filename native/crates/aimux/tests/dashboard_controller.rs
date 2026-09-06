@@ -449,6 +449,87 @@ fn topology_enter_dispatches_selected_session_activation() {
 }
 
 #[test]
+fn graveyard_enter_and_digits_dispatch_resurrection_requests() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('g'));
+    controller.set_subscreen_actions(vec![
+        DashboardSubscreenAction::GraveyardWorktree("/repo/.aimux/worktrees/old".into()),
+        DashboardSubscreenAction::GraveyardAgent("codex-old".into()),
+    ]);
+
+    let DashboardControllerEffect::Request(worktree_request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected worktree resurrect request");
+    };
+    assert_eq!(
+        worktree_request.path,
+        routes::graveyard_actions::RESURRECT_WORKTREE
+    );
+    assert_eq!(
+        worktree_request.body,
+        json!({ "path": "/repo/.aimux/worktrees/old" })
+    );
+
+    let DashboardControllerEffect::Request(agent_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('2'))
+    else {
+        panic!("expected agent resurrect request");
+    };
+    assert_eq!(controller.subscreen_index, 1);
+    assert_eq!(
+        agent_request.path,
+        routes::graveyard_actions::RESURRECT_AGENT
+    );
+    assert_eq!(agent_request.body, json!({ "sessionId": "codex-old" }));
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('0')),
+        DashboardControllerEffect::Ignored
+    );
+}
+
+#[test]
+fn graveyard_delete_key_requires_confirmation_for_worktrees() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('g'));
+    controller.set_subscreen_actions(vec![DashboardSubscreenAction::GraveyardWorktree(
+        "/repo/.aimux/worktrees/old".into(),
+    )]);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('x')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.graveyard_worktree_delete_confirm.as_deref(),
+        Some("/repo/.aimux/worktrees/old")
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('n')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.graveyard_worktree_delete_confirm.is_none());
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+    let DashboardControllerEffect::Request(delete_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('y'))
+    else {
+        panic!("expected worktree delete request");
+    };
+    assert_eq!(
+        delete_request.path,
+        routes::graveyard_actions::DELETE_WORKTREE
+    );
+    assert_eq!(
+        delete_request.body,
+        json!({ "path": "/repo/.aimux/worktrees/old" })
+    );
+    assert!(controller.graveyard_worktree_delete_confirm.is_none());
+}
+
+#[test]
 fn coordination_notification_keys_dispatch_read_and_clear_requests() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

@@ -3678,6 +3678,18 @@ fn delete_agent_assets(
     );
     remove_file_if_exists(
         aimux_dir
+            .join("recordings")
+            .join(format!("{session_id}.log")),
+        &mut removed_assets,
+    );
+    remove_file_if_exists(
+        aimux_dir
+            .join("recordings")
+            .join(format!("{session_id}.txt")),
+        &mut removed_assets,
+    );
+    remove_file_if_exists(
+        aimux_dir
             .join("history")
             .join(format!("{session_id}.jsonl")),
         &mut removed_assets,
