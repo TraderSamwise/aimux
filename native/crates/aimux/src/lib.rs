@@ -17,6 +17,7 @@ pub mod daemon_supervisor;
 pub mod dashboard_command_spec;
 pub mod dashboard_internal;
 pub mod dashboard_model;
+pub mod dashboard_navigation;
 pub mod dashboard_renderer;
 pub mod debug_state;
 pub mod expose_socket;
