@@ -70,7 +70,8 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     assert!(plain.contains("codex"));
     assert!(plain.contains("yarn dev"));
     assert!(plain.contains("[svc] offline"));
-    assert!(plain.contains("thread 8"));
+    assert!(plain.contains("READY"));
+    assert!(plain.contains("thread 8/0/5"));
     assert!(plain.contains("step in"));
     for line in result.frame.split("\r\n") {
         assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));

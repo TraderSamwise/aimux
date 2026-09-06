@@ -33,7 +33,19 @@ pub struct DashboardSession {
     pub status: SessionStatus,
     pub active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tmux_window_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tmux_window_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,8 +60,28 @@ pub struct DashboardSession {
     pub scribe: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_control: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<SessionSemanticState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_started_at: Option<String>,
+    #[serde(default)]
+    pub unseen_count: usize,
     #[serde(default)]
     pub thread_unread_count: usize,
+    #[serde(default)]
+    pub thread_waiting_on_me_count: usize,
+    #[serde(default)]
+    pub thread_waiting_on_them_count: usize,
+    #[serde(default)]
+    pub thread_pending_count: usize,
+    #[serde(default)]
+    pub workflow_on_me_count: usize,
+    #[serde(default)]
+    pub workflow_blocked_count: usize,
+    #[serde(default)]
+    pub workflow_family_count: usize,
     #[serde(default)]
     pub notification_unread_count: usize,
     #[serde(default)]
@@ -69,6 +101,60 @@ pub enum SessionStatus {
     Idle,
     Waiting,
     Offline,
+    Exited,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSemanticState {
+    pub user: SessionUserState,
+    #[serde(default)]
+    pub notifications: SessionNotificationState,
+    pub presentation: SessionPresentationState,
+    #[serde(default)]
+    pub activity_new_count: usize,
+    #[serde(default)]
+    pub thread_unread_count: usize,
+    #[serde(default)]
+    pub pending_delivery_count: usize,
+    #[serde(default)]
+    pub waiting_on_me_count: usize,
+    #[serde(default)]
+    pub waiting_on_them_count: usize,
+    #[serde(default)]
+    pub blocked_count: usize,
+    #[serde(default)]
+    pub family_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SessionUserState {
+    pub label: String,
+    #[serde(default = "default_attention")]
+    pub attention: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionNotificationState {
+    #[serde(default)]
+    pub unread_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPresentationState {
+    pub status_label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_hint: Option<String>,
+    #[serde(default)]
+    pub attention_score: usize,
+}
+
+fn default_attention() -> String {
+    "none".to_owned()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -98,6 +184,8 @@ pub enum ServiceStatus {
     Running,
     Exited,
     Offline,
+    Stopped,
+    Error,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
