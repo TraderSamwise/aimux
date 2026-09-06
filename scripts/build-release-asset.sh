@@ -46,16 +46,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
-if [ "$BUILD_PROFILE" = "local" ]; then
-  rm -rf dist dist-local
-  yarn tsc -p tsconfig.local.json
-  mv dist-local dist
-  cp dist/local-launcher-env.js dist/launcher-env.js
-  cp dist/local-launcher-env.d.ts dist/launcher-env.d.ts
-  cp dist/local-launcher-bin.js dist/launcher-bin.js
-  cp dist/local-launcher-bin.d.ts dist/launcher-bin.d.ts
-  node scripts/check-local-build-boundary.mjs dist
-else
+if [ "$BUILD_PROFILE" = "full" ]; then
   yarn build:release
   yarn build:ui:local
 fi

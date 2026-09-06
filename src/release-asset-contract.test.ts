@@ -26,6 +26,8 @@ describe("release asset native contract", () => {
   it("keeps the release tarball on the native runtime surface", () => {
     const body = script();
 
+    expect(body).not.toContain("tsconfig.local.json");
+    expect(body).not.toContain("check-local-build-boundary.mjs");
     expect(body).not.toContain("yarn install --production");
     expect(body).not.toContain("node_modules/node-pty");
     expect(body).not.toContain("cp -R bin dist");
