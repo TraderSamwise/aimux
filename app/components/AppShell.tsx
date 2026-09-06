@@ -16,6 +16,7 @@ import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SharedSidebar } from "@/components/SharedSidebar";
 import { ChatChromeMotion } from "@/components/ChatChromeMotion";
+import { ChatTopEdgeFade } from "@/components/ChatTopEdgeFade";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
@@ -182,6 +183,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ) : null}
           </ChatChromeMotion>
         </View>
+        {overlayTopChrome ? (
+          <ChatTopEdgeFade topInset={resolvedTopInset} visible={!chatChromeVisible} />
+        ) : null}
         <View className="flex-1 flex-row">
           {isDesktop ? desktopSidebarSurface : null}
           {isTablet && sidebarOpen ? desktopSidebarSurface : null}
