@@ -805,6 +805,9 @@ Priority fixture groups:
 - `terminal/line-editor.json`: single-line editor cursor movement, editing,
   paste newline normalization, key-consumption, reverse-video cursor, and
   horizontal scroll rendering captured by running TypeScript `line-editor`.
+- `terminal/rich-text.json`: SGR rich-text run splitting, RGB color projection,
+  multiline attribute carryover, inverse color handling, and plain-text
+  projection captured by running TypeScript `rich-text`.
 
 ## Transcript
 
