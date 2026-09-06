@@ -1,8 +1,9 @@
 use crate::core_cli_routing::{
-    CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand, core_command_args, is_core_cli_command,
-    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_host_restart_args,
-    parse_core_logs_args, parse_core_project_ensure_args, parse_core_restart_args,
-    parse_core_runtime_restart_args,
+    CoreHostAgentReadArgsError, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
+    core_command_args, is_core_cli_command, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_host_agent_read_args_result,
+    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
+    parse_core_restart_args, parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,7 @@ pub enum CoreCliOutputMode {
 #[serde(rename_all = "kebab-case")]
 pub enum CoreCliOperation {
     HostStatus,
+    HostAgentRead,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -440,6 +442,29 @@ fn dashboard_text_payload(
     Value::Object(payload)
 }
 
+fn host_agent_read_text_path(project: &str, session_id: &str, start_line: i64) -> String {
+    format!(
+        "{}?project={}&sessionId={}&startLine={}",
+        CORE_API_ROUTES.host_agent_read_text,
+        encode_query_component(project),
+        encode_query_component(session_id),
+        start_line
+    )
+}
+
+fn encode_query_component(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                output.push(byte as char);
+            }
+            _ => output.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    output
+}
+
 /// Produces the high-level execution decision made by `runCoreCli` while
 /// leaving filesystem access, credential mutation, tmux opening, and HTTP I/O
 /// to the caller. Explicit project arguments are passed through unchanged.
@@ -514,6 +539,41 @@ where
             command_action(default_call(CORE_COMMAND_NAMES.status, None)),
             CoreCliFallback::None,
         ),
+        ("host", "agent-read") => {
+            let parsed = parse_core_host_agent_read_args_result(&args).map_err(|error| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: match error {
+                        CoreHostAgentReadArgsError::LinesNotPositive => {
+                            "Error: --lines must be a positive integer"
+                        }
+                        CoreHostAgentReadArgsError::StartLineNotInteger => {
+                            "Error: --start-line must be an integer"
+                        }
+                        CoreHostAgentReadArgsError::InvalidArguments => {
+                            "error: invalid host agent-read arguments"
+                        }
+                    },
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::HostAgentRead,
+                CoreCliAction::TextRoute {
+                    path: host_agent_read_text_path(
+                        &project_root,
+                        &parsed.session_id,
+                        parsed.start_line,
+                    ),
+                    body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("serve", _) => (
             CoreCliOperation::ProjectServe,
             command_action(default_call(

@@ -148,6 +148,81 @@ fn host_restart_always_sends_serve_and_preserves_open_as_a_local_followup() {
 }
 
 #[test]
+fn host_agent_read_plans_native_text_route_with_resolved_project_and_tail_math() {
+    let plan = classify_core_cli_with_project_resolver(
+        &[
+            "host",
+            "agent-read",
+            "claude 1",
+            "--project",
+            "./child dir",
+            "--lines",
+            "200",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("host agent-read plan");
+    assert_eq!(plan.operation, CoreCliOperation::HostAgentRead);
+    assert_eq!(plan.output_mode, CoreCliOutputMode::Text);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/host-agent-read-text?project=%2Fresolved%2F.%2Fchild%20dir&sessionId=claude%201&startLine=-200".into(),
+            body: None,
+        }
+    );
+
+    let default_project =
+        classify_core_cli(&["host", "agent-read", "codex-1"], &context(true, true))
+            .expect("default host agent-read plan");
+    assert_eq!(
+        default_project.action,
+        CoreCliAction::TextRoute {
+            path: "/core/host-agent-read-text?project=%2Frepo&sessionId=codex-1&startLine=-120"
+                .into(),
+            body: None,
+        }
+    );
+}
+
+#[test]
+fn invalid_host_agent_read_args_fail_before_node_fallback() {
+    let invalid_lines = classify_core_cli(
+        &["host", "agent-read", "claude-1", "--lines", "-5"],
+        &context(true, true),
+    )
+    .expect_err("non-positive lines");
+    assert_eq!(invalid_lines.exit_code(), 1);
+    assert_eq!(
+        invalid_lines.to_string(),
+        "Error: --lines must be a positive integer"
+    );
+
+    let invalid_start = classify_core_cli(
+        &["host", "agent-read", "claude-1", "--start-line", "10px"],
+        &context(true, true),
+    )
+    .expect_err("invalid start-line");
+    assert_eq!(invalid_start.exit_code(), 1);
+    assert_eq!(
+        invalid_start.to_string(),
+        "Error: --start-line must be an integer"
+    );
+
+    let missing_session = classify_core_cli(
+        &["host", "agent-read", "--project", "/repo"],
+        &context(true, true),
+    )
+    .expect_err("missing session");
+    assert_eq!(missing_session.exit_code(), 1);
+    assert!(matches!(
+        missing_session,
+        CoreCliPlanError::InvalidArguments { .. }
+    ));
+}
+
+#[test]
 fn daemon_status_uses_a_bounded_existing_daemon_request_and_stored_state_fallback() {
     let plan = classify_core_cli(&["daemon", "status", "--json"], &context(false, false))
         .expect("daemon status plan");
@@ -289,7 +364,7 @@ fn malformed_mutation_is_invalid_while_other_unknown_forms_are_unsupported() {
     for args in [
         vec!["remote", "enable", "--json"],
         vec!["daemon", "status", "extra"],
-        vec!["dashboard-reload"],
+        vec!["unknown", "command"],
     ] {
         let error = classify_core_cli(&args, &context(true, true)).expect_err("unsupported form");
         assert_eq!(error.exit_code(), 2, "{args:?}");

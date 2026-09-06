@@ -49,6 +49,22 @@ pub struct CoreHostRestartArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreHostAgentReadArgs {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub start_line: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreHostAgentReadArgsError {
+    InvalidArguments,
+    LinesNotPositive,
+    StartLineNotInteger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreDashboardReloadArgs {
     pub open: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -323,6 +339,94 @@ pub fn parse_core_host_restart_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHos
     Some(parsed)
 }
 
+pub fn parse_core_host_agent_read_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHostAgentReadArgs> {
+    parse_core_host_agent_read_args_result(args).ok()
+}
+
+pub fn parse_core_host_agent_read_args_result<S: AsRef<str>>(
+    args: &[S],
+) -> Result<CoreHostAgentReadArgs, CoreHostAgentReadArgsError> {
+    if args.first().map(AsRef::as_ref) != Some("host")
+        || args.get(1).map(AsRef::as_ref) != Some("agent-read")
+    {
+        return Err(CoreHostAgentReadArgsError::InvalidArguments);
+    }
+    let mut project = None;
+    let mut session_id = None;
+    let mut start_line_value = Some("-120".to_owned());
+    let mut lines_value = None;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--project" {
+            let value =
+                required_value(args, index).ok_or(CoreHostAgentReadArgsError::InvalidArguments)?;
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() {
+                return Err(CoreHostAgentReadArgsError::InvalidArguments);
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--start-line" {
+            let value =
+                required_value(args, index).ok_or(CoreHostAgentReadArgsError::InvalidArguments)?;
+            start_line_value = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--start-line=") {
+            if value.is_empty() {
+                return Err(CoreHostAgentReadArgsError::InvalidArguments);
+            }
+            start_line_value = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--lines" {
+            let value =
+                required_value(args, index).ok_or(CoreHostAgentReadArgsError::InvalidArguments)?;
+            lines_value = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--lines=") {
+            if value.is_empty() {
+                return Err(CoreHostAgentReadArgsError::InvalidArguments);
+            }
+            lines_value = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return Err(CoreHostAgentReadArgsError::InvalidArguments);
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    let session_id = session_id.ok_or(CoreHostAgentReadArgsError::InvalidArguments)?;
+    let start_line = match lines_value.as_deref().and_then(parse_strict_safe_integer) {
+        Some(lines) => {
+            if lines <= 0 {
+                return Err(CoreHostAgentReadArgsError::LinesNotPositive);
+            }
+            -lines
+        }
+        None => parse_strict_safe_integer(start_line_value.as_deref().unwrap_or("-120"))
+            .ok_or(CoreHostAgentReadArgsError::StartLineNotInteger)?,
+    };
+    Ok(CoreHostAgentReadArgs {
+        session_id,
+        project,
+        start_line,
+    })
+}
+
 pub fn parse_core_dashboard_reload_args<S: AsRef<str>>(
     args: &[S],
 ) -> Option<CoreDashboardReloadArgs> {
@@ -437,6 +541,22 @@ fn non_flag_inline_value(value: &str) -> Option<&str> {
     (!value.is_empty() && !value.starts_with('-')).then_some(value)
 }
 
+fn parse_strict_safe_integer(value: &str) -> Option<i64> {
+    const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let digits = trimmed.strip_prefix('-').unwrap_or(trimmed);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let parsed = trimmed.parse::<i64>().ok()?;
+    (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER)
+        .contains(&parsed)
+        .then_some(parsed)
+}
+
 pub fn is_valid_core_project_ensure_args<S: AsRef<str>>(args: &[S]) -> bool {
     parse_core_project_ensure_args(args).is_some()
 }
@@ -460,6 +580,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("host"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("host"), Some("stop" | "kill")) => args.len() == 2,
         (Some("host"), Some("restart")) => parse_core_host_restart_args(args).is_some(),
+        (Some("host"), Some("agent-read")) => true,
         (Some("daemon"), Some("ensure" | "status" | "projects")) => {
             has_only_allowed_flags(&args[2..], &["--json"])
         }

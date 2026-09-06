@@ -133,7 +133,9 @@ impl CoreCliRuntime for FakeRuntime {
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
         self.text_routes.push((path.to_owned(), body));
-        Ok(if path.ends_with("?json=1") {
+        Ok(if path.starts_with("/core/host-agent-read-text?") {
+            "pane output\n".into()
+        } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
             "Runtime Coherence\n  ok\n".into()
@@ -441,6 +443,34 @@ fn dashboard_reload_and_runtime_restart_execute_native_text_routes() {
                 Some(json!({ "projectRoot": "/resolved/child" })),
             ),
         ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn host_agent_read_executes_native_text_route_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let read = run_core_cli_with(
+        &args(&[
+            "host",
+            "agent-read",
+            "claude-1",
+            "--project=/repo",
+            "--lines",
+            "80",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(read.code, 0);
+    assert_eq!(read.stdout, ["pane output"]);
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            "/core/host-agent-read-text?project=%2Frepo&sessionId=claude-1&startLine=-80".into(),
+            None,
+        )]
     );
     assert!(runtime.commands.is_empty());
 }

@@ -1,10 +1,11 @@
 use aimux::core_cli_routing::{
-    CoreDaemonRestartArgs, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
-    CoreProjectEnsureArgs, CoreRestartArgs, core_command_args, has_core_global_logging_args,
-    is_core_cli_command, is_core_project_ensure_command, is_valid_core_project_ensure_args,
-    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_host_restart_args,
-    parse_core_logs_args, parse_core_project_ensure_args, parse_core_restart_args,
-    parse_core_runtime_restart_args,
+    CoreDaemonRestartArgs, CoreHostAgentReadArgs, CoreHostRestartArgs, CoreLogsArgs,
+    CoreLogsSubcommand, CoreProjectEnsureArgs, CoreRestartArgs, core_command_args,
+    has_core_global_logging_args, is_core_cli_command, is_core_project_ensure_command,
+    is_valid_core_project_ensure_args, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
+    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
+    parse_core_restart_args, parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -150,6 +151,74 @@ fn host_restart_parser_accepts_only_open_and_serve() {
     );
     assert_eq!(
         parse_core_host_restart_args(&["host", "restart", "--json"]),
+        None
+    );
+}
+
+#[test]
+fn host_agent_read_parser_matches_commander_flag_math() {
+    assert_eq!(
+        parse_core_host_agent_read_args(&["host", "agent-read", "claude-1"]),
+        Some(CoreHostAgentReadArgs {
+            session_id: "claude-1".into(),
+            project: None,
+            start_line: -120,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_read_args(&[
+            "host",
+            "agent-read",
+            "--project=/repo space",
+            "--start-line",
+            "-80",
+            "claude-1",
+        ]),
+        Some(CoreHostAgentReadArgs {
+            session_id: "claude-1".into(),
+            project: Some("/repo space".into()),
+            start_line: -80,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_read_args(&[
+            "host",
+            "agent-read",
+            "claude-1",
+            "--project",
+            "/repo",
+            "--lines=160",
+        ]),
+        Some(CoreHostAgentReadArgs {
+            session_id: "claude-1".into(),
+            project: Some("/repo".into()),
+            start_line: -160,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_read_args(&[
+            "host",
+            "agent-read",
+            "claude-1",
+            "--lines",
+            "not-an-int",
+            "--start-line",
+            "-42",
+        ]),
+        Some(CoreHostAgentReadArgs {
+            session_id: "claude-1".into(),
+            project: None,
+            start_line: -42,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_read_args(&["host", "agent-read", "claude-1", "--lines", "0"]),
+        None
+    );
+    assert_eq!(
+        parse_core_host_agent_read_args(
+            &["host", "agent-read", "claude-1", "--start-line", "1.5",]
+        ),
         None
     );
 }
