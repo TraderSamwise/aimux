@@ -88,6 +88,8 @@ const looksLikeToolActionText = (text: string) => {
       trimmed,
     ) ||
     /^Background command\s+".+"\s+completed\s+\(exit code\s+\d+\)/i.test(trimmed) ||
+    /^Task Output\s+[a-f0-9]{6,}\b/i.test(trimmed) ||
+    /^Agent\s+"[^"]+"\s+finished\b/i.test(trimmed) ||
     looksLikeRanCommandText(trimmed) ||
     /^Searched\s*for\s*\d+\s*patterns?/i.test(trimmed) ||
     /^Read\s*\d+\s*files?/i.test(trimmed)

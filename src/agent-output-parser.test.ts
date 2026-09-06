@@ -570,6 +570,33 @@ describe("parseAgentOutput", () => {
     expect(messagesFromParsedAgentOutput(second).map((message) => message.text)).toEqual(["[Image #17]"]);
   });
 
+  it("keeps Claude task output progress out of assistant chat messages", () => {
+    const raw = [
+      "⏺ Sign-up takes no prefilled address, which matters.",
+      "",
+      "Task Output a214a37629dc53118",
+      "  ⎿  Read output (ctrl+o to expand)",
+      "",
+      'Agent "Audit phase 4 plan" finished · 1m 41s',
+      "",
+      "⏺ Now the route, and the two comments that assert the old rule.",
+      "",
+      "Task Output a51ccfed03dad09ee",
+      "  Audit phase 4 implementation",
+      "    Waiting for task (esc to give additional instructions)",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status", "response", "status"]);
+    expect(parsed.blocks[1]?.text).toContain("Task Output a214a37629dc53118");
+    expect(parsed.blocks[3]?.text).toContain("Waiting for task");
+    expect(messagesFromParsedAgentOutput(parsed).map((message) => message.text)).toEqual([
+      "Sign-up takes no prefilled address, which matters.",
+      "Now the route, and the two comments that assert the old rule.",
+    ]);
+  });
+
   it("parses unmarked wrapped Claude tool actions as status without swallowing prose examples", () => {
     const raw = [
       "⏺ Running verification.",
