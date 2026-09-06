@@ -568,6 +568,12 @@ Priority fixture groups:
   file-tail reads, transcript probing, and Codex rollout path lookup captured
   by running TypeScript `transcript-turn-state`.
 
+## Transport
+
+- `transport/security.json`: shared-chat actor attribution plus client device
+  proof signing-message and public-key encoding behavior captured by running
+  TypeScript transport/security helpers.
+
 ## Worktree
 
 - `worktree/cache-cleanup.json`: generated-cache planning, active-runtime

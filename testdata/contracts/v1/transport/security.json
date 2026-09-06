@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "source": ["app/lib/shared-chat-actor.test.ts", "app/lib/client-device-proof.test.ts"],
+  "generatedBy": "scripts/capture-transport-security-contract.mjs",
+  "description": "Shared-chat actor attribution and client device proof message/public-key encoding contracts captured by running TypeScript transport/security helpers.",
+  "cases": [
+    {
+      "id": "transport-security-001",
+      "name": "does not tag non-shared conversations",
+      "source": "app/lib/shared-chat-actor.test.ts",
+      "api": "resolveSharedChatActor",
+      "input": {
+        "name": "does not tag non-shared conversations",
+        "source": "app/lib/shared-chat-actor.test.ts",
+        "api": "resolveSharedChatActor",
+        "value": { "isCanonicalSharedRoute": false, "isSharedConversation": false }
+      },
+      "output": null,
+      "inputSha256": "7bca02d903374adafefdaf59e7ee83e2b000eecc2fc0413d0b26afd92326d172"
+    },
+    {
+      "id": "transport-security-002",
+      "name": "tags owners correctly in the shared experience",
+      "source": "app/lib/shared-chat-actor.test.ts",
+      "api": "resolveSharedChatActor",
+      "input": {
+        "name": "tags owners correctly in the shared experience",
+        "source": "app/lib/shared-chat-actor.test.ts",
+        "api": "resolveSharedChatActor",
+        "value": {
+          "currentParticipant": {
+            "userId": "user_owner",
+            "displayName": "Sam Owner",
+            "email": "sam@example.com",
+            "role": "owner",
+            "status": "active",
+            "joinedAt": "2026-08-13T00:00:00.000Z"
+          },
+          "isCanonicalSharedRoute": true,
+          "isSharedConversation": true,
+          "routeOwnerUserId": "user_owner",
+          "userId": "user_owner"
+        }
+      },
+      "output": { "role": "owner", "displayName": "Sam Owner", "email": "sam@example.com" },
+      "inputSha256": "b2de19fdd43ae197b2cc69ed1980ed4d514f31d55d40988f83a78b6ff03b265f"
+    },
+    {
+      "id": "transport-security-003",
+      "name": "tags guests correctly in the shared experience",
+      "source": "app/lib/shared-chat-actor.test.ts",
+      "api": "resolveSharedChatActor",
+      "input": {
+        "name": "tags guests correctly in the shared experience",
+        "source": "app/lib/shared-chat-actor.test.ts",
+        "api": "resolveSharedChatActor",
+        "value": {
+          "currentParticipant": {
+            "userId": "user_guest",
+            "displayName": "Ada Guest",
+            "email": "ada@example.com",
+            "role": "guest",
+            "status": "active",
+            "joinedAt": "2026-08-13T00:00:00.000Z"
+          },
+          "isCanonicalSharedRoute": true,
+          "isSharedConversation": true,
+          "routeOwnerUserId": "user_owner",
+          "userId": "user_guest"
+        }
+      },
+      "output": { "role": "guest", "displayName": "Ada Guest", "email": "ada@example.com" },
+      "inputSha256": "84aa3f3422b8764f10ea61efe7e49f2b1815c64e7cc7aae93fa9d6dbc19342b1"
+    },
+    {
+      "id": "transport-security-004",
+      "name": "still tags owner GUI messages from normal project routes",
+      "source": "app/lib/shared-chat-actor.test.ts",
+      "api": "resolveSharedChatActor",
+      "input": {
+        "name": "still tags owner GUI messages from normal project routes",
+        "source": "app/lib/shared-chat-actor.test.ts",
+        "api": "resolveSharedChatActor",
+        "value": {
+          "currentParticipant": {
+            "userId": "user_owner",
+            "displayName": "Sam Owner",
+            "email": "sam@example.com",
+            "role": "owner",
+            "status": "active",
+            "joinedAt": "2026-08-13T00:00:00.000Z"
+          },
+          "displayName": "Fallback Name",
+          "email": "fallback@example.com",
+          "isCanonicalSharedRoute": false,
+          "isSharedConversation": true,
+          "userId": "user_owner"
+        }
+      },
+      "output": { "role": "owner", "displayName": "Sam Owner", "email": "sam@example.com" },
+      "inputSha256": "bf506e25064a2454ef3d1a069fde6b34b8142b525c197e522081b3d628ac98ed"
+    },
+    {
+      "id": "transport-security-005",
+      "name": "uses fallback guest identity on canonical shared routes",
+      "source": "app/lib/shared-chat-actor.ts",
+      "api": "resolveSharedChatActor",
+      "input": {
+        "name": "uses fallback guest identity on canonical shared routes",
+        "source": "app/lib/shared-chat-actor.ts",
+        "api": "resolveSharedChatActor",
+        "value": {
+          "displayName": "Fallback Guest",
+          "email": "guest@example.com",
+          "isCanonicalSharedRoute": true,
+          "isSharedConversation": true,
+          "routeOwnerUserId": "user_owner",
+          "userId": "unknown"
+        }
+      },
+      "output": { "role": "guest", "displayName": "Fallback Guest", "email": "guest@example.com" },
+      "inputSha256": "dbffb1b8cb66ec6636a28b3294ec4f2f5d95e4a8e95ca927216d044aae49f1ea"
+    },
+    {
+      "id": "transport-security-006",
+      "name": "formats device proof signing messages",
+      "source": "app/lib/client-device-proof.ts",
+      "api": "deviceProofMessage",
+      "input": {
+        "name": "formats device proof signing messages",
+        "source": "app/lib/client-device-proof.ts",
+        "api": "deviceProofMessage",
+        "deviceId": "client_1",
+        "timestamp": "2026-05-24T00:00:00.000Z",
+        "nonce": "nonce"
+      },
+      "output": "aimux-device-proof-v1\nclient_1\n2026-05-24T00:00:00.000Z\nnonce",
+      "inputSha256": "d697e37606b4383d68633cdc28b1b670acaab23a6bfa5a961d7fa143fc76ce06"
+    },
+    {
+      "id": "transport-security-007",
+      "name": "base64url-encodes exported device public keys",
+      "source": "app/lib/client-device-proof.ts",
+      "api": "encodeDevicePublicKey",
+      "input": {
+        "name": "base64url-encodes exported device public keys",
+        "source": "app/lib/client-device-proof.ts",
+        "api": "encodeDevicePublicKey",
+        "publicKeyJwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "y": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "ext": true,
+          "key_ops": ["verify"]
+        }
+      },
+      "output": "eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJ5IjoiQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQiIsImV4dCI6dHJ1ZSwia2V5X29wcyI6WyJ2ZXJpZnkiXX0",
+      "inputSha256": "7031e9c7e828bfd624c13cca4d1f498bdb003c8dbb8c51a701d537fc4b715d7f"
+    }
+  ]
+}
