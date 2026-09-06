@@ -76,6 +76,19 @@ pub fn compute_build_stamp(artifact_paths: &[PathBuf]) -> io::Result<String> {
 }
 
 pub fn project_service_artifact_paths(module_dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
+    let candidates = runtime_native_artifact_candidates();
+    project_service_artifact_paths_with_native_candidates(module_dir, &candidates)
+}
+
+pub fn project_service_artifact_paths_with_native_candidates(
+    module_dir: impl AsRef<Path>,
+    native_candidates: &[PathBuf],
+) -> io::Result<Vec<PathBuf>> {
+    for candidate in native_candidates {
+        if candidate.is_file() {
+            return Ok(vec![candidate.clone()]);
+        }
+    }
     let module_dir = module_dir.as_ref();
     Ok(vec![
         resolve_artifact(
@@ -84,6 +97,47 @@ pub fn project_service_artifact_paths(module_dir: impl AsRef<Path>) -> io::Resul
         )?,
         resolve_artifact(module_dir.join("main.js"), module_dir.join("main.ts"))?,
     ])
+}
+
+fn runtime_native_artifact_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("AIMUX_NATIVE_BIN")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        candidates.push(path);
+    }
+    if let Ok(path) = std::env::current_exe()
+        && path.file_name().and_then(|value| value.to_str()) == Some("aimux")
+    {
+        candidates.push(path);
+    }
+    if let Some(root) = std::env::var_os("AIMUX_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        candidates.push(
+            root.join("native")
+                .join(platform_native_dirname())
+                .join("aimux"),
+        );
+    }
+    candidates
+}
+
+fn platform_native_dirname() -> String {
+    format!(
+        "{}-{}",
+        match std::env::consts::OS {
+            "macos" => "darwin",
+            value => value,
+        },
+        match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            value => value,
+        }
+    )
 }
 
 pub fn compute_project_service_build_stamp(module_dir: impl AsRef<Path>) -> io::Result<String> {
