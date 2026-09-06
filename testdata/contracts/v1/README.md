@@ -63,6 +63,9 @@ Priority fixture groups:
   offset, terminal output hydration, visible-pane output mode, and active
   shared-session mapping/equality/merge/hydration behavior captured by running
   TypeScript app state helpers.
+- `app-state/lifecycle-transitions.json`: app project lifecycle transition
+  local/failure record normalization and optimistic desktop-state projection
+  captured by running TypeScript lifecycle transition helpers.
 - `app-state/project-views.json`: app project API view registry, refresh
   dependency expansion, and update-channel routing captured by running
   TypeScript project view helpers.
