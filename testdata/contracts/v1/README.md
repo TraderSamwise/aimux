@@ -100,6 +100,10 @@ Priority fixture groups:
   discovery, ambiguity handling, transcript relocation, and moved-session argv
   cases captured by running the TypeScript backend discovery helpers against
   temporary transcript stores.
+- `backend-session-ids/identity.json`: strict topology backend-session-id
+  latching, topology side effects, full identity resolution, disk-discovery
+  fallback, and refusal reasons captured by running TypeScript
+  `runtime-core/backend-session-ids`.
 
 ## Coordination
 
@@ -203,6 +207,16 @@ Priority fixture groups:
   corrupt legacy file, global agent-dir copy avoidance, and blocked existing
   exchange behavior captured by running TypeScript `runtime-migration` helpers
   against temporary repositories.
+
+## Runtime Topology
+
+- `runtime-topology/store.json`: topology store clone/isolation, raw-file
+  invalidation, YAML read/write, validation error, lock, and reference-pruning
+  behavior captured by running TypeScript `RuntimeTopologyStore`.
+- `runtime-topology/sessions.json`: session upsert, graveyard/resurrection,
+  replacement save, runtime reconciliation, service preservation, and topology
+  reference-pruning behavior captured by running TypeScript
+  `runtime-core/topology-sessions`.
 
 ## Connection Targets
 

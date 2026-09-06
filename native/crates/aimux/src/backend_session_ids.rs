@@ -34,6 +34,52 @@ pub struct BackendSessionDiscoveryOptions {
     pub codex_exclude_backend_session_ids: BTreeSet<String>,
 }
 
+pub fn record_topology_backend_session_id(
+    topology: &mut Value,
+    session_id: &str,
+    backend_session_id: &str,
+) -> Result<Value, String> {
+    let session_id = session_id.trim();
+    let backend_session_id = backend_session_id.trim();
+    if session_id.is_empty() {
+        return Err("sessionId is required".into());
+    }
+    if backend_session_id.is_empty() {
+        return Err("backendSessionId is required".into());
+    }
+
+    let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut) else {
+        return Err(format!(
+            "Agent \"{session_id}\" is not managed in runtime topology"
+        ));
+    };
+    let Some(session) = sessions
+        .iter_mut()
+        .find(|entry| string_field(entry, "id").as_deref() == Some(session_id))
+    else {
+        return Err(format!(
+            "Agent \"{session_id}\" is not managed in runtime topology"
+        ));
+    };
+
+    if let Some(existing) = string_field(session, "backendSessionId")
+        && !existing.is_empty()
+        && existing != backend_session_id
+    {
+        return Err(format!(
+            "Agent \"{session_id}\" already has backend session \"{existing}\", cannot replace with \"{backend_session_id}\""
+        ));
+    }
+
+    let selected = string_field(session, "backendSessionId")
+        .filter(|existing| !existing.is_empty())
+        .unwrap_or_else(|| backend_session_id.to_owned());
+    session["backendSessionId"] = Value::String(selected.clone());
+    session["updatedAt"] = Value::String("2026-09-06T00:00:01.000Z".into());
+    topology["generatedAt"] = Value::String("2026-09-06T00:00:01.000Z".into());
+    Ok(json!({ "sessionId": session_id, "backendSessionId": selected }))
+}
+
 pub fn resolve_agent_identity(
     project_root: &str,
     session_id: &str,
