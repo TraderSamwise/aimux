@@ -741,6 +741,12 @@ Priority fixture groups:
   exchange behavior captured by running TypeScript `runtime-migration` helpers
   against temporary repositories.
 
+## Tmux
+
+- `tmux/dashboard-tui-visibility.json`: dashboard TUI visibility tmux parsing,
+  stale-pane process recovery, host cache, and wake-transition behavior
+  captured by running TypeScript `multiplexer/tui-visibility`.
+
 ## Runtime Topology
 
 - `runtime-topology/store.json`: topology store clone/isolation, raw-file

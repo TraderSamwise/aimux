@@ -1,0 +1,283 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/tui-visibility.test.ts",
+  "generatedBy": "scripts/capture-dashboard-tui-visibility-v1-contract.mjs",
+  "description": "Dashboard TUI visibility tmux parsing, stale-pane process recovery, host cache, and wake-transition behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "tmux-dashboard-tui-visibility-001",
+      "name": "marks an attached active window as visible",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "marks an attached active window as visible",
+      "api": "parseTmuxVisibility",
+      "input": { "raw": "1\t1\n", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+      "inputSha256": "f149ed0a28a7fcb9dcd51d5838fb10b9d6829554b8ddfe0bcdf371486307429c"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-002",
+      "name": "marks an attached inactive window as hidden",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "marks an attached inactive window as hidden",
+      "api": "parseTmuxVisibility",
+      "input": { "raw": "1\t0\n", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+      "inputSha256": "9c56c1a5698c9ec628820601cc73ae74470905436417241ebff46a07e69c56bc"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-003",
+      "name": "marks a detached dashboard as not visible",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "marks a detached dashboard as not visible",
+      "api": "parseTmuxVisibility",
+      "input": { "raw": "0\t1\n", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": false, "activeWindow": true, "visible": false, "reason": "detached" },
+      "inputSha256": "6c2ac09b88cce18220c83eadd2338cd9e83004c34449b8427205b9122ccb70e2"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-004",
+      "name": "fails open on malformed tmux output",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "fails open on malformed tmux output",
+      "api": "parseTmuxVisibility",
+      "input": { "raw": "bad", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": true, "activeWindow": true, "visible": true, "reason": "query-failed" },
+      "inputSha256": "4fff9fecbec2d7efd7e7fc5a9947900b52c2aea05a279e9c557b78f84563ed0a"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-005",
+      "name": "assumes visible outside tmux",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "assumes visible outside tmux",
+      "api": "readTmuxTuiVisibility",
+      "input": { "env": {} },
+      "output": { "attached": true, "activeWindow": true, "visible": true, "reason": "not-tmux" },
+      "inputSha256": "573050e3f36c1d9fcc8a6bf8a640431322b0cfb94b2bdc99c9016c7c7ea1593b"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-006",
+      "name": "queries the current pane from TMUX_PANE",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "queries the current pane from TMUX_PANE",
+      "api": "readTmuxTuiVisibility",
+      "input": { "env": { "TMUX_PANE": "%7" }, "directRaw": "2\t1\n", "panesThrow": true, "parentsThrow": true },
+      "output": { "paneId": "%7", "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+      "inputSha256": "2b354179461d9670cff9a05e6c8666e1eb3b9aa87d997cfe8dd0f0ec61782ea2"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-007",
+      "name": "fails open when the tmux query throws",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "fails open when the tmux query throws",
+      "api": "readTmuxTuiVisibility",
+      "input": { "env": { "TMUX_PANE": "%7" }, "directThrows": true, "panesThrow": true, "parentsThrow": true },
+      "output": { "paneId": "%7", "attached": true, "activeWindow": true, "visible": true, "reason": "query-failed" },
+      "inputSha256": "4c8bb5e054c666381c9aa65661819ab3cce951d1bc9ce20ce6d1f8e7573a02f1"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-008",
+      "name": "recovers from a stale TMUX_PANE by resolving the live pane from the process tree",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "recovers from a stale TMUX_PANE by resolving the live pane from the process tree",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "env": { "TMUX_PANE": "%stale" },
+        "pid": 300,
+        "directRaw": "",
+        "panes": "%live\t200\t1\t0\n%other\t400\t1\t1\n",
+        "parents": "300 250\n250 200\n200 1\n"
+      },
+      "output": { "paneId": "%live", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+      "inputSha256": "0e824fed54d8fb184c6e74c6bf163d694e1de598e303b979203bf7fe9507a927"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-009",
+      "name": "prefers process-tree visibility when a stale TMUX_PANE still points at a valid pane",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "prefers process-tree visibility when a stale TMUX_PANE still points at a valid pane",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "env": { "TMUX_PANE": "%stale" },
+        "pid": 300,
+        "directRaw": "1\t1\n",
+        "panes": "%stale\t100\t1\t1\n%live\t200\t1\t0\n",
+        "parents": "300 250\n250 200\n200 1\n100 1\n"
+      },
+      "output": { "paneId": "%live", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+      "inputSha256": "d9d20d08b365d6c7d4eb81458dda775c6b2a1326a1e79b5d44985829da0944c9"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-010",
+      "name": "uses a valid direct pane query when process-tree resolution cannot match a pane",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "uses a valid direct pane query when process-tree resolution cannot match a pane",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "env": { "TMUX_PANE": "%current" },
+        "pid": 300,
+        "directRaw": "1\t1\n",
+        "panes": "%current\t100\t1\t1\n",
+        "parents": "300 250\n250 1\n100 1\n"
+      },
+      "output": { "paneId": "%current", "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+      "inputSha256": "bae5310979968d8b1115cb7ef20576cc78fb432c6989a85c342534551102afab"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-011",
+      "name": "fails open when process-tree resolution cannot match the current pane",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "fails open when process-tree resolution cannot match the current pane",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "env": { "TMUX_PANE": "%current" },
+        "pid": 300,
+        "directThrows": true,
+        "panes": "%current\t100\t1\t1\n",
+        "parents": "300 250\n250 1\n100 1\n"
+      },
+      "output": {
+        "paneId": "%current",
+        "attached": true,
+        "activeWindow": true,
+        "visible": true,
+        "reason": "query-failed"
+      },
+      "inputSha256": "6c524d6fd76344b502398ee72332475337c383f4028c101804337675a64eea6c"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-012",
+      "name": "treats stale dashboard processes outside live tmux panes as detached",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "treats stale dashboard processes outside live tmux panes as detached",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "env": { "TMUX_PANE": "%stale" },
+        "pid": 300,
+        "directThrows": true,
+        "panes": "%live\t200\t1\t1\n",
+        "parents": "300 250\n250 1\n200 1\n"
+      },
+      "output": {
+        "paneId": "%stale",
+        "attached": false,
+        "activeWindow": false,
+        "visible": false,
+        "reason": "detached"
+      },
+      "inputSha256": "b51b43a69f92999dc187ee7092b4a1cefe0efa8a386b01c93cf034fb5058dabb"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-013",
+      "name": "parses tmux pane rows",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "parses tmux pane rows",
+      "api": "parseTmuxPaneRows",
+      "input": { "raw": "%1\t123\t1\t0\nbad\n%2\t456\t0\t1\n" },
+      "output": [
+        { "paneId": "%1", "panePid": 123, "attachedRaw": "1", "activeWindowRaw": "0" },
+        { "paneId": "%2", "panePid": 456, "attachedRaw": "0", "activeWindowRaw": "1" }
+      ],
+      "inputSha256": "6eb2d666604e7529609ae2e6d36936b3129e117bdebcb84495df9340bb89b932"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-014",
+      "name": "finds the pane whose process tree owns the dashboard process",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "finds the pane whose process tree owns the dashboard process",
+      "api": "findTmuxPaneForProcess",
+      "input": { "panes": "%1\t100\t1\t0\n%2\t500\t1\t1\n", "parents": "250 200\n200 100\n100 1\n500 1\n", "pid": 250 },
+      "output": { "paneId": "%1", "panePid": 100, "attachedRaw": "1", "activeWindowRaw": "0" },
+      "inputSha256": "16ffb32620aba0582878b8e4d8fc9e0e7149dc2acbf85e5171193c333a3e7bd5"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-015",
+      "name": "does not query tmux for non-dashboard hosts",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "does not query tmux for non-dashboard hosts",
+      "api": "readDashboardTuiVisibilityForHost",
+      "input": { "host": { "startedInDashboard": false } },
+      "output": {
+        "snapshot": { "attached": true, "activeWindow": true, "visible": true, "reason": "not-tmux" },
+        "host": { "startedInDashboard": false }
+      },
+      "inputSha256": "8b9f782cb5ea2723a5ac00b2f4461f0e116811f9d6ce5f03f5bdfd7cde7450e6"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-016",
+      "name": "caches visibility briefly",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "caches visibility briefly",
+      "api": "readDashboardTuiVisibilityForHost",
+      "input": { "reads": [{ "now": 1000 }, { "now": 1100 }] },
+      "output": {
+        "first": { "paneId": "%1", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+        "second": { "paneId": "%1", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+        "calls": 1,
+        "host": {
+          "startedInDashboard": true,
+          "dashboardTuiVisibility": {
+            "paneId": "%1",
+            "attached": true,
+            "activeWindow": false,
+            "visible": false,
+            "reason": "hidden"
+          },
+          "dashboardTuiVisibilityCheckedAt": 1000
+        }
+      },
+      "inputSha256": "36ecf19f301e7dff9ac213af2bc4cdce3bad8d1dcb5c07f93e4f2ac8a9021cc7"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-017",
+      "name": "records a wake transition when a hidden dashboard becomes visible",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "records a wake transition when a hidden dashboard becomes visible",
+      "api": "readDashboardTuiVisibilityForHost",
+      "input": { "force": true, "now": 2000 },
+      "output": {
+        "snapshot": { "paneId": "%1", "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+        "firstWake": true,
+        "secondWake": false,
+        "host": {
+          "startedInDashboard": true,
+          "dashboardTuiVisibility": {
+            "paneId": "%1",
+            "attached": true,
+            "activeWindow": true,
+            "visible": true,
+            "reason": "visible"
+          },
+          "dashboardTuiVisibilityCheckedAt": 2000,
+          "dashboardTuiVisibilityWakePending": false
+        }
+      },
+      "inputSha256": "bc580d13a07f0256820b042f4764e8494c6eb256afb7440e5f934f38a497f37a"
+    },
+    {
+      "id": "tmux-dashboard-tui-visibility-018",
+      "name": "marks focus-in dashboards visible without waiting for the next tmux query",
+      "source": "src/multiplexer/tui-visibility.test.ts",
+      "sourceName": "marks focus-in dashboards visible without waiting for the next tmux query",
+      "api": "markDashboardTuiVisible",
+      "input": { "now": 2000, "paneId": "%1" },
+      "output": {
+        "host": {
+          "dashboardTuiVisibility": {
+            "paneId": "%1",
+            "attached": true,
+            "activeWindow": true,
+            "visible": true,
+            "reason": "visible"
+          },
+          "dashboardTuiVisibilityCheckedAt": 2000,
+          "dashboardHiddenVisibilityRecheckAt": 0,
+          "dashboardHiddenVisibilitySkipTicks": 0,
+          "dashboardTuiVisibilityWakePending": false
+        },
+        "firstWake": true,
+        "secondWake": false
+      },
+      "inputSha256": "a30d973491240e613e4c3dfd51daac9bd9f1e2d79ee4cc4f4a8b9f58f94d2f00"
+    }
+  ]
+}
