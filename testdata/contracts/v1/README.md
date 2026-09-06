@@ -29,6 +29,12 @@ Priority fixture groups:
 
 ## Agent Output
 
+- `agent-output/activity-text.json`: first-priority progress-line extraction
+  cases captured by running TypeScript `activityTextFromParsedAgentOutput`
+  against `src/agent-output-activity-text.test.ts` inputs.
+- `agent-output/liveness.json`: `readAgentOutput` output/activity/attention
+  projections captured by running the TypeScript multiplexer helper with mocked
+  pane capture and persisted derived metadata.
 - `agent-output/parser-adversarial.json`: golden `{ input, output }` cases
   captured by running the TypeScript `parseAgentOutput` implementation against
   the exported adversarial fixtures, parser fixture tests, compact parser
@@ -54,6 +60,18 @@ Priority fixture groups:
   resync, and error contracts captured from the TypeScript stream handler.
 - `agent-output/read-metrics.json`: output-read metric aggregation and recent
   ring-buffer behavior captured from the TypeScript metric accumulator.
+
+## Agent Restore
+
+- `agent-restore/state.json`: last-online snapshot, prompt-gate, restore-offer,
+  acknowledgement, removal, and reconciliation scenarios captured by running
+  TypeScript `runtime-core/agent-restore-state` transitions. Volatile generated
+  identifiers and timestamps are normalized after TypeScript execution.
+
+## Agent Status
+
+- `agent-status/chip.json`: status chip mapping and ANSI rendering contracts
+  captured by running TypeScript `tui/render/agent-status` helpers.
 
 ## Attachments
 

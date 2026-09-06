@@ -1,3 +1,6 @@
+pub mod agent_output_liveness_contract;
+pub mod agent_restore_state_contract;
+pub mod agent_status_contract;
 pub mod alert_display_contract;
 pub mod ansi_sgr_spans;
 pub mod atomic_write;
