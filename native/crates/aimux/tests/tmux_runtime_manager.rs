@@ -1,7 +1,7 @@
 use aimux::tmux::{
-    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, TMUX_RUNTIME_CONTRACT_OPTION,
-    TmuxClientInfo, TmuxCommandSpec, TmuxRuntimeConfig, TmuxRuntimeManager, TmuxTarget,
-    TmuxWindowInfo, project_session,
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, OpenTargetOptions,
+    TMUX_RUNTIME_CONTRACT_OPTION, TmuxClientInfo, TmuxCommandSpec, TmuxRuntimeConfig,
+    TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, project_session,
 };
 use serde_json::json;
 use std::cell::RefCell;
@@ -655,6 +655,61 @@ fn ensure_project_session_uses_dashboard_command_and_skips_create_when_repaired(
             .iter()
             .any(|args| args.first().map(String::as_str) == Some("new-session"))
     );
+}
+
+#[test]
+fn client_session_default_statusline_uses_native_internal_reader() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let client_linked = Rc::new(RefCell::new(false));
+    let calls_for_exec = calls.clone();
+    let client_linked_for_exec = client_linked.clone();
+    let mut manager = TmuxRuntimeManager::with_exec_and_interactive(
+        move |args, _options| {
+            calls_for_exec.borrow_mut().push(args.to_vec());
+            let joined = args.join(" ");
+            if joined == "show-options -v -t aimux-mobile-abc @aimux-project-root" {
+                return Ok("/repo/mobile".to_owned());
+            }
+            if joined == "has-session -t aimux-mobile-abc-client-deadbeef" {
+                return Err("missing".to_owned());
+            }
+            if joined.starts_with("list-windows -t aimux-mobile-abc-client-deadbeef") {
+                if *client_linked_for_exec.borrow() {
+                    return Ok("@9\t9\tcodex\t0\t90\t0".to_owned());
+                }
+                return Ok(String::new());
+            }
+            if joined == "link-window -d -s @9 -t aimux-mobile-abc-client-deadbeef" {
+                *client_linked_for_exec.borrow_mut() = true;
+            }
+            Ok(String::new())
+        },
+        |_args, _options| Ok(()),
+    );
+
+    manager
+        .open_target(
+            &target(),
+            OpenTargetOptions {
+                inside_tmux: true,
+                client_suffix: Some("deadbeef".to_owned()),
+                return_session_name: Some("origin".to_owned()),
+                ..OpenTargetOptions::default()
+            },
+        )
+        .expect("open target");
+
+    let calls = calls.borrow();
+    let status_format = calls
+        .iter()
+        .find(|args| {
+            args.first().map(String::as_str) == Some("set-option")
+                && args.get(3).map(String::as_str) == Some("status-format[0]")
+        })
+        .and_then(|args| args.get(4))
+        .expect("status-format[0] set");
+    assert!(status_format.contains("__tmux-statusline-internal"));
+    assert!(!status_format.contains("tmux-statusline.sh"));
 }
 
 #[test]

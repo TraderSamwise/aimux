@@ -127,6 +127,7 @@ pub mod tmux_query_memo;
 pub mod tmux_runtime_stop;
 pub mod tmux_session_transport;
 pub mod tmux_startup_interstitials;
+pub mod tmux_statusline_script;
 pub mod tmux_window_open;
 pub mod tool_hooks;
 pub mod tool_hooks_contract;

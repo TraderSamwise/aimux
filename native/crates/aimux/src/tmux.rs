@@ -2637,8 +2637,11 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
             .unwrap_or_else(|| "aimux __tmux-control-internal".to_owned()),
         statusline_command: TmuxCommandSpec {
             cwd: project_root_text.to_owned(),
-            command: "sh".to_owned(),
-            args: vec![repo_script_path("tmux-statusline.sh")],
+            command: std::env::current_exe()
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "aimux".to_owned()),
+            args: vec!["__tmux-statusline-internal".to_owned()],
         },
         runtime_owner_id: runtime_owner_id(&mut resolver),
     }
@@ -2671,7 +2674,6 @@ fn managed_runtime_build_stamp() -> String {
     if let Ok(exe) = std::env::current_exe() {
         paths.push(exe);
     }
-    paths.push(Path::new(&repo_script_path("tmux-statusline.sh")).to_path_buf());
     paths
         .into_iter()
         .map(|path| {

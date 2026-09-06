@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "source": "src/tmux/statusline-script.test.ts",
+  "subject": "scripts/tmux-statusline.sh",
+  "caseCount": 10,
+  "description": "tmux statusline cache-file lookup and silent-failure behavior captured by running the shipped shell script.",
+  "cases": [
+    {
+      "id": "tmux-statusline-script-001",
+      "name": "stays quiet before line parsing can configure logging",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "stays quiet before line parsing can configure logging",
+        "args": ["--project-state-dir", "<state>"],
+        "files": {}
+      },
+      "output": { "status": 0, "stdout": "\n", "stderr": "", "files": {} },
+      "inputSha256": "384b7b9a4bf73d5ff97841e9329b12380e56985468da06b899dd49f2d0f29537"
+    },
+    {
+      "id": "tmux-statusline-script-002",
+      "name": "stays quiet before project state dir configures logging",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "stays quiet before project state dir configures logging",
+        "args": ["--line", "bottom"],
+        "files": {}
+      },
+      "output": { "status": 0, "stdout": "\n", "stderr": "", "files": {} },
+      "inputSha256": "120f76e449b5c4b752ddd5950fee423ebd7c892469026a372168d008ecf542b4"
+    },
+    {
+      "id": "tmux-statusline-script-003",
+      "name": "top prefers current window status file",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "top prefers current window status file",
+        "args": ["--line", "top", "--project-state-dir", "<state>", "--current-window-id", "@1"],
+        "files": {
+          "tmux-statusline/top-@1.txt": "top-window\n",
+          "tmux-statusline/top-dashboard.txt": "top-dashboard\n"
+        }
+      },
+      "output": {
+        "status": 0,
+        "stdout": "top-window\n",
+        "stderr": "",
+        "files": {
+          "tmux-statusline/top-@1.txt": "top-window\n",
+          "tmux-statusline/top-dashboard.txt": "top-dashboard\n"
+        }
+      },
+      "inputSha256": "3e03094c7ba22897c14312df31c543bac6733efcdd063f7eb25ec07285b6b3bc"
+    },
+    {
+      "id": "tmux-statusline-script-004",
+      "name": "top falls back to dashboard status file",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "top falls back to dashboard status file",
+        "args": ["--line", "top", "--project-state-dir", "<state>", "--current-window-id", "@missing"],
+        "files": { "tmux-statusline/top-dashboard.txt": "top-dashboard\n" }
+      },
+      "output": {
+        "status": 0,
+        "stdout": "top-dashboard\n",
+        "stderr": "",
+        "files": { "tmux-statusline/top-dashboard.txt": "top-dashboard\n" }
+      },
+      "inputSha256": "3796df5385711a42ded22f39fbcd4fa72c05d1c2d3441306657718000078219b"
+    },
+    {
+      "id": "tmux-statusline-script-005",
+      "name": "top logs missing status file",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "top logs missing status file",
+        "args": [
+          "--line",
+          "top",
+          "--project-state-dir",
+          "<state>",
+          "--current-window-id",
+          "@missing",
+          "--current-window",
+          "codex",
+          "--current-session",
+          "aimux-repo"
+        ],
+        "files": {}
+      },
+      "output": {
+        "status": 0,
+        "stdout": "\n",
+        "stderr": "",
+        "files": {
+          "logs/tmux-statusline.log": "<timestamp> top render missing file current_window_id=@missing current_window=codex current_session=aimux-repo\n"
+        }
+      },
+      "inputSha256": "00a793ecc4ad824cd51f55a16fa24da69f262b304b52ced71969e346b8cc5b06"
+    },
+    {
+      "id": "tmux-statusline-script-006",
+      "name": "dashboard bottom prefers client-session status file",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "dashboard bottom prefers client-session status file",
+        "args": [
+          "--line",
+          "bottom",
+          "--project-state-dir",
+          "<state>",
+          "--current-window",
+          "dashboard-live",
+          "--current-session",
+          "aimux-repo-client-live"
+        ],
+        "files": {
+          "tmux-statusline/bottom-dashboard-aimux-repo-client-live.txt": "bottom-client\n",
+          "tmux-statusline/bottom-dashboard.txt": "bottom-dashboard\n"
+        }
+      },
+      "output": {
+        "status": 0,
+        "stdout": "bottom-client\n",
+        "stderr": "",
+        "files": {
+          "tmux-statusline/bottom-dashboard-aimux-repo-client-live.txt": "bottom-client\n",
+          "tmux-statusline/bottom-dashboard.txt": "bottom-dashboard\n"
+        }
+      },
+      "inputSha256": "114675b4d4ba63f16bc5891eace45c5a5801a5a913cdf9f8e1848a8aa28fb569"
+    },
+    {
+      "id": "tmux-statusline-script-007",
+      "name": "dashboard bottom falls back to dashboard status file",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "dashboard bottom falls back to dashboard status file",
+        "args": [
+          "--line",
+          "bottom",
+          "--project-state-dir",
+          "<state>",
+          "--current-window",
+          "dashboard-live",
+          "--current-session",
+          "aimux-repo-client-live"
+        ],
+        "files": { "tmux-statusline/bottom-dashboard.txt": "bottom-dashboard\n" }
+      },
+      "output": {
+        "status": 0,
+        "stdout": "bottom-dashboard\n",
+        "stderr": "",
+        "files": { "tmux-statusline/bottom-dashboard.txt": "bottom-dashboard\n" }
+      },
+      "inputSha256": "909c0f8c3398e8a70d4fbd20ccb04702389baff207deba2db0c73121a67ec474"
+    },
+    {
+      "id": "tmux-statusline-script-008",
+      "name": "window bottom reads current window status file",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "window bottom reads current window status file",
+        "args": [
+          "--line",
+          "bottom",
+          "--project-state-dir",
+          "<state>",
+          "--current-window",
+          "codex",
+          "--current-window-id",
+          "@2"
+        ],
+        "files": { "tmux-statusline/bottom-@2.txt": "bottom-window\n" }
+      },
+      "output": {
+        "status": 0,
+        "stdout": "bottom-window\n",
+        "stderr": "",
+        "files": { "tmux-statusline/bottom-@2.txt": "bottom-window\n" }
+      },
+      "inputSha256": "806cd3adfb58339806e501b3b34d506b439351e9a190216309ce7ff465135bac"
+    },
+    {
+      "id": "tmux-statusline-script-009",
+      "name": "window bottom logs missing status file",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "window bottom logs missing status file",
+        "args": [
+          "--line",
+          "bottom",
+          "--project-state-dir",
+          "<state>",
+          "--current-window",
+          "codex",
+          "--current-window-id",
+          "@missing",
+          "--current-session",
+          "aimux-repo"
+        ],
+        "files": {}
+      },
+      "output": {
+        "status": 0,
+        "stdout": "\n",
+        "stderr": "",
+        "files": {
+          "logs/tmux-statusline.log": "<timestamp> window bottom render missing file current_window_id=@missing current_window=codex current_session=aimux-repo\n"
+        }
+      },
+      "inputSha256": "e201023c37724b65dfb62fbd28467d0f013125bb8935d72013ae0328e376a732"
+    },
+    {
+      "id": "tmux-statusline-script-010",
+      "name": "unsupported line logs after project state dir is known",
+      "source": "src/tmux/statusline-script.test.ts",
+      "api": "scripts/tmux-statusline.sh",
+      "input": {
+        "name": "unsupported line logs after project state dir is known",
+        "args": ["--line", "middle", "--project-state-dir", "<state>"],
+        "files": {}
+      },
+      "output": {
+        "status": 0,
+        "stdout": "\n",
+        "stderr": "",
+        "files": { "logs/tmux-statusline.log": "<timestamp> unsupported line=middle\n" }
+      },
+      "inputSha256": "f7c092a496a0b50ecb45e76263fced7f6f70d1cb4ec899354dfe3b13a3a06a4f"
+    }
+  ]
+}

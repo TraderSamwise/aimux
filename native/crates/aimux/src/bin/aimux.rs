@@ -19,6 +19,7 @@ use aimux::project_service::process::{
 use aimux::root_session_launch::{parse_root_resume_args, resume_saved_sessions};
 use aimux::tmux_control::{parse_tmux_control_args, run_tmux_control};
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
+use aimux::tmux_statusline_script::{parse_tmux_statusline_args, run_tmux_statusline};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -85,6 +86,11 @@ enum Command {
     },
     #[command(name = "__tmux-control-internal", hide = true)]
     TmuxControlInternal {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "__tmux-statusline-internal", hide = true)]
+    TmuxStatuslineInternal {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -172,6 +178,13 @@ fn main() -> Result<ExitCode> {
             }
         };
     }
+    if let Command::TmuxStatuslineInternal { args } = cli.command.clone() {
+        let options = parse_tmux_statusline_args(&args);
+        let mut stdout = std::io::stdout();
+        return Ok(ExitCode::from(
+            run_tmux_statusline(options, &mut stdout) as u8
+        ));
+    }
     match cli.command {
         Command::BuildInfo { json } => print_value(aimux::build_info(), json),
         Command::Daemon {
@@ -220,6 +233,9 @@ fn main() -> Result<ExitCode> {
             Ok(())
         }
         Command::TmuxControlInternal { .. } => unreachable!("handled before native command match"),
+        Command::TmuxStatuslineInternal { .. } => {
+            unreachable!("handled before native command match")
+        }
     }?;
     Ok(ExitCode::SUCCESS)
 }
@@ -235,6 +251,7 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "__project-service-internal" => true,
         [command, ..] if command == "__dashboard-internal-native" => true,
         [command, ..] if command == "__tmux-control-internal" => true,
+        [command, ..] if command == "__tmux-statusline-internal" => true,
         _ => false,
     }
 }
@@ -436,6 +453,7 @@ fn is_known_aimux_command_word(word: &str) -> bool {
             | "worktree"
             | "__dashboard-internal-native"
             | "__tmux-control-internal"
+            | "__tmux-statusline-internal"
             | "__project-service-internal"
     )
 }
