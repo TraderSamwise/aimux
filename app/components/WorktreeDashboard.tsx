@@ -43,7 +43,7 @@ import {
 // dashboard's card/dot/[n]/pill language. Palette: card #15161a · border
 // #26272d · hairline #202127 · text #edeef0 / muted #7c7e88 / faint #565862.
 const PRESS = "hover:bg-[#1f2025] active:bg-[#232733]";
-const WORKTREE_LIST_MIN_WIDTH = 540;
+const WORKTREE_CARD_MIN_WIDTH = 500;
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -415,21 +415,8 @@ function WorktreeCard({
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
   const barColor = identityTone;
   const chips = worktreeCountChips(bucket);
-
-  return (
-    <View
-      className={cn(
-        "overflow-hidden rounded-xl",
-        compact ? "mb-2" : "mb-3",
-        containsSelected ? "bg-[#181a1f]" : "bg-[#15161a]",
-      )}
-      style={{
-        borderWidth: 1,
-        borderColor: containsSelected ? "#3a3c44" : "#26272d",
-        borderLeftWidth: 3,
-        borderLeftColor: barColor,
-      }}
-    >
+  const content = (
+    <>
       <View
         className={cn("flex-row items-center gap-2.5", compact ? "px-3 py-2" : "px-3.5 py-2.5")}
       >
@@ -498,6 +485,37 @@ function WorktreeCard({
           ))}
         </View>
       ) : null}
+    </>
+  );
+
+  return (
+    <View
+      className={cn(
+        "overflow-hidden rounded-xl",
+        compact ? "mb-2" : "mb-3",
+        containsSelected ? "bg-[#181a1f]" : "bg-[#15161a]",
+      )}
+      style={{
+        borderWidth: 1,
+        borderColor: containsSelected ? "#3a3c44" : "#26272d",
+        borderLeftWidth: 3,
+        borderLeftColor: barColor,
+      }}
+    >
+      {compact ? (
+        content
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
+          <View className="flex-1" style={{ minWidth: WORKTREE_CARD_MIN_WIDTH }}>
+            {content}
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -614,17 +632,7 @@ export function WorktreeList({
     return <View className={listClassName}>{content}</View>;
   }
 
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator
-      keyboardShouldPersistTaps="handled"
-      className={listClassName}
-      contentContainerStyle={{ minWidth: WORKTREE_LIST_MIN_WIDTH, flexGrow: 1 }}
-    >
-      <View className="flex-1">{content}</View>
-    </ScrollView>
-  );
+  return <View className={listClassName}>{content}</View>;
 }
 
 // Self-contained worktree dashboard (state handling + list). `padded` adds the
