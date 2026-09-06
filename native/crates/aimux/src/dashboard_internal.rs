@@ -493,9 +493,28 @@ fn dashboard_screen_action(
     row: &serde_json::Value,
 ) -> DashboardSubscreenAction {
     match screen {
-        DashboardScreen::Coordination => json_string(row, &["sessionId"])
-            .map(DashboardSubscreenAction::Session)
-            .unwrap_or(DashboardSubscreenAction::None),
+        DashboardScreen::Coordination => match json_string(row, &["kind"]).as_deref() {
+            Some("thread") => json_string(row, &["thread", "thread", "id"])
+                .map(|thread_id| DashboardSubscreenAction::Thread {
+                    thread_kind: json_string(row, &["thread", "thread", "kind"]),
+                    task_id: json_string(row, &["thread", "task", "id"]),
+                    target_session_id: json_string(row, &["thread", "thread", "owner"])
+                        .or_else(|| first_json_string(row, &["thread", "thread", "waitingOn"]))
+                        .or_else(|| first_json_string(row, &["thread", "thread", "participants"])),
+                    thread_id,
+                })
+                .unwrap_or(DashboardSubscreenAction::None),
+            Some("notification") => DashboardSubscreenAction::Notification {
+                session_id: json_string(row, &["sessionId"]),
+                ids: json_array(row, &["notification", "notifications"])
+                    .iter()
+                    .filter_map(|notification| json_string(notification, &["id"]))
+                    .collect(),
+            },
+            _ => json_string(row, &["sessionId"])
+                .map(DashboardSubscreenAction::Session)
+                .unwrap_or(DashboardSubscreenAction::None),
+        },
         DashboardScreen::Library => json_string(row, &["path"])
             .map(DashboardSubscreenAction::Path)
             .unwrap_or(DashboardSubscreenAction::None),
@@ -526,6 +545,13 @@ fn json_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
     current
         .as_str()
         .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn first_json_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    json_array(value, path)
+        .iter()
+        .find_map(|value| value.as_str().filter(|value| !value.is_empty()))
         .map(str::to_owned)
 }
 

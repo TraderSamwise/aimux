@@ -449,6 +449,111 @@ fn topology_enter_dispatches_selected_session_activation() {
 }
 
 #[test]
+fn coordination_notification_keys_dispatch_read_and_clear_requests() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('c'));
+    controller.set_subscreen_actions(vec![DashboardSubscreenAction::Notification {
+        session_id: Some("claude-0".into()),
+        ids: vec!["note-1".into()],
+    }]);
+
+    let DashboardControllerEffect::Request(read_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('r'))
+    else {
+        panic!("expected notification read request");
+    };
+    assert_eq!(read_request.path, routes::notifications::READ);
+    assert_eq!(read_request.body, json!({ "sessionId": "claude-0" }));
+
+    let DashboardControllerEffect::Request(clear_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('c'))
+    else {
+        panic!("expected notification clear request");
+    };
+    assert_eq!(clear_request.path, routes::notifications::CLEAR);
+    assert_eq!(clear_request.body, json!({ "sessionId": "claude-0" }));
+
+    let DashboardControllerEffect::Request(clear_all_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('C'))
+    else {
+        panic!("expected notification clear all request");
+    };
+    assert_eq!(clear_all_request.path, routes::notifications::CLEAR);
+    assert_eq!(clear_all_request.body, json!({}));
+}
+
+#[test]
+fn coordination_thread_keys_dispatch_workflow_requests() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('c'));
+    controller.set_subscreen_actions(vec![DashboardSubscreenAction::Thread {
+        thread_id: "thread-1".into(),
+        thread_kind: Some("conversation".into()),
+        task_id: None,
+        target_session_id: Some("claude-0".into()),
+    }]);
+
+    let DashboardControllerEffect::Request(block_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('b'))
+    else {
+        panic!("expected thread block request");
+    };
+    assert_eq!(block_request.path, routes::threads::STATUS);
+    assert_eq!(
+        block_request.body,
+        json!({ "threadId": "thread-1", "status": "blocked" })
+    );
+
+    let DashboardControllerEffect::Request(done_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('x'))
+    else {
+        panic!("expected thread done request");
+    };
+    assert_eq!(done_request.path, routes::threads::STATUS);
+    assert_eq!(
+        done_request.body,
+        json!({ "threadId": "thread-1", "status": "done" })
+    );
+}
+
+#[test]
+fn coordination_task_and_review_keys_dispatch_task_requests() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('c'));
+    controller.set_subscreen_actions(vec![DashboardSubscreenAction::Thread {
+        thread_id: "thread-1".into(),
+        thread_kind: Some("task".into()),
+        task_id: Some("task-1".into()),
+        target_session_id: Some("claude-0".into()),
+    }]);
+
+    let DashboardControllerEffect::Request(accept_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('A'))
+    else {
+        panic!("expected task accept request");
+    };
+    assert_eq!(accept_request.path, routes::tasks::ACCEPT);
+    assert_eq!(
+        accept_request.body,
+        json!({ "taskId": "task-1", "from": "user" })
+    );
+
+    let DashboardControllerEffect::Request(review_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('J'))
+    else {
+        panic!("expected review request-changes request");
+    };
+    assert_eq!(review_request.path, routes::reviews::REQUEST_CHANGES);
+    assert_eq!(
+        review_request.body,
+        json!({ "taskId": "task-1", "from": "user" })
+    );
+}
+
+#[test]
 fn service_input_collects_printable_text_and_dispatches_create() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());

@@ -13,6 +13,8 @@ use crate::dashboard_tool_picker::{
     DashboardToolEntry, DashboardToolPickerEffect, DashboardToolPickerMode,
     DashboardToolPickerState,
 };
+use crate::project_api_contract::routes;
+use serde_json::json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardController {
@@ -198,6 +200,39 @@ impl DashboardController {
             {
                 self.select_subscreen_digit(digit)
             }
+            DashboardKey::Printable('R') if self.screen == DashboardScreen::Coordination => {
+                self.coordination_notification_request(routes::notifications::READ, None)
+            }
+            DashboardKey::Printable('C') if self.screen == DashboardScreen::Coordination => {
+                self.coordination_notification_request(routes::notifications::CLEAR, None)
+            }
+            DashboardKey::Printable('r') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_notification_request(routes::notifications::READ)
+            }
+            DashboardKey::Printable('c') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_complete_request()
+            }
+            DashboardKey::Printable('A') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_accept_request()
+            }
+            DashboardKey::Printable('b') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_block_request()
+            }
+            DashboardKey::Printable('o') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_thread_status_request("open")
+            }
+            DashboardKey::Printable('x') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_thread_status_request("done")
+            }
+            DashboardKey::Printable('P') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_review_request(routes::reviews::APPROVE)
+            }
+            DashboardKey::Printable('J') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_review_request(routes::reviews::REQUEST_CHANGES)
+            }
+            DashboardKey::Printable('E') if self.screen == DashboardScreen::Coordination => {
+                self.selected_coordination_task_request(routes::tasks::REOPEN)
+            }
             DashboardKey::Printable('r') => DashboardControllerEffect::Render,
             DashboardKey::Enter => self.handle_subscreen_enter(snapshot),
             DashboardKey::Printable('?') => {
@@ -324,8 +359,219 @@ impl DashboardController {
                 self.footer_message = Some(path);
                 DashboardControllerEffect::Render
             }
+            DashboardSubscreenAction::Notification {
+                session_id: Some(session_id),
+                ..
+            } => {
+                let Some(session) = find_session(snapshot, &session_id) else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                match plan_dashboard_action(
+                    Some(DashboardEntryRef::Session(session)),
+                    DashboardActionKind::Enter,
+                ) {
+                    DashboardActionPlan::Request(request) => {
+                        DashboardControllerEffect::Request(request)
+                    }
+                    DashboardActionPlan::Blocked(message) => {
+                        self.footer_message = Some(message);
+                        DashboardControllerEffect::Render
+                    }
+                    DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+                }
+            }
+            DashboardSubscreenAction::Thread {
+                target_session_id: Some(session_id),
+                ..
+            } => {
+                let Some(session) = find_session(snapshot, &session_id) else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                match plan_dashboard_action(
+                    Some(DashboardEntryRef::Session(session)),
+                    DashboardActionKind::Enter,
+                ) {
+                    DashboardActionPlan::Request(request) => {
+                        DashboardControllerEffect::Request(request)
+                    }
+                    DashboardActionPlan::Blocked(message) => {
+                        self.footer_message = Some(message);
+                        DashboardControllerEffect::Render
+                    }
+                    DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+                }
+            }
             DashboardSubscreenAction::None => DashboardControllerEffect::Ignored,
+            DashboardSubscreenAction::Notification { .. }
+            | DashboardSubscreenAction::Thread { .. } => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn selected_subscreen_action(&self) -> DashboardSubscreenAction {
+        self.subscreen_actions
+            .get(self.subscreen_index)
+            .cloned()
+            .unwrap_or(DashboardSubscreenAction::None)
+    }
+
+    fn selected_coordination_notification_request(
+        &self,
+        path: &'static str,
+    ) -> DashboardControllerEffect {
+        let action = match self.selected_subscreen_action() {
+            DashboardSubscreenAction::Notification { session_id, ids } => {
+                Some(DashboardSubscreenAction::Notification { session_id, ids })
+            }
+            _ => None,
+        };
+        self.coordination_notification_request(path, action)
+    }
+
+    fn coordination_notification_request(
+        &self,
+        path: &'static str,
+        action: Option<DashboardSubscreenAction>,
+    ) -> DashboardControllerEffect {
+        let body = match action {
+            Some(DashboardSubscreenAction::Notification {
+                session_id: Some(session_id),
+                ..
+            }) => json!({ "sessionId": session_id }),
+            Some(DashboardSubscreenAction::Notification { ids, .. }) if !ids.is_empty() => {
+                json!({ "ids": ids })
+            }
+            Some(_) => return DashboardControllerEffect::Ignored,
+            None => json!({}),
+        };
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path,
+            body,
+        })
+    }
+
+    fn selected_coordination_accept_request(&self) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::Thread {
+                task_id: Some(task_id),
+                ..
+            } => self.coordination_task_request(routes::tasks::ACCEPT, task_id),
+            DashboardSubscreenAction::Thread {
+                thread_id,
+                thread_kind,
+                ..
+            } if thread_kind.as_deref() == Some("handoff") => {
+                self.coordination_thread_request(routes::handoff::ACCEPT, thread_id)
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn selected_coordination_complete_request(&self) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::Notification { .. } => {
+                self.selected_coordination_notification_request(routes::notifications::CLEAR)
+            }
+            DashboardSubscreenAction::Thread {
+                task_id: Some(task_id),
+                ..
+            } => self.coordination_task_request(routes::tasks::COMPLETE, task_id),
+            DashboardSubscreenAction::Thread {
+                thread_id,
+                thread_kind,
+                ..
+            } if thread_kind.as_deref() == Some("handoff") => {
+                self.coordination_thread_request(routes::handoff::COMPLETE, thread_id)
+            }
+            DashboardSubscreenAction::Thread { thread_id, .. } => {
+                self.coordination_thread_status_request(thread_id, "done")
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn selected_coordination_block_request(&self) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::Thread {
+                task_id: Some(task_id),
+                ..
+            } => self.coordination_task_request(routes::tasks::BLOCK, task_id),
+            DashboardSubscreenAction::Thread { thread_id, .. } => {
+                self.coordination_thread_status_request(thread_id, "blocked")
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn selected_coordination_thread_status_request(
+        &self,
+        status: &'static str,
+    ) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::Thread { thread_id, .. } => {
+                self.coordination_thread_status_request(thread_id, status)
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn selected_coordination_review_request(
+        &self,
+        path: &'static str,
+    ) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::Thread {
+                task_id: Some(task_id),
+                ..
+            } => self.coordination_task_request(path, task_id),
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn selected_coordination_task_request(&self, path: &'static str) -> DashboardControllerEffect {
+        match self.selected_subscreen_action() {
+            DashboardSubscreenAction::Thread {
+                task_id: Some(task_id),
+                ..
+            } => self.coordination_task_request(path, task_id),
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn coordination_task_request(
+        &self,
+        path: &'static str,
+        task_id: String,
+    ) -> DashboardControllerEffect {
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path,
+            body: json!({ "taskId": task_id, "from": "user" }),
+        })
+    }
+
+    fn coordination_thread_request(
+        &self,
+        path: &'static str,
+        thread_id: String,
+    ) -> DashboardControllerEffect {
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path,
+            body: json!({ "threadId": thread_id, "from": "user" }),
+        })
+    }
+
+    fn coordination_thread_status_request(
+        &self,
+        thread_id: String,
+        status: &'static str,
+    ) -> DashboardControllerEffect {
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::threads::STATUS,
+            body: json!({ "threadId": thread_id, "status": status }),
+        })
     }
 
     fn handle_tool_picker_key(
@@ -624,6 +870,16 @@ pub enum DashboardSubscreenAction {
     Session(String),
     Service(String),
     Path(String),
+    Notification {
+        session_id: Option<String>,
+        ids: Vec<String>,
+    },
+    Thread {
+        thread_id: String,
+        thread_kind: Option<String>,
+        task_id: Option<String>,
+        target_session_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
