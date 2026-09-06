@@ -2036,6 +2036,92 @@ pub fn parse_core_repair_args<S: AsRef<str>>(args: &[S]) -> Option<CoreRepairArg
     Some(parsed)
 }
 
+pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArgs> {
+    if args.first().map(AsRef::as_ref) != Some("doctor") {
+        return None;
+    }
+    let subcommand = match args.get(1).map(AsRef::as_ref) {
+        Some("disk" | "tmux") => args[1].as_ref().to_owned(),
+        _ => return None,
+    };
+    let mut parsed = CoreDoctorArgs {
+        subcommand,
+        project: None,
+        project_root: None,
+        session: None,
+        window_id: None,
+        include_active: false,
+        json: false,
+    };
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "disk" && arg == "--include-active" {
+            parsed.include_active = true;
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "disk" && arg == "--project" {
+            parsed.project = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "disk"
+            && let Some(value) = arg.strip_prefix("--project=")
+        {
+            parsed.project = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "tmux" && arg == "--project-root" {
+            parsed.project_root = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "tmux"
+            && let Some(value) = arg.strip_prefix("--project-root=")
+        {
+            parsed.project_root = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "tmux" && arg == "--session" {
+            parsed.session = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "tmux"
+            && let Some(value) = arg.strip_prefix("--session=")
+        {
+            parsed.session = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if parsed.subcommand == "tmux" && arg == "--window-id" {
+            parsed.window_id = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "tmux"
+            && let Some(value) = arg.strip_prefix("--window-id=")
+        {
+            if value.is_empty() {
+                return None;
+            }
+            parsed.window_id = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(parsed)
+}
+
 pub fn parse_core_project_ensure_args<S: AsRef<str>>(args: &[S]) -> Option<CoreProjectEnsureArgs> {
     if args.first().map(AsRef::as_ref) != Some("daemon")
         || args.get(1).map(AsRef::as_ref) != Some("project-ensure")
@@ -2575,6 +2661,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("daemon"), Some("restart")) => parse_core_daemon_restart_args(args).is_some(),
         (Some("daemon"), Some("project-ensure")) => true,
         (Some("doctor"), Some("versions")) => has_only_allowed_flags(&args[2..], &["--json"]),
+        (Some("doctor"), Some("disk" | "tmux")) => parse_core_doctor_args(args).is_some(),
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),
         (Some("repair"), _) => parse_core_repair_args(args).is_some(),
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),

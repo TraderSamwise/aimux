@@ -3,7 +3,7 @@ use crate::core_cli_routing::{
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_collaboration_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_graveyard_args,
+    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
@@ -90,6 +90,8 @@ pub enum CoreCliOperation {
     Metadata,
     Repair,
     RepairExchange,
+    DoctorDisk,
+    DoctorTmux,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -685,6 +687,51 @@ fn metadata_text_path(project: &str, args: &[String]) -> String {
     for arg in args {
         path.push_str("&arg=");
         path.push_str(&encode_query_component(arg));
+    }
+    path
+}
+
+fn push_text_query(path: &mut String, name: &str, value: &str) {
+    if path.contains('?') {
+        path.push('&');
+    } else {
+        path.push('?');
+    }
+    path.push_str(name);
+    path.push('=');
+    path.push_str(&encode_query_component(value));
+}
+
+fn doctor_disk_text_path(project: Option<&str>, include_active: bool, json: bool) -> String {
+    let mut path = CORE_API_ROUTES.doctor_disk_text.to_owned();
+    if let Some(project) = project {
+        push_text_query(&mut path, "project", project);
+    }
+    if include_active {
+        push_text_query(&mut path, "includeActive", "1");
+    }
+    if json {
+        push_text_query(&mut path, "json", "1");
+    }
+    path
+}
+
+fn doctor_tmux_text_path(
+    project_root: &str,
+    session: Option<&str>,
+    window_id: Option<&str>,
+    json: bool,
+) -> String {
+    let mut path = CORE_API_ROUTES.doctor_tmux_text.to_owned();
+    push_text_query(&mut path, "projectRoot", project_root);
+    if let Some(session) = session {
+        push_text_query(&mut path, "session", session);
+    }
+    if let Some(window_id) = window_id {
+        push_text_query(&mut path, "windowId", window_id);
+    }
+    if json {
+        push_text_query(&mut path, "json", "1");
     }
     path
 }
@@ -1812,6 +1859,43 @@ where
             },
             CoreCliFallback::None,
         ),
+        ("doctor", "disk" | "tmux") => {
+            let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
+            if parsed.subcommand == "disk" {
+                let project_root = parsed.project.as_deref().map(&resolve_project_root);
+                (
+                    CoreCliOperation::DoctorDisk,
+                    CoreCliAction::TextRoute {
+                        path: doctor_disk_text_path(
+                            project_root.as_deref(),
+                            parsed.include_active,
+                            parsed.json,
+                        ),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            } else {
+                let project_root = parsed
+                    .project_root
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::DoctorTmux,
+                    CoreCliAction::TextRoute {
+                        path: doctor_tmux_text_path(
+                            &project_root,
+                            parsed.session.as_deref(),
+                            parsed.window_id.as_deref(),
+                            parsed.json,
+                        ),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            }
+        }
         ("metadata", _) => {
             let parsed = parse_core_metadata_args(&args).expect("eligible metadata must parse");
             (

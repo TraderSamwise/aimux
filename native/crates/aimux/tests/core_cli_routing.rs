@@ -1,15 +1,15 @@
 use aimux::core_cli_routing::{
     CoreAgentInputArgs, CoreAgentPsArgs, CoreCollaborationArgs, CoreDaemonRestartArgs,
-    CoreGraveyardArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs,
-    CoreLogsArgs, CoreLogsSubcommand, CoreMetadataArgs, CoreNotificationArgs,
+    CoreDoctorArgs, CoreGraveyardArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs,
+    CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand, CoreMetadataArgs, CoreNotificationArgs,
     CoreProjectEnsureArgs, CoreRepairArgs, CoreRestartArgs, CoreTaskArgs, CoreThreadArgs,
     CoreWorktreeArgs, core_command_args, has_core_global_logging_args, is_core_cli_command,
     is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_input_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_collaboration_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_graveyard_args, parse_core_host_agent_read_args,
-    parse_core_host_agent_stream_args, parse_core_host_restart_args,
-    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
     parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
@@ -243,6 +243,57 @@ fn metadata_and_repair_parsers_match_commander_compatible_forms() {
         None
     );
     assert_eq!(parse_core_repair_args(&["repair", "--project-root"]), None);
+}
+
+#[test]
+fn doctor_disk_and_tmux_parsers_match_cli_forms() {
+    assert_eq!(
+        parse_core_doctor_args(&[
+            "doctor",
+            "disk",
+            "--project=./child",
+            "--include-active",
+            "--json",
+        ]),
+        Some(CoreDoctorArgs {
+            subcommand: "disk".into(),
+            project: Some("./child".into()),
+            project_root: None,
+            session: None,
+            window_id: None,
+            include_active: true,
+            json: true,
+        })
+    );
+    assert_eq!(
+        parse_core_doctor_args(&[
+            "doctor",
+            "tmux",
+            "--project-root",
+            "./child",
+            "--session",
+            "aimux-repo",
+            "--window-id=@1",
+            "--json",
+        ]),
+        Some(CoreDoctorArgs {
+            subcommand: "tmux".into(),
+            project: None,
+            project_root: Some("./child".into()),
+            session: Some("aimux-repo".into()),
+            window_id: Some("@1".into()),
+            include_active: false,
+            json: true,
+        })
+    );
+    assert_eq!(
+        parse_core_doctor_args(&["doctor", "disk", "--session", "x"]),
+        None
+    );
+    assert_eq!(
+        parse_core_doctor_args(&["doctor", "tmux", "--project-root", "-repo"]),
+        None
+    );
 }
 
 #[test]

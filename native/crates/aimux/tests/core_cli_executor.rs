@@ -435,11 +435,39 @@ fn doctor_versions_executes_daemon_text_route() {
         serde_json::from_str::<Value>(&json.stdout[0]).expect("doctor json"),
         json!({ "generatedAt": "now", "projects": [] })
     );
+    let disk = run_core_cli_with(
+        &args(&["doctor", "disk", "--project=/repo", "--include-active"]),
+        &mut runtime,
+    );
+    assert_eq!(disk.code, 0);
+    assert_eq!(disk.stdout, ["Runtime Coherence\n  ok"]);
+
+    let tmux = run_core_cli_with(
+        &args(&[
+            "doctor",
+            "tmux",
+            "--project-root=/repo",
+            "--session=aimux-repo",
+            "--window-id=@1",
+        ]),
+        &mut runtime,
+    );
+    assert_eq!(tmux.code, 0);
+    assert_eq!(tmux.stdout, ["Runtime Coherence\n  ok"]);
     assert_eq!(
         runtime.text_routes,
         [
             ("/core/doctor/versions-text".into(), None),
-            ("/core/doctor/versions-text?json=1".into(), None)
+            ("/core/doctor/versions-text?json=1".into(), None),
+            (
+                "/core/doctor/disk-text?project=%2Frepo&includeActive=1".into(),
+                None,
+            ),
+            (
+                "/core/doctor/tmux-text?projectRoot=%2Frepo&session=aimux-repo&windowId=%401"
+                    .into(),
+                None,
+            ),
         ]
     );
     assert!(runtime.commands.is_empty());

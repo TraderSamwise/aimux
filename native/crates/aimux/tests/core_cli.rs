@@ -904,6 +904,66 @@ fn metadata_and_repair_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
+    let disk = classify_core_cli_with_project_resolver(
+        &[
+            "doctor",
+            "disk",
+            "--project",
+            "./child",
+            "--include-active",
+            "--json",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("doctor disk plan");
+    assert_eq!(disk.operation, CoreCliOperation::DoctorDisk);
+    assert_eq!(
+        disk.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/disk-text?project=%2Fresolved%2F.%2Fchild&includeActive=1&json=1"
+                .into(),
+            body: None,
+        }
+    );
+
+    let disk_all = classify_core_cli(&["doctor", "disk"], &context(true, true))
+        .expect("doctor disk all projects plan");
+    assert_eq!(
+        disk_all.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/disk-text".into(),
+            body: None,
+        }
+    );
+
+    let tmux = classify_core_cli_with_project_resolver(
+        &[
+            "doctor",
+            "tmux",
+            "--project-root=./child",
+            "--session",
+            "aimux-repo",
+            "--window-id",
+            "@1",
+            "--json",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("doctor tmux plan");
+    assert_eq!(tmux.operation, CoreCliOperation::DoctorTmux);
+    assert_eq!(
+        tmux.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/tmux-text?projectRoot=%2Fresolved%2F.%2Fchild&session=aimux-repo&windowId=%401&json=1".into(),
+            body: None,
+        }
+    );
+}
+
+#[test]
 fn agent_ps_plans_native_text_route_with_project_resolution() {
     let plan = classify_core_cli_with_project_resolver(
         &["ps", "--project", "./child dir", "--json"],
