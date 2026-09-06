@@ -148,6 +148,13 @@ Priority fixture groups:
   captured by running TypeScript `buildRuntimeCoherenceReport` with mocked
   runtime dependencies.
 
+## Runtime Migration
+
+- `runtime-migration/migration.json`: report, explicit import, rollback,
+  corrupt legacy file, global agent-dir copy avoidance, and blocked existing
+  exchange behavior captured by running TypeScript `runtime-migration` helpers
+  against temporary repositories.
+
 ## Statusline
 
 - `statusline/model.json`: statusline helper, scoped-session, teammate,

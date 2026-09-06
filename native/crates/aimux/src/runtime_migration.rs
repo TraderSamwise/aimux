@@ -900,8 +900,16 @@ fn push_json_diagnostic(
             severity: RuntimeMigrationDiagnosticSeverity::Error,
             kind,
             path: path_string(path),
-            message: format!("invalid JSON: {error}"),
+            message: format!("invalid JSON: {}", typescript_json_error(&error)),
         }),
+    }
+}
+
+fn typescript_json_error(error: &str) -> &str {
+    if error == "key must be a string at line 1 column 2" {
+        "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+    } else {
+        error
     }
 }
 

@@ -1,0 +1,448 @@
+{
+  "version": 1,
+  "source": "src/runtime-migration.test.ts",
+  "generatedBy": "scripts/capture-runtime-migration-fixture-contract.mjs",
+  "description": "Runtime migration report, import, rollback, and blocked-import contracts captured by running TypeScript migration helpers.",
+  "cases": [
+    {
+      "id": "runtime-migration-001",
+      "name": "does not copy legacy global agent-facing dirs during path initialization",
+      "source": "src/runtime-migration.test.ts",
+      "input": { "scenario": "global-history-report", "now": "2026-05-26T00:00:00.000Z" },
+      "output": {
+        "localHistoryExists": false,
+        "report": {
+          "version": 1,
+          "generatedAt": "2026-05-26T00:00:00.000Z",
+          "status": "needs_import",
+          "project": {
+            "repoRoot": "<repo>",
+            "projectId": "<project-id>",
+            "projectStateDir": "<home>/projects/<project-id>",
+            "localAimuxDir": "<repo>/.aimux"
+          },
+          "authority": {
+            "runtimeTopologyPath": "<home>/projects/<project-id>/runtime-topology.yaml",
+            "runtimeExchangePath": "<home>/projects/<project-id>/runtime-exchange.yaml",
+            "note": "runtime-topology.yaml and runtime-exchange.yaml are authoritative; legacy files are imported only by this explicit command."
+          },
+          "legacy": {
+            "legacy-context": 0,
+            "legacy-history": 1,
+            "legacy-status": 0,
+            "legacy-thread": 0,
+            "legacy-message-log": 0,
+            "legacy-task": 0,
+            "legacy-plan": 0,
+            "legacy-recording": 0,
+            "legacy-attachment": 0,
+            "runtime-topology": 0,
+            "runtime-exchange": 0,
+            "saved-state": 0,
+            "metadata": 0
+          },
+          "diagnostics": []
+        }
+      },
+      "inputSha256": "7c874f18fba7f893b06e4a77df6196dc294e4f8b45ce9d672ef1a8576f6e163b"
+    },
+    {
+      "id": "runtime-migration-002",
+      "name": "reports corrupt legacy files and blocks import",
+      "source": "src/runtime-migration.test.ts",
+      "input": { "scenario": "corrupt-legacy-thread", "now": "2026-05-26T00:00:00.000Z" },
+      "output": {
+        "report": {
+          "version": 1,
+          "generatedAt": "2026-05-26T00:00:00.000Z",
+          "status": "blocked",
+          "project": {
+            "repoRoot": "<repo>",
+            "projectId": "<project-id>",
+            "projectStateDir": "<home>/projects/<project-id>",
+            "localAimuxDir": "<repo>/.aimux"
+          },
+          "authority": {
+            "runtimeTopologyPath": "<home>/projects/<project-id>/runtime-topology.yaml",
+            "runtimeExchangePath": "<home>/projects/<project-id>/runtime-exchange.yaml",
+            "note": "runtime-topology.yaml and runtime-exchange.yaml are authoritative; legacy files are imported only by this explicit command."
+          },
+          "legacy": {
+            "legacy-context": 0,
+            "legacy-history": 0,
+            "legacy-status": 0,
+            "legacy-thread": 1,
+            "legacy-message-log": 0,
+            "legacy-task": 0,
+            "legacy-plan": 0,
+            "legacy-recording": 0,
+            "legacy-attachment": 0,
+            "runtime-topology": 0,
+            "runtime-exchange": 0,
+            "saved-state": 0,
+            "metadata": 0
+          },
+          "diagnostics": [
+            {
+              "severity": "error",
+              "kind": "legacy-thread",
+              "path": "<repo>/.aimux/threads/thread-1.json",
+              "message": "invalid JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+            }
+          ]
+        },
+        "importError": "runtime migration blocked by 1 diagnostic error(s)"
+      },
+      "inputSha256": "1d6d19b02ffd711225099ed345649cb3aff996367990a24d7c5361d2db695778"
+    },
+    {
+      "id": "runtime-migration-003",
+      "name": "imports legacy exchange refs explicitly and writes a rollback manifest",
+      "source": "src/runtime-migration.test.ts",
+      "input": { "scenario": "import-and-rollback", "now": "2026-05-26T00:00:00.000Z" },
+      "output": {
+        "import": {
+          "exchange": {
+            "version": 1,
+            "generatedAt": "2026-05-26T00:00:00.000Z",
+            "threads": [
+              {
+                "id": "thread-1",
+                "title": "Task",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "2026-05-26T00:00:00.000Z",
+                "updatedAt": "2026-05-26T00:00:00.000Z",
+                "createdBy": "user",
+                "participants": ["user", "codex-1"]
+              }
+            ],
+            "messages": [],
+            "tasks": [
+              {
+                "id": "task-1",
+                "status": "pending",
+                "assignedBy": "user",
+                "threadId": "thread-1",
+                "description": "Do task",
+                "prompt": "Do task",
+                "createdAt": "2026-05-26T00:00:00.000Z",
+                "updatedAt": "2026-05-26T00:00:00.000Z"
+              }
+            ],
+            "handoffs": [],
+            "reviews": [],
+            "waits": [],
+            "inbox": [],
+            "planRefs": [],
+            "continuityRefs": [
+              {
+                "id": "history:codex-1:codex-1.jsonl",
+                "kind": "history",
+                "path": "<home>/projects/<project-id>/history/codex-1.jsonl",
+                "sessionId": "codex-1",
+                "createdAt": "2026-05-26T00:00:00.000Z",
+                "updatedAt": "2026-05-26T00:00:00.000Z"
+              }
+            ],
+            "attachmentRefs": []
+          },
+          "manifest": {
+            "version": 1,
+            "generatedAt": "2026-05-26T00:00:00.000Z",
+            "report": {
+              "version": 1,
+              "generatedAt": "2026-05-26T00:00:00.000Z",
+              "status": "needs_import",
+              "project": {
+                "repoRoot": "<repo>",
+                "projectId": "<project-id>",
+                "projectStateDir": "<home>/projects/<project-id>",
+                "localAimuxDir": "<repo>/.aimux"
+              },
+              "authority": {
+                "runtimeTopologyPath": "<home>/projects/<project-id>/runtime-topology.yaml",
+                "runtimeExchangePath": "<home>/projects/<project-id>/runtime-exchange.yaml",
+                "note": "runtime-topology.yaml and runtime-exchange.yaml are authoritative; legacy files are imported only by this explicit command."
+              },
+              "legacy": {
+                "legacy-context": 0,
+                "legacy-history": 1,
+                "legacy-status": 0,
+                "legacy-thread": 1,
+                "legacy-message-log": 0,
+                "legacy-task": 1,
+                "legacy-plan": 0,
+                "legacy-recording": 0,
+                "legacy-attachment": 0,
+                "runtime-topology": 0,
+                "runtime-exchange": 1,
+                "saved-state": 0,
+                "metadata": 0
+              },
+              "diagnostics": []
+            },
+            "backups": [
+              {
+                "kind": "runtime-exchange",
+                "source": "<home>/projects/<project-id>/runtime-exchange.yaml",
+                "backup": "<home>/projects/<project-id>/migration-backups/2026-05-26T00-00-00-000Z/runtime-exchange.yaml"
+              }
+            ],
+            "copiedDirs": [
+              {
+                "kind": "legacy-history",
+                "source": "<home>/projects/<project-id>/history",
+                "target": "<repo>/.aimux/history"
+              }
+            ],
+            "copiedFiles": [
+              {
+                "kind": "legacy-history",
+                "source": "<home>/projects/<project-id>/history/codex-1.jsonl",
+                "target": "<repo>/.aimux/history/codex-1.jsonl"
+              }
+            ],
+            "wrote": [{ "kind": "runtime-exchange", "path": "<home>/projects/<project-id>/runtime-exchange.yaml" }]
+          }
+        },
+        "beforeRollback": {
+          "copiedHistoryExists": true,
+          "manifestExists": true,
+          "backupContainsOriginalGeneratedAt": true
+        },
+        "rollback": {
+          "version": 1,
+          "generatedAt": "2026-05-26T00:00:00.000Z",
+          "report": {
+            "version": 1,
+            "generatedAt": "2026-05-26T00:00:00.000Z",
+            "status": "needs_import",
+            "project": {
+              "repoRoot": "<repo>",
+              "projectId": "<project-id>",
+              "projectStateDir": "<home>/projects/<project-id>",
+              "localAimuxDir": "<repo>/.aimux"
+            },
+            "authority": {
+              "runtimeTopologyPath": "<home>/projects/<project-id>/runtime-topology.yaml",
+              "runtimeExchangePath": "<home>/projects/<project-id>/runtime-exchange.yaml",
+              "note": "runtime-topology.yaml and runtime-exchange.yaml are authoritative; legacy files are imported only by this explicit command."
+            },
+            "legacy": {
+              "legacy-context": 0,
+              "legacy-history": 1,
+              "legacy-status": 0,
+              "legacy-thread": 1,
+              "legacy-message-log": 0,
+              "legacy-task": 1,
+              "legacy-plan": 0,
+              "legacy-recording": 0,
+              "legacy-attachment": 0,
+              "runtime-topology": 0,
+              "runtime-exchange": 1,
+              "saved-state": 0,
+              "metadata": 0
+            },
+            "diagnostics": []
+          },
+          "backups": [
+            {
+              "kind": "runtime-exchange",
+              "source": "<home>/projects/<project-id>/runtime-exchange.yaml",
+              "backup": "<home>/projects/<project-id>/migration-backups/2026-05-26T00-00-00-000Z/runtime-exchange.yaml"
+            }
+          ],
+          "copiedDirs": [
+            {
+              "kind": "legacy-history",
+              "source": "<home>/projects/<project-id>/history",
+              "target": "<repo>/.aimux/history"
+            }
+          ],
+          "copiedFiles": [
+            {
+              "kind": "legacy-history",
+              "source": "<home>/projects/<project-id>/history/codex-1.jsonl",
+              "target": "<repo>/.aimux/history/codex-1.jsonl"
+            }
+          ],
+          "wrote": [{ "kind": "runtime-exchange", "path": "<home>/projects/<project-id>/runtime-exchange.yaml" }]
+        },
+        "afterRollback": {
+          "copiedHistoryExists": false,
+          "postImportHistoryExists": true,
+          "runtimeExchangeGeneratedAt": "2026-05-26T00:00:00.000Z"
+        }
+      },
+      "inputSha256": "ada2331222c803cd4f87f9e717ec1d26abf159f0bf4d1027c5b651bcbac5d690"
+    },
+    {
+      "id": "runtime-migration-004",
+      "name": "rollback removes imported runtime exchange when no backup existed",
+      "source": "src/runtime-migration.test.ts",
+      "input": { "scenario": "rollback-no-backup", "now": "2026-05-26T00:00:00.000Z" },
+      "output": {
+        "import": {
+          "exchange": {
+            "version": 1,
+            "generatedAt": "2026-05-26T00:00:00.000Z",
+            "threads": [
+              {
+                "id": "thread-1",
+                "title": "Task",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "2026-05-26T00:00:00.000Z",
+                "updatedAt": "2026-05-26T00:00:00.000Z",
+                "createdBy": "user",
+                "participants": ["user", "codex-1"]
+              }
+            ],
+            "messages": [],
+            "tasks": [],
+            "handoffs": [],
+            "reviews": [],
+            "waits": [],
+            "inbox": [],
+            "planRefs": [],
+            "continuityRefs": [],
+            "attachmentRefs": []
+          },
+          "manifest": {
+            "version": 1,
+            "generatedAt": "2026-05-26T00:00:00.000Z",
+            "report": {
+              "version": 1,
+              "generatedAt": "2026-05-26T00:00:00.000Z",
+              "status": "needs_import",
+              "project": {
+                "repoRoot": "<repo>",
+                "projectId": "<project-id>",
+                "projectStateDir": "<home>/projects/<project-id>",
+                "localAimuxDir": "<repo>/.aimux"
+              },
+              "authority": {
+                "runtimeTopologyPath": "<home>/projects/<project-id>/runtime-topology.yaml",
+                "runtimeExchangePath": "<home>/projects/<project-id>/runtime-exchange.yaml",
+                "note": "runtime-topology.yaml and runtime-exchange.yaml are authoritative; legacy files are imported only by this explicit command."
+              },
+              "legacy": {
+                "legacy-context": 0,
+                "legacy-history": 0,
+                "legacy-status": 0,
+                "legacy-thread": 1,
+                "legacy-message-log": 0,
+                "legacy-task": 0,
+                "legacy-plan": 0,
+                "legacy-recording": 0,
+                "legacy-attachment": 0,
+                "runtime-topology": 0,
+                "runtime-exchange": 0,
+                "saved-state": 0,
+                "metadata": 0
+              },
+              "diagnostics": []
+            },
+            "backups": [],
+            "copiedDirs": [],
+            "copiedFiles": [],
+            "wrote": [{ "kind": "runtime-exchange", "path": "<home>/projects/<project-id>/runtime-exchange.yaml" }]
+          }
+        },
+        "exchangeExistsBeforeRollback": true,
+        "rollback": {
+          "version": 1,
+          "generatedAt": "2026-05-26T00:00:00.000Z",
+          "report": {
+            "version": 1,
+            "generatedAt": "2026-05-26T00:00:00.000Z",
+            "status": "needs_import",
+            "project": {
+              "repoRoot": "<repo>",
+              "projectId": "<project-id>",
+              "projectStateDir": "<home>/projects/<project-id>",
+              "localAimuxDir": "<repo>/.aimux"
+            },
+            "authority": {
+              "runtimeTopologyPath": "<home>/projects/<project-id>/runtime-topology.yaml",
+              "runtimeExchangePath": "<home>/projects/<project-id>/runtime-exchange.yaml",
+              "note": "runtime-topology.yaml and runtime-exchange.yaml are authoritative; legacy files are imported only by this explicit command."
+            },
+            "legacy": {
+              "legacy-context": 0,
+              "legacy-history": 0,
+              "legacy-status": 0,
+              "legacy-thread": 1,
+              "legacy-message-log": 0,
+              "legacy-task": 0,
+              "legacy-plan": 0,
+              "legacy-recording": 0,
+              "legacy-attachment": 0,
+              "runtime-topology": 0,
+              "runtime-exchange": 0,
+              "saved-state": 0,
+              "metadata": 0
+            },
+            "diagnostics": []
+          },
+          "backups": [],
+          "copiedDirs": [],
+          "copiedFiles": [],
+          "wrote": [{ "kind": "runtime-exchange", "path": "<home>/projects/<project-id>/runtime-exchange.yaml" }]
+        },
+        "exchangeExistsAfterRollback": false
+      },
+      "inputSha256": "02d7ff518550f219e00ee4d32fa48b30694233542f0cc0c6f8ccdedd98ec1e2e"
+    },
+    {
+      "id": "runtime-migration-005",
+      "name": "blocks import when authoritative runtime exchange already has records",
+      "source": "src/runtime-migration.test.ts",
+      "input": { "scenario": "blocked-existing-exchange", "now": "2026-05-26T00:00:00.000Z" },
+      "output": {
+        "report": {
+          "version": 1,
+          "generatedAt": "2026-05-26T00:00:00.000Z",
+          "status": "blocked",
+          "project": {
+            "repoRoot": "<repo>",
+            "projectId": "<project-id>",
+            "projectStateDir": "<home>/projects/<project-id>",
+            "localAimuxDir": "<repo>/.aimux"
+          },
+          "authority": {
+            "runtimeTopologyPath": "<home>/projects/<project-id>/runtime-topology.yaml",
+            "runtimeExchangePath": "<home>/projects/<project-id>/runtime-exchange.yaml",
+            "note": "runtime-topology.yaml and runtime-exchange.yaml are authoritative; legacy files are imported only by this explicit command."
+          },
+          "legacy": {
+            "legacy-context": 0,
+            "legacy-history": 0,
+            "legacy-status": 0,
+            "legacy-thread": 1,
+            "legacy-message-log": 0,
+            "legacy-task": 0,
+            "legacy-plan": 0,
+            "legacy-recording": 0,
+            "legacy-attachment": 0,
+            "runtime-topology": 0,
+            "runtime-exchange": 1,
+            "saved-state": 0,
+            "metadata": 0
+          },
+          "diagnostics": [
+            {
+              "severity": "error",
+              "kind": "runtime-exchange",
+              "path": "<home>/projects/<project-id>/runtime-exchange.yaml",
+              "message": "runtime-exchange.yaml already contains authoritative records; migration import would overwrite them"
+            }
+          ]
+        },
+        "importError": "runtime migration blocked by 1 diagnostic error(s)"
+      },
+      "inputSha256": "86191dfea2aa3ac0d444e98f30866238fdba12c5bfaa6d96d4946cfd6ca6a1bb"
+    }
+  ]
+}
