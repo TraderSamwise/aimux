@@ -194,7 +194,7 @@ fn router_publishes_runtime_notify_alert_before_route_update() {
     assert_eq!(response.body, json!({ "ok": true }));
 
     let events = context.project_events.events_since(0, None);
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 2);
     assert_eq!(events[0].event["type"], "alert");
     assert_eq!(events[0].event["kind"], "blocked");
     assert_eq!(events[0].event["sessionId"], "codex-1");
@@ -210,17 +210,6 @@ fn router_publishes_runtime_notify_alert_before_route_update() {
     assert_eq!(events[1].event["sessionId"], "codex-1");
     assert_eq!(
         events[1].event["views"],
-        json!([
-            "coordination-worklist",
-            "notifications",
-            "project-observability"
-        ])
-    );
-    assert_eq!(events[2].event["type"], "project_update");
-    assert_eq!(events[2].event["reason"], "POST /notify");
-    assert!(events[2].event.get("sessionId").is_none());
-    assert_eq!(
-        events[2].event["views"],
         json!([
             "coordination-worklist",
             "notifications",

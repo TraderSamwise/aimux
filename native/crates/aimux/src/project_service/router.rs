@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
-use crate::project_api_contract::project_api_views_for_mutation_route;
+use crate::project_api_contract::{project_api_views_for_mutation_route, routes};
 
 use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
@@ -221,6 +221,9 @@ fn publish_project_update_for_response(
         return;
     }
     let pathname = super::dispatcher::project_service_pathname(path);
+    if method == "POST" && pathname == routes::runtime::NOTIFY {
+        return;
+    }
     if project_api_views_for_mutation_route(method, pathname).is_none() {
         return;
     }
