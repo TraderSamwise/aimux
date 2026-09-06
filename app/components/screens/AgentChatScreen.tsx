@@ -106,6 +106,7 @@ import {
   chatVisibleTranscriptMessages,
   type ChatVisibleTranscript,
 } from "@/lib/chat-visible-transcript";
+import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
@@ -471,6 +472,7 @@ export default function ChatScreen() {
     shareId?: string | string[];
   }>();
   const routeOwnerUserId = singleRouteParam(params.ownerUserId);
+  const routeFocusToken = singleRouteParam(params.focusToken) ?? "";
   const sessionId = singleRouteParam(params.sessionId);
   const routeShareId = singleRouteParam(params.shareId);
   const sessionKey = sessionId ?? "";
@@ -523,6 +525,12 @@ export default function ChatScreen() {
   } | null>(null);
   const activeShareForRoute =
     activeShare && activeShare.sessionId === sessionId ? activeShare : null;
+  const chatViewportKey = chatViewportKeyForRoute({
+    focusToken: routeFocusToken,
+    projectPath: stateProjectPath,
+    sessionKey,
+    share: activeShareForRoute,
+  });
   const isCanonicalSharedRoute = Boolean(
     pathname.startsWith("/shares/") && routeOwnerUserId && routeShareId && sessionId,
   );
@@ -1432,9 +1440,12 @@ export default function ChatScreen() {
           <ComposerFocusShell
             dragging={dragging}
             sending={sendBusy || composerAwaitingAck}
-            onLayout={(event: LayoutChangeEvent) =>
-              setComposerWidth(event.nativeEvent.layout.width)
-            }
+            onLayout={(event: LayoutChangeEvent) => {
+              const nextWidth = event.nativeEvent.layout.width;
+              setComposerWidth((currentWidth) =>
+                currentWidth === nextWidth ? currentWidth : nextWidth,
+              );
+            }}
           >
             {({ onBlur, onFocus }) => (
               <>
@@ -2020,15 +2031,17 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-              <AgentChatSessionViewport
-                key={sessionKey}
-                allMessages={allMessages}
-                composerFooter={composerFooter}
-                dividerWidth={chatDividerWidth}
-                ref={chatViewportRef}
-                serviceEndpoint={displayServiceEndpoint}
-                sessionKey={sessionKey}
-              />
+              <View className="flex-1 bg-background">
+                <AgentChatSessionViewport
+                  key={chatViewportKey}
+                  allMessages={allMessages}
+                  dividerWidth={chatDividerWidth}
+                  ref={chatViewportRef}
+                  serviceEndpoint={displayServiceEndpoint}
+                  sessionKey={sessionKey}
+                />
+                {composerFooter}
+              </View>
             )}
           </View>
         </View>
@@ -2041,13 +2054,12 @@ const AgentChatSessionViewport = React.forwardRef<
   ChatSessionViewportHandle,
   {
     allMessages: readonly ChatMessage[];
-    composerFooter: React.ReactNode;
     dividerWidth: number;
     serviceEndpoint: ServiceEndpoint;
     sessionKey: string;
   }
 >(function AgentChatSessionViewport(
-  { allMessages, composerFooter, dividerWidth, serviceEndpoint, sessionKey },
+  { allMessages, dividerWidth, serviceEndpoint, sessionKey },
   ref,
 ) {
   const liveChatTranscript = useMemo(
@@ -2279,7 +2291,6 @@ const AgentChatSessionViewport = React.forwardRef<
       {__DEV__ && chatScrollDebugSnapshot ? (
         <ChatScrollDebugOverlay snapshot={chatScrollDebugSnapshot} />
       ) : null}
-      {composerFooter}
     </View>
   );
 });
@@ -2313,53 +2324,71 @@ function ChatScrollDebugOverlay({ snapshot }: { snapshot: ChatScrollDebugSnapsho
   );
 }
 
-const AgentChatTranscript = React.forwardRef<
-  ChatScrollHandle,
-  {
-    dividerWidth: number;
-    messages: readonly ChatMessage[];
-    onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
-    onLayout: (event: LayoutChangeEvent) => void;
-    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-    serviceEndpoint: ServiceEndpoint;
-  }
->(function AgentChatTranscript(
-  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
-  ref,
-) {
-  const content =
-    messages.length === 0 ? null : (
-      <View className="w-full gap-1">
-        {messages.map((message, index) => (
-          <View
-            key={message.id ?? message.clientMessageId ?? `message:${index}`}
-            style={{ flexShrink: 0 }}
-          >
-            <MessageBlock
-              dividerWidth={dividerWidth}
-              message={message}
-              serviceEndpoint={serviceEndpoint}
-            />
-          </View>
-        ))}
-      </View>
-    );
-  const contentContainerStyle = {
-    flexGrow: 1,
-    justifyContent: "flex-end" as const,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 18,
-  };
+type AgentChatTranscriptProps = {
+  dividerWidth: number;
+  messages: readonly ChatMessage[];
+  onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
+  onLayout: (event: LayoutChangeEvent) => void;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  serviceEndpoint: ServiceEndpoint;
+};
 
-  if (Platform.OS !== "web") {
+const AgentChatTranscript = React.memo(
+  React.forwardRef<ChatScrollHandle, AgentChatTranscriptProps>(function AgentChatTranscript(
+    { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
+    ref,
+  ) {
+    const content =
+      messages.length === 0 ? null : (
+        <View className="w-full gap-1">
+          {messages.map((message, index) => (
+            <View
+              key={message.id ?? message.clientMessageId ?? `message:${index}`}
+              style={{ flexShrink: 0 }}
+            >
+              <MessageBlock
+                dividerWidth={dividerWidth}
+                message={message}
+                serviceEndpoint={serviceEndpoint}
+              />
+            </View>
+          ))}
+        </View>
+      );
+    const contentContainerStyle = {
+      flexGrow: 1,
+      justifyContent: "flex-end" as const,
+      paddingHorizontal: 16,
+      paddingTop: 16,
+      paddingBottom: 18,
+    };
+
+    if (Platform.OS !== "web") {
+      return (
+        <KeyboardChatScrollView
+          ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+          className="flex-1 bg-background"
+          contentContainerStyle={contentContainerStyle}
+          keyboardDismissMode="interactive"
+          keyboardLiftBehavior="whenAtEnd"
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={onContentSizeChange}
+          onLayout={onLayout}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator
+        >
+          {content}
+        </KeyboardChatScrollView>
+      );
+    }
+
     return (
-      <KeyboardChatScrollView
-        ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+      <ScrollView
+        ref={ref as React.Ref<ScrollView>}
         className="flex-1 bg-background"
         contentContainerStyle={contentContainerStyle}
-        keyboardDismissMode="interactive"
-        keyboardLiftBehavior="whenAtEnd"
+        keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={onContentSizeChange}
         onLayout={onLayout}
@@ -2368,27 +2397,11 @@ const AgentChatTranscript = React.forwardRef<
         showsVerticalScrollIndicator
       >
         {content}
-      </KeyboardChatScrollView>
+      </ScrollView>
     );
-  }
-
-  return (
-    <ScrollView
-      ref={ref as React.Ref<ScrollView>}
-      className="flex-1 bg-background"
-      contentContainerStyle={contentContainerStyle}
-      keyboardDismissMode="on-drag"
-      keyboardShouldPersistTaps="handled"
-      onContentSizeChange={onContentSizeChange}
-      onLayout={onLayout}
-      onScroll={onScroll}
-      scrollEventThrottle={16}
-      showsVerticalScrollIndicator
-    >
-      {content}
-    </ScrollView>
-  );
-});
+  }),
+);
+AgentChatTranscript.displayName = "AgentChatTranscript";
 
 function ComposerFocusShell({
   children,
