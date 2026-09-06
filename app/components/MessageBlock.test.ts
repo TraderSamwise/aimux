@@ -329,6 +329,45 @@ describe("MessageBlock table text", () => {
       { kind: "text", text: "After" },
     ]);
   });
+
+  it("does not promote vertical-only box glyph output to a table", () => {
+    expect(
+      splitMarkdownTableSegments(
+        [
+          "299 +fn footer_hint_text(input:",
+          "&DashboardRenderInput<'_>) -> String {",
+          "300 +  if !input.snapshot.",
+          "worktree_groups.is_empty() &&",
+          "input.nav_level == DashboardNavLevel:",
+          ":Worktrees {",
+          '301 +    return "↑↓/jk worktrees [1-9]',
+          "worktree [Enter/→/l] step in [Tab] details [n]",
+          'agent [v] service [q] quit"',
+          "302 +  }",
+          "│││││  ││ ││││││││",
+          "│││││  ││ ││││││││",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        kind: "text",
+        text: [
+          "299 +fn footer_hint_text(input:",
+          "&DashboardRenderInput<'_>) -> String {",
+          "300 +  if !input.snapshot.",
+          "worktree_groups.is_empty() &&",
+          "input.nav_level == DashboardNavLevel:",
+          ":Worktrees {",
+          '301 +    return "↑↓/jk worktrees [1-9]',
+          "worktree [Enter/→/l] step in [Tab] details [n]",
+          'agent [v] service [q] quit"',
+          "302 +  }",
+          "│││││  ││ ││││││││",
+          "│││││  ││ ││││││││",
+        ].join("\n"),
+      },
+    ]);
+  });
 });
 
 describe("MessageBlock code edit previews", () => {

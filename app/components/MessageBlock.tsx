@@ -373,7 +373,7 @@ function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRang
         tableLines.push(lines[index] ?? "");
         index += 1;
       }
-      if (tableLines.length >= 2) {
+      if (isTerminalBoxTableBlock(tableLines)) {
         flushText();
         const tableText = tableLines.join("\n");
         segments.push({
@@ -406,6 +406,11 @@ function isTerminalBoxTableLine(line: string): boolean {
   const trimmed = line.trim();
   if (trimmed.length < 2) return false;
   return BOX_TABLE_CHARS.test(trimmed);
+}
+
+function isTerminalBoxTableBlock(lines: readonly string[]): boolean {
+  if (lines.length < 2) return false;
+  return lines.some((line) => /[─═]/.test(line)) && lines.some((line) => /[│║]/.test(line));
 }
 
 export function canRenderRichText(
