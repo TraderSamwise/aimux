@@ -175,6 +175,14 @@ Priority fixture groups:
   view, flattened-row, and count contracts captured by running TypeScript
   `project-topology` helpers.
 
+## Project Takeover
+
+- `project-takeover/takeover.json`: alternate-owner stop requests, stale daemon
+  state cleanup, endpoint file removal, topology preservation, and stale
+  process-signal decisions captured by running TypeScript `project-takeover`
+  with fake `ps`/`lsof` and a local daemon endpoint. This is currently a Rust
+  checklist corpus because the implementation belongs to daemon ownership.
+
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
