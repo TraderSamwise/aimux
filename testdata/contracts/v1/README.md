@@ -24,3 +24,6 @@ Priority fixture groups:
 - `agent-output/parser-fuzz.json`: frozen deterministic parser fuzz corpus
   captured by running the TypeScript fuzz generator in
   `src/agent-output-parser-fuzz.test.ts`.
+- `agent-output/transcript.json`: transcript projection and published
+  attachment merge cases captured by running the TypeScript
+  `agent-transcript` APIs against `src/agent-transcript.test.ts` inputs.
