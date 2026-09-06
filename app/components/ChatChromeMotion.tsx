@@ -2,12 +2,14 @@ import React, { useEffect } from "react";
 import type { ViewStyle } from "react-native";
 import Reanimated, {
   Easing as ReanimatedEasing,
+  ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 
-const CHAT_CHROME_ANIMATION_MS = 120;
+const CHAT_CHROME_REVEAL_MS = 130;
+const CHAT_CHROME_HIDE_MS = 95;
 const CHAT_CHROME_DEFAULT_HIDE_DISTANCE = 96;
 
 export function ChatChromeMotion({
@@ -27,8 +29,11 @@ export function ChatChromeMotion({
 
   useEffect(() => {
     progress.value = withTiming(visible ? 1 : 0, {
-      duration: CHAT_CHROME_ANIMATION_MS,
-      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+      duration: visible ? CHAT_CHROME_REVEAL_MS : CHAT_CHROME_HIDE_MS,
+      easing: visible
+        ? ReanimatedEasing.out(ReanimatedEasing.cubic)
+        : ReanimatedEasing.in(ReanimatedEasing.quad),
+      reduceMotion: ReduceMotion.System,
     });
   }, [progress, visible]);
 
