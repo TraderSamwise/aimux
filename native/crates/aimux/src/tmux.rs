@@ -1,6 +1,10 @@
 use crate::paths::{basename_like_node_posix, compute_project_id};
+use serde_json::Value;
 use sha1::{Digest, Sha1};
+use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 pub const TMUX_SEND_TEXT_CHUNK_BYTES: usize = 4_000;
 pub const WINDOW_TARGET_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}";
@@ -68,6 +72,365 @@ pub struct TmuxTarget {
     pub window_index: i64,
     pub window_name: String,
     pub pane_dead: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxWindowInfo {
+    pub id: String,
+    pub index: i64,
+    pub name: String,
+    pub active: bool,
+    pub activity: Option<i64>,
+    pub pane_dead: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxClientInfo {
+    pub tty: String,
+    pub session_name: String,
+    pub window_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TmuxManagedWindow {
+    pub target: TmuxTarget,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TmuxExecOptions {
+    pub cwd: Option<String>,
+}
+
+type TmuxExecFn = dyn FnMut(&[String], Option<&TmuxExecOptions>) -> Result<String, String>;
+
+pub struct TmuxRuntimeManager {
+    session_prefix: String,
+    exec: Box<TmuxExecFn>,
+}
+
+impl TmuxRuntimeManager {
+    pub fn new() -> Self {
+        Self::with_exec(|args, options| {
+            let mut command = Command::new("tmux");
+            command.args(args);
+            if let Some(cwd) = options.and_then(|options| options.cwd.as_deref()) {
+                command.current_dir(cwd);
+            }
+            let output = command
+                .output()
+                .map_err(|error| format!("failed to run tmux: {error}"))?;
+            if output.status.success() {
+                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            Err(if stderr.is_empty() {
+                format!("tmux exited with {}", output.status)
+            } else {
+                stderr
+            })
+        })
+    }
+
+    pub fn with_exec(
+        exec: impl FnMut(&[String], Option<&TmuxExecOptions>) -> Result<String, String> + 'static,
+    ) -> Self {
+        Self {
+            session_prefix: "aimux".to_owned(),
+            exec: Box::new(exec),
+        }
+    }
+
+    pub fn with_session_prefix(mut self, session_prefix: impl Into<String>) -> Self {
+        self.session_prefix = session_prefix.into();
+        self
+    }
+
+    pub fn is_available(&mut self) -> bool {
+        self.exec_tmux(&["-V"]).is_ok()
+    }
+
+    pub fn get_version(&mut self) -> Option<String> {
+        self.exec_tmux(&["-V"]).ok()
+    }
+
+    pub fn get_project_session(&self, project_root: impl AsRef<Path>) -> TmuxSessionRef {
+        project_session(project_root, &self.session_prefix)
+    }
+
+    pub fn is_managed_session_name(&self, session_name: &str) -> bool {
+        session_name.starts_with(&format!("{}-", self.session_prefix))
+    }
+
+    pub fn repair_legacy_project_session_names(
+        &mut self,
+        project_root: impl AsRef<Path>,
+        session_names: Option<Vec<String>>,
+    ) -> TmuxSessionRef {
+        let project_root = project_root.as_ref();
+        let session = self.get_project_session(project_root);
+        let legacy_session_name = legacy_project_session_name(project_root, &self.session_prefix);
+        if legacy_session_name == session.session_name {
+            return session;
+        }
+        let mut known_names: BTreeSet<String> = session_names
+            .unwrap_or_else(|| self.list_session_names())
+            .into_iter()
+            .collect();
+        self.rename_known_session(
+            &mut known_names,
+            &legacy_session_name,
+            &session.session_name,
+        );
+        let names: Vec<String> = known_names.iter().cloned().collect();
+        for name in names {
+            if !is_tmux_client_session_for_host(&name, &legacy_session_name) {
+                continue;
+            }
+            let suffix = &name[legacy_session_name.len()..];
+            self.rename_known_session(
+                &mut known_names,
+                &name,
+                &format!("{}{}", session.session_name, suffix),
+            );
+        }
+        session
+    }
+
+    pub fn has_session(&mut self, session_name: &str) -> bool {
+        self.exec_tmux(&["has-session", "-t", session_name]).is_ok()
+    }
+
+    pub fn list_session_names(&mut self) -> Vec<String> {
+        let Ok(raw) = self.exec_tmux(&["list-sessions", "-F", "#{session_name}"]) else {
+            return Vec::new();
+        };
+        raw.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    pub fn list_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
+        let Ok(raw) = self.exec_owned(list_windows_argv(session_name), None) else {
+            return Vec::new();
+        };
+        parse_tmux_windows(&raw)
+    }
+
+    pub fn get_target_by_window_id(
+        &mut self,
+        session_name: &str,
+        window_id: &str,
+    ) -> Option<TmuxTarget> {
+        let window = self
+            .list_windows(session_name)
+            .into_iter()
+            .find(|entry| entry.id == window_id)?;
+        Some(TmuxTarget {
+            session_name: session_name.to_owned(),
+            window_id: window.id,
+            window_index: window.index,
+            window_name: window.name,
+            pane_dead: window.pane_dead,
+        })
+    }
+
+    pub fn has_window(&mut self, target: &TmuxTarget) -> bool {
+        self.get_target_by_window_id(&target.session_name, &target.window_id)
+            .is_some()
+    }
+
+    pub fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+        let Ok(pane_dead) = self.display_message("#{pane_dead}", Some(&target.window_id)) else {
+            return false;
+        };
+        pane_dead.trim() != "1"
+    }
+
+    pub fn is_window_active(&mut self, target: &TmuxTarget) -> bool {
+        self.display_message("#{window_active}", Some(&target.window_id))
+            .is_ok_and(|value| value.trim() == "1")
+    }
+
+    pub fn list_clients(&mut self) -> Vec<TmuxClientInfo> {
+        let Ok(raw) = self.exec_owned(list_clients_argv(), None) else {
+            return Vec::new();
+        };
+        raw.lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let mut parts = line.split('\t');
+                TmuxClientInfo {
+                    tty: parts.next().unwrap_or_default().to_owned(),
+                    session_name: parts.next().unwrap_or_default().to_owned(),
+                    window_id: parts.next().unwrap_or_default().to_owned(),
+                    name: parts.next().unwrap_or_default().to_owned(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn find_client_by_tty(&mut self, client_tty: &str) -> Option<TmuxClientInfo> {
+        let normalized = client_tty.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+        self.list_clients()
+            .into_iter()
+            .find(|client| client.tty == normalized)
+    }
+
+    pub fn get_attached_client_for_target(
+        &mut self,
+        target: &TmuxTarget,
+    ) -> Option<TmuxClientInfo> {
+        let clients: Vec<TmuxClientInfo> = self
+            .list_clients()
+            .into_iter()
+            .filter(|client| {
+                client.session_name == target.session_name
+                    || is_tmux_client_session_for_host(&client.session_name, &target.session_name)
+            })
+            .collect();
+        clients
+            .iter()
+            .find(|client| client.window_id == target.window_id)
+            .cloned()
+            .or_else(|| clients.first().cloned())
+    }
+
+    pub fn get_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
+        self.exec_tmux(&["show-options", "-v", "-t", session_name, key])
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn get_window_metadata(&mut self, window_id: &str) -> Option<Value> {
+        let raw = self
+            .exec_tmux(&["show-window-options", "-v", "-t", window_id, "@aimux-meta"])
+            .ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    pub fn list_managed_windows(&mut self, session_name: &str) -> Vec<TmuxManagedWindow> {
+        let Ok(raw) = self.exec_tmux(&[
+            "list-windows",
+            "-t",
+            session_name,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}",
+        ]) else {
+            return Vec::new();
+        };
+        parse_tmux_managed_windows(session_name, &raw)
+    }
+
+    pub fn list_project_managed_windows(
+        &mut self,
+        project_root: impl AsRef<Path>,
+    ) -> Vec<TmuxManagedWindow> {
+        let project_root = project_root.as_ref();
+        let host_session = self.get_project_session(project_root).session_name;
+        let all_session_names = self.list_session_names();
+        self.repair_legacy_project_session_names(project_root, Some(all_session_names));
+        let requested_root = canonicalize_filesystem_path(project_root);
+        let session_names: Vec<String> = self
+            .list_session_names()
+            .into_iter()
+            .filter(|name| {
+                if name == &host_session || is_tmux_client_session_for_host(name, &host_session) {
+                    return true;
+                }
+                if !self.is_managed_session_name(name) {
+                    return false;
+                }
+                self.get_session_option(name, "@aimux-project-root")
+                    .is_some_and(|stored_root| {
+                        canonicalize_filesystem_path(stored_root) == requested_root
+                    })
+            })
+            .collect();
+        let mut seen_window_ids = BTreeSet::new();
+        let mut managed = Vec::new();
+        for session_name in session_names {
+            for entry in self.list_managed_windows(&session_name) {
+                if seen_window_ids.insert(entry.target.window_id.clone()) {
+                    managed.push(entry);
+                }
+            }
+        }
+        managed
+    }
+
+    pub fn find_managed_window(
+        &mut self,
+        session_name: &str,
+        session_id: Option<&str>,
+        backend_session_id: Option<&str>,
+    ) -> Option<TmuxManagedWindow> {
+        if session_id.is_none() && backend_session_id.is_none() {
+            return None;
+        }
+        self.list_managed_windows(session_name)
+            .into_iter()
+            .find(|entry| {
+                session_id
+                    .is_some_and(|id| metadata_string(&entry.metadata, "sessionId") == Some(id))
+                    || backend_session_id.is_some_and(|id| {
+                        metadata_string(&entry.metadata, "backendSessionId") == Some(id)
+                    })
+            })
+    }
+
+    fn display_message(&mut self, format: &str, target: Option<&str>) -> Result<String, String> {
+        let argv = match target {
+            Some(target) => vec![
+                "display-message".to_owned(),
+                "-p".to_owned(),
+                "-t".to_owned(),
+                target.to_owned(),
+                format.to_owned(),
+            ],
+            None => vec![
+                "display-message".to_owned(),
+                "-p".to_owned(),
+                format.to_owned(),
+            ],
+        };
+        self.exec_owned(argv, None)
+    }
+
+    fn rename_known_session(&mut self, known_names: &mut BTreeSet<String>, from: &str, to: &str) {
+        if !known_names.contains(from) || known_names.contains(to) {
+            return;
+        }
+        if self.exec_tmux(&["rename-session", "-t", from, to]).is_ok() {
+            known_names.remove(from);
+            known_names.insert(to.to_owned());
+        }
+    }
+
+    fn exec_tmux(&mut self, args: &[&str]) -> Result<String, String> {
+        self.exec_owned(args.iter().map(|arg| (*arg).to_owned()).collect(), None)
+    }
+
+    fn exec_owned(
+        &mut self,
+        args: Vec<String>,
+        options: Option<TmuxExecOptions>,
+    ) -> Result<String, String> {
+        (self.exec)(&args, options.as_ref())
+    }
+}
+
+impl Default for TmuxRuntimeManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -627,6 +990,73 @@ fn is_lower_hex_8(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn parse_tmux_windows(raw: &str) -> Vec<TmuxWindowInfo> {
+    raw.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut parts = line.split('\t');
+            TmuxWindowInfo {
+                id: parts.next().unwrap_or_default().to_owned(),
+                index: parse_i64_or_zero(parts.next()),
+                name: parts.next().unwrap_or_default().to_owned(),
+                active: parts.next() == Some("1"),
+                activity: parse_optional_i64(parts.next()),
+                pane_dead: Some(parts.next() == Some("1")),
+            }
+        })
+        .collect()
+}
+
+fn parse_tmux_managed_windows(session_name: &str, raw: &str) -> Vec<TmuxManagedWindow> {
+    raw.lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let window_id = parts.next().unwrap_or_default().to_owned();
+            let window_index = parse_i64_or_zero(parts.next());
+            let window_name = parts.next().unwrap_or_default().to_owned();
+            let _active = parts.next();
+            let _activity = parts.next();
+            let pane_dead = Some(parts.next() == Some("1"));
+            let metadata_raw = parts.next().unwrap_or_default();
+            let metadata = serde_json::from_str(metadata_raw).ok()?;
+            Some(TmuxManagedWindow {
+                target: TmuxTarget {
+                    session_name: session_name.to_owned(),
+                    window_id,
+                    window_index,
+                    window_name,
+                    pane_dead,
+                },
+                metadata,
+            })
+        })
+        .collect()
+}
+
+fn parse_i64_or_zero(value: Option<&str>) -> i64 {
+    value.and_then(|value| value.parse().ok()).unwrap_or(0)
+}
+
+fn parse_optional_i64(value: Option<&str>) -> Option<i64> {
+    let value = value?;
+    if value.is_empty() {
+        None
+    } else {
+        value.parse().ok()
+    }
+}
+
+fn metadata_string<'a>(metadata: &'a Value, key: &str) -> Option<&'a str> {
+    metadata.get(key).and_then(Value::as_str)
+}
+
+fn canonicalize_filesystem_path(path: impl AsRef<Path>) -> String {
+    fs::canonicalize(path.as_ref())
+        .unwrap_or_else(|_| path.as_ref().to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn slugify_project_name(name: &str) -> String {
