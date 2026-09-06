@@ -49,6 +49,236 @@ pub fn run_dashboard_lifecycle_contract_case(case: &Value) -> Value {
     normalize(Value::Object(output))
 }
 
+pub fn run_dashboard_lifecycle_guard_named_contract_case(name: &str, input: &Value) -> Value {
+    if name.contains("renders only when the requested screen still matches") {
+        return run_lifecycle_guard_render_case(input);
+    }
+    if name.contains("runs lifecycle task success handlers only while the token is current") {
+        return run_lifecycle_guard_stale_success_case(input);
+    }
+    if name.contains("runs lifecycle task error handlers only while the token is current") {
+        return run_lifecycle_guard_stale_error_case(input);
+    }
+    if name.contains("runs lifecycle task handlers when the token remains current") {
+        return run_lifecycle_guard_current_task_case(input);
+    }
+    if name.contains("does not route success handler exceptions to the error handler") {
+        return run_lifecycle_guard_success_throw_case(input);
+    }
+    if input.get("mutate").is_some() {
+        return run_lifecycle_guard_mutation_case(input);
+    }
+    run_lifecycle_guard_current_case(input)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DashboardLifecycleGuardToken {
+    mode: String,
+    input_epoch: Option<i64>,
+    requires_input_epoch: bool,
+    screen: Option<String>,
+}
+
+impl DashboardLifecycleGuardToken {
+    fn value(&self) -> Value {
+        let mut value = Map::new();
+        value.insert("mode".to_owned(), Value::String(self.mode.clone()));
+        insert_optional_value(&mut value, "inputEpoch", self.input_epoch.map(Value::from));
+        if self.requires_input_epoch {
+            value.insert("requiresInputEpoch".to_owned(), Value::Bool(true));
+        }
+        insert_optional(
+            &mut value,
+            "screen",
+            self.screen.as_ref().map(ToOwned::to_owned),
+        );
+        Value::Object(value)
+    }
+}
+
+fn run_lifecycle_guard_current_case(input: &Value) -> Value {
+    let host = input.get("host").cloned().unwrap_or_else(|| json!({}));
+    let opts = input.get("opts").unwrap_or(&Value::Null);
+    let token = capture_dashboard_lifecycle_guard(&host, opts);
+    json!({
+        "token": token.value(),
+        "current": is_dashboard_lifecycle_guard_current(&host, &token),
+    })
+}
+
+fn run_lifecycle_guard_mutation_case(input: &Value) -> Value {
+    let mut host = input
+        .get("hostBefore")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let opts = input.get("opts").unwrap_or(&Value::Null);
+    let token = capture_dashboard_lifecycle_guard(&host, opts);
+    merge_object(&mut host, input.get("mutate").unwrap_or(&Value::Null));
+    json!({
+        "token": token.value(),
+        "currentAfterMutation": is_dashboard_lifecycle_guard_current(&host, &token),
+        "hostAfter": host,
+    })
+}
+
+fn run_lifecycle_guard_render_case(input: &Value) -> Value {
+    let mut calls = Vec::new();
+    let mut host = input
+        .get("hostBefore")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let opts = input.get("opts").unwrap_or(&Value::Null);
+    let token = capture_dashboard_lifecycle_guard(&host, opts);
+    render_dashboard_if_lifecycle_current(&host, &token, &mut calls);
+    merge_object(&mut host, input.get("mutate").unwrap_or(&Value::Null));
+    render_dashboard_if_lifecycle_current(&host, &token, &mut calls);
+    json!({
+        "token": token.value(),
+        "calls": calls,
+        "hostAfter": host,
+    })
+}
+
+fn run_lifecycle_guard_stale_success_case(input: &Value) -> Value {
+    let mut host = input
+        .get("hostBefore")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let token = capture_dashboard_lifecycle_guard(&host, input.get("opts").unwrap_or(&Value::Null));
+    merge_object(
+        &mut host,
+        input.get("mutateBeforeResolve").unwrap_or(&Value::Null),
+    );
+    let mut calls = Vec::new();
+    if is_dashboard_lifecycle_guard_current(&host, &token) {
+        calls.push(json!({
+            "kind": "success",
+            "value": input.get("resolution").and_then(Value::as_str).unwrap_or_default(),
+            "token": token.value(),
+        }));
+    }
+    if is_dashboard_lifecycle_guard_current(&host, &token) {
+        calls.push(json!({ "kind": "finally", "token": token.value() }));
+    }
+    json!({ "calls": calls, "hostAfter": host })
+}
+
+fn run_lifecycle_guard_stale_error_case(input: &Value) -> Value {
+    let mut host = input
+        .get("hostBefore")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let token = capture_dashboard_lifecycle_guard(&host, input.get("opts").unwrap_or(&Value::Null));
+    merge_object(
+        &mut host,
+        input.get("mutateBeforeReject").unwrap_or(&Value::Null),
+    );
+    let mut calls = Vec::new();
+    if is_dashboard_lifecycle_guard_current(&host, &token) {
+        calls.push(json!({
+            "kind": "error",
+            "error": input.get("rejection").and_then(Value::as_str).unwrap_or_default(),
+            "token": token.value(),
+        }));
+    }
+    json!({ "calls": calls, "hostAfter": host })
+}
+
+fn run_lifecycle_guard_current_task_case(input: &Value) -> Value {
+    let host = input.get("host").cloned().unwrap_or_else(|| json!({}));
+    let token = capture_dashboard_lifecycle_guard(&host, input.get("opts").unwrap_or(&Value::Null));
+    let mut calls = Vec::new();
+    if is_dashboard_lifecycle_guard_current(&host, &token) {
+        calls.push(json!({
+            "kind": "success",
+            "value": input.get("resolution").and_then(Value::as_str).unwrap_or_default(),
+            "token": token.value(),
+        }));
+    }
+    if is_dashboard_lifecycle_guard_current(&host, &token) {
+        calls.push(json!({ "kind": "finally", "token": token.value() }));
+    }
+    json!({ "calls": calls, "hostAfter": host })
+}
+
+fn run_lifecycle_guard_success_throw_case(input: &Value) -> Value {
+    let host = input.get("host").cloned().unwrap_or_else(|| json!({}));
+    let token = capture_dashboard_lifecycle_guard(&host, input.get("opts").unwrap_or(&Value::Null));
+    let calls = if is_dashboard_lifecycle_guard_current(&host, &token) {
+        vec![json!({ "kind": "success" })]
+    } else {
+        Vec::new()
+    };
+    json!({ "calls": calls, "hostAfter": host })
+}
+
+fn capture_dashboard_lifecycle_guard(host: &Value, opts: &Value) -> DashboardLifecycleGuardToken {
+    let mode = if host.get("mode").is_none()
+        || host.get("mode").and_then(Value::as_str) == Some("dashboard")
+    {
+        "dashboard"
+    } else {
+        "other"
+    };
+    let wants_input_epoch = opts
+        .get("inputEpoch")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    DashboardLifecycleGuardToken {
+        mode: mode.to_owned(),
+        input_epoch: wants_input_epoch
+            .then(|| host.get("dashboardInputEpoch").and_then(Value::as_i64))
+            .flatten(),
+        requires_input_epoch: wants_input_epoch,
+        screen: opts
+            .get("screen")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    }
+}
+
+fn is_dashboard_lifecycle_guard_current(
+    host: &Value,
+    token: &DashboardLifecycleGuardToken,
+) -> bool {
+    if host.get("mode").is_some() && host.get("mode").and_then(Value::as_str) != Some("dashboard") {
+        return false;
+    }
+    if token.mode != "dashboard" {
+        return false;
+    }
+    if token.requires_input_epoch || token.input_epoch.is_some() {
+        let Some(host_epoch) = host.get("dashboardInputEpoch").and_then(Value::as_i64) else {
+            return false;
+        };
+        if Some(host_epoch) != token.input_epoch {
+            return false;
+        }
+    }
+    let Some(screen) = &token.screen else {
+        return true;
+    };
+    host.get("dashboardState")
+        .and_then(|state| state.get("screen"))
+        .and_then(Value::as_str)
+        == Some(screen)
+}
+
+fn render_dashboard_if_lifecycle_current(
+    host: &Value,
+    token: &DashboardLifecycleGuardToken,
+    calls: &mut Vec<Value>,
+) {
+    if is_dashboard_lifecycle_guard_current(host, token)
+        && let Some(screen) = host
+            .get("dashboardState")
+            .and_then(|state| state.get("screen"))
+            .and_then(Value::as_str)
+    {
+        calls.push(json!({ "screen": screen }));
+    }
+}
+
 fn stop_agent(
     host: &mut LifecycleHost,
     topology: &mut Value,
