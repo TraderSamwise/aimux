@@ -1,0 +1,461 @@
+{
+  "version": 1,
+  "source": "src/graveyard-cleanup.test.ts",
+  "generatedBy": "scripts/capture-graveyard-cleanup-contract.mjs",
+  "description": "Graveyard cleanup planning, callback ordering, dry-run/apply behavior, and standalone agent asset/state deletion captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "graveyard-cleanup-001",
+      "name": "plans agents and worktrees whose graveyard lifetime has expired",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "buildGraveyardCleanupPlan",
+      "input": {
+        "now": "2026-06-14T00:00:00.000Z",
+        "config": { "cleanupEnabled": true, "retentionDays": 14 },
+        "sessions": [
+          {
+            "id": "expired-agent",
+            "nodeId": "node-agent",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "graveyard",
+            "updatedAt": "2026-05-30T00:00:00.000Z"
+          },
+          {
+            "id": "fresh-agent",
+            "nodeId": "node-fresh",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "graveyard",
+            "updatedAt": "2026-06-01T00:00:01.000Z",
+            "graveyardedAt": "2026-06-01T00:00:01.000Z"
+          }
+        ],
+        "worktrees": [
+          {
+            "id": "old-worktree",
+            "path": "/repo/.aimux/worktrees/old",
+            "name": "old",
+            "graveyardedAt": "2026-05-31T00:00:00.000Z"
+          },
+          {
+            "id": "fresh-worktree",
+            "path": "/repo/.aimux/worktrees/fresh",
+            "name": "fresh",
+            "graveyardedAt": "2026-06-01T00:00:01.000Z"
+          }
+        ]
+      },
+      "output": {
+        "enabled": true,
+        "now": "2026-06-14T00:00:00.000Z",
+        "cutoff": "2026-05-31T00:00:00.000Z",
+        "retentionDays": 14,
+        "agents": [
+          {
+            "kind": "agent",
+            "sessionId": "expired-agent",
+            "graveyardedAt": "2026-05-30T00:00:00.000Z",
+            "expiresAt": "2026-06-13T00:00:00.000Z"
+          }
+        ],
+        "worktrees": [
+          {
+            "kind": "worktree",
+            "path": "/repo/.aimux/worktrees/old",
+            "name": "old",
+            "graveyardedAt": "2026-05-31T00:00:00.000Z",
+            "expiresAt": "2026-06-14T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "c56f965ba818fa7cb21989cabbe8dd984f8aa118544e4335ada93d3f7ec04414"
+    },
+    {
+      "id": "graveyard-cleanup-002",
+      "name": "returns an empty plan when cleanup is disabled",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "buildGraveyardCleanupPlan",
+      "input": {
+        "now": "2026-06-14T00:00:00.000Z",
+        "config": { "cleanupEnabled": false, "retentionDays": 14 },
+        "sessions": [
+          {
+            "id": "expired-agent",
+            "nodeId": "node-agent",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "graveyard",
+            "updatedAt": "2026-05-30T00:00:00.000Z"
+          }
+        ],
+        "worktrees": [
+          {
+            "id": "old-worktree",
+            "path": "/repo/.aimux/worktrees/old",
+            "name": "old",
+            "graveyardedAt": "2026-05-31T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "enabled": false,
+        "now": "2026-06-14T00:00:00.000Z",
+        "cutoff": "2026-05-31T00:00:00.000Z",
+        "retentionDays": 14,
+        "agents": [],
+        "worktrees": []
+      },
+      "inputSha256": "5ac9c1fd2efdcb8752d784c609b3b0cc0a07995a854c22b5b10b5922facd05f4"
+    },
+    {
+      "id": "graveyard-cleanup-003",
+      "name": "falls back to default retention when config retention is not numeric",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "buildGraveyardCleanupPlan",
+      "input": {
+        "now": "2026-06-14T00:00:00.000Z",
+        "config": { "cleanupEnabled": true, "retentionDays": null },
+        "sessions": [
+          {
+            "id": "recent-agent",
+            "nodeId": "node-agent",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "graveyard",
+            "updatedAt": "2026-06-10T00:00:00.000Z"
+          }
+        ],
+        "worktrees": []
+      },
+      "output": {
+        "enabled": true,
+        "now": "2026-06-14T00:00:00.000Z",
+        "cutoff": "2026-05-31T00:00:00.000Z",
+        "retentionDays": 14,
+        "agents": [],
+        "worktrees": []
+      },
+      "inputSha256": "4031f9d6548fd4e00ce4a69caeac1c236ad61dfd4c59660adb352522e4e5f8ab"
+    },
+    {
+      "id": "graveyard-cleanup-004",
+      "name": "does not run standalone agent cleanup for agents under an expired worktree",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "runGraveyardCleanup",
+      "input": {
+        "planInput": {
+          "now": "2026-06-14T00:00:00.000Z",
+          "config": { "cleanupEnabled": true, "retentionDays": 14 },
+          "sessions": [
+            {
+              "id": "codex-old",
+              "nodeId": "node-agent",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "updatedAt": "2026-05-30T00:00:00.000Z",
+              "worktreePath": "/repo/.aimux/worktrees/old"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "old-worktree",
+              "path": "/repo/.aimux/worktrees/old",
+              "name": "old",
+              "graveyardedAt": "2026-05-31T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-14T00:00:00.000Z",
+            "cutoff": "2026-05-31T00:00:00.000Z",
+            "retentionDays": 14,
+            "agents": [
+              {
+                "kind": "agent",
+                "sessionId": "codex-old",
+                "graveyardedAt": "2026-05-30T00:00:00.000Z",
+                "expiresAt": "2026-06-13T00:00:00.000Z",
+                "worktreePath": "/repo/.aimux/worktrees/old"
+              }
+            ],
+            "worktrees": [
+              {
+                "kind": "worktree",
+                "path": "/repo/.aimux/worktrees/old",
+                "name": "old",
+                "graveyardedAt": "2026-05-31T00:00:00.000Z",
+                "expiresAt": "2026-06-14T00:00:00.000Z"
+              }
+            ]
+          },
+          "results": [{ "kind": "worktree", "id": "/repo/.aimux/worktrees/old", "status": "removed" }]
+        },
+        "deleteAgentCalls": [],
+        "deleteWorktreeCalls": ["/repo/.aimux/worktrees/old"]
+      },
+      "inputSha256": "c9e8daaeb67611f280883ef1e1859b086a62f91baa9ed0e31ca5e07d7ff1469b"
+    },
+    {
+      "id": "graveyard-cleanup-005",
+      "name": "continues dependent agent cleanup when expired worktree cleanup fails",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "runGraveyardCleanup",
+      "input": {
+        "planInput": {
+          "now": "2026-06-14T00:00:00.000Z",
+          "config": { "cleanupEnabled": true, "retentionDays": 14 },
+          "sessions": [
+            {
+              "id": "codex-old",
+              "nodeId": "node-agent",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "updatedAt": "2026-05-30T00:00:00.000Z",
+              "worktreePath": "/repo/.aimux/worktrees/old"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "old-worktree",
+              "path": "/repo/.aimux/worktrees/old",
+              "name": "old",
+              "graveyardedAt": "2026-05-31T00:00:00.000Z"
+            }
+          ]
+        },
+        "operations": { "worktreeError": "worktree remove failed" }
+      },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-14T00:00:00.000Z",
+            "cutoff": "2026-05-31T00:00:00.000Z",
+            "retentionDays": 14,
+            "agents": [
+              {
+                "kind": "agent",
+                "sessionId": "codex-old",
+                "graveyardedAt": "2026-05-30T00:00:00.000Z",
+                "expiresAt": "2026-06-13T00:00:00.000Z",
+                "worktreePath": "/repo/.aimux/worktrees/old"
+              }
+            ],
+            "worktrees": [
+              {
+                "kind": "worktree",
+                "path": "/repo/.aimux/worktrees/old",
+                "name": "old",
+                "graveyardedAt": "2026-05-31T00:00:00.000Z",
+                "expiresAt": "2026-06-14T00:00:00.000Z"
+              }
+            ]
+          },
+          "results": [
+            {
+              "kind": "worktree",
+              "id": "/repo/.aimux/worktrees/old",
+              "status": "failed",
+              "error": "worktree remove failed"
+            },
+            { "kind": "agent", "id": "codex-old", "status": "removed", "removedAssets": [] }
+          ]
+        },
+        "deleteAgentCalls": ["codex-old"],
+        "deleteWorktreeCalls": ["/repo/.aimux/worktrees/old"]
+      },
+      "inputSha256": "77eef7e08c36dbaee84ee5bdcb5f2c23dd8d82cad5a32d267b43b05b2d0d0266"
+    },
+    {
+      "id": "graveyard-cleanup-006",
+      "name": "continues dependent agent cleanup when expired worktree cleanup reports a non-removed status",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "runGraveyardCleanup",
+      "input": {
+        "planInput": {
+          "now": "2026-06-14T00:00:00.000Z",
+          "config": { "cleanupEnabled": true, "retentionDays": 14 },
+          "sessions": [
+            {
+              "id": "codex-old",
+              "nodeId": "node-agent",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "updatedAt": "2026-05-30T00:00:00.000Z",
+              "worktreePath": "/repo/.aimux/worktrees/old"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "old-worktree",
+              "path": "/repo/.aimux/worktrees/old",
+              "name": "old",
+              "graveyardedAt": "2026-05-31T00:00:00.000Z"
+            }
+          ]
+        },
+        "operations": { "worktreeStatus": "not-found" }
+      },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-14T00:00:00.000Z",
+            "cutoff": "2026-05-31T00:00:00.000Z",
+            "retentionDays": 14,
+            "agents": [
+              {
+                "kind": "agent",
+                "sessionId": "codex-old",
+                "graveyardedAt": "2026-05-30T00:00:00.000Z",
+                "expiresAt": "2026-06-13T00:00:00.000Z",
+                "worktreePath": "/repo/.aimux/worktrees/old"
+              }
+            ],
+            "worktrees": [
+              {
+                "kind": "worktree",
+                "path": "/repo/.aimux/worktrees/old",
+                "name": "old",
+                "graveyardedAt": "2026-05-31T00:00:00.000Z",
+                "expiresAt": "2026-06-14T00:00:00.000Z"
+              }
+            ]
+          },
+          "results": [
+            {
+              "kind": "worktree",
+              "id": "/repo/.aimux/worktrees/old",
+              "status": "failed",
+              "error": "worktree cleanup returned non-removed status \"not-found\""
+            },
+            { "kind": "agent", "id": "codex-old", "status": "removed", "removedAssets": [] }
+          ]
+        },
+        "deleteAgentCalls": ["codex-old"],
+        "deleteWorktreeCalls": ["/repo/.aimux/worktrees/old"]
+      },
+      "inputSha256": "c9ca93c0373c4accae9d023b025fc5161db00f027ba3c87184f425f1d7f8bf19"
+    },
+    {
+      "id": "graveyard-cleanup-007",
+      "name": "dry-run reports worktree and standalone agent targets without deleting them",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "runGraveyardCleanup",
+      "input": {
+        "planInput": {
+          "now": "2026-06-14T00:00:00.000Z",
+          "config": { "cleanupEnabled": true, "retentionDays": 14 },
+          "sessions": [
+            {
+              "id": "codex-old",
+              "nodeId": "node-agent",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "updatedAt": "2026-05-30T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "old-worktree",
+              "path": "/repo/.aimux/worktrees/old",
+              "name": "old",
+              "graveyardedAt": "2026-05-31T00:00:00.000Z"
+            }
+          ]
+        },
+        "run": { "dryRun": true }
+      },
+      "output": {
+        "result": {
+          "dryRun": true,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-14T00:00:00.000Z",
+            "cutoff": "2026-05-31T00:00:00.000Z",
+            "retentionDays": 14,
+            "agents": [
+              {
+                "kind": "agent",
+                "sessionId": "codex-old",
+                "graveyardedAt": "2026-05-30T00:00:00.000Z",
+                "expiresAt": "2026-06-13T00:00:00.000Z"
+              }
+            ],
+            "worktrees": [
+              {
+                "kind": "worktree",
+                "path": "/repo/.aimux/worktrees/old",
+                "name": "old",
+                "graveyardedAt": "2026-05-31T00:00:00.000Z",
+                "expiresAt": "2026-06-14T00:00:00.000Z"
+              }
+            ]
+          },
+          "results": [
+            { "kind": "worktree", "id": "/repo/.aimux/worktrees/old", "status": "dry-run" },
+            { "kind": "agent", "id": "codex-old", "status": "dry-run" }
+          ]
+        },
+        "deleteAgentCalls": [],
+        "deleteWorktreeCalls": []
+      },
+      "inputSha256": "1435b6ce2f1e837acf97f9dacf01fb885e35e195161f171b3d553c70664ab290"
+    },
+    {
+      "id": "graveyard-cleanup-008",
+      "name": "deletes standalone graveyard agent topology, metadata, and per-session assets",
+      "source": "src/graveyard-cleanup.test.ts",
+      "api": "deleteGraveyardAgent",
+      "input": { "sessionId": "codex-old" },
+      "output": {
+        "deleted": {
+          "sessionId": "codex-old",
+          "removedAssets": [
+            "<project>/.aimux/context/codex-old",
+            "<project>/.aimux/history/codex-old.jsonl",
+            "<project>/.aimux/plans/codex-old.md",
+            "<project>/.aimux/status/codex-old.md",
+            "<projectState>/claude-settings/codex-old.json",
+            "<projectState>/recordings/codex-old.log",
+            "<projectState>/recordings/codex-old.txt"
+          ]
+        },
+        "settingsExists": false,
+        "contextExists": false,
+        "recordingLogExists": false,
+        "metadataHasSession": false,
+        "graveyardSessions": []
+      },
+      "inputSha256": "546fefaa2676d9f1f155d17c6165bfece34821d295ed1fadb9a95b3a0915d509"
+    }
+  ]
+}

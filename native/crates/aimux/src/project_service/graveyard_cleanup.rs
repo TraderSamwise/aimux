@@ -1,4 +1,4 @@
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Number, Value, json};
 use std::path::Path;
 
 use crate::config::load_config_for_project;
@@ -23,7 +23,7 @@ pub fn build_graveyard_cleanup_plan(
             "enabled": false,
             "now": iso_from_epoch_millis(now_ms),
             "cutoff": iso_from_epoch_millis(cutoff_ms),
-            "retentionDays": config.retention_days,
+            "retentionDays": js_number(config.retention_days),
             "agents": [],
             "worktrees": [],
         }));
@@ -40,10 +40,148 @@ pub fn build_graveyard_cleanup_plan(
         "enabled": true,
         "now": iso_from_epoch_millis(now_ms),
         "cutoff": iso_from_epoch_millis(cutoff_ms),
-        "retentionDays": config.retention_days,
+        "retentionDays": js_number(config.retention_days),
         "agents": agents,
         "worktrees": worktrees,
     }))
+}
+
+pub fn build_graveyard_cleanup_plan_from_input(input: &Value) -> Value {
+    let config = cleanup_config(input.get("config"));
+    let now = input
+        .get("now")
+        .and_then(Value::as_str)
+        .unwrap_or("1970-01-01T00:00:00.000Z");
+    let now_ms = parse_iso_millis(now).unwrap_or(0.0);
+    let cutoff_ms = now_ms - config.retention_days * MS_PER_DAY;
+    if !config.cleanup_enabled {
+        return json!({
+            "enabled": false,
+            "now": iso_from_epoch_millis(now_ms),
+            "cutoff": iso_from_epoch_millis(cutoff_ms),
+            "retentionDays": js_number(config.retention_days),
+            "agents": [],
+            "worktrees": [],
+        });
+    }
+    let agents = input
+        .get("sessions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|session| expired_agent_target(session, cutoff_ms, config.retention_days))
+        .collect::<Vec<_>>();
+    let worktrees = input
+        .get("worktrees")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|worktree| expired_worktree_target(worktree, cutoff_ms, config.retention_days))
+        .collect::<Vec<_>>();
+    json!({
+        "enabled": true,
+        "now": iso_from_epoch_millis(now_ms),
+        "cutoff": iso_from_epoch_millis(cutoff_ms),
+        "retentionDays": js_number(config.retention_days),
+        "agents": agents,
+        "worktrees": worktrees,
+    })
+}
+
+pub fn run_graveyard_cleanup_contract(input: &Value) -> Value {
+    let plan = build_graveyard_cleanup_plan_from_input(&input["planInput"]);
+    let dry_run = input
+        .get("run")
+        .and_then(|run| run.get("dryRun"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let operations = input.get("operations").unwrap_or(&Value::Null);
+    let mut results = Vec::new();
+    let mut removed_worktree_paths = std::collections::BTreeSet::new();
+    let mut delete_agent_calls = Vec::new();
+    let mut delete_worktree_calls = Vec::new();
+
+    if plan.get("enabled").and_then(Value::as_bool) == Some(true) {
+        for worktree in array_field_values(&plan, "worktrees") {
+            let path = string_field(&worktree, "path")
+                .unwrap_or_default()
+                .to_owned();
+            if dry_run {
+                results.push(json!({ "kind": "worktree", "id": path, "status": "dry-run" }));
+                continue;
+            }
+            delete_worktree_calls.push(Value::String(path.clone()));
+            if let Some(error) = operations.get("worktreeError").and_then(Value::as_str) {
+                results.push(json!({
+                    "kind": "worktree",
+                    "id": path,
+                    "status": "failed",
+                    "error": error,
+                }));
+                continue;
+            }
+            let status = operations
+                .get("worktreeStatus")
+                .and_then(Value::as_str)
+                .unwrap_or("removed");
+            if status == "removed" {
+                removed_worktree_paths.insert(path.clone());
+                results.push(json!({ "kind": "worktree", "id": path, "status": "removed" }));
+            } else {
+                results.push(json!({
+                    "kind": "worktree",
+                    "id": path,
+                    "status": "failed",
+                    "error": format!("worktree cleanup returned non-removed status \"{status}\""),
+                }));
+            }
+        }
+        let worktree_paths_with_handled_agents = if dry_run {
+            array_field_values(&plan, "worktrees")
+                .into_iter()
+                .map(|worktree| {
+                    string_field(&worktree, "path")
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+                .collect::<std::collections::BTreeSet<_>>()
+        } else {
+            removed_worktree_paths
+        };
+        for agent in array_field_values(&plan, "agents") {
+            let session_id = string_field(&agent, "sessionId")
+                .unwrap_or_default()
+                .to_owned();
+            let worktree_path = string_field(&agent, "worktreePath").map(ToOwned::to_owned);
+            if worktree_path
+                .as_ref()
+                .is_some_and(|path| worktree_paths_with_handled_agents.contains(path))
+            {
+                continue;
+            }
+            if dry_run {
+                results.push(json!({ "kind": "agent", "id": session_id, "status": "dry-run" }));
+                continue;
+            }
+            delete_agent_calls.push(Value::String(session_id.clone()));
+            results.push(json!({
+                "kind": "agent",
+                "id": session_id,
+                "status": "removed",
+                "removedAssets": [],
+            }));
+        }
+    }
+
+    json!({
+        "result": {
+            "dryRun": dry_run,
+            "plan": plan,
+            "results": results,
+        },
+        "deleteAgentCalls": delete_agent_calls,
+        "deleteWorktreeCalls": delete_worktree_calls,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,6 +269,14 @@ fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
     value.get(field).and_then(Value::as_str)
 }
 
+fn array_field_values(value: &Value, field: &str) -> Vec<Value> {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn now_epoch_millis() -> i128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -198,4 +344,14 @@ fn iso_from_epoch_millis(ms: f64) -> String {
         datetime.second(),
         sub_millis
     )
+}
+
+fn js_number(value: f64) -> Value {
+    if value.is_finite() && value.fract() == 0.0 {
+        Value::Number(Number::from(value as i64))
+    } else {
+        Number::from_f64(value)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
+    }
 }

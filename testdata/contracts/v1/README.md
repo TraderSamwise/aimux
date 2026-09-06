@@ -213,6 +213,22 @@ Priority fixture groups:
   byte accounting, and diagnostics captured by running TypeScript
   `runtime-core/exchange-store`.
 
+## Recordings
+
+- `recordings/cleanup.json`: recording cleanup retention, live-session guards,
+  orphan discovery, size ordering, dry-run/apply/limit behavior, and local
+  extra-directory sweeps captured by running TypeScript `recording-cleanup`.
+- `recordings/config.json`: global recording cleanup config defaults, off
+  switch, minimum retention, and out-of-range fallback captured by running
+  TypeScript `recording-config`.
+
+## Graveyard
+
+- `graveyard/cleanup.json`: graveyard cleanup plan cutoffs, retention
+  defaults, callback ordering, dry-run/apply behavior, dependent-agent cleanup,
+  and standalone agent asset/state deletion captured by running TypeScript
+  `graveyard-cleanup`.
+
 ## Runtime Migration
 
 - `runtime-state/atomic-write.json`: atomic text/JSON write, explicit file

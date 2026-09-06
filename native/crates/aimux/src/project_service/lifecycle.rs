@@ -3665,13 +3665,13 @@ fn delete_agent_assets(
     let aimux_dir = project_root.join(".aimux");
     let mut removed_assets = Vec::new();
     remove_file_if_exists(
-        aimux_dir
+        project_state_dir
             .join("recordings")
             .join(format!("{session_id}.log")),
         &mut removed_assets,
     );
     remove_file_if_exists(
-        aimux_dir
+        project_state_dir
             .join("recordings")
             .join(format!("{session_id}.txt")),
         &mut removed_assets,
