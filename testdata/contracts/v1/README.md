@@ -275,6 +275,11 @@ Priority fixture groups:
   byte accounting, and diagnostics captured by running TypeScript
   `runtime-core/exchange-store`.
 
+## Runtime Restart
+
+- `runtime-restart/render.json`: user-facing runtime restart summary rendering
+  captured by running TypeScript `renderRuntimeRestartResult`.
+
 ## Visual Client Leases
 
 - `visual-client-leases/leases.json`: visual client lease kind parsing,

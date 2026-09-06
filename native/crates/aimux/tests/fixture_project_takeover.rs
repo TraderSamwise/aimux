@@ -8,6 +8,8 @@ const PROJECT_TAKEOVER: &str =
 fn fixture_project_takeover_needs_rust_api() {
     let contract: Value =
         serde_json::from_str(PROJECT_TAKEOVER).expect("valid project-takeover fixture");
-    let cases = contract["cases"].as_array().expect("project-takeover cases");
+    let cases = contract["cases"]
+        .as_array()
+        .expect("project-takeover cases");
     assert_eq!(cases.len(), 5, "unexpected project-takeover case count");
 }
