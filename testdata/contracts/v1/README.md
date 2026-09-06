@@ -40,6 +40,13 @@ Priority fixture groups:
   shimmer behavior captured by running TypeScript `app/lib/status-tone` and
   `app/lib/activity-label` helpers.
 
+## App Interaction
+
+- `app-interaction/lifecycle-scroll.json`: app session resume affordance and
+  chat scroll policy thresholds, distance math, user-scroll intent, and
+  auto-scroll command behavior captured by running TypeScript
+  `app/lib/agent-lifecycle` and `app/lib/chat-scroll-policy` helpers.
+
 ## Agent Output
 
 - `agent-display/labels.json`: app generated-label detection, tool-name
