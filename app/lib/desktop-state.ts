@@ -21,6 +21,17 @@ export interface ExposeChatPreview {
   source: ExposeChatPreviewSource;
 }
 
+export interface DesktopSessionSemanticState {
+  user?: {
+    label?: string | null;
+  } | null;
+  notifications?: {
+    latestUnread?: {
+      createdAt?: string | null;
+    } | null;
+  } | null;
+}
+
 export interface DesktopSession {
   id: string;
   command?: string;
@@ -34,6 +45,7 @@ export interface DesktopSession {
   worktreeBranch?: string;
   label?: string;
   headline?: string;
+  createdAt?: string;
   restoreState?: "ready" | "blocked";
   restoreBlockedReason?: string;
   role?: string;
@@ -44,9 +56,11 @@ export interface DesktopSession {
   becameIdleAt?: string;
   recencyAt?: string;
   recencyLabel?: string;
+  semantic?: DesktopSessionSemanticState;
   unseenCount?: number;
   previewLine?: string;
   pendingAction?: string;
+  pendingStartedAt?: string;
   loop?: { active?: boolean; goal?: string; since?: string } | null;
   overseer?: boolean;
   scribe?: boolean;
@@ -68,11 +82,13 @@ export interface DesktopService {
   status: DesktopServiceStatus;
   active?: boolean;
   label?: string;
+  createdAt?: string;
   lastUsedAt?: string;
   shellCommand?: string;
   shellCommandState?: "running" | "prompt";
   previewLine?: string;
   pendingAction?: string;
+  pendingStartedAt?: string;
   optimistic?: boolean;
 }
 

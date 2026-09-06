@@ -1,3 +1,5 @@
+import type { DesktopService, DesktopSession } from "@/lib/desktop-state";
+
 export function parseRecencyTimestamp(value?: string | null): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -32,4 +34,79 @@ export function formatLabeledRecency(
   const relative = formatRelativeRecency(value, now);
   if (!relative) return null;
   return label ? `${label} ${relative}` : relative;
+}
+
+function pendingActionRecencyLabel(value?: string | null): string | null {
+  return value ? value.replace(/_/g, " ") : null;
+}
+
+export function formatSessionRecency(session: DesktopSession, now = Date.now()): string | null {
+  if (session.recencyAt) return formatLabeledRecency(session.recencyLabel, session.recencyAt, now);
+
+  const lastOutputAt = session.lastOutputAt;
+  const output = lastOutputAt ? ({ label: "output", value: lastOutputAt } as const) : null;
+  const semanticLabel = session.semantic?.user?.label;
+  const latestUnreadAt = session.semantic?.notifications?.latestUnread?.createdAt;
+
+  let anchor: { label: string; value?: string | null } | null = null;
+  if (session.pendingAction) {
+    anchor = {
+      label: pendingActionRecencyLabel(session.pendingAction) ?? "pending",
+      value:
+        session.pendingStartedAt ??
+        session.createdAt ??
+        session.lastUsedAt ??
+        session.becameIdleAt ??
+        lastOutputAt,
+    };
+  } else {
+    switch (semanticLabel) {
+      case "needs_input":
+      case "needs_response":
+        anchor = {
+          label: "prompted",
+          value: latestUnreadAt ?? lastOutputAt ?? session.becameIdleAt ?? session.lastUsedAt,
+        };
+        break;
+      case "next_step":
+      case "idle":
+      case "interrupted":
+        anchor = output ?? { label: "idle", value: session.becameIdleAt ?? session.lastUsedAt };
+        break;
+      case "working":
+      case "ready":
+        anchor = output;
+        break;
+      case "done":
+        anchor = output ?? { label: "done", value: session.becameIdleAt ?? session.lastUsedAt };
+        break;
+      case "offline":
+        anchor = output ?? { label: "offline", value: session.lastUsedAt };
+        break;
+      case "blocked":
+        anchor = {
+          label: "blocked",
+          value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt,
+        };
+        break;
+      case "error":
+        anchor = {
+          label: "failed",
+          value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt,
+        };
+        break;
+      default:
+        anchor = output;
+        break;
+    }
+  }
+
+  if (!anchor?.value) return null;
+  return formatLabeledRecency(anchor.label, anchor.value, now);
+}
+
+export function formatServiceRecency(service: DesktopService, now = Date.now()): string | null {
+  const value = service.pendingStartedAt ?? service.lastUsedAt ?? service.createdAt;
+  const label = service.pendingAction ? pendingActionRecencyLabel(service.pendingAction) : "used";
+  return formatLabeledRecency(label, value, now);
 }

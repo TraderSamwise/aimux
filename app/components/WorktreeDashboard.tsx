@@ -15,7 +15,7 @@ import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
-import { formatLabeledRecency, formatRelativeRecency } from "@/lib/recency";
+import { formatServiceRecency, formatSessionRecency } from "@/lib/recency";
 import {
   agentStatusKind,
   appStatusClasses,
@@ -140,12 +140,11 @@ function joinHints(...parts: Array<string | null | undefined>): string | undefin
 }
 
 function agentRecencyText(session: DesktopSession): string | null {
-  return formatLabeledRecency(session.recencyLabel, session.recencyAt);
+  return formatSessionRecency(session);
 }
 
 function serviceRecencyText(service: DesktopService): string | null {
-  const relative = formatRelativeRecency(service.lastUsedAt);
-  return relative ? `used ${relative}` : null;
+  return formatServiceRecency(service);
 }
 
 function CompactRecency({ text }: { text?: string | null }) {

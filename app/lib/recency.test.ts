@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { formatLabeledRecency, formatRelativeRecency, parseRecencyTimestamp } from "@/lib/recency";
+import {
+  formatLabeledRecency,
+  formatRelativeRecency,
+  formatServiceRecency,
+  formatSessionRecency,
+  parseRecencyTimestamp,
+} from "@/lib/recency";
 
 const NOW = Date.parse("2026-09-06T04:00:00.000Z");
 
@@ -22,6 +28,70 @@ describe("app recency formatting", () => {
       "prompted 2h ago",
     );
     expect(formatLabeledRecency(null, "2026-09-06T03:59:50.000Z", NOW)).toBe("just now");
+  });
+
+  it("formats session recency from the desktop-state semantic payload", () => {
+    expect(
+      formatSessionRecency(
+        {
+          id: "claude-a",
+          status: "running",
+          active: true,
+          semantic: {
+            user: { label: "needs_input" },
+            notifications: { latestUnread: { createdAt: "2026-09-06T02:00:00.000Z" } },
+          },
+          lastOutputAt: "2026-09-06T03:57:00.000Z",
+        },
+        NOW,
+      ),
+    ).toBe("prompted 2h ago");
+
+    expect(
+      formatSessionRecency(
+        {
+          id: "codex-a",
+          status: "running",
+          active: true,
+          semantic: { user: { label: "ready" } },
+          lastOutputAt: "2026-09-06T03:57:00.000Z",
+        },
+        NOW,
+      ),
+    ).toBe("output 3m ago");
+  });
+
+  it("prefers backend recency fields when present", () => {
+    expect(
+      formatSessionRecency(
+        {
+          id: "codex-a",
+          status: "running",
+          active: true,
+          recencyLabel: "output",
+          recencyAt: "2026-09-06T03:57:00.000Z",
+          semantic: {
+            user: { label: "needs_input" },
+            notifications: { latestUnread: { createdAt: "2026-09-06T02:00:00.000Z" } },
+          },
+        },
+        NOW,
+      ),
+    ).toBe("output 3m ago");
+  });
+
+  it("formats service recency from last-used state", () => {
+    expect(
+      formatServiceRecency(
+        {
+          id: "service-a",
+          status: "running",
+          active: true,
+          lastUsedAt: "2026-09-06T03:56:00.000Z",
+        },
+        NOW,
+      ),
+    ).toBe("used 4m ago");
   });
 
   it("ignores missing or invalid timestamps", () => {
