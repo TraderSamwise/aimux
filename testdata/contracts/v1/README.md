@@ -275,6 +275,12 @@ Priority fixture groups:
   primary-lane detection, and corrupt global config quarantine side effects
   captured by running TypeScript `install-config`.
 
+## CLI
+
+- `cli/parsing.json`: process command-line flag value matching and shell/env
+  assignment parsing captured by running TypeScript `process-args` and
+  `shell-args`.
+
 ## Proxy
 
 - `proxy/project-binding.json`: proxy path parsing and project-service target
