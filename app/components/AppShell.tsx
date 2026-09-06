@@ -10,24 +10,29 @@ import {
 import { usePathname } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { KeyRound, Menu } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
 import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SharedSidebar } from "@/components/SharedSidebar";
+import { ChatChromeMotion } from "@/components/ChatChromeMotion";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
+import { chatTopBarReserveHeight } from "@/lib/chat-chrome-layout";
 import { isDesktopZoomCommand, subscribeNativeAppCommands } from "@/lib/native-app-commands";
+import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
-import { sidebarOpenAtom } from "@/stores/ui";
+import { chatChromeVisibleAtom, sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { isDesktopNative, uiScale } = useRuntimeTuning();
   const isDesktop = width >= 1024;
   const isTablet = width >= 640 && width < 1024;
@@ -36,6 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
   const pathname = usePathname();
+  const chatChromeVisible = useAtomValue(chatChromeVisibleAtom);
   const activeShare = useRouteShare();
   const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
   const isMonitorRoute = pathname === "/monitor";
@@ -47,6 +53,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [translateX] = useState(() => new RNAnimated.Value(-DRAWER_WIDTH));
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
+  const overlayTopChrome = isChatRoute(pathname);
+  const topChromeHideDistance = chatTopBarReserveHeight({
+    pairingBannerVisible: showPairingBanner,
+    topInset: resolveChromeTopInset(insets.top),
+  });
 
   // Mobile drawer should start closed — users don't expect it open on load.
   useEffect(() => {
@@ -96,45 +107,64 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Menu size={20} color="#a1a1aa" />
     </Button>
   ) : undefined;
+  const desktopSidebar = overlayTopChrome ? (
+    <View style={{ height: "100%", paddingTop: topChromeHideDistance }}>
+      <Sidebar />
+    </View>
+  ) : (
+    <Sidebar />
+  );
 
   return (
     <View className="flex-1 bg-background">
       <View style={shellZoomStyle}>
-        <View style={{ flexShrink: 0 }}>
-          <TopBar left={hamburger} />
-          {showPairingBanner ? (
-            <Pressable
-              accessibilityLabel="Pair this browser"
-              accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
-              onPress={() => setPairingDialogOpen(true)}
-              className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
-            >
-              <KeyRound size={16} color="#fbbf24" />
-              <View className="ml-2 min-w-0 flex-1">
-                <Text className="text-[13px] font-semibold text-amber-200">
-                  Approve this browser to connect
-                </Text>
-                <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
-                  Run {APPROVE_COMMAND}
-                  {pendingApproval?.approvalCode
-                    ? ` and match code ${pendingApproval.approvalCode}`
-                    : ""}
-                  .
-                </Text>
-              </View>
-            </Pressable>
-          ) : null}
+        <View
+          style={
+            overlayTopChrome
+              ? { left: 0, position: "absolute", right: 0, top: 0, zIndex: 60 }
+              : { flexShrink: 0 }
+          }
+        >
+          <ChatChromeMotion
+            direction="top"
+            distance={topChromeHideDistance}
+            visible={!overlayTopChrome || chatChromeVisible}
+          >
+            <TopBar left={hamburger} />
+            {showPairingBanner ? (
+              <Pressable
+                accessibilityLabel="Pair this browser"
+                accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
+                onPress={() => setPairingDialogOpen(true)}
+                className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
+              >
+                <KeyRound size={16} color="#fbbf24" />
+                <View className="ml-2 min-w-0 flex-1">
+                  <Text className="text-[13px] font-semibold text-amber-200">
+                    Approve this browser to connect
+                  </Text>
+                  <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
+                    Run {APPROVE_COMMAND}
+                    {pendingApproval?.approvalCode
+                      ? ` and match code ${pendingApproval.approvalCode}`
+                      : ""}
+                    .
+                  </Text>
+                </View>
+              </Pressable>
+            ) : null}
+          </ChatChromeMotion>
         </View>
         <View className="flex-1 flex-row">
-          {isDesktop ? <Sidebar /> : null}
-          {isTablet && sidebarOpen ? <Sidebar /> : null}
+          {isDesktop ? desktopSidebar : null}
+          {isTablet && sidebarOpen ? desktopSidebar : null}
           <View className="flex-1">{children}</View>
 
           {isMobile && sidebarOpen ? (
             <Pressable
               onPress={() => setSidebarOpen(false)}
               style={[
-                { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 },
+                { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 80 },
                 Platform.OS === "web" ? ({ position: "fixed" } as object) : undefined,
               ]}
             />
@@ -148,7 +178,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 left: 0,
                 bottom: 0,
                 width: DRAWER_WIDTH,
-                zIndex: 50,
+                zIndex: 90,
                 transform: [{ translateX }],
               }}
             >
@@ -167,5 +197,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ) : null}
       </View>
     </View>
+  );
+}
+
+function isChatRoute(pathname: string) {
+  return (
+    (pathname.startsWith("/agent/") && pathname.endsWith("/chat")) ||
+    (pathname.startsWith("/shares/") && pathname.includes("/agent/") && pathname.endsWith("/chat"))
   );
 }

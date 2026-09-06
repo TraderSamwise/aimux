@@ -20,6 +20,7 @@ import {
   View,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type ViewStyle,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
@@ -51,11 +52,20 @@ import { Text } from "@/components/ui/text";
 import { AgentActions } from "@/components/agent-actions";
 import { AgentManagementPanel } from "@/components/agent-management-panel";
 import { TeammatePanel } from "@/components/teammate-panel";
+import { ChatChromeMotion } from "@/components/ChatChromeMotion";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
+import {
+  CHAT_RECONNECTING_PANEL_RESERVE,
+  CHAT_SESSION_HEADER_HEIGHT,
+  chatControlPanelReserveHeight,
+  chatOverlayPanelReserveHeight,
+  chatTopBarReserveHeight,
+  chatTranscriptTopReserveHeight,
+} from "@/lib/chat-chrome-layout";
 import { useAuth, useUser } from "@/lib/auth";
 import { agentActivityLabel, shouldShimmerAgentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
@@ -93,9 +103,12 @@ import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
   chatCommandForNavigationFocus,
+  chatChromeAfterUserScroll,
   chatPolicyAfterNavigationFocus,
   chatPolicyAfterUserScroll,
+  createChatScrollChromeState,
   createChatScrollPolicy,
+  type ChatScrollChromeState,
   type ChatScrollCommand,
   type ChatScrollMetrics,
   type ChatScrollPolicy,
@@ -115,7 +128,7 @@ import {
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import type { AgentOutputFeedPurpose } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
-import { resolveChromeBottomInset } from "@/lib/native-safe-area";
+import { resolveChromeBottomInset, resolveChromeTopInset } from "@/lib/native-safe-area";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { singleRouteParam } from "@/lib/route-params";
@@ -152,6 +165,7 @@ import {
   activeSharedSessionAtom,
   type ActiveSharedSession,
 } from "@/stores/settings";
+import { chatChromeVisibleAtom } from "@/stores/ui";
 import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
@@ -175,6 +189,9 @@ const COMPOSER_INPUT_MAX_HEIGHT =
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
+const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
+const CHAT_COMPOSER_RESERVE_GAP = 8;
+const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
 const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
 /** How much of the label the travelling highlight covers, as a fraction of its width. */
 const FOOTER_LABEL_SHIMMER_BAND = 0.3;
@@ -481,6 +498,7 @@ export default function ChatScreen() {
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const markOutputInterrupted = useSetAtom(markOutputInterruptedAtom);
   const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
+  const setGlobalChatChromeVisible = useSetAtom(chatChromeVisibleAtom);
   const transcript = useAtomValue(transcriptFamily(sessionKey));
   const transcriptLastError = useAtomValue(lastErrorFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
@@ -518,6 +536,8 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [chatChromeVisible, setChatChromeVisible] = useState(true);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
@@ -753,9 +773,6 @@ export default function ChatScreen() {
     Platform.OS === "web" || keyboardVisible
       ? COMPOSER_FOOTER_VERTICAL_PADDING
       : COMPOSER_FOOTER_VERTICAL_PADDING + resolveChromeBottomInset(insets.bottom);
-  const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
-  const endpointHost = serviceEndpoint?.host ?? null;
-  const endpointPort = serviceEndpoint?.port ?? null;
   const displayServiceEndpoint =
     serviceEndpoint ??
     (lastConnectedEndpoint?.projectPath === stateProjectPath
@@ -763,6 +780,59 @@ export default function ChatScreen() {
       : null);
   const serviceDisconnected =
     !routeSessionMissing && !serviceEndpoint && Boolean(displayServiceEndpoint);
+  const showComposerFooter = !routeSessionMissing && Boolean(displayServiceEndpoint);
+  const showPairingBanner =
+    relayConfigured &&
+    relayStatus === "device_pending" &&
+    pathname !== "/shares" &&
+    !pathname.startsWith("/shares/") &&
+    !activeShare;
+  const resolvedTopInset = resolveChromeTopInset(insets.top);
+  const topBarHeight = chatTopBarReserveHeight({
+    pairingBannerVisible: showPairingBanner,
+    topInset: resolvedTopInset,
+  });
+  const chatHeaderTopReserve = topBarHeight + CHAT_SESSION_HEADER_HEIGHT;
+  const chatOverlayPanelReserve = chatOverlayPanelReserveHeight({
+    manageOpen: managePanelOpen,
+    serviceDisconnected,
+    shareDetailsExpanded: shareDetailsExpanded || !activeShare,
+    shareOpen: sharePanelOpen,
+    windowHeight,
+  });
+  const chatControlPanelReserve = chatControlPanelReserveHeight({
+    manageOpen: managePanelOpen,
+    shareDetailsExpanded: shareDetailsExpanded || !activeShare,
+    shareOpen: sharePanelOpen,
+    windowHeight,
+  });
+  const chatControlPanelTopReserve =
+    chatHeaderTopReserve + (serviceDisconnected ? CHAT_RECONNECTING_PANEL_RESERVE : 0);
+  const chatTopContentReserve = chatTranscriptTopReserveHeight({
+    pairingBannerVisible: showPairingBanner,
+    panelReserveHeight: chatOverlayPanelReserve,
+    topInset: resolvedTopInset,
+  });
+  const chatBottomContentReserve =
+    COMPOSER_FOOTER_VERTICAL_PADDING +
+    COMPOSER_INPUT_MAX_HEIGHT +
+    CHAT_COMPOSER_RESERVE_GAP +
+    CHAT_COMPOSER_CONTROL_ROW_HEIGHT +
+    composerFooterBottomPadding +
+    (pendingAttachments.length > 0 ? CHAT_ATTACHMENT_STRIP_RESERVE : 0);
+  const effectiveChatChromeVisible =
+    chatChromeVisible ||
+    keyboardVisible ||
+    composerFocused ||
+    pendingAttachments.length > 0 ||
+    sharePanelOpen ||
+    managePanelOpen ||
+    serviceDisconnected ||
+    routeSessionMissing ||
+    !displayServiceEndpoint;
+  const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
+  const endpointHost = serviceEndpoint?.host ?? null;
+  const endpointPort = serviceEndpoint?.port ?? null;
   const useScrollableNativeHeader = Platform.OS !== "web";
   const chatBubbleMaxWidth = Math.max(
     260,
@@ -799,6 +869,27 @@ export default function ChatScreen() {
     }, 0);
     return () => clearTimeout(timer);
   }, [endpointHost, endpointPort, stateProjectPath]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a new chat route starts with chrome visible
+    setChatChromeVisible(true);
+    setGlobalChatChromeVisible(true);
+  }, [chatViewportKey, setGlobalChatChromeVisible]);
+
+  const handleChatChromeVisibleChange = useCallback(
+    (visible: boolean) => {
+      setChatChromeVisible((current) => (current === visible ? current : visible));
+    },
+    [setChatChromeVisible],
+  );
+
+  useEffect(() => {
+    setGlobalChatChromeVisible(effectiveChatChromeVisible);
+  }, [effectiveChatChromeVisible, setGlobalChatChromeVisible]);
+
+  useEffect(() => {
+    return () => setGlobalChatChromeVisible(true);
+  }, [setGlobalChatChromeVisible]);
 
   const { initialStatus: initialOutputStatus, refreshOutputSnapshot } = useAgentOutputFeed({
     appVisible,
@@ -1294,10 +1385,11 @@ export default function ChatScreen() {
       });
       return () => {
         composerFocusedRef.current = false;
+        setComposerFocused(false);
         setNativeChatComposerFocused(false);
         unsubscribe();
       };
-    }, []),
+    }, [setComposerFocused]),
   );
 
   const handleComposerKeyboardEvent = useCallback(
@@ -1365,11 +1457,15 @@ export default function ChatScreen() {
     [handleComposerKeyboardEvent],
   );
 
-  const setComposerNativeFocus = useCallback((focused: boolean, updateFocusShell: () => void) => {
-    composerFocusedRef.current = focused;
-    setNativeChatComposerFocused(focused);
-    updateFocusShell();
-  }, []);
+  const setComposerNativeFocus = useCallback(
+    (focused: boolean, updateFocusShell: () => void) => {
+      composerFocusedRef.current = focused;
+      setComposerFocused((current) => (current === focused ? current : focused));
+      setNativeChatComposerFocused(focused);
+      updateFocusShell();
+    },
+    [setComposerFocused],
+  );
 
   useEffect(() => {
     if (!shouldLoadShareSummary) {
@@ -1530,6 +1626,22 @@ export default function ChatScreen() {
     }
     if (router.canGoBack()) router.back();
     else router.replace(parentViewHrefForPath(pathname, projectPath));
+  }
+
+  function toggleSharePanel() {
+    setSharePanelOpen((open) => {
+      const next = !open;
+      if (next) setManagePanelOpen(false);
+      return next;
+    });
+  }
+
+  function toggleManagePanel() {
+    setManagePanelOpen((open) => {
+      const next = !open;
+      if (next) setSharePanelOpen(false);
+      return next;
+    });
   }
 
   const composerFooterContent = useMemo(
@@ -1743,15 +1855,35 @@ export default function ChatScreen() {
       wideControls,
     ],
   );
-  const composerFooter = useMemo(
-    () =>
-      Platform.OS === "web" ? (
-        composerFooterContent
-      ) : (
-        <KeyboardStickyView style={{ flexShrink: 0 }}>{composerFooterContent}</KeyboardStickyView>
-      ),
-    [composerFooterContent],
-  );
+  const composerFooter = useMemo(() => {
+    const composerChromeStyle: ViewStyle = {
+      bottom: 0,
+      left: 0,
+      position: "absolute",
+      right: 0,
+      zIndex: 30,
+    };
+    return Platform.OS === "web" ? (
+      <ChatChromeMotion
+        direction="bottom"
+        distance={chatBottomContentReserve}
+        style={composerChromeStyle}
+        visible={effectiveChatChromeVisible}
+      >
+        {composerFooterContent}
+      </ChatChromeMotion>
+    ) : (
+      <KeyboardStickyView style={composerChromeStyle}>
+        <ChatChromeMotion
+          direction="bottom"
+          distance={chatBottomContentReserve}
+          visible={effectiveChatChromeVisible}
+        >
+          {composerFooterContent}
+        </ChatChromeMotion>
+      </KeyboardStickyView>
+    );
+  }, [chatBottomContentReserve, composerFooterContent, effectiveChatChromeVisible]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -1762,7 +1894,18 @@ export default function ChatScreen() {
         >
           {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
           <View className="flex-1">
-            <View style={{ flexShrink: 0 }}>
+            <ChatChromeMotion
+              direction="top"
+              distance={chatTopContentReserve}
+              style={{
+                left: 0,
+                position: "absolute",
+                right: 0,
+                top: topBarHeight,
+                zIndex: 25,
+              }}
+              visible={effectiveChatChromeVisible}
+            >
               <View className="border-b border-border px-4 py-3 flex-row items-center justify-between">
                 {useScrollableNativeHeader ? (
                   <ScrollView
@@ -1834,14 +1977,14 @@ export default function ChatScreen() {
                             />
                           </View>
                           <Pressable
-                            onPress={() => setSharePanelOpen((open) => !open)}
+                            onPress={toggleSharePanel}
                             accessibilityLabel="Invite collaborator"
                             className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
                           >
                             <UserPlus size={15} color="#a1a1aa" />
                           </Pressable>
                           <Pressable
-                            onPress={() => setManagePanelOpen((open) => !open)}
+                            onPress={toggleManagePanel}
                             accessibilityLabel="Manage agent"
                             accessibilityState={{ expanded: managePanelOpen }}
                             className={cn(
@@ -1944,14 +2087,14 @@ export default function ChatScreen() {
                                 />
                               </View>
                               <Pressable
-                                onPress={() => setSharePanelOpen((open) => !open)}
+                                onPress={toggleSharePanel}
                                 accessibilityLabel="Invite collaborator"
                                 className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
                               >
                                 <UserPlus size={15} color="#a1a1aa" />
                               </Pressable>
                               <Pressable
-                                onPress={() => setManagePanelOpen((open) => !open)}
+                                onPress={toggleManagePanel}
                                 accessibilityLabel="Manage agent"
                                 accessibilityState={{ expanded: managePanelOpen }}
                                 className={cn(
@@ -1990,14 +2133,23 @@ export default function ChatScreen() {
                   </>
                 )}
               </View>
-            </View>
+            </ChatChromeMotion>
             {/*
             Closed by default. These are settings, and pinning them above every
             conversation cost the chat ~250px on every screen for controls with
             no recorded use.
           */}
             {session && managePanelOpen && canUseOwnerControls ? (
-              <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
+              <View
+                style={{
+                  left: 0,
+                  maxHeight: Math.round(windowHeight * 0.6),
+                  position: "absolute",
+                  right: 0,
+                  top: chatControlPanelTopReserve,
+                  zIndex: 24,
+                }}
+              >
                 <ScrollView>
                   {compactHeaderActions && !useScrollableNativeHeader ? (
                     <View className="border-b border-border bg-card px-4 py-3">
@@ -2035,160 +2187,175 @@ export default function ChatScreen() {
             {sharePanelOpen ? (
               <View
                 className={cn("border-b border-border bg-card px-4", activeShare ? "py-2" : "py-3")}
-                style={{ flexShrink: 0 }}
+                style={{
+                  left: 0,
+                  maxHeight: chatControlPanelReserve || undefined,
+                  position: "absolute",
+                  right: 0,
+                  top: chatControlPanelTopReserve,
+                  zIndex: 23,
+                }}
               >
-                {activeShare ? (
-                  <>
-                    <View className="flex-row items-center justify-between gap-3">
-                      <Pressable
-                        onPress={() => setShareDetailsExpanded((expanded) => !expanded)}
-                        accessibilityRole="button"
-                        accessibilityLabel="Toggle shared chat details"
-                        accessibilityState={{ expanded: shareDetailsExpanded }}
-                        className="flex-1 flex-row items-center gap-2 active:opacity-70"
-                      >
-                        <ChevronDown
-                          size={16}
-                          color="#a1a1aa"
-                          style={{
-                            transform: [{ rotate: shareDetailsExpanded ? "0deg" : "-90deg" }],
-                          }}
-                        />
-                        <View className="flex-1">
-                          <Text className="text-xs font-semibold uppercase tracking-widest text-foreground">
-                            Shared chat
-                          </Text>
-                          <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
-                            Replying as {sharedChatDisplayName}
-                            {sharedChatParticipantCount
-                              ? ` · ${sharedChatParticipantCount} participant${
-                                  sharedChatParticipantCount === 1 ? "" : "s"
-                                }`
-                              : ""}
-                          </Text>
-                        </View>
-                      </Pressable>
-                      {!currentUserIsShareOwner ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          label={shareAction ? "Leaving..." : "Leave"}
-                          disabled={!token || Boolean(shareAction)}
-                          onPress={handleLeaveShare}
-                        />
-                      ) : null}
-                    </View>
-                  </>
-                ) : (
-                  <View className="flex-row items-center gap-2">
-                    <Input
-                      value={inviteEmail}
-                      onChangeText={setInviteEmail}
-                      placeholder="Email address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="email-address"
-                      className="flex-1 h-9 text-sm"
-                    />
-                    <Button
-                      size="sm"
-                      label={inviteBusy ? "Sending..." : "Invite"}
-                      disabled={
-                        inviteBusy ||
-                        !relayConfigured ||
-                        !token ||
-                        !project?.path ||
-                        !sessionId ||
-                        !inviteEmail.trim()
-                      }
-                      onPress={handleSendInvite}
-                    />
-                  </View>
-                )}
-                {shareSummary && (!activeShare || shareDetailsExpanded) ? (
-                  <View className="mt-3 border-t border-border pt-3">
-                    <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                      Participants
-                    </Text>
-                    {shareSummary.participants.map((participant) => (
-                      <View
-                        key={participant.userId}
-                        className="mt-2 flex-row items-center justify-between gap-3"
-                      >
-                        <View className="flex-1">
-                          <Text className="text-sm text-foreground" numberOfLines={1}>
-                            {participant.displayName}
-                          </Text>
-                          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                            {participant.role} · {formatShareParticipantStatus(participant)}
-                            {participant.email ? ` · ${participant.email}` : ""}
-                          </Text>
-                        </View>
-                        {canManageShare &&
-                        participant.role !== "owner" &&
-                        participant.status === "active" ? (
+                <ScrollView keyboardShouldPersistTaps="handled">
+                  {activeShare ? (
+                    <>
+                      <View className="flex-row items-center justify-between gap-3">
+                        <Pressable
+                          onPress={() => setShareDetailsExpanded((expanded) => !expanded)}
+                          accessibilityRole="button"
+                          accessibilityLabel="Toggle shared chat details"
+                          accessibilityState={{ expanded: shareDetailsExpanded }}
+                          className="flex-1 flex-row items-center gap-2 active:opacity-70"
+                        >
+                          <ChevronDown
+                            size={16}
+                            color="#a1a1aa"
+                            style={{
+                              transform: [{ rotate: shareDetailsExpanded ? "0deg" : "-90deg" }],
+                            }}
+                          />
+                          <View className="flex-1">
+                            <Text className="text-xs font-semibold uppercase tracking-widest text-foreground">
+                              Shared chat
+                            </Text>
+                            <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+                              Replying as {sharedChatDisplayName}
+                              {sharedChatParticipantCount
+                                ? ` · ${sharedChatParticipantCount} participant${
+                                    sharedChatParticipantCount === 1 ? "" : "s"
+                                  }`
+                                : ""}
+                            </Text>
+                          </View>
+                        </Pressable>
+                        {!currentUserIsShareOwner ? (
                           <Button
                             size="sm"
                             variant="outline"
-                            label={shareAction === participant.userId ? "Removing..." : "Remove"}
+                            label={shareAction ? "Leaving..." : "Leave"}
                             disabled={!token || Boolean(shareAction)}
-                            onPress={() => handleRemoveParticipant(participant.userId)}
+                            onPress={handleLeaveShare}
                           />
                         ) : null}
                       </View>
-                    ))}
-                    {canManageShare && visibleShareInvites.length > 0 ? (
-                      <View className="mt-3">
-                        <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                          Invites
-                        </Text>
-                        {visibleShareInvites.map((invite) => (
-                          <View
-                            key={invite.id}
-                            className="mt-2 flex-row items-center justify-between gap-3"
-                          >
-                            <View className="flex-1">
-                              <Text className="text-sm text-foreground" numberOfLines={1}>
-                                {invite.email}
-                              </Text>
-                              <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                                {formatShareInviteStatus(invite)}
-                              </Text>
-                            </View>
-                            {invite.status === "pending" ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                label={
-                                  shareAction === `invite:${invite.id}` ? "Revoking..." : "Revoke"
-                                }
-                                disabled={!token || Boolean(shareAction)}
-                                onPress={() => handleRevokeInvite(invite.id, invite.email)}
-                              />
-                            ) : null}
+                    </>
+                  ) : (
+                    <View className="flex-row items-center gap-2">
+                      <Input
+                        value={inviteEmail}
+                        onChangeText={setInviteEmail}
+                        placeholder="Email address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="email-address"
+                        className="flex-1 h-9 text-sm"
+                      />
+                      <Button
+                        size="sm"
+                        label={inviteBusy ? "Sending..." : "Invite"}
+                        disabled={
+                          inviteBusy ||
+                          !relayConfigured ||
+                          !token ||
+                          !project?.path ||
+                          !sessionId ||
+                          !inviteEmail.trim()
+                        }
+                        onPress={handleSendInvite}
+                      />
+                    </View>
+                  )}
+                  {shareSummary && (!activeShare || shareDetailsExpanded) ? (
+                    <View className="mt-3 border-t border-border pt-3">
+                      <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                        Participants
+                      </Text>
+                      {shareSummary.participants.map((participant) => (
+                        <View
+                          key={participant.userId}
+                          className="mt-2 flex-row items-center justify-between gap-3"
+                        >
+                          <View className="flex-1">
+                            <Text className="text-sm text-foreground" numberOfLines={1}>
+                              {participant.displayName}
+                            </Text>
+                            <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                              {participant.role} · {formatShareParticipantStatus(participant)}
+                              {participant.email ? ` · ${participant.email}` : ""}
+                            </Text>
                           </View>
-                        ))}
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
-                {!relayConfigured ? (
-                  <Text className="text-xs text-muted-foreground mt-2">
-                    Remote mode is required for shared session invites.
-                  </Text>
-                ) : !token ? (
-                  <Text className="text-xs text-muted-foreground mt-2">
-                    Sign in is required to send invites.
-                  </Text>
-                ) : inviteStatus ? (
-                  <Text className="text-xs text-muted-foreground mt-2">{inviteStatus}</Text>
-                ) : null}
+                          {canManageShare &&
+                          participant.role !== "owner" &&
+                          participant.status === "active" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              label={shareAction === participant.userId ? "Removing..." : "Remove"}
+                              disabled={!token || Boolean(shareAction)}
+                              onPress={() => handleRemoveParticipant(participant.userId)}
+                            />
+                          ) : null}
+                        </View>
+                      ))}
+                      {canManageShare && visibleShareInvites.length > 0 ? (
+                        <View className="mt-3">
+                          <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                            Invites
+                          </Text>
+                          {visibleShareInvites.map((invite) => (
+                            <View
+                              key={invite.id}
+                              className="mt-2 flex-row items-center justify-between gap-3"
+                            >
+                              <View className="flex-1">
+                                <Text className="text-sm text-foreground" numberOfLines={1}>
+                                  {invite.email}
+                                </Text>
+                                <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                                  {formatShareInviteStatus(invite)}
+                                </Text>
+                              </View>
+                              {invite.status === "pending" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  label={
+                                    shareAction === `invite:${invite.id}` ? "Revoking..." : "Revoke"
+                                  }
+                                  disabled={!token || Boolean(shareAction)}
+                                  onPress={() => handleRevokeInvite(invite.id, invite.email)}
+                                />
+                              ) : null}
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {!relayConfigured ? (
+                    <Text className="text-xs text-muted-foreground mt-2">
+                      Remote mode is required for shared session invites.
+                    </Text>
+                  ) : !token ? (
+                    <Text className="text-xs text-muted-foreground mt-2">
+                      Sign in is required to send invites.
+                    </Text>
+                  ) : inviteStatus ? (
+                    <Text className="text-xs text-muted-foreground mt-2">{inviteStatus}</Text>
+                  ) : null}
+                </ScrollView>
               </View>
             ) : null}
             {serviceDisconnected ? (
               <View
                 className="border-b border-border bg-card/80 px-4 py-2"
-                style={{ flexShrink: 0 }}
+                style={{
+                  left: 0,
+                  position: "absolute",
+                  right: 0,
+                  top: chatHeaderTopReserve,
+                  zIndex: 22,
+                }}
               >
                 <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                   Reconnecting
@@ -2200,7 +2367,13 @@ export default function ChatScreen() {
             ) : null}
 
             {routeSessionMissing ? (
-              <View className="flex-1 p-4">
+              <View
+                className="flex-1 p-4"
+                style={{
+                  paddingBottom: showComposerFooter ? chatBottomContentReserve : 16,
+                  paddingTop: chatTopContentReserve + 16,
+                }}
+              >
                 <View className="rounded-lg border border-border bg-card p-4">
                   <Text className="text-base font-semibold text-foreground">
                     Agent no longer exists.
@@ -2213,7 +2386,13 @@ export default function ChatScreen() {
                 </View>
               </View>
             ) : !displayServiceEndpoint ? (
-              <View className="flex-1 p-4">
+              <View
+                className="flex-1 p-4"
+                style={{
+                  paddingBottom: showComposerFooter ? chatBottomContentReserve : 16,
+                  paddingTop: chatTopContentReserve + 16,
+                }}
+              >
                 <Text className="text-sm text-muted-foreground">
                   Project service not running. Start the project host to view this session.
                 </Text>
@@ -2223,16 +2402,19 @@ export default function ChatScreen() {
                 <AgentChatSessionViewport
                   key={chatViewportKey}
                   allMessages={allMessages}
+                  bottomContentInset={chatBottomContentReserve}
                   dividerWidth={chatDividerWidth}
                   placeholderState={chatPlaceholderState}
                   ref={chatViewportRef}
+                  onChromeVisibleChange={handleChatChromeVisibleChange}
                   onRetryTranscriptLoad={handleRetryTranscriptLoad}
                   serviceEndpoint={displayServiceEndpoint}
                   sessionKey={sessionKey}
+                  topContentInset={chatTopContentReserve}
                 />
-                {composerFooter}
               </View>
             )}
+            {showComposerFooter ? composerFooter : null}
           </View>
         </View>
       </View>
@@ -2244,20 +2426,26 @@ const AgentChatSessionViewport = React.forwardRef<
   ChatSessionViewportHandle,
   {
     allMessages: readonly ChatMessage[];
+    bottomContentInset: number;
     dividerWidth: number;
+    onChromeVisibleChange: (visible: boolean) => void;
     onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
     placeholderState: ChatTranscriptPlaceholderState;
     serviceEndpoint: ServiceEndpoint;
     sessionKey: string;
+    topContentInset: number;
   }
 >(function AgentChatSessionViewport(
   {
     allMessages,
+    bottomContentInset,
     dividerWidth,
+    onChromeVisibleChange,
     onRetryTranscriptLoad,
     placeholderState,
     serviceEndpoint,
     sessionKey,
+    topContentInset,
   },
   ref,
 ) {
@@ -2279,6 +2467,7 @@ const AgentChatSessionViewport = React.forwardRef<
     viewportHeight: 0,
   });
   const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+  const chatScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
   const chatScrollFrameRef = useRef<number | null>(null);
   const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
   const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
@@ -2341,9 +2530,17 @@ const AgentChatSessionViewport = React.forwardRef<
     });
     liveChatTranscriptRef.current = live;
     chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+    chatScrollChromeRef.current = createChatScrollChromeState();
+    onChromeVisibleChange(true);
     applyVisibleChatTranscript(live);
     executeChatScrollCommand(chatCommandForNavigationFocus());
-  }, [allMessages, applyVisibleChatTranscript, executeChatScrollCommand, sessionKey]);
+  }, [
+    allMessages,
+    applyVisibleChatTranscript,
+    executeChatScrollCommand,
+    onChromeVisibleChange,
+    sessionKey,
+  ]);
 
   useImperativeHandle(ref, () => ({ showNewest }), [showNewest]);
 
@@ -2353,6 +2550,8 @@ const AgentChatSessionViewport = React.forwardRef<
     useCallback(() => {
       chatInitialLayoutKeyRef.current = sessionKey || null;
       chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+      chatScrollChromeRef.current = createChatScrollChromeState();
+      onChromeVisibleChange(true);
       showLiveChatTranscript();
       const interaction = InteractionManager.runAfterInteractions(() => {
         executeChatScrollCommand(chatCommandForNavigationFocus());
@@ -2361,7 +2560,13 @@ const AgentChatSessionViewport = React.forwardRef<
         interaction.cancel();
         cancelPendingChatScroll();
       };
-    }, [cancelPendingChatScroll, executeChatScrollCommand, sessionKey, showLiveChatTranscript]),
+    }, [
+      cancelPendingChatScroll,
+      executeChatScrollCommand,
+      onChromeVisibleChange,
+      sessionKey,
+      showLiveChatTranscript,
+    ]),
   );
 
   const handleChatLayout = useCallback(
@@ -2406,11 +2611,20 @@ const AgentChatSessionViewport = React.forwardRef<
         cancelPendingChatScroll();
       }
       chatScrollPolicyRef.current = nextPolicy;
+      const nextChrome = chatChromeAfterUserScroll(
+        chatScrollChromeRef.current,
+        nextPolicy,
+        metrics,
+      );
+      if (nextChrome !== chatScrollChromeRef.current) {
+        chatScrollChromeRef.current = nextChrome;
+        onChromeVisibleChange(nextChrome.visible);
+      }
       if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
         showLiveChatTranscript();
       }
     },
-    [cancelPendingChatScroll, showLiveChatTranscript],
+    [cancelPendingChatScroll, onChromeVisibleChange, showLiveChatTranscript],
   );
 
   useEffect(() => {
@@ -2435,12 +2649,15 @@ const AgentChatSessionViewport = React.forwardRef<
         ref={chatScrollRef}
         serviceEndpoint={serviceEndpoint}
         dividerWidth={dividerWidth}
+        bottomContentInset={bottomContentInset}
+        topContentInset={topContentInset}
       />
     </View>
   );
 });
 
 type AgentChatTranscriptProps = {
+  bottomContentInset: number;
   dividerWidth: number;
   messages: readonly ChatMessage[];
   onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
@@ -2449,11 +2666,13 @@ type AgentChatTranscriptProps = {
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
+  topContentInset: number;
 };
 
 const AgentChatTranscript = React.memo(
   React.forwardRef<ChatScrollHandle, AgentChatTranscriptProps>(function AgentChatTranscript(
     {
+      bottomContentInset,
       dividerWidth,
       messages,
       onContentSizeChange,
@@ -2462,9 +2681,16 @@ const AgentChatTranscript = React.memo(
       onScroll,
       placeholderState,
       serviceEndpoint,
+      topContentInset,
     },
     ref,
   ) {
+    const extraContentPadding = useSharedValue(bottomContentInset);
+
+    useEffect(() => {
+      extraContentPadding.value = bottomContentInset;
+    }, [bottomContentInset, extraContentPadding]);
+
     const content =
       messages.length === 0 ? (
         <ChatTranscriptPlaceholder
@@ -2491,8 +2717,8 @@ const AgentChatTranscript = React.memo(
       flexGrow: 1,
       justifyContent: "flex-end" as const,
       paddingHorizontal: 16,
-      paddingTop: 16,
-      paddingBottom: 18,
+      paddingTop: topContentInset + 16,
+      paddingBottom: Platform.OS === "web" ? bottomContentInset + 18 : 18,
     };
 
     if (Platform.OS !== "web") {
@@ -2501,6 +2727,7 @@ const AgentChatTranscript = React.memo(
           ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
           className="flex-1 bg-background"
           contentContainerStyle={contentContainerStyle}
+          extraContentPadding={extraContentPadding}
           keyboardDismissMode="interactive"
           keyboardLiftBehavior="whenAtEnd"
           keyboardShouldPersistTaps="handled"
