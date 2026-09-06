@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-dashboard-project-event-refresh-contract.mjs",
+  "source": "src/multiplexer/project-event-stream.ts",
+  "subject": "DashboardProjectEventAdapter.refreshViews",
+  "description": "Dashboard project event refresh routing captured by running TypeScript.",
+  "caseCount": 9,
+  "cases": [
+    {
+      "id": "dashboard-project-event-refresh-001",
+      "name": "notification updates refresh model and visible coordination screen",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "notification updates refresh model and visible coordination screen",
+        "screen": "coordination",
+        "views": ["notifications", "coordination-worklist"]
+      },
+      "output": { "calls": ["dashboard-model", "coordination", "render"], "renders": 1 },
+      "inputSha256": "8ba5a3654fff1312b7d452cd26734c65ee6959196f8fdac6c4f29f78aa4cea1d"
+    },
+    {
+      "id": "dashboard-project-event-refresh-002",
+      "name": "project observability refreshes only the project screen",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "project observability refreshes only the project screen",
+        "screen": "project",
+        "views": ["project-observability"]
+      },
+      "output": { "calls": ["project", "render"], "renders": 1 },
+      "inputSha256": "5e42ca1a7b6c18e64b92896b9ae25d94e15968993b77540c7d595f16ce96625c"
+    },
+    {
+      "id": "dashboard-project-event-refresh-003",
+      "name": "agent updates refresh model and visible topology screen",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "agent updates refresh model and visible topology screen",
+        "screen": "topology",
+        "views": ["agents"]
+      },
+      "output": { "calls": ["dashboard-model", "topology", "render"], "renders": 1 },
+      "inputSha256": "0c2432a4aa5ed706876e6a28e1199c2104f6bfa1d64e913575c0cc1347f80c09"
+    },
+    {
+      "id": "dashboard-project-event-refresh-004",
+      "name": "library updates refresh only the visible library screen",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "library updates refresh only the visible library screen",
+        "screen": "library",
+        "views": ["library"]
+      },
+      "output": { "calls": ["library", "render"], "renders": 1 },
+      "inputSha256": "65e2b60b952141335e0198b7814a8d8e6a7dff8d4a4d9210cdd59c20a300f97e"
+    },
+    {
+      "id": "dashboard-project-event-refresh-005",
+      "name": "graveyard updates refresh only the visible graveyard screen",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "graveyard updates refresh only the visible graveyard screen",
+        "screen": "graveyard",
+        "views": ["graveyard"]
+      },
+      "output": { "calls": ["graveyard", "graveyard-frame", "render"], "renders": 1 },
+      "inputSha256": "09b38927334527fdfc56ceabe6e434f85d4c8a23ef92ac80a51a16f179cb2bf6"
+    },
+    {
+      "id": "dashboard-project-event-refresh-006",
+      "name": "team plan and work-outline updates do not trigger dashboard refresh work",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "team plan and work-outline updates do not trigger dashboard refresh work",
+        "screen": "coordination",
+        "views": ["team", "plans", "work-outline"]
+      },
+      "output": { "calls": [], "renders": 0 },
+      "inputSha256": "8dae180c47cc72bd1eb3e6ca56d6ff1370204915ad771254495b3268b8af6ace"
+    },
+    {
+      "id": "dashboard-project-event-refresh-007",
+      "name": "skips render when model refresh reports no applied data",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "skips render when model refresh reports no applied data",
+        "screen": "coordination",
+        "views": ["desktop-state"],
+        "modelResult": false
+      },
+      "output": { "calls": ["dashboard-model"], "renders": 0 },
+      "inputSha256": "5ecb81c5c208aef3f2c6f033ba7c982efc61ed1b2a3868507ba0df767d12a663"
+    },
+    {
+      "id": "dashboard-project-event-refresh-008",
+      "name": "renders successful model refresh when coordination refresh rejects",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "renders successful model refresh when coordination refresh rejects",
+        "screen": "coordination",
+        "views": ["desktop-state", "coordination-worklist"],
+        "coordinationThrows": true
+      },
+      "output": { "calls": ["dashboard-model", "coordination", "render"], "renders": 1 },
+      "inputSha256": "3552e61eeeb18210ed27ddaf5f442133855b3d6e4a25414db21ab41893aef39b"
+    },
+    {
+      "id": "dashboard-project-event-refresh-009",
+      "name": "ready event refreshes every routed view for the visible screen",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "scheduleProjectViewRefresh",
+      "input": {
+        "name": "ready event refreshes every routed view for the visible screen",
+        "eventName": "ready",
+        "screen": "library",
+        "views": [
+          "agents",
+          "coordination-worklist",
+          "desktop-state",
+          "graveyard",
+          "library",
+          "notifications",
+          "plans",
+          "project-observability",
+          "services",
+          "team",
+          "tasks",
+          "threads",
+          "topology",
+          "work-outline",
+          "worktrees"
+        ]
+      },
+      "output": { "calls": ["dashboard-model", "library", "render"], "renders": 1 },
+      "inputSha256": "0f389774df8ad1b66931aeca7c95a0ae1b35a904d0decc9a29cf25b8139bfaa9"
+    }
+  ]
+}

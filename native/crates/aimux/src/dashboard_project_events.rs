@@ -15,6 +15,20 @@ const DESKTOP_STATE_REFRESH_VIEWS: &[&str] = &[
     "threads",
 ];
 
+const COORDINATION_REFRESH_VIEWS: &[&str] =
+    &["coordination-worklist", "notifications", "tasks", "threads"];
+const PROJECT_REFRESH_VIEWS: &[&str] = &[
+    "project-observability",
+    "tasks",
+    "notifications",
+    "worktrees",
+    "agents",
+    "services",
+];
+const TOPOLOGY_REFRESH_VIEWS: &[&str] = &["topology", "agents", "services", "worktrees"];
+const LIBRARY_REFRESH_VIEWS: &[&str] = &["library"];
+const GRAVEYARD_REFRESH_VIEWS: &[&str] = &["graveyard", "agents", "worktrees"];
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DashboardProjectEvent {
     Ready(Map<String, Value>),
@@ -232,4 +246,70 @@ pub fn event_requests_desktop_state(event: &DashboardProjectEvent) -> bool {
                 })
             }),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardProjectRefreshWork {
+    DashboardModel,
+    Coordination,
+    Project,
+    Topology,
+    Library,
+    Graveyard,
+}
+
+impl DashboardProjectRefreshWork {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DashboardModel => "dashboard-model",
+            Self::Coordination => "coordination",
+            Self::Project => "project",
+            Self::Topology => "topology",
+            Self::Library => "library",
+            Self::Graveyard => "graveyard",
+        }
+    }
+}
+
+pub fn dashboard_project_refresh_work(
+    views: &[String],
+    active_screen: Option<&str>,
+) -> Vec<DashboardProjectRefreshWork> {
+    let mut work = Vec::new();
+    if touches(views, DESKTOP_STATE_REFRESH_VIEWS) {
+        work.push(DashboardProjectRefreshWork::DashboardModel);
+    }
+    if active_screen == Some("coordination") && touches(views, COORDINATION_REFRESH_VIEWS) {
+        work.push(DashboardProjectRefreshWork::Coordination);
+    }
+    if active_screen == Some("project") && touches(views, PROJECT_REFRESH_VIEWS) {
+        work.push(DashboardProjectRefreshWork::Project);
+    }
+    if active_screen == Some("topology") && touches(views, TOPOLOGY_REFRESH_VIEWS) {
+        work.push(DashboardProjectRefreshWork::Topology);
+    }
+    if active_screen == Some("library") && touches(views, LIBRARY_REFRESH_VIEWS) {
+        work.push(DashboardProjectRefreshWork::Library);
+    }
+    if active_screen == Some("graveyard") && touches(views, GRAVEYARD_REFRESH_VIEWS) {
+        work.push(DashboardProjectRefreshWork::Graveyard);
+    }
+    work
+}
+
+pub fn should_render_after_project_event_refresh(
+    work: &[DashboardProjectRefreshWork],
+    applied_refresh: bool,
+    lifecycle_current: bool,
+) -> bool {
+    if work.is_empty() || !applied_refresh || !lifecycle_current {
+        return false;
+    }
+    true
+}
+
+fn touches(views: &[String], candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| views.iter().any(|view| view == candidate))
 }
