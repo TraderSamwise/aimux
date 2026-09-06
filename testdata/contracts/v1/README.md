@@ -35,6 +35,9 @@ Priority fixture groups:
 
 ## Agent Output
 
+- `agent-display/labels.json`: app generated-label detection, tool-name
+  fallback, role-label trimming, short-name, and compact-identity behavior
+  captured by running TypeScript `app/lib/agent-display` helpers.
 - `agent-output/activity-text.json`: first-priority progress-line extraction
   cases captured by running TypeScript `activityTextFromParsedAgentOutput`
   against `src/agent-output-activity-text.test.ts` inputs.
