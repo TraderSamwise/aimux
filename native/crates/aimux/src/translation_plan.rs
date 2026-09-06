@@ -112,7 +112,7 @@ pub fn rewrite_status() -> RewriteStatus {
         strategy: "translation first: preserve functional behavior, function logic, loops, and data shapes; split large TypeScript monoliths into smaller Rust modules when the split does not change behavior.",
         end_state: "zero Node in the normal Aimux CLI, daemon, project-service, tmux runtime, and dashboard hot path",
         progress_estimate_percent: 20,
-        active_slice: "runtime event fanout is narrowed and legacy Node daemon/project-service adoption is blocked; remaining CLI fallback families are next",
+        active_slice: "runtime event fanout is narrowed, legacy Node daemon/project-service adoption is blocked, and the core-routable installed CLI Node fallback backlog is empty",
         checkpoints: &[
             "native CLI scaffold and rewrite status command",
             "project API contract constants and mutation invalidation mapping",
@@ -123,6 +123,7 @@ pub fn rewrite_status() -> RewriteStatus {
             "native dashboard command is available behind an explicit selector while the TypeScript dashboard remains the feature-parity default",
             "output capture/projection cache and expose preview attachment slices",
             "native daemon/runtime rejects legacy Node control-plane adoption and relaunches project services native on open",
+            "native release archives install without requiring Node when the platform Rust binary is present",
         ],
         phases: PHASES,
     }

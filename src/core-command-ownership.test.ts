@@ -180,12 +180,14 @@ const coreCommandDispositions: Array<{
   {
     command: "daemon restart",
     args: ["daemon", "restart"],
-    disposition: "node-core-fallback",
+    disposition: "shim-fast-path",
+    shimNeedle: "aimux_try_restart",
   },
   {
     command: "daemon restart --json",
     args: ["daemon", "restart", "--json"],
-    disposition: "node-core-fallback",
+    disposition: "shim-fast-path",
+    shimNeedle: "aimux_try_restart",
   },
   {
     command: "serve",
@@ -391,7 +393,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(38);
+    expect(fastPaths).toHaveLength(40);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
@@ -403,6 +405,6 @@ describe("core command ownership inventory", () => {
       .filter((entry) => entry.disposition === "node-core-fallback")
       .map((entry) => entry.command);
 
-    expect(backlog).toEqual(["daemon restart", "daemon restart --json"]);
+    expect(backlog).toEqual([]);
   });
 });
