@@ -225,6 +225,8 @@ Priority fixture groups:
   `runtime-guard-repair-history`.
 - `runtime-state/drift.json`: local-build drift error classification captured
   by running TypeScript `runtime-drift`.
+- `runtime-state/repair-events.json`: durable repair event JSONL logging
+  captured by running TypeScript `repair-events`.
 - `runtime-migration/migration.json`: report, explicit import, rollback,
   corrupt legacy file, global agent-dir copy avoidance, and blocked existing
   exchange behavior captured by running TypeScript `runtime-migration` helpers

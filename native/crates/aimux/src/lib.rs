@@ -67,6 +67,7 @@ pub mod proxy_project_binding;
 pub mod remote_access;
 pub mod remote_credentials;
 pub mod remote_login;
+pub mod repair_events;
 pub mod root_session_launch;
 pub mod runtime_coherence;
 pub mod runtime_drift;
