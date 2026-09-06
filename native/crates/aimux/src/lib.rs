@@ -87,6 +87,7 @@ pub mod statusline_model_contract;
 pub mod tmux;
 pub mod tmux_control;
 pub mod tmux_expose;
+pub mod tmux_expose_hot_snapshot;
 pub mod tool_hooks;
 pub mod tool_hooks_contract;
 pub mod transcript_turn_state;
