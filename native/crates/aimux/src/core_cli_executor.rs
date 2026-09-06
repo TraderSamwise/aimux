@@ -1,6 +1,6 @@
 use crate::core_cli::{
     CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCommandCall,
-    CoreCommandOk, classify_core_cli_with_project_resolver,
+    CoreCommandOk, CoreLoopActorContext, classify_core_cli_with_project_resolver,
 };
 use crate::core_command_client::request_core_command;
 use crate::core_command_contract::CORE_COMMAND_NAMES;
@@ -62,6 +62,7 @@ pub trait CoreCliRuntime {
     fn load_daemon_info(&self) -> Option<AimuxDaemonInfo>;
     fn load_daemon_state(&self) -> DaemonState;
     fn has_remote_credentials(&self) -> bool;
+    fn loop_actor_context(&self) -> CoreLoopActorContext;
     fn credentials_for_status(&self) -> Option<Value>;
     fn whoami_payload(&self) -> Value;
     fn set_remote_enabled(&self, enabled: bool) -> Result<(), String>;
@@ -111,6 +112,10 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     fn has_remote_credentials(&self) -> bool {
         let resolver = PathResolver::from_env();
         load_credentials(&resolver).is_some()
+    }
+
+    fn loop_actor_context(&self) -> CoreLoopActorContext {
+        CoreLoopActorContext::from_env()
     }
 
     fn credentials_for_status(&self) -> Option<Value> {
@@ -261,6 +266,7 @@ pub fn run_core_cli_with(
         current_project_root,
         daemon_running: runtime.load_daemon_info().is_some(),
         has_credentials: runtime.has_remote_credentials(),
+        loop_actor: runtime.loop_actor_context(),
     };
     let plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
         runtime.resolve_project_root(project)

@@ -1,4 +1,4 @@
-use aimux::core_cli::{CoreCommandCall, CoreCommandOk};
+use aimux::core_cli::{CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
 use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::text::auth::AuthFlowResult;
@@ -78,6 +78,10 @@ impl CoreCliRuntime for FakeRuntime {
         self.credentials.is_some()
     }
 
+    fn loop_actor_context(&self) -> CoreLoopActorContext {
+        CoreLoopActorContext::default()
+    }
+
     fn credentials_for_status(&self) -> Option<Value> {
         self.credentials.as_ref().map(|credentials| {
             json!({
@@ -153,6 +157,8 @@ impl CoreCliRuntime for FakeRuntime {
             "graveyarded claude-1\n".into()
         } else if path.starts_with("/core/lifecycle/fork-text") {
             "forked codex-2\nthread thread-1\n".into()
+        } else if path.starts_with("/core/loop/") {
+            "loop ok\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -672,6 +678,71 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
                     "instruction": "continue",
                     "worktreePath": null,
                     "open": true,
+                })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let add = run_core_cli_with(
+        &args(&["loop", "add", "claude-1", "--goal", "keep going"]),
+        &mut runtime,
+    );
+    let remove = run_core_cli_with(&args(&["loop", "remove", "claude-1"]), &mut runtime);
+    let done = run_core_cli_with(
+        &args(&["loop", "done", "--session", "claude-1", "--reason", "done"]),
+        &mut runtime,
+    );
+    let block = run_core_cli_with(
+        &args(&["loop", "block", "--session=claude-1", "--reason=blocked"]),
+        &mut runtime,
+    );
+
+    assert_eq!(add.stdout, ["loop ok"]);
+    assert_eq!(remove.stdout, ["loop ok"]);
+    assert_eq!(done.stdout, ["loop ok"]);
+    assert_eq!(block.stdout, ["loop ok"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/loop/add-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "claude-1",
+                    "source": "human",
+                    "goal": "keep going",
+                })),
+            ),
+            (
+                "/core/loop/remove-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "claude-1",
+                    "source": "human",
+                })),
+            ),
+            (
+                "/core/loop/done-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "claude-1",
+                    "source": "agent",
+                    "reason": "done",
+                })),
+            ),
+            (
+                "/core/loop/block-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "claude-1",
+                    "source": "agent",
+                    "reason": "blocked",
                 })),
             ),
         ]

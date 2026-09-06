@@ -7,8 +7,9 @@ use aimux::core_cli_routing::{
     parse_core_agent_rename_args, parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
     parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_project_ensure_args,
-    parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
+    parse_core_loop_mutation_args, parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -270,6 +271,53 @@ fn lifecycle_parsers_match_spawn_stop_kill_and_fork_forms() {
     assert!(!is_core_cli_command(&["stop"]));
     assert!(is_core_cli_command(&["stop", "claude-1"]));
     assert!(is_core_cli_command(&["stop", "--bad"]));
+}
+
+#[test]
+fn loop_parsers_match_mutation_and_exit_forms() {
+    let add = parse_core_loop_mutation_args(&[
+        "loop",
+        "add",
+        "claude-1",
+        "--goal",
+        "keep going",
+        "--project=/repo",
+    ])
+    .expect("loop add");
+    assert_eq!(add.subcommand, "add");
+    assert_eq!(add.session_id, "claude-1");
+    assert_eq!(add.goal.as_deref(), Some("keep going"));
+    assert_eq!(add.project.as_deref(), Some("/repo"));
+
+    let remove =
+        parse_core_loop_mutation_args(&["loop", "remove", "claude-1"]).expect("loop remove");
+    assert_eq!(remove.subcommand, "remove");
+    assert_eq!(remove.session_id, "claude-1");
+
+    let done = parse_core_loop_exit_args(&[
+        "loop",
+        "done",
+        "--session",
+        "claude-1",
+        "--reason=done",
+        "--json",
+    ])
+    .expect("loop done");
+    assert_eq!(done.subcommand, "done");
+    assert_eq!(done.session_id.as_deref(), Some("claude-1"));
+    assert_eq!(done.reason.as_deref(), Some("done"));
+    assert!(done.json);
+
+    let block =
+        parse_core_loop_exit_args(&["loop", "block", "--project", "/repo"]).expect("loop block");
+    assert_eq!(block.subcommand, "block");
+    assert_eq!(block.project.as_deref(), Some("/repo"));
+
+    assert!(parse_core_loop_mutation_args(&["loop", "add"]).is_none());
+    assert!(
+        parse_core_loop_mutation_args(&["loop", "remove", "claude-1", "--goal", "x"]).is_none()
+    );
+    assert!(parse_core_loop_exit_args(&["loop", "done", "--session"]).is_none());
 }
 
 #[test]

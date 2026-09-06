@@ -5,8 +5,9 @@ use crate::core_cli_routing::{
     parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
     parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_project_ensure_args,
-    parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
+    parse_core_loop_mutation_args, parse_core_project_ensure_args, parse_core_restart_args,
+    parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,10 @@ pub enum CoreCliOperation {
     LifecycleStop,
     LifecycleKill,
     LifecycleFork,
+    LoopAdd,
+    LoopRemove,
+    LoopDone,
+    LoopBlock,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -84,6 +89,31 @@ pub struct CoreCliContext {
     pub current_project_root: String,
     pub daemon_running: bool,
     pub has_credentials: bool,
+    pub loop_actor: CoreLoopActorContext,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CoreLoopActorContext {
+    pub session_id: Option<String>,
+    pub tool: Option<String>,
+    pub overseer: bool,
+}
+
+impl CoreLoopActorContext {
+    pub fn from_env() -> Self {
+        Self {
+            session_id: env_value("AIMUX_SESSION_ID"),
+            tool: env_value("AIMUX_TOOL"),
+            overseer: std::env::var("AIMUX_OVERSEER").ok().as_deref() == Some("1"),
+        }
+    }
+}
+
+fn env_value(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -500,6 +530,30 @@ fn text_route_path(path: &str, json: bool) -> String {
     }
 }
 
+fn loop_actor_payload(
+    actor: &CoreLoopActorContext,
+    default_source: &str,
+) -> serde_json::Map<String, Value> {
+    let Some(session_id) = actor.session_id.clone() else {
+        return serde_json::Map::from_iter([(
+            "source".into(),
+            Value::String(default_source.to_owned()),
+        )]);
+    };
+    let source = if actor.overseer { "overseer" } else { "agent" };
+    let mut payload = serde_json::Map::from_iter([
+        ("source".into(), Value::String(source.into())),
+        ("updatedBy".into(), Value::String(session_id.clone())),
+        ("updatedBySessionId".into(), Value::String(session_id)),
+    ]);
+    if actor.overseer {
+        payload.insert("updatedByRole".into(), Value::String("overseer".into()));
+    } else if let Some(tool) = actor.tool.as_ref() {
+        payload.insert("updatedByRole".into(), Value::String(tool.clone()));
+    }
+    payload
+}
+
 fn encode_query_component(value: &str) -> String {
     let mut output = String::new();
     for byte in value.bytes() {
@@ -725,6 +779,84 @@ where
                         "worktreePath": parsed.worktree,
                         "open": parsed.open,
                     })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("loop", "add" | "remove") => {
+            let parsed = parse_core_loop_mutation_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid loop arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let mut body = serde_json::Map::from_iter([
+                ("project".into(), Value::String(project_root)),
+                ("sessionId".into(), Value::String(parsed.session_id)),
+            ]);
+            body.extend(loop_actor_payload(&context.loop_actor, "human"));
+            if let Some(goal) = parsed.goal {
+                body.insert("goal".into(), Value::String(goal));
+            }
+            let (operation, route) = if parsed.subcommand == "add" {
+                (CoreCliOperation::LoopAdd, CORE_API_ROUTES.loop_add_text)
+            } else {
+                (
+                    CoreCliOperation::LoopRemove,
+                    CORE_API_ROUTES.loop_remove_text,
+                )
+            };
+            (
+                operation,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(route, parsed.json),
+                    body: Some(Value::Object(body)),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("loop", "done" | "block") => {
+            let parsed = parse_core_loop_exit_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid loop arguments",
+                }
+            })?;
+            let session_id = parsed
+                .session_id
+                .or_else(|| context.loop_actor.session_id.clone())
+                .ok_or_else(|| CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "aimux: pass --session or run inside an aimux agent (AIMUX_SESSION_ID is unset)",
+                })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let mut body = serde_json::Map::from_iter([
+                ("project".into(), Value::String(project_root)),
+                ("sessionId".into(), Value::String(session_id)),
+            ]);
+            body.extend(loop_actor_payload(&context.loop_actor, "agent"));
+            if let Some(reason) = parsed.reason {
+                body.insert("reason".into(), Value::String(reason));
+            }
+            let (operation, route) = if parsed.subcommand == "done" {
+                (CoreCliOperation::LoopDone, CORE_API_ROUTES.loop_done_text)
+            } else {
+                (CoreCliOperation::LoopBlock, CORE_API_ROUTES.loop_block_text)
+            };
+            (
+                operation,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(route, parsed.json),
+                    body: Some(Value::Object(body)),
                 },
                 CoreCliFallback::None,
             )

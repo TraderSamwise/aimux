@@ -80,6 +80,31 @@ pub struct CoreLifecycleForkArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreLoopMutationArgs {
+    pub subcommand: String,
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreLoopExitArgs {
+    pub subcommand: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoreLogsSubcommand {
@@ -769,6 +794,142 @@ fn stop_has_session_or_invalid_agent_shape<S: AsRef<str>>(args: &[S]) -> bool {
     false
 }
 
+pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLoopMutationArgs> {
+    if args.first().map(AsRef::as_ref) != Some("loop") {
+        return None;
+    }
+    let subcommand = args.get(1).map(AsRef::as_ref)?;
+    if !matches!(subcommand, "add" | "remove") {
+        return None;
+    }
+    let mut session_id = None;
+    let mut goal = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--goal" && subcommand == "add" {
+            goal = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--goal=") {
+            if subcommand != "add" {
+                return None;
+            }
+            goal = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return None;
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreLoopMutationArgs {
+        subcommand: subcommand.to_owned(),
+        session_id: session_id?,
+        goal,
+        project,
+        json,
+    })
+}
+
+pub fn parse_core_loop_exit_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLoopExitArgs> {
+    if args.first().map(AsRef::as_ref) != Some("loop") {
+        return None;
+    }
+    let subcommand = args.get(1).map(AsRef::as_ref)?;
+    if !matches!(subcommand, "done" | "block") {
+        return None;
+    }
+    let mut session_id = None;
+    let mut reason = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--session" {
+            session_id = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--session=") {
+            if value.is_empty() {
+                return None;
+            }
+            session_id = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--reason" {
+            reason = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--reason=") {
+            reason = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(CoreLoopExitArgs {
+        subcommand: subcommand.to_owned(),
+        session_id,
+        reason,
+        project,
+        json,
+    })
+}
+
 #[allow(clippy::collapsible_if)]
 pub fn parse_core_logs_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLogsArgs> {
     if args.first().map(AsRef::as_ref) != Some("logs") {
@@ -1258,6 +1419,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("fork"), _) => true,
         (Some("kill"), _) => true,
         (Some("stop"), _) => stop_has_session_or_invalid_agent_shape(args),
+        (Some("loop"), Some("add" | "remove" | "done" | "block")) => true,
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,

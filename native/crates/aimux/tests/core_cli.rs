@@ -1,7 +1,7 @@
 use aimux::core_cli::{
     CORE_DIAGNOSTIC_TIMEOUT_MS, CoreCliAction, CoreCliContext, CoreCliFallback, CoreCliOperation,
     CoreCliOutputMode, CoreCliPlanError, CoreCommandResponseError, CoreHttpMethod,
-    build_core_command_transport_request, classify_core_cli,
+    CoreLoopActorContext, build_core_command_transport_request, classify_core_cli,
     classify_core_cli_with_project_resolver, validate_core_command_response,
 };
 use aimux::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
@@ -12,6 +12,7 @@ fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
         current_project_root: "/repo".into(),
         daemon_running,
         has_credentials,
+        loop_actor: CoreLoopActorContext::default(),
     }
 }
 
@@ -491,6 +492,98 @@ fn lifecycle_commands_plan_native_text_routes() {
     );
 
     assert!(classify_core_cli(&["stop"], &context(true, true)).is_err());
+}
+
+#[test]
+fn loop_commands_plan_native_text_routes_with_actor_defaults() {
+    let add = classify_core_cli(
+        &["loop", "add", "claude-1", "--goal", "keep going"],
+        &context(true, true),
+    )
+    .expect("loop add plan");
+    assert_eq!(add.operation, CoreCliOperation::LoopAdd);
+    assert_eq!(
+        add.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/add-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "human",
+                "goal": "keep going",
+            })),
+        }
+    );
+
+    let remove = classify_core_cli(
+        &["loop", "remove", "claude-1", "--project=/repo"],
+        &context(true, true),
+    )
+    .expect("loop remove plan");
+    assert_eq!(remove.operation, CoreCliOperation::LoopRemove);
+    assert_eq!(
+        remove.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/remove-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "human",
+            })),
+        }
+    );
+
+    let done = classify_core_cli(
+        &[
+            "loop",
+            "done",
+            "--session",
+            "claude-1",
+            "--reason",
+            "done",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("loop done plan");
+    assert_eq!(done.operation, CoreCliOperation::LoopDone);
+    assert_eq!(
+        done.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/done-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "agent",
+                "reason": "done",
+            })),
+        }
+    );
+
+    let block = classify_core_cli(
+        &["loop", "block", "--session=claude-1"],
+        &context(true, true),
+    )
+    .expect("loop block plan");
+    assert_eq!(block.operation, CoreCliOperation::LoopBlock);
+    assert_eq!(
+        block.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/block-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "agent",
+            })),
+        }
+    );
+
+    let missing_session = classify_core_cli(&["loop", "done"], &context(true, true))
+        .expect_err("missing loop session");
+    assert_eq!(
+        missing_session.to_string(),
+        "aimux: pass --session or run inside an aimux agent (AIMUX_SESSION_ID is unset)"
+    );
 }
 
 #[test]
