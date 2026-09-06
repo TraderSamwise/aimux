@@ -358,9 +358,28 @@ Priority fixture groups:
 
 ## Metadata Server
 
+- `metadata-server/agent-input.json`: shared-chat actor parsing, safe actor
+  labels, prompt prefixing, attachment-reference formatting, and hosted
+  attachment reference parsing captured by running TypeScript metadata-server
+  agent-input helpers.
+- `metadata-server/dashboard-client-state.json`: dashboard client control-screen
+  parsing captured by running TypeScript `parseDashboardControlScreen`.
+- `metadata-server/expose-socket.json`: expose socket positive header integer
+  parsing and fixed-size launch-header splitting captured by running TypeScript
+  expose-socket helpers.
+- `metadata-server/http.json`: JSON body reading, header normalization, CORS
+  selection, JSON response sending, and integer parser behavior captured by
+  running TypeScript metadata-server HTTP helpers.
 - `metadata-server/interaction-display.json`: interaction title, message, and
   summary projection behavior captured by running TypeScript
   `summarizeInteractionForDisplay`.
+- `metadata-server/library-documents.json`: library document allowlist,
+  metadata, bounded content, and truncation behavior captured by running
+  TypeScript `listLibraryDocuments` against a temporary project.
+- `metadata-server/lifecycle-mutation-queue.json`: lifecycle mutation queue
+  ordering, diagnostics, conflict, queue-limit, error, `lifecycleOk`, and early
+  result behavior captured by running TypeScript, with generated operation IDs,
+  timestamps, durations, and process IDs normalized after execution.
 - `metadata-server/output-previews.json`: expose preview snapshot merging,
   agent-output read coalescing, visual client lease touch behavior, and default
   preview diagnostics captured by running TypeScript metadata-server

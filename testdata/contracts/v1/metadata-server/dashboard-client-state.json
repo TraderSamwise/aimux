@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "source": "src/metadata-server/dashboard-client-state.test.ts",
+  "generatedBy": "scripts/capture-metadata-server-runtime-contract.mjs",
+  "description": "Metadata-server dashboard client control-screen parsing behavior captured by running TypeScript parseDashboardControlScreen.",
+  "cases": [
+    {
+      "id": "metadata-dashboard-client-state-001",
+      "name": "parses supported dashboard control screens",
+      "source": "src/metadata-server/dashboard-client-state.test.ts",
+      "api": "parseDashboardControlScreen",
+      "input": { "values": ["dashboard", " coordination ", "project", "library", "topology", "graveyard"] },
+      "output": ["dashboard", "coordination", "project", "library", "topology", "graveyard"],
+      "inputSha256": "7f0164a445a13b69b6daf53bc2ffed36d91c3f9b4f868f2880e20e5c96d6404c"
+    },
+    {
+      "id": "metadata-dashboard-client-state-002",
+      "name": "ignores unsupported dashboard control screens",
+      "source": "src/metadata-server/dashboard-client-state.test.ts",
+      "api": "parseDashboardControlScreen",
+      "input": { "values": ["agent", null, "", " Dashboard "] },
+      "output": [null, null, null, null],
+      "inputSha256": "4199b121c0a161caf416a8da06aac44ec892b7898488e035ae8a7a2c370ab4f7"
+    }
+  ]
+}

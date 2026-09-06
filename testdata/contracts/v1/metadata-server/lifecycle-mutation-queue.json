@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+  "generatedBy": "scripts/capture-metadata-server-runtime-contract.mjs",
+  "description": "Metadata-server lifecycle mutation queue ordering, diagnostics, conflict, queue-limit, error, lifecycleOk, and early-result behavior captured by running TypeScript. Generated operation IDs, timestamps, durations, and process IDs are normalized after execution.",
+  "cases": [
+    {
+      "id": "metadata-lifecycle-mutation-queue-001",
+      "name": "runs lifecycle mutations serially and tracks diagnostics",
+      "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+      "api": "LifecycleMutationQueue",
+      "input": { "scenario": "serial-diagnostics" },
+      "output": {
+        "events": ["first:start", "first:end", "second:start"],
+        "during": {
+          "ok": true,
+          "pid": "<pid>",
+          "projectRoot": "/repo",
+          "queuedCount": 2,
+          "queueLimit": 32,
+          "activeTargets": [
+            { "key": "agent:one", "operation": "agent.stop", "targetKind": "agent", "targetId": "one" },
+            { "key": "agent:two", "operation": "agent.stop", "targetKind": "agent", "targetId": "two" }
+          ],
+          "telemetry": {
+            "enqueued": 2,
+            "started": 1,
+            "succeeded": 0,
+            "failed": 0,
+            "released": 0,
+            "rejectedConflicts": 0,
+            "rejectedQueueFull": 0,
+            "maxQueuedCount": 2,
+            "maxQueuedMs": "<duration-ms>",
+            "maxDurationMs": "<duration-ms>",
+            "lastStartedAt": "<ts:1>",
+            "lastSettledAt": null,
+            "lastError": null
+          }
+        },
+        "results": ["first", "second"],
+        "final": {
+          "ok": true,
+          "pid": "<pid>",
+          "projectRoot": "/repo",
+          "queuedCount": 0,
+          "queueLimit": 32,
+          "activeTargets": [],
+          "telemetry": {
+            "enqueued": 2,
+            "started": 2,
+            "succeeded": 2,
+            "failed": 0,
+            "released": 2,
+            "rejectedConflicts": 0,
+            "rejectedQueueFull": 0,
+            "maxQueuedCount": 2,
+            "maxQueuedMs": "<duration-ms>",
+            "maxDurationMs": "<duration-ms>",
+            "lastStartedAt": "<ts:1>",
+            "lastSettledAt": "<ts:1>",
+            "lastError": null
+          }
+        }
+      },
+      "inputSha256": "25b6b8f0ec3e1e415b72b9c200a1bf12e24b4ae1ca74bb383ea5bdab2f502824"
+    },
+    {
+      "id": "metadata-lifecycle-mutation-queue-002",
+      "name": "rejects concurrent mutations for the same lifecycle target",
+      "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+      "api": "LifecycleMutationQueue",
+      "input": { "scenario": "same-target-conflict" },
+      "output": {
+        "error": { "name": "Error", "message": "lifecycle mutation already in progress for agent same", "status": 409 },
+        "diagnostics": {
+          "ok": true,
+          "pid": "<pid>",
+          "projectRoot": "/repo",
+          "queuedCount": 1,
+          "queueLimit": 32,
+          "activeTargets": [
+            { "key": "agent:same", "operation": "agent.stop", "targetKind": "agent", "targetId": "same" }
+          ],
+          "telemetry": {
+            "enqueued": 1,
+            "started": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "released": 0,
+            "rejectedConflicts": 1,
+            "rejectedQueueFull": 0,
+            "maxQueuedCount": 1,
+            "maxQueuedMs": "<duration-ms>",
+            "maxDurationMs": "<duration-ms>",
+            "lastStartedAt": null,
+            "lastSettledAt": null,
+            "lastError": null
+          }
+        }
+      },
+      "inputSha256": "f905a081eb1ad0a2b2d4c4e47914f2f71a36d5703cf6329573b57f6189f8945b"
+    },
+    {
+      "id": "metadata-lifecycle-mutation-queue-003",
+      "name": "rejects transition-backed work over the queue limit",
+      "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+      "api": "LifecycleMutationQueue",
+      "input": { "scenario": "queue-limit" },
+      "output": {
+        "error": {
+          "name": "Error",
+          "message": "lifecycle mutation queue is full (1/1); wait for current operations to settle",
+          "status": 429
+        },
+        "diagnostics": {
+          "ok": true,
+          "pid": "<pid>",
+          "projectRoot": "/repo",
+          "queuedCount": 1,
+          "queueLimit": 1,
+          "activeTargets": [
+            { "key": "agent:one", "operation": "agent.stop", "targetKind": "agent", "targetId": "one" }
+          ],
+          "telemetry": {
+            "enqueued": 1,
+            "started": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "released": 0,
+            "rejectedConflicts": 0,
+            "rejectedQueueFull": 1,
+            "maxQueuedCount": 1,
+            "maxQueuedMs": "<duration-ms>",
+            "maxDurationMs": "<duration-ms>",
+            "lastStartedAt": null,
+            "lastSettledAt": null,
+            "lastError": null
+          }
+        }
+      },
+      "inputSha256": "914f6a5d67572d3faee6cb35e4afd4dcb8f4bb5d9c4ad0637e13e3582785980f"
+    },
+    {
+      "id": "metadata-lifecycle-mutation-queue-004",
+      "name": "records failed lifecycle mutations and exposes user-facing errors",
+      "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+      "api": "LifecycleMutationQueue",
+      "input": { "scenario": "failure-diagnostics" },
+      "output": {
+        "error": { "name": "Error", "message": "boom" },
+        "diagnostics": {
+          "ok": true,
+          "pid": "<pid>",
+          "projectRoot": "/repo",
+          "queuedCount": 0,
+          "queueLimit": 32,
+          "activeTargets": [],
+          "telemetry": {
+            "enqueued": 1,
+            "started": 1,
+            "succeeded": 0,
+            "failed": 1,
+            "released": 1,
+            "rejectedConflicts": 0,
+            "rejectedQueueFull": 0,
+            "maxQueuedCount": 1,
+            "maxQueuedMs": "<duration-ms>",
+            "maxDurationMs": "<duration-ms>",
+            "lastStartedAt": "<ts:1>",
+            "lastSettledAt": "<ts:1>",
+            "lastError": "boom"
+          }
+        }
+      },
+      "inputSha256": "e61b99f6ac20d8503744f918af73d42c8562858ff514a6bdb51586091dd7864e"
+    },
+    {
+      "id": "metadata-lifecycle-mutation-queue-005",
+      "name": "wraps lifecycle-ok responses with transition metadata",
+      "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+      "api": "lifecycleOk",
+      "input": {
+        "scenario": "lifecycle-ok",
+        "result": { "sessionId": "codex-one" },
+        "transition": { "operation": "agent.stop", "targetKind": "agent", "targetId": "codex-one" }
+      },
+      "output": {
+        "sessionId": "codex-one",
+        "ok": true,
+        "transition": {
+          "operationId": "<opid:1>",
+          "operation": "agent.stop",
+          "targetKind": "agent",
+          "phase": "succeeded",
+          "startedAt": "<ts:1>",
+          "updatedAt": "<ts:1>",
+          "targetId": "codex-one"
+        }
+      },
+      "inputSha256": "4df5a45f4059355106382274502e99bd4d6e9a62696631eaccfbc77aeeff9736"
+    },
+    {
+      "id": "metadata-lifecycle-mutation-queue-006",
+      "name": "returns early when lifecycle work is still pending",
+      "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+      "api": "waitForEarlyLifecycleResult",
+      "input": { "scenario": "early-pending" },
+      "output": { "kind": "pending" },
+      "inputSha256": "3e2b3f9602dfea87418c0664745d4e4b32a52520eb0ea24c04baacc82032d937"
+    },
+    {
+      "id": "metadata-lifecycle-mutation-queue-007",
+      "name": "returns early resolved and rejected lifecycle outcomes",
+      "source": "src/metadata-server/lifecycle-mutation-queue.test.ts",
+      "api": "waitForEarlyLifecycleResult",
+      "input": { "scenario": "early-settled" },
+      "output": {
+        "resolved": { "kind": "resolved", "result": "ok" },
+        "rejected": { "kind": "rejected", "error": { "name": "Error", "message": "failed" } }
+      },
+      "inputSha256": "fbe45bf8754963cfeb79d4b970e6b461208e5f771ac49a4db3b87a73b1ce3027"
+    }
+  ]
+}
