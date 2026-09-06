@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "source": "src/local-ui-server.test.ts",
+  "generatedBy": "scripts/capture-service-notify-contract.mjs",
+  "description": "Local UI server shell/config/static/fallback/traversal/loopback behavior captured by running TypeScript startLocalUiServer against a temporary UI root.",
+  "cases": [
+    {
+      "id": "local-ui-server-001",
+      "name": "serves the exported app shell",
+      "source": "src/local-ui-server.test.ts",
+      "api": "startLocalUiServer",
+      "input": { "path": "/" },
+      "output": {
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "cacheControl": "no-cache",
+        "bodyContainsAimuxUi": true,
+        "bodyContainsDaemonUrl": false,
+        "bodyContainsConsoleLog": false
+      },
+      "inputSha256": "fdf6f57e150ea5cc949277a40f1c2b8fb53f108bd4c6af4b4f65f566507e6351"
+    },
+    {
+      "id": "local-ui-server-002",
+      "name": "serves runtime local connection config",
+      "source": "src/local-ui-server.test.ts",
+      "api": "startLocalUiServer",
+      "input": { "path": "/aimux-local-config.js" },
+      "output": {
+        "status": 200,
+        "contentType": "text/javascript; charset=utf-8",
+        "cacheControl": "no-store",
+        "bodyContainsAimuxUi": false,
+        "bodyContainsDaemonUrl": true,
+        "bodyContainsConsoleLog": false
+      },
+      "inputSha256": "71e61e4d1e45a16adc492c35181b7c1657321a72fa2aef05d42dcaf9a53470a2"
+    },
+    {
+      "id": "local-ui-server-003",
+      "name": "falls back to index for routed app paths",
+      "source": "src/local-ui-server.test.ts",
+      "api": "startLocalUiServer",
+      "input": { "path": "/topology/agent/claude-1/chat?from=map" },
+      "output": {
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "cacheControl": "no-cache",
+        "bodyContainsAimuxUi": true,
+        "bodyContainsDaemonUrl": false,
+        "bodyContainsConsoleLog": false
+      },
+      "inputSha256": "c3c863a346d7fca17aad3f08a30e205f5cf1e96bf747f060814c19b8adeeabd0"
+    },
+    {
+      "id": "local-ui-server-004",
+      "name": "serves static assets with immutable caching",
+      "source": "src/local-ui-server.test.ts",
+      "api": "startLocalUiServer",
+      "input": { "path": "/assets/app.js" },
+      "output": {
+        "status": 200,
+        "contentType": "text/javascript; charset=utf-8",
+        "cacheControl": "public, max-age=31536000, immutable",
+        "bodyContainsAimuxUi": false,
+        "bodyContainsDaemonUrl": false,
+        "bodyContainsConsoleLog": true
+      },
+      "inputSha256": "e7964f9d870bf3205d2b12434da534c33e40f3db73d18fc469b2e0dbcd1a227d"
+    },
+    {
+      "id": "local-ui-server-005",
+      "name": "rejects path traversal attempts",
+      "source": "src/local-ui-server.test.ts",
+      "api": "startLocalUiServer",
+      "input": { "path": "/%2e%2e/package.json" },
+      "output": { "status": 403 },
+      "inputSha256": "7e2eba302fcbcd93aee6ba170d638a4d2d676d4064c9e60ab1b25451206c4484"
+    },
+    {
+      "id": "local-ui-server-006",
+      "name": "rejects non-loopback hosts",
+      "source": "src/local-ui-server.test.ts",
+      "api": "startLocalUiServer",
+      "input": { "host": "0.0.0.0" },
+      "output": {
+        "rejected": true,
+        "message": "Local UI host must be loopback (127.0.0.1, localhost, or ::1), got 0.0.0.0"
+      },
+      "inputSha256": "fdee7c02f6065de9962ec07ff0b435eb1c0728663c438e7163ac37181112ce95"
+    }
+  ]
+}

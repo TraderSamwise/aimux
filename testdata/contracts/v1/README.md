@@ -222,6 +222,10 @@ Priority fixture groups:
 - `notifications/mobile-push.json`: mobile push alert forwarding request shape
   and external-notification disable gates captured by running TypeScript
   `mobile-push-bridge` against a local daemon endpoint.
+- `notifications/notify-alert.json`: notifyAlert category gates, focus
+  suppression, external-notification guard, and desktop delivery payloads
+  captured by running TypeScript notify with config/suppression/desktop
+  recorders.
 - `notifications/store.json`: notification list/filter/count, mark-read, clear,
   add/upsert, live alert event, focus-suppression, dedupe, interaction metadata,
   and runtime-exchange side-effect behavior captured by running TypeScript
@@ -546,6 +550,13 @@ Priority fixture groups:
   daemon-start gating/transport options, and CLI control-plane restart
   orchestration/callback side effects captured by running TypeScript client
   helpers with mocked dependencies.
+
+## Service
+
+- `service/local-ui-server.json`: local UI server app shell, runtime config,
+  routed fallback, immutable assets, traversal rejection, and loopback binding
+  behavior captured by running TypeScript `startLocalUiServer` against a
+  temporary UI root.
 
 ## Launch
 
