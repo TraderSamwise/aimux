@@ -113,6 +113,13 @@ Priority fixture groups:
 - `context/bridge.json`: tmux pane live snapshot, bounding, UI-chrome filtering,
   and response-mining behavior captured by running TypeScript `ContextWatcher`.
 
+## Debug State
+
+- `debug-state/report.json`: target resolution, source roles, topology,
+  metadata projection filtering, notification matches, worktree graveyard, and
+  unavailable live-source contracts captured by running TypeScript
+  `buildDebugStateReport`.
+
 ## Hooks
 
 - `hooks/tool-hooks.json`: Claude and Codex hook command construction,
