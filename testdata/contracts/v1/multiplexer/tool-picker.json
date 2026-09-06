@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/tool-picker.test.ts",
+  "generatedBy": "scripts/capture-tool-picker-contract.mjs",
+  "description": "Tool picker default environment formatting and launch override contracts captured by running TypeScript tool-picker helpers.",
+  "cases": [
+    {
+      "id": "tool-picker-001",
+      "name": "formats undefined env defaults as empty",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "formatEnvDefaults",
+      "input": { "name": "formats undefined env defaults as empty", "api": "formatEnvDefaults" },
+      "output": "",
+      "inputSha256": "9fe945f6184e1f598ef8e38607c8405a4e62d039e95d93d2db4d79c197237f0d"
+    },
+    {
+      "id": "tool-picker-002",
+      "name": "renders env defaults and quotes values with spaces",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "formatEnvDefaults",
+      "input": {
+        "name": "renders env defaults and quotes values with spaces",
+        "api": "formatEnvDefaults",
+        "env": { "A": "1", "MSG": "hello world" }
+      },
+      "output": "A=1 MSG='hello world'",
+      "inputSha256": "7c189d156fc576e6af99d8f7723c9f94897ccae40c3c5fe0660cb83831c11c3b"
+    },
+    {
+      "id": "tool-picker-003",
+      "name": "omits launch override when no defaults are configured",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "defaultsLaunchOverride",
+      "input": {
+        "name": "omits launch override when no defaults are configured",
+        "api": "defaultsLaunchOverride",
+        "tool": {}
+      },
+      "output": null,
+      "inputSha256": "a2d15678a8de95df21043024fba70822de4438d2fc8adc7d28347ce4bdd40624"
+    },
+    {
+      "id": "tool-picker-004",
+      "name": "omits launch override for empty default args and env",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "defaultsLaunchOverride",
+      "input": {
+        "name": "omits launch override for empty default args and env",
+        "api": "defaultsLaunchOverride",
+        "tool": { "defaultArgs": [], "defaultEnv": {} }
+      },
+      "output": null,
+      "inputSha256": "3844c3f95228f7b518ae7b2d18aac208a37a13a9d83ebd29098b9fa9f9febf5b"
+    },
+    {
+      "id": "tool-picker-005",
+      "name": "appends default args after base args",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "defaultsLaunchOverride",
+      "input": {
+        "name": "appends default args after base args",
+        "api": "defaultsLaunchOverride",
+        "tool": { "defaultArgs": ["--model", "opus"] }
+      },
+      "output": { "command": "claude", "args": ["--base", "--model", "opus"] },
+      "inputSha256": "7f4551fd34a99ff7349aa0775b437d786f72abc72ddbbccb13705617c16ab4fd"
+    },
+    {
+      "id": "tool-picker-006",
+      "name": "carries default env through",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "defaultsLaunchOverride",
+      "input": {
+        "name": "carries default env through",
+        "api": "defaultsLaunchOverride",
+        "tool": { "defaultEnv": { "CLAUDE_YOLO": "1" } }
+      },
+      "output": { "command": "claude", "args": ["--base"], "env": { "CLAUDE_YOLO": "1" } },
+      "inputSha256": "131b021a1cfbaf89c0f3b634411f324e31d0fdca6a2e6d5ba07ad71993bdfe59"
+    },
+    {
+      "id": "tool-picker-007",
+      "name": "combines default args and env",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "defaultsLaunchOverride",
+      "input": {
+        "name": "combines default args and env",
+        "api": "defaultsLaunchOverride",
+        "tool": { "defaultArgs": ["--model", "opus"], "defaultEnv": { "FOO": "bar" } }
+      },
+      "output": { "command": "claude", "args": ["--base", "--model", "opus"], "env": { "FOO": "bar" } },
+      "inputSha256": "d43471c0b29dd255c823f5652fc405a7a86037f28cfe7b368a4870c626e40d2a"
+    }
+  ]
+}
