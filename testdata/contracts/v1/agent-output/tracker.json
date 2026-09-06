@@ -1,6 +1,10 @@
 {
   "version": 1,
   "source": "scripts/capture-agent-tracker-contract.mjs",
+  "sources": [
+    "src/agent-tracker.test.ts",
+    "scripts/capture-agent-tracker-contract.mjs"
+  ],
   "generatedBy": "scripts/capture-agent-tracker-contract.mjs",
   "description": "Agent tracker state-transition contracts captured by running the TypeScript AgentTracker against deterministic action sequences.",
   "cases": [

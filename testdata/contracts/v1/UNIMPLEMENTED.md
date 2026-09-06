@@ -7,9 +7,9 @@ not exist yet or the implementation sits behind an ownership fence.
 Coverage definition used for this inventory: a `src` test module is covered when
 any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level
 `source`, top-level `sources`, case `source`, or group/case `source` field.
-Under that definition there are 245 `src` test modules, 187 covered modules, and
-58 uncovered modules remaining. The older 196-uncovered baseline is stale; from
-that baseline, 138 modules have been covered.
+Under that definition there are 245 `src` test modules, 188 covered modules, and
+57 uncovered modules remaining. The older 196-uncovered baseline is stale; from
+that baseline, 139 modules have been covered.
 
 There are 29 ignored corpus entries below, covering 162 captured checklist
 cases.
