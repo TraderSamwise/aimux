@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "source": "src/connection-targets.test.ts + app/lib/connection-targets.test.ts",
+  "generatedBy": "scripts/capture-connection-targets-contract.mjs",
+  "description": "CLI and app connection target resolution contracts captured by running TypeScript resolvers.",
+  "cases": [
+    {
+      "id": "connection-targets-001",
+      "name": "defaults production CLI login to the hosted app and relay",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliTargets",
+      "input": { "env": {} },
+      "output": { "webAppUrl": "https://aimux.app", "relayUrl": "wss://relay.aimux.app" },
+      "inputSha256": "573050e3f36c1d9fcc8a6bf8a640431322b0cfb94b2bdc99c9016c7c7ea1593b"
+    },
+    {
+      "id": "connection-targets-002",
+      "name": "defaults development CLI login to local web while keeping the production relay",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliTargets",
+      "input": { "env": { "AIMUX_ENV": "development" } },
+      "output": { "webAppUrl": "http://localhost:8081", "relayUrl": "wss://relay.aimux.app" },
+      "inputSha256": "5febc0e0c1c9c9a14f02ee1c02c6ddf24afc38a20b9b1bb3e75f560f8b2d2570"
+    },
+    {
+      "id": "connection-targets-003",
+      "name": "allows explicit web app and relay overrides",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliTargets",
+      "input": {
+        "env": {
+          "AIMUX_ENV": "development",
+          "AIMUX_WEB_APP_URL": "https://preview.example.com/",
+          "AIMUX_RELAY_URL": "wss://relay-preview.example.com/"
+        }
+      },
+      "output": { "webAppUrl": "https://preview.example.com", "relayUrl": "wss://relay-preview.example.com" },
+      "inputSha256": "e982d7b2caa6389b38d9eb4c52bee990dc0f8871e01ff59832ff70a5de94e89d"
+    },
+    {
+      "id": "connection-targets-004",
+      "name": "ignores blank CLI target overrides",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliTargets",
+      "input": { "env": { "AIMUX_ENV": "development", "AIMUX_WEB_APP_URL": "   ", "AIMUX_RELAY_URL": "" } },
+      "output": { "webAppUrl": "http://localhost:8081", "relayUrl": "wss://relay.aimux.app" },
+      "inputSha256": "6e7ba7ee2782935a1d9cb1423566f810e6caf8c00ba03b599d49d64f323589f9"
+    },
+    {
+      "id": "connection-targets-005",
+      "name": "is false with no lane signals",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliDevelopment",
+      "input": { "env": {} },
+      "output": { "development": false },
+      "inputSha256": "573050e3f36c1d9fcc8a6bf8a640431322b0cfb94b2bdc99c9016c7c7ea1593b"
+    },
+    {
+      "id": "connection-targets-006",
+      "name": "detects dev from AIMUX_ENV",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliDevelopment",
+      "input": { "env": { "AIMUX_ENV": "development" } },
+      "output": { "development": true },
+      "inputSha256": "5febc0e0c1c9c9a14f02ee1c02c6ddf24afc38a20b9b1bb3e75f560f8b2d2570"
+    },
+    {
+      "id": "connection-targets-007",
+      "name": "does not infer development from a custom home",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliDevelopment",
+      "input": { "env": { "AIMUX_HOME": "/tmp/aimux-custom" } },
+      "output": { "development": false },
+      "inputSha256": "8e8ff9f6fa9ee05f6b21e8413a20b94471378e5b6a41bf38070b1d10e4fb5940"
+    },
+    {
+      "id": "connection-targets-008",
+      "name": "does not infer development from a custom daemon port",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliDevelopment",
+      "input": { "env": { "AIMUX_DAEMON_PORT": "44190" } },
+      "output": { "development": false },
+      "inputSha256": "c81f627c8c92a7fc5c5b078593882c4934b4f5e3907b239540e850b8943611c9"
+    },
+    {
+      "id": "connection-targets-009",
+      "name": "does not infer development from an explicit local web app url",
+      "source": "src/connection-targets.test.ts",
+      "api": "cliDevelopment",
+      "input": { "env": { "AIMUX_WEB_APP_URL": "http://localhost:8081" } },
+      "output": { "development": false },
+      "inputSha256": "979d8dae26bb4222ba36e312fd00ee744bf652eea51bfa5ce7c45d939473c60e"
+    },
+    {
+      "id": "connection-targets-010",
+      "name": "defaults development app builds to local daemon mode",
+      "source": "app/lib/connection-targets.test.ts",
+      "api": "app",
+      "input": { "env": { "NODE_ENV": "development" } },
+      "output": { "mode": "local", "daemonUrl": "http://localhost:43190", "relayUrl": null },
+      "inputSha256": "1798a2975fa480db2e8f9b11bc00880611942d498d281f3de52ba1061946a26d"
+    },
+    {
+      "id": "connection-targets-011",
+      "name": "defaults production app builds to hosted relay mode",
+      "source": "app/lib/connection-targets.test.ts",
+      "api": "app",
+      "input": { "env": { "NODE_ENV": "production" } },
+      "output": { "mode": "relay", "daemonUrl": null, "relayUrl": "wss://relay.aimux.app" },
+      "inputSha256": "4d859c1bfbea5e87672fb5bfa46e48b92f1c39923d7604de6d243d2eb3bb6a1f"
+    },
+    {
+      "id": "connection-targets-012",
+      "name": "allows explicit app relay target override",
+      "source": "app/lib/connection-targets.test.ts",
+      "api": "app",
+      "input": {
+        "env": {
+          "NODE_ENV": "development",
+          "EXPO_PUBLIC_AIMUX_CONNECTION_MODE": "relay",
+          "EXPO_PUBLIC_AIMUX_RELAY_URL": "wss://relay-preview.example.com/"
+        }
+      },
+      "output": { "mode": "relay", "daemonUrl": null, "relayUrl": "wss://relay-preview.example.com" },
+      "inputSha256": "ceaa2ea58b05e2bead22a84971396a3b57aed077af8dd0fb53a2bccd9d2d921c"
+    },
+    {
+      "id": "connection-targets-013",
+      "name": "allows explicit app local daemon target override",
+      "source": "app/lib/connection-targets.test.ts",
+      "api": "app",
+      "input": {
+        "env": {
+          "NODE_ENV": "development",
+          "EXPO_PUBLIC_AIMUX_CONNECTION_MODE": "local",
+          "EXPO_PUBLIC_AIMUX_DAEMON_URL": "http://localhost:43210/"
+        }
+      },
+      "output": { "mode": "local", "daemonUrl": "http://localhost:43210", "relayUrl": null },
+      "inputSha256": "61ec512dc13681d7c1a32b60f7b27ce0ed5010d464cf73fa5b467ac83e226c9f"
+    },
+    {
+      "id": "connection-targets-014",
+      "name": "does not let app relay URL override switch development default",
+      "source": "app/lib/connection-targets.test.ts",
+      "api": "app",
+      "input": {
+        "env": { "NODE_ENV": "development", "EXPO_PUBLIC_AIMUX_RELAY_URL": "wss://relay-preview.example.com/" }
+      },
+      "output": { "mode": "local", "daemonUrl": "http://localhost:43190", "relayUrl": null },
+      "inputSha256": "2572a665504ab5c9a0a29d559a9d1d9f1b970f596d308925f43c733e6accf8ca"
+    },
+    {
+      "id": "connection-targets-015",
+      "name": "does not let app daemon URL override switch production default",
+      "source": "app/lib/connection-targets.test.ts",
+      "api": "app",
+      "input": { "env": { "NODE_ENV": "production", "EXPO_PUBLIC_AIMUX_DAEMON_URL": "http://localhost:43210/" } },
+      "output": { "mode": "relay", "daemonUrl": null, "relayUrl": "wss://relay.aimux.app" },
+      "inputSha256": "ff6a03877ee9817fb2feecaa925fb7f29d5d7604ed96b13318cd8a5608fc7b3e"
+    },
+    {
+      "id": "connection-targets-016",
+      "name": "rejects invalid explicit app connection modes",
+      "source": "app/lib/connection-targets.test.ts",
+      "api": "app",
+      "input": { "env": { "EXPO_PUBLIC_AIMUX_CONNECTION_MODE": "remote" } },
+      "output": { "error": "EXPO_PUBLIC_AIMUX_CONNECTION_MODE must be \"local\" or \"relay\", got remote" },
+      "inputSha256": "e964c6704b837a80b796c3ba90cd3d543f20b9c9081a664d1c7bed9b7ad80050"
+    }
+  ]
+}

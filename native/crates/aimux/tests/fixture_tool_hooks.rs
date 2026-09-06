@@ -7,7 +7,7 @@ const TOOL_HOOKS: &str = include_str!("../../../../testdata/contracts/v1/hooks/t
 fn fixture_tool_hooks_match_typescript() {
     let contract: Value = serde_json::from_str(TOOL_HOOKS).expect("valid tool hooks fixture");
     let cases = contract["cases"].as_array().expect("tool hook cases");
-    assert_eq!(cases.len(), 42, "unexpected tool hook case count");
+    assert_eq!(cases.len(), 43, "unexpected tool hook case count");
     let mut failures = Vec::new();
     for case in cases {
         let actual = tool_hooks_contract(case["api"].as_str().unwrap_or_default(), &case["input"]);

@@ -85,6 +85,25 @@ fn inject_claude_hook_args_contract(input: &Value) -> Value {
 fn install_codex_hooks_contract(input: &Value) -> Value {
     let temp_root = temp_contract_dir("codex");
     let hooks_path = codex_hooks_path(Some(&temp_root));
+    if let Some(existing_raw) = input.get("existingRaw").and_then(Value::as_str) {
+        fs::create_dir_all(hooks_path.parent().expect("hooks parent")).expect("mkdir hooks parent");
+        fs::write(&hooks_path, existing_raw).expect("write existing hooks");
+        let output = match install_codex_hooks(Some(&temp_root)) {
+            Ok(path) => json!({
+                "ok": true,
+                "path": path.to_string_lossy(),
+                "afterRaw": fs::read_to_string(&hooks_path).unwrap_or_default(),
+            }),
+            Err(error) => json!({
+                "ok": false,
+                "error": error,
+                "afterRaw": fs::read_to_string(&hooks_path).unwrap_or_default(),
+            }),
+        };
+        let output = normalize_temp_value(output, &temp_root);
+        let _ = fs::remove_dir_all(temp_root);
+        return output;
+    }
     if let Some(existing) = input.get("existing").filter(|value| !value.is_null()) {
         fs::create_dir_all(hooks_path.parent().expect("hooks parent")).expect("mkdir hooks parent");
         fs::write(&hooks_path, existing.to_string()).expect("write existing hooks");

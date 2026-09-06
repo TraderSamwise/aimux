@@ -85,9 +85,17 @@ Priority fixture groups:
 - `attachments/text.json`: wrapped attachment text recovery cases captured by
   running TypeScript `recoverWrappedAttachments` against the attachment parser
   test scenarios and wrap-position matrices.
+- `attachments/store.json`: attachment creation, publishability checks,
+  sensitive path classification, hosted metadata, content reads, recent
+  publish ordering, and hydration behavior captured by running TypeScript
+  attachment-store helpers.
 
 ## Backend Session Discovery
 
+- `backend-id-reconcile/reconcile.json`: offline topology backend-session-id
+  backfill, transcript ambiguity, existing-id preservation, main-checkout
+  fallback, and idempotence behavior captured by running TypeScript
+  `reconcileOfflineBackendSessionIds`.
 - `backend-session-discovery/discovery.json`: Claude/Codex transcript
   discovery, ambiguity handling, transcript relocation, and moved-session argv
   cases captured by running the TypeScript backend discovery helpers against
@@ -195,6 +203,12 @@ Priority fixture groups:
   corrupt legacy file, global agent-dir copy avoidance, and blocked existing
   exchange behavior captured by running TypeScript `runtime-migration` helpers
   against temporary repositories.
+
+## Connection Targets
+
+- `connection-targets/targets.json`: CLI and app connection mode, daemon URL,
+  relay URL, override, and invalid-mode behavior captured by running TypeScript
+  connection-target resolver helpers.
 
 ## Statusline
 

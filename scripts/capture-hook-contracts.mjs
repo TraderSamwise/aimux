@@ -199,6 +199,33 @@ for (const existing of [
     rmSync(dir, { recursive: true, force: true });
   }
 }
+{
+  const dir = mkdtempSync(join(tmpdir(), "aimux-hook-codex-"));
+  try {
+    const path = codex.codexHooksPath(dir);
+    writeFileSync(path, "not json");
+    let output;
+    try {
+      codex.installCodexHooks({ codexHome: dir });
+      output = { ok: true, afterRaw: readFileSync(path, "utf8") };
+    } catch (error) {
+      output = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        afterRaw: readFileSync(path, "utf8"),
+      };
+    }
+    add(
+      "throws on a non-JSON Codex hooks file rather than clobbering it",
+      "src/codex-hooks.test.ts",
+      "installCodexHooks",
+      { existingRaw: "not json" },
+      normalizePaths(output, dir),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 for (const raw of ['{"session_id":"abc","tool_name":"Bash"}', "nope"]) {
   add("parses Codex hook payloads", "src/codex-hooks.test.ts", "parseCodexHookPayload", { raw }, codex.parseCodexHookPayload(raw));
 }

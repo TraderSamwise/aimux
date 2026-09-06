@@ -1,8 +1,10 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use crate::atomic_write::{atomic_write, write_json_atomic};
 use crate::project_api_contract::routes;
@@ -13,7 +15,11 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::router::ProjectServiceRequestContext;
 
 const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+const RECENT_PUBLISHED_PER_SESSION: usize = 5;
+const UNANCHORED_HYDRATE_GRACE_MS: u128 = 2 * 60 * 1000;
 static ATTACHMENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static RECENT_PUBLISHED_BY_SESSION: OnceLock<Mutex<HashMap<String, Vec<Value>>>> = OnceLock::new();
+static HYDRATED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 pub fn route_attachment_request(
     context: &ProjectServiceRequestContext,
@@ -326,6 +332,7 @@ fn create_uploaded_attachment(
     atomic_write(&content_path, &buffer).map_err(|error| error.to_string())?;
     write_json_atomic(attachment_dir.join(format!("{id}.json")), &record)
         .map_err(|error| error.to_string())?;
+    remember_published_attachment(context.project_root(), &record);
     Ok(to_public_attachment(record))
 }
 
@@ -531,6 +538,199 @@ pub fn get_attachment_record(
         return None;
     }
     Some(parsed)
+}
+
+pub fn list_session_attachments(
+    project_root: impl AsRef<Path>,
+    session_id: &str,
+    limit: Option<usize>,
+) -> Vec<Value> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Vec::new();
+    }
+    let project_root = project_root.as_ref();
+    hydrate_session_attachments(project_root, session_id);
+    let key = recent_session_key(project_root, session_id);
+    recent_published_by_session()
+        .lock()
+        .expect("recent attachment mutex poisoned")
+        .get(&key)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .take(limit.unwrap_or(RECENT_PUBLISHED_PER_SESSION))
+        .collect()
+}
+
+pub fn anchor_session_attachment(
+    project_root: impl AsRef<Path>,
+    session_id: &str,
+    attachment_id: &str,
+    message_id: &str,
+) {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return;
+    }
+    let project_root = project_root.as_ref();
+    let key = recent_session_key(project_root, session_id);
+    {
+        let mut recent = recent_published_by_session()
+            .lock()
+            .expect("recent attachment mutex poisoned");
+        if let Some(entries) = recent.get_mut(&key)
+            && let Some(entry) = entries
+                .iter_mut()
+                .find(|entry| entry["record"]["id"].as_str() == Some(attachment_id))
+            && let Value::Object(entry) = entry
+        {
+            entry.insert(
+                "anchorMessageId".into(),
+                Value::String(message_id.to_owned()),
+            );
+        }
+    }
+    let Some(mut record) = get_attachment_record(project_root, attachment_id, Some(session_id))
+    else {
+        return;
+    };
+    if string_field(&record, "source") != Some("path") {
+        return;
+    }
+    if let Value::Object(record_object) = &mut record {
+        record_object.insert(
+            "anchorMessageId".into(),
+            Value::String(message_id.to_owned()),
+        );
+    }
+    let _ = write_json_atomic(
+        attachments_dir(project_root).join(format!("{attachment_id}.json")),
+        &record,
+    );
+}
+
+pub fn forget_session_attachments() {
+    recent_published_by_session()
+        .lock()
+        .expect("recent attachment mutex poisoned")
+        .clear();
+    hydrated_sessions()
+        .lock()
+        .expect("hydrated attachment mutex poisoned")
+        .clear();
+}
+
+fn remember_published_attachment(project_root: impl AsRef<Path>, record: &Value) {
+    if string_field(record, "source") != Some("path") {
+        return;
+    }
+    let Some(session_id) = string_field(record, "sessionId") else {
+        return;
+    };
+    let Some(record_id) = string_field(record, "id") else {
+        return;
+    };
+    let key = recent_session_key(project_root.as_ref(), session_id);
+    let mut recent = recent_published_by_session()
+        .lock()
+        .expect("recent attachment mutex poisoned");
+    let entries = recent.entry(key).or_default();
+    entries.retain(|entry| entry["record"]["id"].as_str() != Some(record_id));
+    entries.insert(0, json!({ "record": to_public_attachment(record.clone()) }));
+    entries.truncate(RECENT_PUBLISHED_PER_SESSION);
+}
+
+fn hydrate_session_attachments(project_root: &Path, session_id: &str) {
+    let key = recent_session_key(project_root, session_id);
+    {
+        let mut hydrated = hydrated_sessions()
+            .lock()
+            .expect("hydrated attachment mutex poisoned");
+        if !hydrated.insert(key.clone()) {
+            return;
+        }
+    }
+    let attachments_dir = attachments_dir(project_root);
+    let Ok(entries) = fs::read_dir(attachments_dir) else {
+        return;
+    };
+    let mut records = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("json"))
+        .filter_map(|entry| fs::read_to_string(entry.path()).ok())
+        .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
+        .filter(|record| {
+            string_field(record, "source") == Some("path")
+                && attachment_belongs_to_session(record, session_id)
+        })
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| {
+        string_field(right, "createdAt")
+            .unwrap_or("")
+            .cmp(string_field(left, "createdAt").unwrap_or(""))
+    });
+    let known_ids = recent_published_by_session()
+        .lock()
+        .expect("recent attachment mutex poisoned")
+        .get(&key)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| {
+            entry
+                .get("record")
+                .and_then(|record| string_field(record, "id"))
+                .map(ToOwned::to_owned)
+        })
+        .collect::<HashSet<_>>();
+    let now = unix_epoch_millis_now();
+    let hydrated = records
+        .into_iter()
+        .filter(|record| string_field(record, "id").is_some_and(|id| !known_ids.contains(id)))
+        .filter(|record| {
+            string_field(record, "anchorMessageId").is_some()
+                || string_field(record, "createdAt")
+                    .and_then(parse_iso_millis)
+                    .is_some_and(|created_at| {
+                        now.saturating_sub(created_at) < UNANCHORED_HYDRATE_GRACE_MS
+                    })
+        })
+        .take(RECENT_PUBLISHED_PER_SESSION)
+        .map(|record| {
+            let mut entry = Map::new();
+            entry.insert("record".into(), to_public_attachment(record.clone()));
+            if let Some(anchor_message_id) = string_field(&record, "anchorMessageId") {
+                entry.insert(
+                    "anchorMessageId".into(),
+                    Value::String(anchor_message_id.to_owned()),
+                );
+            }
+            Value::Object(entry)
+        })
+        .collect::<Vec<_>>();
+    let mut recent = recent_published_by_session()
+        .lock()
+        .expect("recent attachment mutex poisoned");
+    let entries = recent.entry(key).or_default();
+    entries.extend(hydrated);
+    entries.truncate(RECENT_PUBLISHED_PER_SESSION);
+}
+
+fn attachment_belongs_to_session(record: &Value, session_id: &str) -> bool {
+    string_field(record, "sessionId").is_some_and(|owner| owner == session_id)
+}
+
+fn recent_session_key(project_root: &Path, session_id: &str) -> String {
+    format!("{}\0{session_id}", project_root.to_string_lossy())
+}
+
+fn recent_published_by_session() -> &'static Mutex<HashMap<String, Vec<Value>>> {
+    RECENT_PUBLISHED_BY_SESSION.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn hydrated_sessions() -> &'static Mutex<HashSet<String>> {
+    HYDRATED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn to_public_attachment(record: Value) -> Value {
@@ -984,7 +1184,7 @@ fn looks_like_iso_timestamp(value: &str) -> bool {
         && value.ends_with('Z')
 }
 
-fn is_sensitive_attachment_source(path: &Path) -> bool {
+pub fn is_sensitive_attachment_source(path: &Path) -> bool {
     let sensitive_directories = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".gcloud"];
     if path.components().any(|component| {
         let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
@@ -1063,6 +1263,56 @@ fn now_iso() -> String {
         now.second(),
         now.millisecond()
     )
+}
+
+fn unix_epoch_millis_now() -> u128 {
+    time::OffsetDateTime::now_utc()
+        .unix_timestamp_nanos()
+        .max(0) as u128
+        / 1_000_000
+}
+
+fn parse_iso_millis(value: &str) -> Option<u128> {
+    let (date, time) = value.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i64>().ok()?;
+    let month = date_parts.next()?.parse::<i64>().ok()?;
+    let day = date_parts.next()?.parse::<i64>().ok()?;
+    if date_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let time = time.strip_suffix('Z')?;
+    let (hms, millis) = time.split_once('.').unwrap_or((time, "0"));
+    let mut time_parts = hms.split(':');
+    let hour = time_parts.next()?.parse::<i64>().ok()?;
+    let minute = time_parts.next()?.parse::<i64>().ok()?;
+    let second = time_parts.next()?.parse::<i64>().ok()?;
+    if time_parts.next().is_some() || hour > 23 || minute > 59 || second > 59 || millis.len() > 3 {
+        return None;
+    }
+    let mut millis = millis.parse::<u128>().ok()?;
+    for _ in 0..(3 - value
+        .split_once('.')
+        .map_or(0, |(_, rest)| rest.trim_end_matches('Z').len()))
+    {
+        millis *= 10;
+    }
+    let days = days_from_civil(year, month, day)?;
+    Some(
+        (((days as u128 * 24 + hour as u128) * 60 + minute as u128) * 60 + second as u128) * 1000
+            + millis,
+    )
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    (days >= 0).then_some(days)
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {

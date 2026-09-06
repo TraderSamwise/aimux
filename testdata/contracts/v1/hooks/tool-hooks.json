@@ -870,6 +870,19 @@
     },
     {
       "id": "tool-hooks-041",
+      "name": "throws on a non-JSON Codex hooks file rather than clobbering it",
+      "source": "src/codex-hooks.test.ts",
+      "api": "installCodexHooks",
+      "input": { "existingRaw": "not json" },
+      "output": {
+        "ok": false,
+        "error": "Codex hooks file exists but is not valid JSON: <temp>/hooks.json",
+        "afterRaw": "not json"
+      },
+      "inputSha256": "59cd9b4743eb8debbbc909e98b431cd1d06649677f05b7efede31081fedb9b2a"
+    },
+    {
+      "id": "tool-hooks-042",
       "name": "parses Codex hook payloads",
       "source": "src/codex-hooks.test.ts",
       "api": "parseCodexHookPayload",
@@ -878,7 +891,7 @@
       "inputSha256": "222349abf3645300cd1393a06065df303d6dc9cd1cbec1588a6cf6f38372923b"
     },
     {
-      "id": "tool-hooks-042",
+      "id": "tool-hooks-043",
       "name": "parses Codex hook payloads",
       "source": "src/codex-hooks.test.ts",
       "api": "parseCodexHookPayload",
