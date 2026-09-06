@@ -23,7 +23,10 @@ use crate::dashboard_renderer::{
     DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
     render_dashboard_subscreen_frame,
 };
-use crate::dashboard_service_input::render_service_input_overlay;
+use crate::dashboard_service_input::{
+    render_service_input_overlay, render_worktree_input_overlay, render_worktree_list_overlay,
+    render_worktree_remove_confirm_overlay,
+};
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use crate::dashboard_tui_visibility::{
@@ -424,6 +427,43 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_service_input_overlay(
             service_input,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if let Some(worktree_input) = controller.worktree_input.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_worktree_input_overlay(
+            worktree_input,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if let Some(confirm) = controller.worktree_remove_confirm.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_worktree_remove_confirm_overlay(
+            &confirm.name,
+            &confirm.path,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if controller.worktree_list_open {
+        let mut output = frame.frame;
+        output.push_str(&render_worktree_list_overlay(
+            &snapshot.worktree_groups,
             options.cols,
             options.rows,
         ));

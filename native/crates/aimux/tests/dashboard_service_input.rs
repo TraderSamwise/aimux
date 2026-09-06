@@ -1,8 +1,11 @@
 use aimux::dashboard_create::DashboardCreatePlan;
+use aimux::dashboard_model::WorktreeGroup;
 use aimux::dashboard_service_input::{
     DashboardServiceInputEffect, DashboardServiceInputState, render_service_input_overlay,
+    render_worktree_list_overlay,
 };
 use aimux::project_api_contract::routes;
+use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
 
 #[test]
@@ -67,4 +70,38 @@ fn render_service_input_overlay_includes_buffer() {
     assert!(output.contains("CREATE SERVICE"));
     assert!(output.contains("yarn dev_"));
     assert!(output.contains("interactive shell"));
+}
+
+#[test]
+fn render_worktree_list_overlay_includes_main_and_worktree_rows() {
+    let worktrees = vec![
+        worktree_group(json!({
+            "name": "Main Checkout",
+            "branch": "master",
+            "status": "active",
+            "sessions": [],
+            "services": []
+        })),
+        worktree_group(json!({
+            "name": "feature-a",
+            "branch": "feature-a",
+            "path": "/repo/.aimux/worktrees/feature-a",
+            "status": "active",
+            "sessions": [],
+            "services": []
+        })),
+    ];
+
+    let output = render_worktree_list_overlay(&worktrees, 100, 30);
+    let plain = strip_ansi(&output);
+
+    assert!(output.contains("WORKTREE MANAGEMENT"));
+    assert!(output.contains("Main Checkout"));
+    assert!(output.contains("(main)"));
+    assert!(output.contains("feature-a"));
+    assert!(plain.contains("Esc"));
+}
+
+fn worktree_group(value: serde_json::Value) -> WorktreeGroup {
+    serde_json::from_value(value).expect("valid worktree group")
 }

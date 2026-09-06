@@ -30,6 +30,9 @@ pub struct DashboardController {
     pub subscreen_item_count: usize,
     pub subscreen_actions: Vec<DashboardSubscreenAction>,
     pub graveyard_worktree_delete_confirm: Option<String>,
+    pub worktree_input: Option<String>,
+    pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
+    pub worktree_list_open: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +59,9 @@ impl DashboardController {
             subscreen_item_count: 0,
             subscreen_actions: Vec::new(),
             graveyard_worktree_delete_confirm: None,
+            worktree_input: None,
+            worktree_remove_confirm: None,
+            worktree_list_open: false,
         }
     }
 
@@ -76,6 +82,15 @@ impl DashboardController {
         self.footer_message = None;
         if self.launch_options.is_some() {
             return self.handle_launch_options_key(snapshot, key);
+        }
+        if self.worktree_input.is_some() {
+            return self.handle_worktree_input_key(key);
+        }
+        if self.worktree_remove_confirm.is_some() {
+            return self.handle_worktree_remove_confirm_key(key);
+        }
+        if self.worktree_list_open {
+            return self.handle_worktree_list_key(key);
         }
         if self.service_input.is_some() {
             return self.handle_service_input_key(snapshot, key);
@@ -123,6 +138,14 @@ impl DashboardController {
             DashboardKey::Enter => self.handle_enter(snapshot),
             DashboardKey::Stop => self.handle_action(snapshot, DashboardActionKind::Stop),
             DashboardKey::ClearFailures => self.handle_clear_failures(snapshot),
+            DashboardKey::Printable('w') => {
+                self.worktree_input = Some(String::new());
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable('W') => {
+                self.worktree_list_open = true;
+                DashboardControllerEffect::Render
+            }
             DashboardKey::Digit(digit) => match self.navigation.handle_digit(snapshot, digit) {
                 DashboardNavigationOutcome::EntrySelected(entry) => {
                     match plan_dashboard_action(Some(entry), DashboardActionKind::Enter) {
@@ -285,6 +308,9 @@ impl DashboardController {
         self.subscreen_item_count = 0;
         self.subscreen_actions.clear();
         self.graveyard_worktree_delete_confirm = None;
+        self.worktree_input = None;
+        self.worktree_remove_confirm = None;
+        self.worktree_list_open = false;
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
     }
@@ -752,6 +778,73 @@ impl DashboardController {
         }
     }
 
+    fn handle_worktree_input_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.worktree_input = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => {
+                let name = self.worktree_input.take().unwrap_or_default();
+                let name = name.trim().to_owned();
+                if name.is_empty() {
+                    return DashboardControllerEffect::Render;
+                }
+                DashboardControllerEffect::Request(DashboardActionRequest {
+                    method: "POST",
+                    path: routes::worktree_actions::CREATE,
+                    body: json!({ "name": name }),
+                })
+            }
+            DashboardKey::Backspace | DashboardKey::Delete => {
+                if let Some(buffer) = self.worktree_input.as_mut() {
+                    buffer.pop();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(character) => {
+                if let Some(buffer) = self.worktree_input.as_mut() {
+                    buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn handle_worktree_remove_confirm_key(
+        &mut self,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back | DashboardKey::Printable('n') => {
+                self.worktree_remove_confirm = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter | DashboardKey::Printable('y') => {
+                let Some(confirm) = self.worktree_remove_confirm.take() else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                DashboardControllerEffect::Request(DashboardActionRequest {
+                    method: "POST",
+                    path: routes::worktree_actions::GRAVEYARD,
+                    body: json!({ "path": confirm.path }),
+                })
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn handle_worktree_list_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.worktree_list_open = false;
+                DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
     fn handle_launch_options_key(
         &mut self,
         snapshot: &DesktopStateSnapshot,
@@ -940,6 +1033,12 @@ impl DashboardController {
         snapshot: &DesktopStateSnapshot,
         action: DashboardActionKind,
     ) -> DashboardControllerEffect {
+        if action == DashboardActionKind::Stop
+            && self.navigation.level == DashboardNavLevel::Worktrees
+            && let Some(effect) = self.handle_worktree_stop(snapshot)
+        {
+            return effect;
+        }
         match plan_dashboard_action(self.navigation.selected_entry(snapshot), action) {
             DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
             DashboardActionPlan::Blocked(message) => {
@@ -948,6 +1047,42 @@ impl DashboardController {
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn handle_worktree_stop(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> Option<DashboardControllerEffect> {
+        let group = snapshot
+            .worktree_groups
+            .get(self.navigation.worktree_index)?;
+        let path = group.path.as_ref()?;
+        if group.pending || group.removing {
+            let action = group.pending_action.as_deref().unwrap_or("pending");
+            self.footer_message = Some(format!("Worktree {} is {action}", group.name));
+            return Some(DashboardControllerEffect::Render);
+        }
+        if let Some(failure) = group.operation_failure.as_ref() {
+            let operation = failure
+                .get("operation")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("worktree");
+            return Some(DashboardControllerEffect::Request(DashboardActionRequest {
+                method: "POST",
+                path: routes::OPERATION_FAILURES_CLEAR,
+                body: json!({
+                    "targetKind": "worktree",
+                    "operation": operation,
+                    "worktreePath": path,
+                }),
+            }));
+        }
+        self.worktree_remove_confirm = Some(DashboardWorktreeRemoveConfirm {
+            path: path.clone(),
+            name: group.name.clone(),
+        });
+        self.footer_message = Some("Graveyard worktree? Enter/y confirms, n/Esc cancels.".into());
+        Some(DashboardControllerEffect::Render)
     }
 
     fn handle_clear_failures(
@@ -966,6 +1101,12 @@ impl DashboardController {
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardWorktreeRemoveConfirm {
+    pub path: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

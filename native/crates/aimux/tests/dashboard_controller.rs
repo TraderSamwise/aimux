@@ -691,6 +691,123 @@ fn service_input_handles_pasted_command_sequence() {
 }
 
 #[test]
+fn worktree_input_collects_name_and_dispatches_create() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('w')),
+        DashboardControllerEffect::Render
+    );
+    for key in parse_dashboard_keys(b" demo ") {
+        controller.handle_key(&snapshot, key);
+    }
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected worktree create request");
+    };
+    assert_eq!(request.path, routes::worktree_actions::CREATE);
+    assert_eq!(request.body, json!({ "name": "demo" }));
+    assert!(controller.worktree_input.is_none());
+}
+
+#[test]
+fn shifted_w_opens_worktree_list_until_escape() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('W')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.worktree_list_open);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Back),
+        DashboardControllerEffect::Render
+    );
+    assert!(!controller.worktree_list_open);
+}
+
+#[test]
+fn worktree_stop_key_confirms_then_dispatches_graveyard_request() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    let worktree_path = snapshot.worktree_groups[1].path.as_ref().unwrap().clone();
+    let worktree_name = snapshot.worktree_groups[1].name.clone();
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('x')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .worktree_remove_confirm
+            .as_ref()
+            .map(|confirm| (&confirm.path, &confirm.name)),
+        Some((&worktree_path, &worktree_name))
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('n')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.worktree_remove_confirm.is_none());
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected worktree graveyard request");
+    };
+    assert_eq!(request.path, routes::worktree_actions::GRAVEYARD);
+    assert_eq!(request.body, json!({ "path": worktree_path }));
+}
+
+#[test]
+fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    snapshot.worktree_groups[1].pending = true;
+    snapshot.worktree_groups[1].pending_action = Some("creating".into());
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('x')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Worktree feature-a is creating")
+    );
+
+    snapshot.worktree_groups[1].pending = false;
+    snapshot.worktree_groups[1].pending_action = None;
+    snapshot.worktree_groups[1].operation_failure = Some(json!({
+        "operation": "create",
+        "message": "branch already exists",
+    }));
+    let worktree_path = snapshot.worktree_groups[1].path.as_ref().unwrap().clone();
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('x'))
+    else {
+        panic!("expected failure dismissal request");
+    };
+    assert_eq!(request.path, routes::OPERATION_FAILURES_CLEAR);
+    assert_eq!(
+        request.body,
+        json!({
+            "targetKind": "worktree",
+            "operation": "create",
+            "worktreePath": worktree_path,
+        })
+    );
+}
+
+#[test]
 fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"j"), DashboardKey::Printable('j'));
     assert_eq!(parse_dashboard_key(b"\x1b[B"), DashboardKey::Down);
