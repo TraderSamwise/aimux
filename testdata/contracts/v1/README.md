@@ -875,6 +875,11 @@ Priority fixture groups:
   proof signing-message and public-key encoding behavior captured by running
   TypeScript transport/security helpers.
 
+## TUI
+
+- `tui/render-text.json`: two-pane composition and SGR stripping behavior
+  captured by running TypeScript `tui/render/text` helpers.
+
 ## Worktree
 
 - `worktree/cache-cleanup.json`: generated-cache planning, active-runtime
