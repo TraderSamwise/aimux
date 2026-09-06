@@ -107,6 +107,13 @@ Priority fixture groups:
 - `context/bridge.json`: tmux pane live snapshot, bounding, UI-chrome filtering,
   and response-mining behavior captured by running TypeScript `ContextWatcher`.
 
+## Hooks
+
+- `hooks/tool-hooks.json`: Claude and Codex hook command construction,
+  merge/install behavior, permission summaries, argument parsing, and payload
+  parsing captured by running TypeScript `claude-hooks` and `codex-hooks`
+  helpers.
+
 ## Expose
 
 - `expose/pane-output-tap.json`: pane output tap ownership, adoption, renewal,

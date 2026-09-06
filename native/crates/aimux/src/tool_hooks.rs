@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 use crate::atomic_write::write_json_atomic;
 use crate::shell_hooks::shell_quote;
@@ -39,7 +39,7 @@ pub fn install_codex_hooks(codex_home: Option<&Path>) -> Result<std::path::PathB
     Ok(hooks_path)
 }
 
-fn codex_hooks_path(codex_home: Option<&Path>) -> std::path::PathBuf {
+pub fn codex_hooks_path(codex_home: Option<&Path>) -> std::path::PathBuf {
     codex_home
         .map(Path::to_path_buf)
         .or_else(|| std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from))
@@ -52,7 +52,7 @@ fn codex_hooks_path(codex_home: Option<&Path>) -> std::path::PathBuf {
         .join("hooks.json")
 }
 
-fn merge_codex_hooks(mut existing: serde_json::Value) -> serde_json::Value {
+pub fn merge_codex_hooks(mut existing: serde_json::Value) -> serde_json::Value {
     if !existing.is_object() {
         existing = json!({});
     }
@@ -101,11 +101,14 @@ fn remove_aimux_codex_hooks(mut group: serde_json::Value) -> Option<serde_json::
         !entry
             .get("command")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|command| {
-                command.contains("/hooks/codex") || command.contains("codex-hook")
-            })
+            .is_some_and(|command| is_aimux_owned_codex_hook_command(Some(command)))
     });
     (!hooks.is_empty()).then_some(group)
+}
+
+pub fn is_aimux_owned_codex_hook_command(command: Option<&str>) -> bool {
+    command
+        .is_some_and(|command| command.contains("/hooks/codex") || command.contains("codex-hook"))
 }
 
 pub fn inject_claude_hook_args(
@@ -128,7 +131,7 @@ pub fn inject_claude_hook_args(
     Ok(with_session)
 }
 
-fn should_skip_claude_session_id_injection(args: &[String]) -> bool {
+pub fn should_skip_claude_session_id_injection(args: &[String]) -> bool {
     args.iter().any(|arg| {
         arg == "--resume"
             || arg.starts_with("--resume=")
@@ -153,7 +156,44 @@ fn write_claude_hook_settings_file(
     Ok(settings_path)
 }
 
-fn build_claude_hook_settings(
+pub fn is_claude_fork_style_launch(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--fork-session")
+}
+
+pub fn extract_claude_backend_session_id_from_args(args: &[String]) -> Option<String> {
+    if is_claude_fork_style_launch(args) {
+        return None;
+    }
+    for (index, arg) in args.iter().enumerate() {
+        if arg == "--session-id" {
+            if let Some(value) = usable_session_id_arg(args.get(index + 1).map(String::as_str)) {
+                return Some(value);
+            }
+        } else if let Some(value) = arg.strip_prefix("--session-id=") {
+            if let Some(value) = usable_session_id_arg(Some(value)) {
+                return Some(value);
+            }
+        } else if arg == "--resume" {
+            if let Some(value) = usable_session_id_arg(args.get(index + 1).map(String::as_str)) {
+                return Some(value);
+            }
+        } else if let Some(value) = arg.strip_prefix("--resume=")
+            && let Some(value) = usable_session_id_arg(Some(value))
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn usable_session_id_arg(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.starts_with('-'))
+        .map(ToOwned::to_owned)
+}
+
+pub fn build_claude_hook_settings(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
 ) -> serde_json::Value {
@@ -178,6 +218,60 @@ fn build_claude_hook_settings(
             "PermissionRequest": [{ "matcher": "", "hooks": [{ "type": "command", "command": command("permission-request", 120), "timeout": 120 }] }],
         }
     })
+}
+
+pub fn permission_request_hook_output(decision: Option<&str>) -> serde_json::Value {
+    let behavior = match decision {
+        Some("deny") => "deny",
+        Some(value) if value.starts_with("allow") => "allow",
+        _ => return json!({}),
+    };
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": { "behavior": behavior },
+        }
+    })
+}
+
+pub fn summarize_claude_permission_request(payload: &serde_json::Value) -> serde_json::Value {
+    let tool_name = payload
+        .get("tool_name")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::trim)
+        .unwrap_or("tool");
+    let input = payload.get("tool_input").cloned();
+    let detail = input.as_ref().and_then(|input| {
+        ["command", "file_path", "path", "url"]
+            .into_iter()
+            .find_map(|key| input.get(key).and_then(serde_json::Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    });
+    let summary = detail.map_or_else(
+        || tool_name.to_owned(),
+        |detail| {
+            let detail = if detail.chars().count() > 200 {
+                format!("{}…", detail.chars().take(200).collect::<String>())
+            } else {
+                detail
+            };
+            format!("{tool_name}: {detail}")
+        },
+    );
+    let mut output = Map::new();
+    output.insert("toolName".to_owned(), Value::String(tool_name.to_owned()));
+    if let Some(input) = input {
+        output.insert("input".to_owned(), input);
+    }
+    output.insert("summary".to_owned(), Value::String(summary));
+    Value::Object(output)
+}
+
+pub fn parse_codex_hook_payload(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| json!({}))
 }
 
 pub fn build_codex_hook_command(action: &str) -> String {

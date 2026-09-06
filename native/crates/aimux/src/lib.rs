@@ -70,6 +70,7 @@ pub mod statusline_model_contract;
 pub mod tmux;
 pub mod tmux_expose;
 pub mod tool_hooks;
+pub mod tool_hooks_contract;
 pub mod translation_plan;
 pub mod tui_render;
 
