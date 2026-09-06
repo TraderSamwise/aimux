@@ -29,6 +29,7 @@ pub mod dashboard_project_events;
 pub mod dashboard_readiness;
 pub mod dashboard_renderer;
 pub mod dashboard_terminal;
+pub mod dashboard_tool_picker;
 pub mod debug_state;
 pub mod expose_socket;
 pub mod launcher_env;

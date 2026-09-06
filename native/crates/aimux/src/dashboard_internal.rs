@@ -1,3 +1,4 @@
+use crate::config::load_config_for_project;
 use crate::dashboard_client::{
     ProjectServiceEndpoint, execute_dashboard_action, fetch_desktop_state,
     resolve_project_service_endpoint,
@@ -13,6 +14,7 @@ use crate::dashboard_project_events::DashboardProjectRefreshState;
 use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_key};
+use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{self, Write};
@@ -131,6 +133,11 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     }
                     render_now = true;
                 }
+                DashboardControllerEffect::OpenAgentToolPicker => {
+                    let config = load_config_for_project(&options.project_root);
+                    controller.open_tool_picker(enabled_dashboard_tools(&config));
+                    render_now = true;
+                }
                 DashboardControllerEffect::Render => {
                     render_now = true;
                 }
@@ -242,7 +249,7 @@ fn render_dashboard_snapshot(
             None => (None, None),
         };
     let focused_worktree_path = controller.navigation.focused_worktree_path(snapshot);
-    render_dashboard_frame(&DashboardRenderInput {
+    let frame = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
         cols: options.cols,
         rows: options.rows,
@@ -257,7 +264,20 @@ fn render_dashboard_snapshot(
         hidden_offline_agent_count: 0,
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
-    })
+    });
+    if let Some(tool_picker) = controller.tool_picker.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_tool_picker_overlay(
+            tool_picker,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    frame
 }
 
 fn load_dashboard_snapshot(options: &NativeDashboardOptions) -> Result<DashboardSnapshotLoad> {
