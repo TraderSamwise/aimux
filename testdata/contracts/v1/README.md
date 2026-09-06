@@ -705,6 +705,9 @@ Priority fixture groups:
 - `runtime-state/dashboard-navigation.json`: dashboard migrate-picker worktree
   selection and overlay side effects captured by running TypeScript
   `multiplexer/navigation`.
+- `runtime-state/dashboard-repair-notices.json`: dashboard repair notice
+  recording, timestamp, flash suppression, and render side effects captured by
+  running TypeScript `multiplexer/repair-notices`.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
