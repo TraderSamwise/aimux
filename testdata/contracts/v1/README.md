@@ -201,6 +201,12 @@ Priority fixture groups:
   captured by running TypeScript `buildRuntimeCoherenceReport` with mocked
   runtime dependencies.
 
+## Runtime Exchange
+
+- `runtime-exchange/alert-routing.json`: message, task assignment, task
+  outcome, and review outcome alert recipient routing captured by running
+  TypeScript `runtime-core/exchange-alert-routing`.
+
 ## Runtime Migration
 
 - `runtime-migration/migration.json`: report, explicit import, rollback,

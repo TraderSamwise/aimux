@@ -50,6 +50,7 @@ pub mod debug_state;
 pub mod desktop_notifier;
 pub mod expose_pane_output_tap;
 pub mod expose_socket;
+pub mod exchange_alert_routing;
 pub mod install_cleanup;
 pub mod launcher_env;
 pub mod local_ui_server;
