@@ -619,6 +619,9 @@ Priority fixture groups:
   by running TypeScript `dashboard/order` helpers.
 - `dashboard/pending-actions.json`: dashboard pending-action blocking-kind
   policy captured by running TypeScript `isBlockingPendingDashboardActionKind`.
+- `dashboard/quick-jump.json`: dashboard quick-jump worktree and entry
+  numbering plus digit target resolution captured by running TypeScript
+  `dashboard/quick-jump` helpers.
 - `dashboard/visibility.json`: dashboard offline-session classification and
   hide-offline model filtering captured by running TypeScript
   `dashboard/visibility` helpers.
