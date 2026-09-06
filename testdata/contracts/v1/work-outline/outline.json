@@ -1,0 +1,360 @@
+{
+  "version": 1,
+  "source": "src/work-outline.test.ts",
+  "generatedBy": "scripts/capture-work-outline-contract.mjs",
+  "description": "Work outline upsert, filtering, bounds, session-id truncation, and corrupt-state quarantine contracts captured by running TypeScript work-outline helpers.",
+  "normalization": {
+    "corruptFiles": "Time-derived corrupt quarantine suffixes are replaced with work-outline.json.corrupt-<ts>."
+  },
+  "cases": [
+    {
+      "id": "work-outline-001",
+      "name": "upserts by topic and worktree while merging session ids",
+      "source": "src/work-outline.test.ts",
+      "input": { "scenario": "upsert-merge" },
+      "output": {
+        "first": {
+          "entryId": "outline-e83114ebbf01",
+          "topicKey": "release train",
+          "title": "Release train",
+          "summary": "Prepare the release.",
+          "status": "active",
+          "source": "agent",
+          "sessionIds": ["codex-a"],
+          "worktreePath": "/repo/main",
+          "evidence": { "source": "tail", "startLine": 5, "endLine": 9 },
+          "createdAt": "2026-08-30T00:00:00.000Z",
+          "updatedAt": "2026-08-30T00:00:00.000Z",
+          "lastSeenAt": "2026-08-30T00:00:00.000Z"
+        },
+        "second": {
+          "entryId": "outline-e83114ebbf01",
+          "topicKey": "release train",
+          "title": "Release train",
+          "summary": "Release is ready to cut.",
+          "status": "active",
+          "source": "agent",
+          "sessionIds": ["claude-b", "codex-a"],
+          "worktreePath": "/repo/main",
+          "evidence": { "source": "tail", "startLine": 5, "endLine": 9 },
+          "createdAt": "2026-08-30T00:00:00.000Z",
+          "updatedAt": "2026-08-30T00:01:00.000Z",
+          "lastSeenAt": "2026-08-30T00:01:00.000Z"
+        },
+        "state": {
+          "version": 1,
+          "entries": [
+            {
+              "entryId": "outline-e83114ebbf01",
+              "topicKey": "release train",
+              "title": "Release train",
+              "summary": "Release is ready to cut.",
+              "status": "active",
+              "source": "agent",
+              "sessionIds": ["claude-b", "codex-a"],
+              "worktreePath": "/repo/main",
+              "evidence": { "source": "tail", "startLine": 5, "endLine": 9 },
+              "createdAt": "2026-08-30T00:00:00.000Z",
+              "updatedAt": "2026-08-30T00:01:00.000Z",
+              "lastSeenAt": "2026-08-30T00:01:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "99ab6f0c8a8751001e513cb4ae774f11c58fd78a2087ea75bbabcb142adf8fa1"
+    },
+    {
+      "id": "work-outline-002",
+      "name": "filters by status, session, worktree, and search text",
+      "source": "src/work-outline.test.ts",
+      "input": { "scenario": "filters" },
+      "output": {
+        "alpha": {
+          "entryId": "outline-cc1a7d701b76",
+          "topicKey": "alpha",
+          "title": "Alpha cleanup",
+          "summary": "Remove stale paths.",
+          "status": "done",
+          "source": "agent",
+          "sessionIds": ["codex-a"],
+          "worktreePath": "/repo/alpha",
+          "createdAt": "2026-08-30T00:00:00.000Z",
+          "updatedAt": "2026-08-30T00:00:00.000Z",
+          "lastSeenAt": "2026-08-30T00:00:00.000Z"
+        },
+        "beta": {
+          "entryId": "outline-5801d8c1c437",
+          "topicKey": "beta",
+          "title": "Beta scheduler",
+          "summary": "Scan changed agents.",
+          "status": "active",
+          "source": "agent",
+          "sessionIds": ["claude-b"],
+          "worktreePath": "/repo/beta",
+          "createdAt": "2026-08-30T00:01:00.000Z",
+          "updatedAt": "2026-08-30T00:01:00.000Z",
+          "lastSeenAt": "2026-08-30T00:01:00.000Z"
+        },
+        "done": [
+          {
+            "entryId": "outline-cc1a7d701b76",
+            "topicKey": "alpha",
+            "title": "Alpha cleanup",
+            "summary": "Remove stale paths.",
+            "status": "done",
+            "source": "agent",
+            "sessionIds": ["codex-a"],
+            "worktreePath": "/repo/alpha",
+            "createdAt": "2026-08-30T00:00:00.000Z",
+            "updatedAt": "2026-08-30T00:00:00.000Z",
+            "lastSeenAt": "2026-08-30T00:00:00.000Z"
+          }
+        ],
+        "session": [
+          {
+            "entryId": "outline-cc1a7d701b76",
+            "topicKey": "alpha",
+            "title": "Alpha cleanup",
+            "summary": "Remove stale paths.",
+            "status": "done",
+            "source": "agent",
+            "sessionIds": ["codex-a"],
+            "worktreePath": "/repo/alpha",
+            "createdAt": "2026-08-30T00:00:00.000Z",
+            "updatedAt": "2026-08-30T00:00:00.000Z",
+            "lastSeenAt": "2026-08-30T00:00:00.000Z"
+          }
+        ],
+        "worktree": [
+          {
+            "entryId": "outline-cc1a7d701b76",
+            "topicKey": "alpha",
+            "title": "Alpha cleanup",
+            "summary": "Remove stale paths.",
+            "status": "done",
+            "source": "agent",
+            "sessionIds": ["codex-a"],
+            "worktreePath": "/repo/alpha",
+            "createdAt": "2026-08-30T00:00:00.000Z",
+            "updatedAt": "2026-08-30T00:00:00.000Z",
+            "lastSeenAt": "2026-08-30T00:00:00.000Z"
+          }
+        ],
+        "search": [
+          {
+            "entryId": "outline-cc1a7d701b76",
+            "topicKey": "alpha",
+            "title": "Alpha cleanup",
+            "summary": "Remove stale paths.",
+            "status": "done",
+            "source": "agent",
+            "sessionIds": ["codex-a"],
+            "worktreePath": "/repo/alpha",
+            "createdAt": "2026-08-30T00:00:00.000Z",
+            "updatedAt": "2026-08-30T00:00:00.000Z",
+            "lastSeenAt": "2026-08-30T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "c0be266493df302ca32a9385e646d6d4a35b25a24c4e1ac475783fca58a6a7da"
+    },
+    {
+      "id": "work-outline-003",
+      "name": "bounds stored entries and truncates large text",
+      "source": "src/work-outline.test.ts",
+      "input": { "scenario": "bounds-text" },
+      "output": {
+        "summary": {
+          "count": 500,
+          "first": {
+            "entryId": "outline-143dec0665ad",
+            "topicKey": "topic-504",
+            "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt...",
+            "summary": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss...",
+            "status": "active",
+            "source": "agent",
+            "sessionIds": [],
+            "createdAt": "2026-08-30T00:08:24.000Z",
+            "updatedAt": "2026-08-30T00:08:24.000Z",
+            "lastSeenAt": "2026-08-30T00:08:24.000Z"
+          },
+          "last": {
+            "entryId": "outline-4ad20dc1135c",
+            "topicKey": "topic-5",
+            "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt...",
+            "summary": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss...",
+            "status": "active",
+            "source": "agent",
+            "sessionIds": [],
+            "createdAt": "2026-08-30T00:00:05.000Z",
+            "updatedAt": "2026-08-30T00:00:05.000Z",
+            "lastSeenAt": "2026-08-30T00:00:05.000Z"
+          }
+        },
+        "missing": null
+      },
+      "inputSha256": "f70e8490e146c8e981f936d8c171f5aa7bc3d028a64e7194e54180f23291257a"
+    },
+    {
+      "id": "work-outline-004",
+      "name": "bounds and truncates session ids on new and existing entries",
+      "source": "src/work-outline.test.ts",
+      "input": { "scenario": "bounds-session-ids" },
+      "output": {
+        "first": {
+          "entryId": "outline-6c1bf1af77e8",
+          "topicKey": "session bound",
+          "title": "Session bound",
+          "summary": "Keep persisted session id arrays bounded.",
+          "status": "active",
+          "source": "agent",
+          "sessionIds": [
+            "codex-0",
+            "codex-1",
+            "codex-10",
+            "codex-11",
+            "codex-12",
+            "codex-13",
+            "codex-14",
+            "codex-15",
+            "codex-16",
+            "codex-17",
+            "codex-18",
+            "codex-19",
+            "codex-2",
+            "codex-20",
+            "codex-21",
+            "codex-22",
+            "codex-23",
+            "codex-24",
+            "codex-25",
+            "codex-26",
+            "codex-27",
+            "codex-28",
+            "codex-29",
+            "codex-3",
+            "codex-30",
+            "codex-31",
+            "codex-32",
+            "codex-33",
+            "codex-34",
+            "codex-35",
+            "codex-36",
+            "codex-37"
+          ],
+          "createdAt": "2026-08-30T00:00:00.000Z",
+          "updatedAt": "2026-08-30T00:00:00.000Z",
+          "lastSeenAt": "2026-08-30T00:00:00.000Z"
+        },
+        "second": {
+          "entryId": "outline-6c1bf1af77e8",
+          "topicKey": "session bound",
+          "title": "Session bound",
+          "summary": "Keep persisted session id arrays bounded after updates.",
+          "status": "active",
+          "source": "agent",
+          "sessionIds": [
+            "claude-0",
+            "claude-1",
+            "claude-10",
+            "claude-11",
+            "claude-12",
+            "claude-13",
+            "claude-14",
+            "claude-15",
+            "claude-16",
+            "claude-17",
+            "claude-18",
+            "claude-19",
+            "claude-2",
+            "claude-3",
+            "claude-4",
+            "claude-5",
+            "claude-6",
+            "claude-7",
+            "claude-8",
+            "claude-9",
+            "codex-0",
+            "codex-1",
+            "codex-10",
+            "codex-11",
+            "codex-12",
+            "codex-13",
+            "codex-14",
+            "codex-15",
+            "codex-16",
+            "codex-17",
+            "codex-18",
+            "codex-19"
+          ],
+          "createdAt": "2026-08-30T00:00:00.000Z",
+          "updatedAt": "2026-08-30T00:01:00.000Z",
+          "lastSeenAt": "2026-08-30T00:01:00.000Z"
+        },
+        "state": {
+          "version": 1,
+          "entries": [
+            {
+              "entryId": "outline-6c1bf1af77e8",
+              "topicKey": "session bound",
+              "title": "Session bound",
+              "summary": "Keep persisted session id arrays bounded after updates.",
+              "status": "active",
+              "source": "agent",
+              "sessionIds": [
+                "claude-0",
+                "claude-1",
+                "claude-10",
+                "claude-11",
+                "claude-12",
+                "claude-13",
+                "claude-14",
+                "claude-15",
+                "claude-16",
+                "claude-17",
+                "claude-18",
+                "claude-19",
+                "claude-2",
+                "claude-3",
+                "claude-4",
+                "claude-5",
+                "claude-6",
+                "claude-7",
+                "claude-8",
+                "claude-9",
+                "codex-0",
+                "codex-1",
+                "codex-10",
+                "codex-11",
+                "codex-12",
+                "codex-13",
+                "codex-14",
+                "codex-15",
+                "codex-16",
+                "codex-17",
+                "codex-18",
+                "codex-19"
+              ],
+              "createdAt": "2026-08-30T00:00:00.000Z",
+              "updatedAt": "2026-08-30T00:01:00.000Z",
+              "lastSeenAt": "2026-08-30T00:01:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "99d7e0ca59bd57e10b3c0d609725bce232dddc3605ba8e3ccf977627082efdff"
+    },
+    {
+      "id": "work-outline-005",
+      "name": "quarantines corrupt JSON instead of throwing or reparsing forever",
+      "source": "src/work-outline.test.ts",
+      "input": { "scenario": "corrupt-json" },
+      "output": {
+        "state": { "version": 1, "entries": [] },
+        "exists": false,
+        "files": ["work-outline.json.corrupt-<ts>"]
+      },
+      "inputSha256": "cc2317830f087f854c6380948a92b898e5cc26f1334c93796d45c784ab7aa559"
+    }
+  ]
+}

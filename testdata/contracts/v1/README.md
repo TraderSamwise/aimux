@@ -202,3 +202,9 @@ Priority fixture groups:
   protection, dry-run/apply behavior, cleanup-name allowlist, and summarized
   report rendering captured by running TypeScript `worktree-cache-cleanup`
   helpers.
+
+## Work Outline
+
+- `work-outline/outline.json`: work outline upsert, filtering, bounds,
+  session-id truncation, and corrupt-state quarantine behavior captured by
+  running TypeScript `work-outline` helpers.
