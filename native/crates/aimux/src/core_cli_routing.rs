@@ -24,6 +24,26 @@ pub struct CoreAgentInputArgs {
     pub project: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreAgentRenameArgs {
+    pub session_id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreAgentMigrateArgs {
+    pub session_id: String,
+    pub worktree: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoreLogsSubcommand {
@@ -326,6 +346,127 @@ pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgen
         session_id: session_id.clone(),
         text,
         project,
+    })
+}
+
+pub fn parse_core_agent_rename_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentRenameArgs> {
+    if args.first().map(AsRef::as_ref) != Some("rename") {
+        return None;
+    }
+    let mut session_id = None;
+    let mut label = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--label" {
+            label = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--label=") {
+            label = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return None;
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreAgentRenameArgs {
+        session_id: session_id?,
+        label: label?,
+        project,
+        json,
+    })
+}
+
+pub fn parse_core_agent_migrate_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentMigrateArgs> {
+    if args.first().map(AsRef::as_ref) != Some("migrate") {
+        return None;
+    }
+    let mut session_id = None;
+    let mut worktree = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--worktree" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--worktree=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return None;
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreAgentMigrateArgs {
+        session_id: session_id?,
+        worktree: worktree?,
+        project,
+        json,
     })
 }
 
@@ -812,6 +953,8 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
         (Some("ps"), _) => true,
         (Some("input"), _) => true,
+        (Some("rename"), _) => true,
+        (Some("migrate"), _) => true,
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,

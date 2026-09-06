@@ -347,6 +347,67 @@ fn agent_input_plans_native_text_route_with_variadic_text_body() {
 }
 
 #[test]
+fn agent_rename_and_migrate_plan_native_text_routes() {
+    let rename = classify_core_cli_with_project_resolver(
+        &[
+            "rename",
+            "claude-1",
+            "--label",
+            "reviewer",
+            "--project",
+            "./child",
+            "--json",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("rename plan");
+    assert_eq!(rename.operation, CoreCliOperation::AgentRename);
+    assert_eq!(
+        rename.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/rename-text?json=1".into(),
+            body: Some(json!({
+                "project": "/resolved/./child",
+                "sessionId": "claude-1",
+                "label": "reviewer",
+            })),
+        }
+    );
+
+    let migrate = classify_core_cli(
+        &["migrate", "claude-1", "--worktree", "feature"],
+        &context(true, true),
+    )
+    .expect("migrate plan");
+    assert_eq!(migrate.operation, CoreCliOperation::AgentMigrate);
+    assert_eq!(
+        migrate.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/migrate-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "worktreePath": "feature",
+            })),
+        }
+    );
+
+    assert_eq!(
+        classify_core_cli(&["rename", "claude-1"], &context(true, true))
+            .expect_err("rename missing label")
+            .exit_code(),
+        1
+    );
+    assert_eq!(
+        classify_core_cli(&["migrate", "claude-1"], &context(true, true))
+            .expect_err("migrate missing worktree")
+            .exit_code(),
+        1
+    );
+}
+
+#[test]
 fn invalid_host_agent_stream_args_fail_before_node_fallback() {
     let invalid_lines = classify_core_cli(
         &["host", "agent-stream", "claude-1", "--lines", "-5"],

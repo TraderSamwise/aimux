@@ -3,10 +3,11 @@ use aimux::core_cli_routing::{
     CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
     CoreProjectEnsureArgs, CoreRestartArgs, core_command_args, has_core_global_logging_args,
     is_core_cli_command, is_core_project_ensure_command, is_valid_core_project_ensure_args,
-    parse_core_agent_input_args, parse_core_agent_ps_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
-    parse_core_host_agent_stream_args, parse_core_host_restart_args, parse_core_logs_args,
-    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_agent_input_args, parse_core_agent_migrate_args, parse_core_agent_ps_args,
+    parse_core_agent_rename_args, parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
+    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
+    parse_core_restart_args, parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -178,6 +179,45 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
         parse_core_agent_input_args(&["input", "claude-1", "hello", "--project", "--bad"]),
         None
     );
+}
+
+#[test]
+fn agent_rename_and_migrate_parsers_match_required_options() {
+    let rename = parse_core_agent_rename_args(&[
+        "rename",
+        "claude-1",
+        "--label",
+        "reviewer",
+        "--project=/repo",
+        "--json",
+    ])
+    .expect("rename args");
+    assert_eq!(rename.session_id, "claude-1");
+    assert_eq!(rename.label, "reviewer");
+    assert_eq!(rename.project.as_deref(), Some("/repo"));
+    assert!(rename.json);
+
+    let clear = parse_core_agent_rename_args(&["rename", "claude-1", "--label="])
+        .expect("clear label args");
+    assert_eq!(clear.label, "");
+
+    let migrate = parse_core_agent_migrate_args(&[
+        "migrate",
+        "claude-1",
+        "--worktree",
+        "feature",
+        "--project",
+        "/repo",
+    ])
+    .expect("migrate args");
+    assert_eq!(migrate.session_id, "claude-1");
+    assert_eq!(migrate.worktree, "feature");
+    assert_eq!(migrate.project.as_deref(), Some("/repo"));
+    assert!(!migrate.json);
+
+    assert!(parse_core_agent_rename_args(&["rename", "claude-1"]).is_none());
+    assert!(parse_core_agent_migrate_args(&["migrate", "claude-1"]).is_none());
+    assert!(parse_core_agent_migrate_args(&["migrate", "claude-1", "--worktree", "-x"]).is_none());
 }
 
 #[test]

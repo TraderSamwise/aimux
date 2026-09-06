@@ -1,7 +1,8 @@
 use crate::core_cli_routing::{
     CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreHostRestartArgs, CoreLogsArgs,
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_input_args,
-    parse_core_agent_ps_args, parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
+    parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
     parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
     parse_core_restart_args, parse_core_runtime_restart_args,
@@ -29,6 +30,8 @@ pub enum CoreCliOperation {
     HostAgentRead,
     HostAgentStream,
     AgentInput,
+    AgentRename,
+    AgentMigrate,
     AgentPs,
     DashboardReload,
     RuntimeRestart,
@@ -484,6 +487,14 @@ fn agent_ps_text_path(project: &str, json: bool) -> String {
     path
 }
 
+fn text_route_path(path: &str, json: bool) -> String {
+    if json {
+        format!("{path}?json=1")
+    } else {
+        path.to_owned()
+    }
+}
+
 fn encode_query_component(value: &str) -> String {
     let mut output = String::new();
     for byte in value.bytes() {
@@ -556,6 +567,56 @@ where
                         "project": project_root,
                         "sessionId": parsed.session_id,
                         "text": parsed.text,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("rename", _) => {
+            let parsed = parse_core_agent_rename_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid rename arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::AgentRename,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.agent_rename_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                        "label": parsed.label,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("migrate", _) => {
+            let parsed = parse_core_agent_migrate_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid migrate arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::AgentMigrate,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.agent_migrate_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                        "worktreePath": parsed.worktree,
                     })),
                 },
                 CoreCliFallback::None,

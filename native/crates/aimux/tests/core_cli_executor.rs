@@ -141,6 +141,10 @@ impl CoreCliRuntime for FakeRuntime {
             "claude-1  [claude]  ready\n".into()
         } else if path == "/core/agents/input-text" {
             "delivered to claude-1\n".into()
+        } else if path.starts_with("/core/agents/rename-text") {
+            "renamed claude-1 -> reviewer\n".into()
+        } else if path.starts_with("/core/agents/migrate-text") {
+            "migrated claude-1 -> feature\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -547,6 +551,53 @@ fn agent_input_executes_native_text_route_without_core_command_fallback() {
                 "text": "hello",
             })),
         )]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn agent_rename_and_migrate_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let rename = run_core_cli_with(
+        &args(&[
+            "rename",
+            "claude-1",
+            "--label",
+            "reviewer",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
+    let migrate = run_core_cli_with(
+        &args(&["migrate", "claude-1", "--worktree", "feature"]),
+        &mut runtime,
+    );
+
+    assert_eq!(rename.code, 0);
+    assert_eq!(rename.stdout, ["renamed claude-1 -> reviewer"]);
+    assert_eq!(migrate.code, 0);
+    assert_eq!(migrate.stdout, ["migrated claude-1 -> feature"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/agents/rename-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "claude-1",
+                    "label": "reviewer",
+                })),
+            ),
+            (
+                "/core/agents/migrate-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "claude-1",
+                    "worktreePath": "feature",
+                })),
+            ),
+        ]
     );
     assert!(runtime.commands.is_empty());
 }
