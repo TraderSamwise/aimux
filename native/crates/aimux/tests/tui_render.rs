@@ -1,4 +1,7 @@
 use aimux::tui_render::box_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
+use aimux::tui_render::screen_frame::{
+    ScreenFrameInput, compose_screen_frame, screen_content_width, screen_left_width,
+};
 use aimux::tui_render::text::{
     compose_two_pane, strip_ansi, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
 };
@@ -147,6 +150,69 @@ fn danger_overlay_has_warning_glyph_and_uniform_truncated_rows() {
     assert!(widths[0] <= 80);
     assert!(output.contains("\x1b[31m"));
     assert!(rows.iter().any(|row| strip_ansi(row).contains('⚠')));
+}
+
+#[test]
+fn screen_frame_scrolls_to_focused_card_and_renders_footer() {
+    let header = vec![
+        String::new(),
+        "aimux".to_owned(),
+        "─".repeat(80),
+        String::new(),
+    ];
+    let content = (0..12)
+        .map(|index| format!("row-{index}"))
+        .collect::<Vec<_>>();
+    let footer = vec!["q quit".to_owned()];
+
+    let result = compose_screen_frame(&ScreenFrameInput {
+        cols: 80,
+        rows: 10,
+        header: &header,
+        content: &content,
+        footer_lines: &footer,
+        focus_line: 10,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(result.scroll_offset > 0);
+    assert!(plain.starts_with("\x1b[2J\x1b[H"));
+    assert!(plain.contains("row-10"));
+    assert!(plain.contains("▼ more ▼") || plain.contains("▲ more ▲"));
+    assert!(plain.contains("──"));
+    assert!(plain.contains("  q quit"));
+}
+
+#[test]
+fn screen_frame_matches_dashboard_geometry_helpers_and_two_pane_body() {
+    assert_eq!(screen_content_width(40), 72);
+    assert_eq!(screen_content_width(120), 120);
+    assert_eq!(screen_left_width(40), 41);
+    assert_eq!(screen_left_width(120), 69);
+
+    let header: Vec<String> = Vec::new();
+    let footer: Vec<String> = Vec::new();
+    let left = vec!["left".to_owned()];
+    let right = vec!["right".to_owned()];
+    let result = compose_screen_frame(&ScreenFrameInput {
+        cols: 80,
+        rows: 4,
+        header: &header,
+        content: &left,
+        footer_lines: &footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: true,
+        right_panel: Some(&right),
+    });
+
+    assert!(strip_ansi(&result.frame).contains("left"));
+    assert!(strip_ansi(&result.frame).contains("right"));
+    let body_line = result.frame.split("\r\n").nth(1).unwrap_or("");
+    assert!(visible_width(body_line) <= 80);
 }
 
 fn positioned_rows(output: &str) -> Vec<&str> {
