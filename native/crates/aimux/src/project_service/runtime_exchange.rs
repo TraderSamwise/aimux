@@ -161,10 +161,7 @@ pub fn normalize_runtime_exchange(value: Value) -> Result<Value, String> {
     if record.get("version").and_then(Value::as_u64) != Some(RUNTIME_EXCHANGE_VERSION as u64) {
         return Err(format!(
             "unsupported runtime exchange version: {}",
-            record
-                .get("version")
-                .map(Value::to_string)
-                .unwrap_or_else(|| "null".into())
+            unsupported_version_label(record.get("version"))
         ));
     }
     let mut normalized = Map::new();
@@ -188,6 +185,14 @@ pub fn normalize_runtime_exchange(value: Value) -> Result<Value, String> {
         normalized.insert(key.into(), array_value(record.get(key)));
     }
     Ok(Value::Object(normalized))
+}
+
+fn unsupported_version_label(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(value)) => value.clone(),
+        Some(value) => value.to_string(),
+        None => "null".into(),
+    }
 }
 
 fn serialize_runtime_exchange(exchange: &Value) -> String {

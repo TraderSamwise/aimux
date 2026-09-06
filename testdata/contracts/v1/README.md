@@ -208,6 +208,10 @@ Priority fixture groups:
 - `runtime-exchange/import.json`: legacy thread/message/task/file attachment
   conversion, derived handoff/review/wait/inbox references, and absent optional
   directory behavior captured by running TypeScript `runtime-core/exchange-import`.
+- `runtime-exchange/store.json`: runtime exchange YAML persistence, mutation
+  isolation, external rewrite reads, lock recovery, graph pruning, compaction,
+  byte accounting, and diagnostics captured by running TypeScript
+  `runtime-core/exchange-store`.
 
 ## Runtime Migration
 

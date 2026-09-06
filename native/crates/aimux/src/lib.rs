@@ -51,6 +51,7 @@ pub mod desktop_notifier;
 pub mod exchange_alert_routing;
 pub mod expose_pane_output_tap;
 pub mod expose_socket;
+pub mod inbox_cleanup;
 pub mod install_cleanup;
 pub mod launcher_env;
 pub mod local_ui_server;

@@ -1,0 +1,354 @@
+{
+  "version": 1,
+  "source": "src/inbox-cleanup.test.ts",
+  "generatedBy": "scripts/capture-inbox-cleanup-contract.mjs",
+  "description": "Notification inbox cleanup planning and execution contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "notifications-inbox-cleanup-001",
+      "name": "ages out read notifications past retention but never unread ones",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "buildInboxCleanupPlan",
+      "input": {
+        "now": "2026-06-19T00:00:00.000Z",
+        "config": { "cleanupEnabled": true, "retentionDays": 14, "cleanupIntervalMs": 86400000, "maxSize": 100 },
+        "notifications": [
+          {
+            "id": "old-read",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "old-unread",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "recent-read",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "enabled": true,
+        "now": "2026-06-19T00:00:00.000Z",
+        "cutoff": "2026-06-05T00:00:00.000Z",
+        "retentionDays": 14,
+        "maxSize": 100,
+        "targets": [{ "id": "old-read", "reason": "aged", "createdAt": "2026-05-01T00:00:00.000Z" }]
+      },
+      "inputSha256": "2b564e43448821dd33cf9d3e1aedfd7d12a66b21299aeade58abde4484f2ee6d"
+    },
+    {
+      "id": "notifications-inbox-cleanup-002",
+      "name": "trims overflow beyond maxSize, evicting oldest read first",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "buildInboxCleanupPlan",
+      "input": {
+        "now": "2026-06-19T00:00:00.000Z",
+        "config": { "cleanupEnabled": true, "retentionDays": 14, "cleanupIntervalMs": 86400000, "maxSize": 2 },
+        "notifications": [
+          {
+            "id": "r1",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-10T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "r2",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-11T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "r3",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-12T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "r4",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-13T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "r5",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-14T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "enabled": true,
+        "now": "2026-06-19T00:00:00.000Z",
+        "cutoff": "2026-06-05T00:00:00.000Z",
+        "retentionDays": 14,
+        "maxSize": 2,
+        "targets": [
+          { "id": "r1", "reason": "overflow", "createdAt": "2026-06-10T00:00:00.000Z" },
+          { "id": "r2", "reason": "overflow", "createdAt": "2026-06-11T00:00:00.000Z" },
+          { "id": "r3", "reason": "overflow", "createdAt": "2026-06-12T00:00:00.000Z" }
+        ]
+      },
+      "inputSha256": "7af0aee0eae3a802a228254db408070defcbb1b571046a258b6a5af0d97a6b57"
+    },
+    {
+      "id": "notifications-inbox-cleanup-003",
+      "name": "never evicts a protected unread actionable row even when over cap",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "buildInboxCleanupPlan",
+      "input": {
+        "now": "2026-06-19T00:00:00.000Z",
+        "config": { "cleanupEnabled": true, "retentionDays": 14, "cleanupIntervalMs": 86400000, "maxSize": 1 },
+        "notifications": [
+          {
+            "id": "u1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "r1",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "r2",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          }
+        ],
+        "protectedIds": ["u1"]
+      },
+      "output": {
+        "enabled": true,
+        "now": "2026-06-19T00:00:00.000Z",
+        "cutoff": "2026-06-05T00:00:00.000Z",
+        "retentionDays": 14,
+        "maxSize": 1,
+        "targets": [
+          { "id": "r1", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" },
+          { "id": "r2", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" }
+        ]
+      },
+      "inputSha256": "9ff3eda1f35f86a467b919527d81f54d2d33a651d26654bbe88a8eba95564074"
+    },
+    {
+      "id": "notifications-inbox-cleanup-004",
+      "name": "keeps a protected row even when maxSize is 0",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "buildInboxCleanupPlan",
+      "input": {
+        "now": "2026-06-19T00:00:00.000Z",
+        "config": { "cleanupEnabled": true, "retentionDays": 14, "cleanupIntervalMs": 86400000, "maxSize": 0 },
+        "notifications": [
+          {
+            "id": "u1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "enabled": true,
+        "now": "2026-06-19T00:00:00.000Z",
+        "cutoff": "2026-06-05T00:00:00.000Z",
+        "retentionDays": 14,
+        "maxSize": 0,
+        "targets": []
+      },
+      "inputSha256": "754afa531b0f883d82a5960529584669812f9384e6699d1191fbc74c266166fe"
+    },
+    {
+      "id": "notifications-inbox-cleanup-005",
+      "name": "defaults to protecting every unread notification",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "buildInboxCleanupPlan",
+      "input": {
+        "now": "2026-06-19T00:00:00.000Z",
+        "config": { "cleanupEnabled": true, "retentionDays": 14, "cleanupIntervalMs": 86400000, "maxSize": 0 },
+        "notifications": [
+          {
+            "id": "u1",
+            "title": "title",
+            "body": "body",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          },
+          {
+            "id": "r1",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "enabled": true,
+        "now": "2026-06-19T00:00:00.000Z",
+        "cutoff": "2026-06-05T00:00:00.000Z",
+        "retentionDays": 14,
+        "maxSize": 0,
+        "targets": [{ "id": "r1", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" }]
+      },
+      "inputSha256": "db9dfb11dbdf3db66db2bcd987047b29cffa3a55de0d6b99090548733ea5c283"
+    },
+    {
+      "id": "notifications-inbox-cleanup-006",
+      "name": "returns no targets when cleanup is disabled",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "buildInboxCleanupPlan",
+      "input": {
+        "now": "2026-06-19T00:00:00.000Z",
+        "config": { "cleanupEnabled": false, "retentionDays": 14, "cleanupIntervalMs": 86400000, "maxSize": 0 },
+        "notifications": [
+          {
+            "id": "r1",
+            "title": "title",
+            "body": "body",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-18T00:00:00.000Z",
+            "updatedAt": "2026-06-18T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "enabled": false,
+        "now": "2026-06-19T00:00:00.000Z",
+        "cutoff": "2026-06-05T00:00:00.000Z",
+        "retentionDays": 14,
+        "maxSize": 0,
+        "targets": []
+      },
+      "inputSha256": "09203b49fb965ef4e25c74fd89fd5c5531ffbd951a5c8c056ea7b80344e76841"
+    },
+    {
+      "id": "notifications-inbox-cleanup-007",
+      "name": "runInboxCleanup does not clear on dry run",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "runInboxCleanup",
+      "input": {
+        "plan": {
+          "enabled": true,
+          "now": "2026-06-19T00:00:00.000Z",
+          "cutoff": "2026-06-05T00:00:00.000Z",
+          "retentionDays": 14,
+          "maxSize": 0,
+          "targets": [{ "id": "r1", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" }]
+        },
+        "dryRun": true,
+        "clearResults": { "r1": 1 }
+      },
+      "output": {
+        "dryRun": true,
+        "plan": {
+          "enabled": true,
+          "now": "2026-06-19T00:00:00.000Z",
+          "cutoff": "2026-06-05T00:00:00.000Z",
+          "retentionDays": 14,
+          "maxSize": 0,
+          "targets": [{ "id": "r1", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" }]
+        },
+        "results": [{ "id": "r1", "reason": "overflow", "status": "dry-run" }]
+      },
+      "inputSha256": "34ad2c9e46dbdfc338dfd243c9a817827a51fff950047a515e51ae24fbf54ea2"
+    },
+    {
+      "id": "notifications-inbox-cleanup-008",
+      "name": "runInboxCleanup clears targets and reports failures",
+      "source": "src/inbox-cleanup.test.ts",
+      "api": "runInboxCleanup",
+      "input": {
+        "plan": {
+          "enabled": true,
+          "now": "2026-06-19T00:00:00.000Z",
+          "cutoff": "2026-06-05T00:00:00.000Z",
+          "retentionDays": 14,
+          "maxSize": 0,
+          "targets": [{ "id": "r1", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" }]
+        },
+        "dryRun": false,
+        "clearResults": { "r1": 1 },
+        "missResults": { "r1": 0 }
+      },
+      "output": {
+        "ok": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-19T00:00:00.000Z",
+            "cutoff": "2026-06-05T00:00:00.000Z",
+            "retentionDays": 14,
+            "maxSize": 0,
+            "targets": [{ "id": "r1", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" }]
+          },
+          "results": [{ "id": "r1", "reason": "overflow", "status": "cleared" }]
+        },
+        "miss": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-19T00:00:00.000Z",
+            "cutoff": "2026-06-05T00:00:00.000Z",
+            "retentionDays": 14,
+            "maxSize": 0,
+            "targets": [{ "id": "r1", "reason": "overflow", "createdAt": "2026-06-18T00:00:00.000Z" }]
+          },
+          "results": [{ "id": "r1", "reason": "overflow", "status": "failed", "error": "notification not found" }]
+        }
+      },
+      "inputSha256": "877647218fcaca1e21438db8e1313679e51d7e530208822529b4de32d1c1801a"
+    }
+  ]
+}
