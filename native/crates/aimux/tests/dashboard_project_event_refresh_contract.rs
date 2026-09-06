@@ -1,9 +1,9 @@
 use aimux::dashboard_project_events::{
-    dashboard_project_refresh_work, should_render_after_project_event_refresh,
-    DashboardProjectRefreshWork,
+    DashboardProjectRefreshWork, dashboard_project_refresh_work,
+    should_render_after_project_event_refresh,
 };
 use aimux::project_api_contract::PROJECT_API_VIEWS;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const CONTRACT: &str =
     include_str!("../../../../src/multiplexer/dashboard-project-event-refresh.contract.v1.json");

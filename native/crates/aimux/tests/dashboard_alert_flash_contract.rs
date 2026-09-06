@@ -1,5 +1,5 @@
 use aimux::dashboard_project_events::dashboard_alert_footer_flash;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const CONTRACT: &str =
     include_str!("../../../../src/multiplexer/dashboard-alert-flash.contract.v1.json");
