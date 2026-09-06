@@ -879,6 +879,9 @@ Priority fixture groups:
 
 - `tui/render-text.json`: two-pane composition and SGR stripping behavior
   captured by running TypeScript `tui/render/text` helpers.
+- `tui/render-theme.json`: TUI theme primitive, status, keycap, footer, tmux
+  token, and card rendering behavior captured by running TypeScript
+  `tui/render/theme` helpers.
 
 ## Worktree
 
