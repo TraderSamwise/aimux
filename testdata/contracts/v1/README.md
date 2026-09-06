@@ -63,6 +63,9 @@ Priority fixture groups:
   offset, terminal output hydration, visible-pane output mode, and active
   shared-session mapping/equality/merge/hydration behavior captured by running
   TypeScript app state helpers.
+- `app-state/global-inbox.json`: app global inbox request-key shape/sequence
+  and failed-project row retention captured by running TypeScript global inbox
+  helpers, with random request scope normalized after execution.
 - `app-state/lifecycle-transitions.json`: app project lifecycle transition
   local/failure record normalization and optimistic desktop-state projection
   captured by running TypeScript lifecycle transition helpers.
