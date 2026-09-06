@@ -904,6 +904,19 @@ fn metadata_and_repair_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn debug_state_plans_native_local_report() {
+    let plan = classify_core_cli(&["debug-state", "codex-a1"], &context(true, true))
+        .expect("debug-state plan");
+    assert_eq!(plan.operation, CoreCliOperation::DebugState);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::DebugState {
+            target: "codex-a1".into(),
+        }
+    );
+}
+
+#[test]
 fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
     let disk = classify_core_cli_with_project_resolver(
         &[

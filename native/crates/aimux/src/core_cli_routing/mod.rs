@@ -2666,6 +2666,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         }
         (Some("daemon"), Some("restart")) => parse_core_daemon_restart_args(args).is_some(),
         (Some("daemon"), Some("project-ensure")) => true,
+        (Some("debug-state"), Some(_)) => args.len() == 2 && !args[1].as_ref().starts_with('-'),
         (Some("doctor"), Some("versions")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("doctor"), Some("disk" | "exchange" | "lifecycle" | "tmux")) => {
             parse_core_doctor_args(args).is_some()

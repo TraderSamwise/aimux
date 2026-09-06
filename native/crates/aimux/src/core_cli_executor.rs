@@ -19,6 +19,7 @@ use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{AimuxDaemonInfo, DaemonState, load_daemon_info, load_daemon_state};
 use crate::daemon_supervisor::ensure_daemon_running;
+use crate::debug_state::{build_debug_state_report, render_debug_state_report};
 use crate::logs::{
     LogSelectionOptions, clear_log_file, parse_line_count, read_last_log_lines, selected_log_path,
 };
@@ -78,6 +79,7 @@ pub trait CoreCliRuntime {
         &mut self,
         project_root: Option<&str>,
     ) -> Result<RestartControlPlaneTextResult, String>;
+    fn debug_state_report(&self, target: &str) -> Result<String, String>;
 }
 
 #[derive(Debug, Default)]
@@ -250,6 +252,11 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             .unwrap_or_else(|| "Aimux Restart\n  failures: 0".into());
         Ok(RestartControlPlaneTextResult { restart, text })
     }
+
+    fn debug_state_report(&self, target: &str) -> Result<String, String> {
+        let report = build_debug_state_report(self.cwd(), target);
+        render_debug_state_report(&report).map_err(|error| error.to_string())
+    }
 }
 
 pub fn run_core_cli(raw_args: &[String]) -> CoreCliExecution {
@@ -391,6 +398,10 @@ fn run_plan(
         }
         CoreCliAction::RestartControlPlane { project_root } => {
             run_restart_control_plane(project_root.as_deref(), output_mode, runtime)
+        }
+        CoreCliAction::DebugState { target } => {
+            let text = runtime.debug_state_report(&target)?;
+            Ok(CoreCliExecution::ok(vec![text]))
         }
     }
 }

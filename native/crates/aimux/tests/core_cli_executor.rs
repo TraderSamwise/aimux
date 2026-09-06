@@ -232,6 +232,12 @@ impl CoreCliRuntime for FakeRuntime {
             text: format!("Aimux Restart\n  failures: {}", self.restart_failures),
         })
     }
+
+    fn debug_state_report(&self, target: &str) -> Result<String, String> {
+        Ok(format!(
+            "{{\n  \"version\": 1,\n  \"target\": \"{target}\"\n}}"
+        ))
+    }
 }
 
 fn args(values: &[&str]) -> Vec<String> {
@@ -489,6 +495,19 @@ fn doctor_versions_executes_daemon_text_route() {
             ),
         ]
     );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn debug_state_executes_native_local_report_without_daemon() {
+    let mut runtime = FakeRuntime::default();
+    let execution = run_core_cli_with(&args(&["debug-state", "codex-a1"]), &mut runtime);
+    assert_eq!(execution.code, 0);
+    assert_eq!(
+        execution.stdout,
+        ["{\n  \"version\": 1,\n  \"target\": \"codex-a1\"\n}"]
+    );
+    assert!(runtime.text_routes.is_empty());
     assert!(runtime.commands.is_empty());
 }
 

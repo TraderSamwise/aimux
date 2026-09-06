@@ -116,6 +116,7 @@ pub enum CoreCliOperation {
     Logout,
     Login,
     SecurityUnlock,
+    DebugState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -373,6 +374,9 @@ pub enum CoreCliAction {
     Login {
         security_unlock: bool,
         relay_enable: Option<CoreCommandCall>,
+    },
+    DebugState {
+        target: String,
     },
 }
 
@@ -1867,6 +1871,13 @@ where
                     CORE_API_ROUTES.doctor_versions_text.to_owned()
                 },
                 body: None,
+            },
+            CoreCliFallback::None,
+        ),
+        ("debug-state", _) if args.len() == 2 && !args[1].starts_with('-') => (
+            CoreCliOperation::DebugState,
+            CoreCliAction::DebugState {
+                target: args[1].clone(),
             },
             CoreCliFallback::None,
         ),
