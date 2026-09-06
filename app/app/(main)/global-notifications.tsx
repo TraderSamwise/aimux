@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -7,9 +7,16 @@ import { AlertTriangle, Bell, Check, RotateCw } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Card, PressableCard } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
+import { SegmentedControl, type SegmentOption } from "@/components/ui/segmented-control";
 import { Text } from "@/components/ui/text";
 import { listNotifications, markNotificationsRead } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import {
+  filterGlobalNotificationRows,
+  splitGlobalNotificationRows,
+  sortGlobalNotificationRows,
+  type GlobalNotificationScope,
+} from "@/lib/global-notification-feed";
 import {
   buildViewHref,
   buildViewPath,
@@ -32,7 +39,12 @@ import {
   notificationLocalReadStateAtom,
   markNotificationRecordsReadLocalAtom,
 } from "@/stores/notifications";
-import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import {
+  projectsAtom,
+  selectProjectAtom,
+  selectedProjectPathAtom,
+  selectedSessionIdAtom,
+} from "@/stores/projects";
 
 function relativeTime(value: string): string {
   const then = Date.parse(value);
@@ -46,13 +58,6 @@ function relativeTime(value: string): string {
   const deltaDays = Math.floor(deltaHours / 24);
   if (deltaDays < 7) return `${deltaDays}d ago`;
   return new Date(then).toLocaleDateString();
-}
-
-function sortNotificationRows(a: GlobalNotificationRow, b: GlobalNotificationRow): number {
-  if (a.notification.unread !== b.notification.unread) return a.notification.unread ? -1 : 1;
-  const aTime = Date.parse(a.notification.createdAt);
-  const bTime = Date.parse(b.notification.createdAt);
-  return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
 }
 
 function SwipeReadAction({ onPress }: { onPress: () => void }) {
@@ -134,11 +139,47 @@ function GlobalNotificationCard({
   );
 }
 
+function NotificationSection({
+  count,
+  label,
+  rows,
+  onOpen,
+  onRead,
+}: {
+  count: number;
+  label: string;
+  rows: GlobalNotificationRow[];
+  onOpen: (row: GlobalNotificationRow) => void;
+  onRead: (row: GlobalNotificationRow) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <View className="mb-4">
+      <View className="mb-2 flex-row items-center justify-between">
+        <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          {label}
+        </Text>
+        <Text className="text-xs text-muted-foreground">{count}</Text>
+      </View>
+      {rows.map((row) => (
+        <GlobalNotificationCard
+          key={`${row.projectPath}:${row.notification.id}`}
+          row={row}
+          onOpen={onOpen}
+          onRead={onRead}
+        />
+      ))}
+    </View>
+  );
+}
+
 export default function GlobalNotificationsScreen() {
   const router = useRouter();
   const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const projects = useAtomValue(projectsAtom);
+  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const [notificationScope, setNotificationScope] = useState<GlobalNotificationScope>("all");
   const { getToken } = useAuth();
   const resource = useAtomValue(globalNotificationResourceAtom);
   const beginRefresh = useSetAtom(beginGlobalNotificationRefreshAtom);
@@ -180,12 +221,47 @@ export default function GlobalNotificationsScreen() {
             }),
           },
         }))
-        .sort(sortNotificationRows),
+        .sort(sortGlobalNotificationRows),
     [readState, resource.value?.rows],
   );
+  const scopeProject = useMemo(
+    () => projects.find((project) => project.path === selectedProjectPath) ?? null,
+    [projects, selectedProjectPath],
+  );
+  const scopeProjectPath = scopeProject?.path ?? selectedProjectPath;
+  const activeNotificationScope =
+    notificationScope === "project" && scopeProjectPath ? notificationScope : "all";
+  const visibleRows = useMemo(
+    () => filterGlobalNotificationRows(rows, activeNotificationScope, scopeProjectPath),
+    [activeNotificationScope, rows, scopeProjectPath],
+  );
+  const sections = useMemo(() => splitGlobalNotificationRows(visibleRows), [visibleRows]);
   const errors = [...(resource.value?.errors ?? []), ...(resource.error ? [resource.error] : [])];
   const loading = resource.pending;
   const unreadCount = rows.filter((row) => row.notification.unread).length;
+  const visibleUnreadCount = sections.unread.length;
+  const inboxSubtitle =
+    activeNotificationScope === "project" && scopeProject
+      ? `${visibleUnreadCount} unread in ${scopeProject.name}`
+      : `${visibleUnreadCount} unread across ${onlineProjects.length} online project${
+          onlineProjects.length === 1 ? "" : "s"
+        }`;
+  const projectUnreadCount = rows.filter(
+    (row) => row.notification.unread && row.projectPath === scopeProjectPath,
+  ).length;
+  const scopeOptions = useMemo(() => {
+    const options: Array<SegmentOption<GlobalNotificationScope>> = [
+      { value: "all", label: "All", count: unreadCount },
+    ];
+    if (scopeProjectPath) {
+      options.push({
+        value: "project",
+        label: scopeProject?.name ?? "Project",
+        count: projectUnreadCount,
+      });
+    }
+    return options;
+  }, [projectUnreadCount, scopeProject?.name, scopeProjectPath, unreadCount]);
 
   useEffect(() => {
     onlineProjectsRef.current = onlineProjects;
@@ -237,7 +313,7 @@ export default function GlobalNotificationsScreen() {
         resourceRef.current.value?.rows ?? [],
         nextRows,
         failedProjectPaths,
-      ).sort(sortNotificationRows);
+      ).sort(sortGlobalNotificationRows);
       applySuccess({
         requestKey,
         value: {
@@ -306,11 +382,11 @@ export default function GlobalNotificationsScreen() {
   return (
     <Page>
       <PageHeader
-        eyebrow="All Projects"
+        eyebrow={
+          activeNotificationScope === "project" && scopeProject ? scopeProject.name : "All Projects"
+        }
         title="Inbox"
-        subtitle={`${unreadCount} unread across ${onlineProjects.length} online project${
-          onlineProjects.length === 1 ? "" : "s"
-        }`}
+        subtitle={inboxSubtitle}
         actions={
           <Button
             variant="outline"
@@ -324,6 +400,14 @@ export default function GlobalNotificationsScreen() {
         }
       />
 
+      <SegmentedControl
+        options={scopeOptions}
+        value={activeNotificationScope}
+        onChange={setNotificationScope}
+        fullWidth
+        className="mb-4"
+      />
+
       {hasFetchError ? (
         <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10">
           <Text className="text-sm font-semibold text-foreground">Some projects failed</Text>
@@ -331,26 +415,38 @@ export default function GlobalNotificationsScreen() {
         </Card>
       ) : null}
 
-      {rows.length === 0 && hasFetchError && !loading ? (
+      {visibleRows.length === 0 && hasFetchError && !loading ? (
         <PageStateCard
           title="Unable to load inbox"
           body="Fix the failed project connection or refresh to try again."
           tone="warning"
         />
-      ) : rows.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <PageStateCard
           title={loading ? "Loading inbox..." : "All caught up"}
-          body="Project-scoped notifications will appear here as a flattened feed."
+          body={
+            activeNotificationScope === "project" && scopeProject
+              ? `${scopeProject.name} notifications will appear here.`
+              : "Project-scoped notifications will appear here as a flattened feed."
+          }
         />
       ) : (
-        rows.map((row) => (
-          <GlobalNotificationCard
-            key={`${row.projectPath}:${row.notification.id}`}
-            row={row}
+        <>
+          <NotificationSection
+            label="Unread"
+            count={sections.unread.length}
+            rows={sections.unread}
             onOpen={openRow}
             onRead={markRowRead}
           />
-        ))
+          <NotificationSection
+            label="Read"
+            count={sections.read.length}
+            rows={sections.read}
+            onOpen={openRow}
+            onRead={markRowRead}
+          />
+        </>
       )}
     </Page>
   );
