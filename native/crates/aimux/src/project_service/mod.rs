@@ -32,6 +32,7 @@ pub mod preview_snapshots;
 pub mod process;
 pub mod project_events;
 pub mod project_observability;
+pub mod project_topology_contract;
 pub mod prompt_context;
 pub mod reads;
 pub mod router;

@@ -153,6 +153,12 @@ Priority fixture groups:
   because there is no public scanner API outside the daemon/project catalog
   implementation.
 
+## Project Topology
+
+- `project-topology/topology.json`: project topology health, rollup, worktree
+  view, flattened-row, and count contracts captured by running TypeScript
+  `project-topology` helpers.
+
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
