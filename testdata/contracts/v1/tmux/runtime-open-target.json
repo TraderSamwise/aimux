@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-runtime-open-target-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "TmuxRuntimeManager.openTarget client-session resolution captured by running TypeScript.",
+  "caseCount": 3,
+  "cases": [
+    {
+      "id": "tmux-runtime-open-target-001",
+      "name": "uses suffix embedded in current client session",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "uses suffix embedded in current client session",
+        "currentClientSession": "aimux-mobile-abc-client-268eff9c",
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+        "options": { "insideTmux": true }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "execCalls": [
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "@aimux-project-root"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "@aimux-project-root"],
+          ["display-message", "-p", "#{client_session}"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc-client-268eff9c",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+          ],
+          ["link-window", "-d", "-s", "@3", "-t", "aimux-mobile-abc-client-268eff9c"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc-client-268eff9c",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+          ],
+          ["display-message", "-p", "#{client_session}"]
+        ],
+        "interactiveCalls": [["switch-client", "-t", "aimux-mobile-abc-client-268eff9c:3"]]
+      },
+      "inputSha256": "0f9ef6307869bdf157ca2c9be16ece6d3ea08acd1fe4d5d057701abe352faef7"
+    },
+    {
+      "id": "tmux-runtime-open-target-002",
+      "name": "uses client tty and pid when current session is not a client session",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "uses client tty and pid when current session is not a client session",
+        "currentClientSession": "user-main",
+        "clientTty": "/dev/ttys111",
+        "clientPid": "4242",
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+        "options": { "insideTmux": true }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "execCalls": [
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "@aimux-project-root"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "@aimux-project-root"],
+          ["display-message", "-p", "#{client_session}"],
+          ["display-message", "-p", "#{client_tty}"],
+          ["display-message", "-p", "#{client_pid}"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc-client-23ac4d70",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+          ],
+          ["link-window", "-d", "-s", "@3", "-t", "aimux-mobile-abc-client-23ac4d70"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc-client-23ac4d70",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+          ],
+          ["display-message", "-p", "#{client_session}"],
+          ["set-option", "-t", "aimux-mobile-abc-client-23ac4d70", "@aimux-return-session", "user-main"]
+        ],
+        "interactiveCalls": [["switch-client", "-t", "aimux-mobile-abc-client-23ac4d70:3"]]
+      },
+      "inputSha256": "bafeaf548d8d0dd2e3576d617ead5fed79dd35fc2be3474e2e55a62109bfdba6"
+    },
+    {
+      "id": "tmux-runtime-open-target-003",
+      "name": "stays on host session when no client identity is available",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.openTarget",
+      "input": {
+        "name": "stays on host session when no client identity is available",
+        "currentClientSession": "user-main",
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+        "options": { "insideTmux": true }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "execCalls": [
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "@aimux-project-root"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "@aimux-project-root"],
+          ["display-message", "-p", "#{client_session}"],
+          ["display-message", "-p", "#{client_tty}"],
+          ["display-message", "-p", "#{client_pid}"],
+          ["display-message", "-p", "#{client_session}"],
+          ["set-option", "-t", "aimux-mobile-abc", "@aimux-return-session", "user-main"]
+        ],
+        "interactiveCalls": [["switch-client", "-t", "aimux-mobile-abc:3"]]
+      },
+      "inputSha256": "13b94e9df1d6a6cee68e9617a591ff37608415f91f05a7f04181ad95c7603722"
+    }
+  ]
+}

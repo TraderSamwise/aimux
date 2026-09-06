@@ -1732,8 +1732,20 @@ impl TmuxRuntimeManager {
             if let Some(client_tty) = client_tty_override.filter(|value| !value.is_empty()) {
                 return Some(self.normalize_client_suffix(client_tty));
             }
-            if let Some(current_session) = self.current_client_session() {
-                return Some(self.normalize_client_suffix(&current_session));
+            if let Some(current_session) = self.current_client_session()
+                && let Some((_, suffix)) = current_session.rsplit_once("-client-")
+                && is_lower_hex_8(suffix)
+            {
+                return Some(suffix.to_owned());
+            }
+            let client_tty = self.display_message("#{client_tty}", None);
+            let client_pid = self.display_message("#{client_pid}", None);
+            if client_tty.is_some() || client_pid.is_some() {
+                return Some(self.normalize_client_suffix(&format!(
+                    "{}:{}",
+                    client_tty.as_deref().unwrap_or("tty"),
+                    client_pid.as_deref().unwrap_or("pid")
+                )));
             }
             return None;
         }
