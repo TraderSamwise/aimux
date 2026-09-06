@@ -1,5 +1,6 @@
 use aimux::tmux::{
-    CapturePaneOptions, TmuxClientInfo, TmuxCommandSpec, TmuxRuntimeManager, TmuxTarget,
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, TMUX_RUNTIME_CONTRACT_OPTION,
+    TmuxClientInfo, TmuxCommandSpec, TmuxRuntimeConfig, TmuxRuntimeManager, TmuxTarget,
     TmuxWindowInfo, project_session,
 };
 use serde_json::json;
@@ -492,6 +493,213 @@ fn writes_window_metadata_and_agent_policy_options() {
             "@aimux-project-root".to_owned(),
             "/repo/mobile".to_owned(),
         ]));
+}
+
+#[test]
+fn ensure_project_session_creates_and_configures_missing_session() {
+    let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
+        calls_for_exec.borrow_mut().push((
+            args.to_vec(),
+            options.and_then(|options| options.cwd.clone()),
+        ));
+        let joined = args.join(" ");
+        if joined.starts_with("has-session") {
+            return Err("no such session".to_owned());
+        }
+        if joined == "list-sessions -F #{session_name}" {
+            return Ok(String::new());
+        }
+        if joined == "show-options -v -t aimux-mobile-078d0ecd20ec terminal-features" {
+            return Ok(String::new());
+        }
+        Ok(String::new())
+    });
+
+    let session = manager
+        .ensure_project_session("/repo/mobile", None, Some(test_runtime_config()))
+        .expect("session");
+
+    assert_eq!(session.session_name, "aimux-mobile-078d0ecd20ec");
+    let calls = calls.borrow();
+    let create_call = calls
+        .iter()
+        .find(|(args, _)| args.first().map(String::as_str) == Some("new-session"))
+        .expect("new session");
+    assert_eq!(create_call.1, Some("/repo/mobile".to_owned()));
+    assert_eq!(
+        create_call.0,
+        vec![
+            "new-session",
+            "-d",
+            "-s",
+            "aimux-mobile-078d0ecd20ec",
+            "-c",
+            "/repo/mobile",
+            "-n",
+            "dashboard",
+            "sh",
+            "-lc",
+            "tail -f /dev/null",
+        ]
+    );
+    assert!(calls.iter().any(|(args, _)| args
+        == &vec![
+            "set-option".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-078d0ecd20ec".to_owned(),
+            "@aimux-project-state-dir".to_owned(),
+            "/state/mobile".to_owned(),
+        ]));
+    assert!(calls.iter().any(|(args, _)| args
+        == &vec![
+            "set-option".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-078d0ecd20ec".to_owned(),
+            TMUX_RUNTIME_CONTRACT_OPTION.to_owned(),
+            AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned(),
+        ]));
+    assert!(calls.iter().any(|(args, _)| {
+        args.first().map(String::as_str) == Some("set-hook")
+            && args.get(3).map(String::as_str) == Some("pane-focus-in")
+            && args.get(4).is_some_and(|value| {
+                value.contains("tmux-control.sh")
+                    && value.contains(" active ")
+                    && value.contains("--current-window-id #{q:window_id}")
+                    && value.contains("--pane-id #{q:pane_id}")
+            })
+    }));
+    assert!(calls.iter().any(|(args, _)| {
+        args.first().map(String::as_str) == Some("bind-key")
+            && args.get(3).map(String::as_str) == Some("d")
+            && args.join(" ").contains("tmux-control.sh")
+            && args
+                .join(" ")
+                .contains(" dashboard --current-client-session ")
+    }));
+    assert!(calls.iter().any(|(args, _)| {
+        args.first().map(String::as_str) == Some("bind-key")
+            && args.get(3).map(String::as_str) == Some("g")
+            && args.join(" ").contains("tmux-control.sh")
+            && args.join(" ").contains(" expose ")
+    }));
+    assert!(calls.iter().any(|(args, _)| {
+        args.first().map(String::as_str) == Some("set-option")
+            && args.get(3).map(String::as_str) == Some("status-format[0]")
+            && args.get(4).is_some_and(|value| {
+                value.contains("tmux-statusline.sh")
+                    && value.contains("#{?pane_in_mode")
+                    && value.contains("scroll")
+            })
+    }));
+    assert!(calls.iter().any(|(args, _)| {
+        args.first().map(String::as_str) == Some("source-file")
+            && args
+                .get(1)
+                .is_some_and(|value| value.ends_with("mouse-bindings.conf"))
+    }));
+}
+
+#[test]
+fn ensure_project_session_uses_dashboard_command_and_skips_create_when_repaired() {
+    let repaired = Rc::new(RefCell::new(false));
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let repaired_for_exec = repaired.clone();
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        let joined = args.join(" ");
+        if joined == "has-session -t aimux-mobile-078d0ecd20ec" {
+            return if *repaired_for_exec.borrow() {
+                Ok(String::new())
+            } else {
+                Err("missing".to_owned())
+            };
+        }
+        if joined == "list-sessions -F #{session_name}" {
+            return Ok("aimux-mobile-7a62ea91ca".to_owned());
+        }
+        if joined == "rename-session -t aimux-mobile-7a62ea91ca aimux-mobile-078d0ecd20ec" {
+            *repaired_for_exec.borrow_mut() = true;
+            return Ok(String::new());
+        }
+        if joined == "show-options -v -t aimux-mobile-078d0ecd20ec terminal-features" {
+            return Ok(String::new());
+        }
+        Ok(String::new())
+    });
+
+    manager
+        .ensure_project_session(
+            "/repo/mobile",
+            Some(&TmuxCommandSpec {
+                cwd: "/repo/mobile".to_owned(),
+                command: "node".to_owned(),
+                args: vec!["dist/main.js".to_owned()],
+            }),
+            Some(test_runtime_config()),
+        )
+        .expect("session");
+
+    let calls = calls.borrow();
+    assert!(calls.iter().any(|args| args
+        == &vec![
+            "rename-session".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-7a62ea91ca".to_owned(),
+            "aimux-mobile-078d0ecd20ec".to_owned(),
+        ]));
+    assert!(
+        !calls
+            .iter()
+            .any(|args| args.first().map(String::as_str) == Some("new-session"))
+    );
+}
+
+#[test]
+fn configure_managed_session_ignores_unsupported_extended_key_options() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        let joined = args.join(" ");
+        if joined.contains(" extended-keys ") || joined.contains(" extended-keys-format ") {
+            return Err("invalid option: extended-keys".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    manager
+        .configure_managed_session(
+            "aimux-mobile-078d0ecd20ec",
+            "/repo/mobile",
+            test_runtime_config(),
+        )
+        .expect("configure");
+
+    assert!(calls.borrow().iter().any(|args| args
+        == &vec![
+            "set-option".to_owned(),
+            "-as".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-078d0ecd20ec".to_owned(),
+            "terminal-features".to_owned(),
+            ",xterm*:RGB".to_owned(),
+        ]));
+}
+
+fn test_runtime_config() -> TmuxRuntimeConfig {
+    TmuxRuntimeConfig {
+        project_state_dir: "/state/mobile".to_owned(),
+        control_script_command: "sh 'scripts/tmux-control.sh'".to_owned(),
+        statusline_command: TmuxCommandSpec {
+            cwd: "/repo/mobile".to_owned(),
+            command: "sh".to_owned(),
+            args: vec!["scripts/tmux-statusline.sh".to_owned()],
+        },
+        runtime_owner_id: r#"{"home":"/aimux","port":"43190"}"#.to_owned(),
+    }
 }
 
 fn target() -> TmuxTarget {
