@@ -1,4 +1,7 @@
-use aimux::config::{deep_merge, default_config, init_project_with_resolver, merge_config_layers};
+use aimux::config::{
+    deep_merge, default_config, init_project_with_resolver, load_global_config_with_resolver,
+    merge_config_layers,
+};
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};
 use std::fs;
@@ -62,6 +65,36 @@ fn init_project_creates_local_and_global_state_without_overwriting_config() {
         "{\"defaultTool\":\"codex\"}\n"
     );
 
+    fs::remove_dir_all(temp).expect("cleanup");
+}
+
+#[test]
+fn load_global_config_reads_only_global_layer() {
+    let temp = temp_path("global");
+    let repo = temp.join("repo");
+    let home = temp.join("home");
+    fs::create_dir_all(repo.join(".aimux")).expect("repo aimux");
+    fs::create_dir_all(home.join(".aimux")).expect("home aimux");
+    let mut resolver = PathResolver::new(
+        &repo,
+        &home,
+        Some(home.join(".aimux").to_string_lossy().into_owned()),
+    );
+    fs::write(
+        resolver.global_config_path(),
+        "{\"defaultTool\":\"codex\",\"expose\":{\"hotSnapshotsEnabled\":false}}\n",
+    )
+    .expect("global config");
+    fs::write(
+        resolver.config_path_for(&repo),
+        "{\"defaultTool\":\"claude\",\"expose\":{\"hotSnapshotsEnabled\":true}}\n",
+    )
+    .expect("project config");
+
+    let config = load_global_config_with_resolver(&resolver);
+
+    assert_eq!(config["defaultTool"], "codex");
+    assert_eq!(config["expose"]["hotSnapshotsEnabled"], false);
     fs::remove_dir_all(temp).expect("cleanup");
 }
 

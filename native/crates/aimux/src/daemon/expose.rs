@@ -1,3 +1,4 @@
+use crate::config::load_global_config;
 use crate::daemon::json::ExposeFocusRequest;
 use crate::daemon::routing::DaemonRouteUrl;
 use crate::daemon_projects::ProjectsRouteProject;
@@ -153,6 +154,9 @@ impl GlobalExposeHotSnapshotCoordinator {
         if !self.background_refresh_enabled {
             return;
         }
+        if !global_hot_snapshots_enabled() {
+            return;
+        }
         {
             let mut refresh = self
                 .refresh
@@ -187,7 +191,7 @@ impl GlobalExposeHotSnapshotCoordinator {
             }
             refresh.refreshing = true;
         }
-        if self.has_active_preview_clients() {
+        if self.has_active_preview_clients() && global_hot_snapshots_enabled() {
             refresh_global_expose_hot_snapshots(&projects, |id| {
                 project_state_dirs.get(id).cloned().unwrap_or_default()
             });
@@ -199,7 +203,7 @@ impl GlobalExposeHotSnapshotCoordinator {
                 .unwrap_or_else(|error| error.into_inner());
             refresh.refreshing = false;
         }
-        if self.has_active_preview_clients() {
+        if self.has_active_preview_clients() && global_hot_snapshots_enabled() {
             self.schedule_global_refresh(projects, project_state_dirs);
         }
     }
@@ -675,6 +679,14 @@ fn default_global_client_id(kind: &str) -> &str {
         "expose" => "expose:global",
         _ => "api:global",
     }
+}
+
+fn global_hot_snapshots_enabled() -> bool {
+    load_global_config()
+        .get("expose")
+        .and_then(|expose| expose.get("hotSnapshotsEnabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 fn current_unix_millis() -> i64 {
