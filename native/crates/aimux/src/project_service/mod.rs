@@ -27,6 +27,7 @@ pub mod output_cache;
 pub mod output_metrics;
 pub mod plans;
 pub mod process;
+pub mod project_events;
 pub mod project_observability;
 pub mod prompt_context;
 pub mod reads;

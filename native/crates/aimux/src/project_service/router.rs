@@ -7,6 +7,7 @@ use crate::paths::PathResolver;
 use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
 use super::output_metrics::AgentOutputReadMetrics;
+use super::project_events::ProjectEventBus;
 
 use super::agent_controls::route_agent_control_request;
 use super::agent_output::route_agent_output_request;
@@ -53,6 +54,7 @@ pub struct ProjectServiceRequestContext {
     pub output_cache: AgentOutputCaptureCache,
     pub output_projection_cache: AgentOutputProjectionCache,
     pub output_metrics: AgentOutputReadMetrics,
+    pub project_events: ProjectEventBus,
 }
 
 impl ProjectServiceRequestContext {
@@ -66,6 +68,7 @@ impl ProjectServiceRequestContext {
             output_cache: AgentOutputCaptureCache::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
+            project_events: ProjectEventBus::default(),
         }
     }
 
@@ -82,6 +85,7 @@ impl ProjectServiceRequestContext {
             output_cache: AgentOutputCaptureCache::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
+            project_events: ProjectEventBus::default(),
         }
     }
 

@@ -8,7 +8,7 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::notification_context::is_session_notification_focused;
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_events::{route_runtime_event, route_runtime_set_attention};
+use super::runtime_events::{route_runtime_event_with_bus, route_runtime_set_attention};
 use super::runtime_exchange::{
     compact_runtime_exchange_file, inspect_runtime_exchange_store, runtime_exchange_path,
 };
@@ -160,7 +160,13 @@ pub fn route_runtime_metadata_request(
                 .get("event")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new()));
-            route_runtime_event(&project_state_dir, &session, event)
+            route_runtime_event_with_bus(
+                context.project_root(),
+                &project_state_dir,
+                &session,
+                event,
+                &context.project_events,
+            )
         }
         routes::runtime::NOTIFY => Some(route_runtime_notify(&project_state_dir, body)),
         routes::runtime::COMPACT_EXCHANGE => {

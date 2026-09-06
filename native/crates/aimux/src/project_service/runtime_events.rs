@@ -5,13 +5,45 @@ use super::dispatcher::ProjectServiceDispatchResponse;
 use super::metadata::update_session_metadata;
 use super::notification_context::is_session_notification_focused;
 use super::notifications::{NotificationWriteInput, add_notification};
+use super::project_events::ProjectEventBus;
 
 pub fn route_runtime_event(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
     event: Value,
 ) -> Option<ProjectServiceDispatchResponse> {
-    let project_state_dir = project_state_dir.as_ref();
+    route_runtime_event_inner(
+        None,
+        project_state_dir.as_ref(),
+        project_state_dir.as_ref(),
+        session_id,
+        event,
+    )
+}
+
+pub fn route_runtime_event_with_bus(
+    project_root: impl AsRef<Path>,
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    event: Value,
+    event_bus: &ProjectEventBus,
+) -> Option<ProjectServiceDispatchResponse> {
+    route_runtime_event_inner(
+        Some(event_bus),
+        project_root.as_ref(),
+        project_state_dir.as_ref(),
+        session_id,
+        event,
+    )
+}
+
+fn route_runtime_event_inner(
+    event_bus: Option<&ProjectEventBus>,
+    project_root: &Path,
+    project_state_dir: &Path,
+    session_id: &str,
+    event: Value,
+) -> Option<ProjectServiceDispatchResponse> {
     let normalized = normalize_agent_event(event);
     let focused = is_session_notification_focused(project_state_dir, session_id);
     if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
@@ -19,10 +51,24 @@ pub fn route_runtime_event(
     }) {
         return Some(json_response(500, json!({ "ok": false, "error": error })));
     }
-    if let Some(notification) = notification_for_event(session_id, &normalized, focused)
-        && let Err(error) = add_notification(project_state_dir, notification)
-    {
-        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    if let Some(notification) = notification_for_event(session_id, &normalized, focused) {
+        match add_notification(project_state_dir, notification.clone()) {
+            Ok(record) => {
+                if let Some(event_bus) = event_bus {
+                    event_bus.publish_alert_from_notification(project_root, &notification, &record);
+                }
+            }
+            Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+        }
+    }
+    if let Some(event_bus) = event_bus {
+        event_bus.publish_project_update_for_route(
+            project_root,
+            "POST",
+            crate::project_api_contract::routes::runtime::EVENT,
+            None,
+            None,
+        );
     }
     Some(ok())
 }
@@ -246,15 +292,6 @@ pub fn notification_for_event(
             unread,
             ..NotificationWriteInput::default()
         }),
-        "task_done" => Some(NotificationWriteInput {
-            kind: Some("task_done".to_owned()),
-            session_id: Some(session_id.to_owned()),
-            title: format!("{session_id} completed"),
-            body: fallback_string(&message, "Agent completed the task."),
-            dedupe_key: Some(format!("complete:{session_id}")),
-            unread,
-            ..NotificationWriteInput::default()
-        }),
         "task_failed" => Some(NotificationWriteInput {
             kind: Some("task_failed".to_owned()),
             session_id: Some(session_id.to_owned()),
@@ -332,17 +369,6 @@ fn notification_for_status_event(
             title: format!("{session_id} is blocked"),
             body: fallback_string(message, "Agent reported a blocked state."),
             dedupe_key: Some(format!("blocked:{session_id}")),
-            unread,
-            ..NotificationWriteInput::default()
-        });
-    }
-    if tone == Some("success") || status_message_done(&normalized_message) {
-        return Some(NotificationWriteInput {
-            kind: Some("task_done".to_owned()),
-            session_id: Some(session_id.to_owned()),
-            title: format!("{session_id} completed"),
-            body: fallback_string(message, "Agent completed the task."),
-            dedupe_key: Some(format!("complete:{session_id}")),
             unread,
             ..NotificationWriteInput::default()
         });

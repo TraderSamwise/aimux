@@ -27,6 +27,7 @@ fn project_events_stream_returns_ready_snapshot() {
     assert_eq!(stream.start_line, Some(-2000));
     assert_eq!(stream.interval_ms, 250);
     assert!(stream.mode.is_none());
+    assert_eq!(stream.event_cursor, Some(0));
     let body = String::from_utf8(response.bytes.unwrap()).unwrap();
     assert!(body.starts_with("event: ready\n"));
     assert!(body.contains("\"sessionId\":\"codex-1\""));
@@ -34,6 +35,60 @@ fn project_events_stream_returns_ready_snapshot() {
     assert!(body.contains("\"requestedStartLine\":-9999"));
     assert!(body.contains("\"outputStartLineClamped\":true"));
     assert!(body.contains("\"intervalMs\":250"));
+    cleanup(project);
+}
+
+#[test]
+fn project_events_stream_starts_after_existing_events_and_filters_by_session() {
+    let project = temp_project("event-bus");
+    let context = ProjectServiceRequestContext::new(&project);
+    context.project_events.publish(json!({
+        "type": "project_update",
+        "projectId": "project",
+        "ts": "2026-01-01T00:00:00.000Z",
+        "views": ["desktop-state"],
+        "reason": "before-stream",
+        "sessionId": "codex-1"
+    }));
+
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/events?sessionId=codex-1&intervalMs=250",
+        None,
+    );
+    let stream = response.stream.as_ref().expect("stream plan");
+    assert_eq!(stream.event_cursor, Some(1));
+
+    context.project_events.publish(json!({
+        "type": "project_update",
+        "projectId": "project",
+        "ts": "2026-01-01T00:00:01.000Z",
+        "views": ["desktop-state"],
+        "reason": "same-session",
+        "sessionId": "codex-1"
+    }));
+    context.project_events.publish(json!({
+        "type": "project_update",
+        "projectId": "project",
+        "ts": "2026-01-01T00:00:02.000Z",
+        "views": ["desktop-state"],
+        "reason": "other-session",
+        "sessionId": "codex-2"
+    }));
+    context.project_events.publish(json!({
+        "type": "project_update",
+        "projectId": "project",
+        "ts": "2026-01-01T00:00:03.000Z",
+        "views": ["desktop-state"],
+        "reason": "project-wide"
+    }));
+
+    let filtered = context.project_events.events_since(1, Some("codex-1"));
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].event["reason"], "same-session");
+    let unfiltered = context.project_events.events_since(1, None);
+    assert_eq!(unfiltered.len(), 3);
     cleanup(project);
 }
 

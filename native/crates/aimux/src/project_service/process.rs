@@ -153,22 +153,55 @@ pub fn write_project_service_response_with_runtime(
     if let Some(stream) = response.stream.as_ref() {
         let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
         let mut last_output_fingerprint = None;
+        let mut last_project_event_sequence = stream.event_cursor.unwrap_or_default();
         loop {
             thread::sleep(Duration::from_millis(interval_ms));
-            if stream.kind == ProjectServiceStreamKind::AgentOutput {
-                writer.write_all(&encode_agent_output_stream_frame(
+            let frame = match stream.kind {
+                ProjectServiceStreamKind::ProjectEvents => encode_project_event_stream_frame(
+                    stream,
+                    context,
+                    &mut last_project_event_sequence,
+                ),
+                ProjectServiceStreamKind::AgentOutput => encode_agent_output_stream_frame(
                     stream,
                     context,
                     runtime,
                     &mut last_output_fingerprint,
-                ))?;
-            } else {
-                writer.write_all(&encode_sse_keepalive())?;
-            }
+                ),
+                ProjectServiceStreamKind::AgentInteraction => encode_sse_keepalive(),
+            };
+            writer.write_all(&frame)?;
             writer.flush()?;
         }
     }
     Ok(())
+}
+
+fn encode_project_event_stream_frame(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: Option<&ProjectServiceRequestContext>,
+    last_sequence: &mut u64,
+) -> Vec<u8> {
+    let Some(context) = context else {
+        return encode_sse_keepalive();
+    };
+    let records = context
+        .project_events
+        .events_since(*last_sequence, stream.session_id.as_deref());
+    if records.is_empty() {
+        return encode_sse_keepalive();
+    }
+    let mut bytes = Vec::new();
+    for record in records {
+        *last_sequence = (*last_sequence).max(record.sequence);
+        let event_name = record
+            .event
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("project_update");
+        bytes.extend(encode_sse_event(event_name, &record.event));
+    }
+    bytes
 }
 
 fn encode_agent_output_stream_frame(

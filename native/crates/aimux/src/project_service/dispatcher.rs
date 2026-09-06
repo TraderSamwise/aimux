@@ -28,6 +28,7 @@ pub struct ProjectServiceStreamPlan {
     pub start_line: Option<i64>,
     pub interval_ms: i64,
     pub mode: Option<String>,
+    pub event_cursor: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

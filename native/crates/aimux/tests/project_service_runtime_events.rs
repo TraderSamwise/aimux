@@ -146,16 +146,10 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
             limit: Some(10),
         },
     );
-    assert_eq!(snapshot.total, 6);
+    assert_eq!(snapshot.total, 3);
     let by_session = notifications_by_session(snapshot.notifications);
-    assert_eq!(by_session["task-done"]["kind"], "task_done");
-    assert_eq!(by_session["task-done"]["dedupeKey"], "complete:task-done");
     assert_eq!(by_session["error"]["kind"], "task_failed");
     assert_eq!(by_session["error"]["dedupeKey"], "error:error");
-    assert_eq!(by_session["success"]["kind"], "task_done");
-    assert_eq!(by_session["success"]["dedupeKey"], "complete:success");
-    assert_eq!(by_session["done"]["kind"], "task_done");
-    assert_eq!(by_session["done"]["dedupeKey"], "complete:done");
     assert_eq!(by_session["blocked"]["kind"], "blocked");
     assert_eq!(by_session["blocked"]["dedupeKey"], "blocked:blocked");
     assert_eq!(by_session["needs-input"]["kind"], "needs_input");
@@ -163,6 +157,109 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
         by_session["needs-input"]["dedupeKey"],
         "needs_input:needs-input"
     );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_dispatcher_publishes_alert_and_project_update_events() {
+    let project = temp_project("dispatcher-publish");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "needs_input",
+                "message": "Approve the command",
+                "ts": "2026-01-01T00:00:30.000Z"
+            }
+        })),
+    )
+    .expect("runtime event route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, json!({ "ok": true }));
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].event["type"], "alert");
+    assert_eq!(events[0].event["kind"], "needs_input");
+    assert_eq!(events[0].event["sessionId"], "codex-1");
+    assert_eq!(events[0].event["message"], "Approve the command");
+    assert!(
+        events[0].event["notificationId"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert_eq!(events[1].event["type"], "project_update");
+    assert_eq!(events[1].event["reason"], "alert");
+    assert_eq!(events[1].event["sessionId"], "codex-1");
+    assert_eq!(
+        events[1].event["views"],
+        json!([
+            "coordination-worklist",
+            "notifications",
+            "project-observability"
+        ])
+    );
+    assert_eq!(events[2].event["type"], "project_update");
+    assert_eq!(events[2].event["reason"], "POST /event");
+    assert!(events[2].event.get("sessionId").is_none());
+    assert_eq!(
+        events[2].event["views"],
+        json!([
+            "agents",
+            "coordination-worklist",
+            "desktop-state",
+            "project-observability",
+            "topology",
+            "worktrees"
+        ])
+    );
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_task_done_updates_metadata_without_alert_event() {
+    let project = temp_project("task-done-no-alert");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "codex-1",
+            "event": {
+                "kind": "task_done",
+                "message": "Done",
+                "ts": "2026-01-01T00:00:00.000Z"
+            }
+        })),
+    )
+    .expect("runtime event route");
+
+    assert_eq!(response.status, 200);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-1"]["derived"]["activity"], "done");
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 0);
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event["type"], "project_update");
+    assert_eq!(events[0].event["reason"], "POST /event");
     cleanup(project);
 }
 

@@ -63,6 +63,7 @@ fn route_project_events_stream(
             start_line: Some(capture_window.start_line),
             interval_ms: parsed.interval_ms,
             mode: None,
+            event_cursor: Some(context.project_events.latest_sequence()),
         }),
     )
 }
@@ -94,6 +95,7 @@ fn route_agent_output_stream(path: &str) -> ProjectServiceDispatchResponse {
             start_line: Some(capture_window.start_line),
             interval_ms: parsed.interval_ms,
             mode: Some(response_mode_name(parsed.mode).to_owned()),
+            event_cursor: None,
         }),
     )
 }
@@ -112,6 +114,7 @@ fn route_interaction_stream(
             start_line: None,
             interval_ms: 500,
             mode: None,
+            event_cursor: None,
         }),
     )
 }

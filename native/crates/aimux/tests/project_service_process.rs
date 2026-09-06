@@ -108,6 +108,7 @@ fn stream_response_writer_keeps_sse_connection_alive_until_client_disconnects() 
             start_line: None,
             interval_ms: 100,
             mode: None,
+            event_cursor: None,
         }),
         Default::default(),
     );
@@ -127,6 +128,64 @@ fn stream_response_writer_keeps_sse_connection_alive_until_client_disconnects() 
 }
 
 #[test]
+fn project_event_stream_writer_emits_queued_project_events() {
+    let project = temp_project("project-events-stream");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    context.project_events.publish(json!({
+        "type": "project_update",
+        "projectId": "project",
+        "ts": "2026-01-01T00:00:00.000Z",
+        "views": ["desktop-state"],
+        "reason": "POST /event",
+        "sessionId": "codex-1"
+    }));
+    context.project_events.publish(json!({
+        "type": "project_update",
+        "projectId": "project",
+        "ts": "2026-01-01T00:00:01.000Z",
+        "views": ["desktop-state"],
+        "reason": "other",
+        "sessionId": "codex-2"
+    }));
+    let response = prepare_project_service_sse_response(
+        200,
+        b"event: ready\ndata: {\"ok\":true}\n\n".to_vec(),
+        Some(ProjectServiceStreamPlan {
+            kind: ProjectServiceStreamKind::ProjectEvents,
+            session_id: Some("codex-1".into()),
+            start_line: None,
+            interval_ms: 100,
+            mode: None,
+            event_cursor: Some(0),
+        }),
+        Default::default(),
+    );
+    let mut writer = DisconnectAfterWrites::new(3);
+    let mut runtime = FakeStreamRuntime::default();
+
+    let error = write_project_service_response_with_runtime(
+        &mut writer,
+        &response,
+        Some(&context),
+        &mut runtime,
+    )
+    .expect_err("disconnect");
+
+    assert!(matches!(
+        error,
+        aimux::daemon::listener::DaemonListenerError::Io(_)
+    ));
+    let output = String::from_utf8(writer.output).expect("sse response");
+    assert!(output.contains("event: ready\ndata: {\"ok\":true}\n\n"));
+    assert!(output.contains("event: project_update\n"));
+    assert!(output.contains("\"reason\":\"POST /event\""));
+    assert!(!output.contains("\"reason\":\"other\""));
+    assert!(output.contains(": keepalive\n\n"));
+    cleanup(project);
+}
+
+#[test]
 fn output_stream_writer_emits_native_chat_output_frames() {
     let project = temp_project("output-stream");
     let state_dir = project.join("state");
@@ -141,6 +200,7 @@ fn output_stream_writer_emits_native_chat_output_frames() {
             start_line: Some(-120),
             interval_ms: 100,
             mode: Some("chat".into()),
+            event_cursor: None,
         }),
         Default::default(),
     );
