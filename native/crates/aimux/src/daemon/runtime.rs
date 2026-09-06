@@ -12,8 +12,8 @@ use crate::core_command_transport::{
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use crate::daemon::disk_doctor::build_disk_doctor_report;
 use crate::daemon::expose::{
-    DaemonExposeFocusRuntime, SystemDaemonExposeFocusRuntime, expose_focus_route,
-    expose_items_route, open_target_for_client,
+    DaemonExposeFocusRuntime, GlobalExposeHotSnapshotCoordinator, SystemDaemonExposeFocusRuntime,
+    expose_focus_route, expose_items_route, open_target_for_client,
 };
 use crate::daemon::http::DaemonResponseBody;
 use crate::daemon::json::{
@@ -87,6 +87,7 @@ pub struct RealDaemonRuntime {
     project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
     project_service_startup_timeout_ms: u64,
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
+    global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
 }
 
 pub trait ProjectServiceProcessVerifier: Send + Sync {
@@ -126,6 +127,10 @@ impl fmt::Debug for RealDaemonRuntime {
                 "auth_flow_count",
                 &self.auth_flows.lock().map(|flows| flows.len()).ok(),
             )
+            .field(
+                "global_expose_hot_snapshots",
+                &self.global_expose_hot_snapshots,
+            )
             .finish_non_exhaustive()
     }
 }
@@ -154,6 +159,7 @@ impl RealDaemonRuntime {
             project_service_process_verifier: Arc::new(SystemProjectServiceProcessVerifier),
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
+            global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
         }
     }
 
@@ -172,7 +178,13 @@ impl RealDaemonRuntime {
             project_service_process_verifier,
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
+            global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
         }
+    }
+
+    pub fn with_global_expose_hot_snapshot_background_refresh(mut self) -> Self {
+        self.global_expose_hot_snapshots = GlobalExposeHotSnapshotCoordinator::new(true);
+        self
     }
 
     fn resolve_project_root_value(&self, value: &str) -> String {
@@ -515,7 +527,9 @@ pub fn run_daemon_internal() -> Result<()> {
     let _guard = DaemonInfoGuard {
         path: resolver.daemon_info_path(),
     };
-    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(resolver, info)));
+    let runtime = Arc::new(Mutex::new(
+        RealDaemonRuntime::new(resolver, info).with_global_expose_hot_snapshot_background_refresh(),
+    ));
     let stream_runtime = Arc::clone(&runtime);
     serve_daemon_http_with_metadata_and_interceptor(
         DaemonListenConfig { host, port },
@@ -1437,7 +1451,14 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
     }
 
     fn expose_items(&mut self, path: &str) -> Result<Value, String> {
-        expose_items_route(&mut self.resolver, session_prefix_for_project, path)
+        let projects = self.list_projects_for_route();
+        expose_items_route(
+            &mut self.resolver,
+            session_prefix_for_project,
+            path,
+            &projects,
+            &self.global_expose_hot_snapshots,
+        )
     }
 
     fn expose_focus(&mut self, request: ExposeFocusRequest) -> Result<Value, String> {

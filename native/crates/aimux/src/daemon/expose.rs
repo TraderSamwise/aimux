@@ -1,4 +1,6 @@
 use crate::daemon::json::ExposeFocusRequest;
+use crate::daemon::routing::DaemonRouteUrl;
+use crate::daemon_projects::ProjectsRouteProject;
 use crate::daemon_state::load_metadata_state;
 use crate::paths::PathResolver;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
@@ -17,11 +19,22 @@ use crate::tmux::{
     list_clients_argv, list_windows_argv, refresh_status_argv, send_focus_in_argv,
     switch_client_argv, switch_client_to_target_argv,
 };
+use crate::tmux_expose::{ExposeScope, ExposeScopeView};
+use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
+use crate::tmux_expose_hot_snapshot_worker::{
+    ExposeHotSnapshotWorkerProject, refresh_global_expose_hot_snapshots,
+};
+use crate::visual_client_leases_contract::{VisualClientLeaseRegistry, parse_visual_client_kind};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS: u64 = 3_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxClientInfo {
@@ -37,6 +50,159 @@ pub struct TmuxWindowInfo {
     pub index: i64,
     pub name: String,
     pub pane_dead: bool,
+}
+
+#[derive(Clone)]
+pub struct GlobalExposeHotSnapshotCoordinator {
+    leases: Arc<Mutex<VisualClientLeaseRegistry>>,
+    refresh: Arc<Mutex<GlobalExposeHotSnapshotRefreshState>>,
+    background_refresh_enabled: bool,
+    refresh_delay_ms: u64,
+}
+
+#[derive(Debug, Default)]
+struct GlobalExposeHotSnapshotRefreshState {
+    scheduled: bool,
+    refreshing: bool,
+}
+
+impl std::fmt::Debug for GlobalExposeHotSnapshotCoordinator {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GlobalExposeHotSnapshotCoordinator")
+            .field(
+                "background_refresh_enabled",
+                &self.background_refresh_enabled,
+            )
+            .field("refresh_delay_ms", &self.refresh_delay_ms)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for GlobalExposeHotSnapshotCoordinator {
+    fn default() -> Self {
+        Self::new(false)
+    }
+}
+
+impl GlobalExposeHotSnapshotCoordinator {
+    pub fn new(background_refresh_enabled: bool) -> Self {
+        Self {
+            leases: Arc::new(Mutex::new(VisualClientLeaseRegistry::default())),
+            refresh: Arc::new(Mutex::new(GlobalExposeHotSnapshotRefreshState::default())),
+            background_refresh_enabled,
+            refresh_delay_ms: GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS,
+        }
+    }
+
+    pub fn touch_route_lease(
+        &self,
+        route_url: &DaemonRouteUrl,
+        projects: &[ProjectsRouteProject],
+        project_state_dirs: BTreeMap<String, PathBuf>,
+    ) -> bool {
+        if route_url.search_param("includePreview") != Some("1")
+            && route_url.search_param("includeChatPreview") != Some("1")
+        {
+            return false;
+        }
+        let kind =
+            parse_visual_client_kind(route_url.search_param("clientKind").or(Some("expose")));
+        let id = route_url
+            .search_param("clientId")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| default_global_client_id(kind));
+        let input = json!({
+            "id": id,
+            "kind": kind,
+            "surface": "global-expose",
+            "requestedPreview": route_url.search_param("includePreview") == Some("1"),
+            "requestedChatPreview": route_url.search_param("includeChatPreview") == Some("1"),
+            "ttlMs": route_url
+                .search_param("clientTtlMs")
+                .map(|value| Value::String(value.to_owned()))
+                .unwrap_or(Value::Null),
+        });
+        let now = current_unix_millis();
+        let mut leases = self
+            .leases
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        leases.touch(&input, now);
+        let active = leases.has_active_preview_clients(now);
+        drop(leases);
+        if active {
+            self.schedule_global_refresh(worker_projects(projects), project_state_dirs);
+        }
+        active
+    }
+
+    fn has_active_preview_clients(&self) -> bool {
+        self.leases
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .has_active_preview_clients(current_unix_millis())
+    }
+
+    fn schedule_global_refresh(
+        &self,
+        projects: Vec<ExposeHotSnapshotWorkerProject>,
+        project_state_dirs: BTreeMap<String, PathBuf>,
+    ) {
+        if !self.background_refresh_enabled {
+            return;
+        }
+        {
+            let mut refresh = self
+                .refresh
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if refresh.scheduled || refresh.refreshing {
+                return;
+            }
+            refresh.scheduled = true;
+        }
+        let coordinator = self.clone();
+        let delay = Duration::from_millis(self.refresh_delay_ms);
+        thread::spawn(move || {
+            thread::sleep(delay);
+            coordinator.run_scheduled_global_refresh(projects, project_state_dirs);
+        });
+    }
+
+    fn run_scheduled_global_refresh(
+        &self,
+        projects: Vec<ExposeHotSnapshotWorkerProject>,
+        project_state_dirs: BTreeMap<String, PathBuf>,
+    ) {
+        {
+            let mut refresh = self
+                .refresh
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            refresh.scheduled = false;
+            if refresh.refreshing {
+                return;
+            }
+            refresh.refreshing = true;
+        }
+        if self.has_active_preview_clients() {
+            refresh_global_expose_hot_snapshots(&projects, |id| {
+                project_state_dirs.get(id).cloned().unwrap_or_default()
+            });
+        }
+        {
+            let mut refresh = self
+                .refresh
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            refresh.refreshing = false;
+        }
+        if self.has_active_preview_clients() {
+            self.schedule_global_refresh(projects, project_state_dirs);
+        }
+    }
 }
 
 pub trait DaemonExposeFocusRuntime {
@@ -137,14 +303,38 @@ impl DaemonExposeFocusRuntime for SystemDaemonExposeFocusRuntime {
 pub fn expose_items_route(
     resolver: &mut PathResolver,
     session_prefix_for_project: impl Fn(&str) -> String,
-    _path: &str,
+    path: &str,
+    projects_for_refresh: &[ProjectsRouteProject],
+    hot_snapshots: &GlobalExposeHotSnapshotCoordinator,
 ) -> Result<Value, String> {
+    let route_url = DaemonRouteUrl::parse(path);
+    let include_preview = route_url.search_param("includePreview") == Some("1");
+    let include_chat_preview = route_url.search_param("includeChatPreview") == Some("1");
+    let project_state_dirs = project_state_dirs_by_id(resolver, projects_for_refresh);
     let items = list_all_projects_expose_items(resolver, session_prefix_for_project)?;
     let ordered = order_global_expose_items(resolver, items);
+    if include_preview || include_chat_preview {
+        hot_snapshots.touch_route_lease(
+            &route_url,
+            projects_for_refresh,
+            project_state_dirs.clone(),
+        );
+    }
+    let hot_previews = if include_preview {
+        hot_preview_snapshots_for_global_items(resolver, &ordered)
+    } else {
+        BTreeMap::new()
+    };
     let tones = assign_worktree_tones(&ordered, "/");
     let items = ordered
         .iter()
-        .map(|item| serialize_global_expose_item(item, &tones))
+        .map(|item| {
+            serialize_global_expose_item(
+                item,
+                &tones,
+                preview_key_for_item(item).and_then(|key| hot_previews.get(&key)),
+            )
+        })
         .collect::<Vec<_>>();
     Ok(json!({ "ok": true, "items": items }))
 }
@@ -370,9 +560,13 @@ fn order_global_expose_items(
 fn serialize_global_expose_item(
     item: &crate::project_service::switchable_agents::SwitchableAgentItem,
     tones: &BTreeMap<String, i64>,
+    preview_snapshot: Option<&Value>,
 ) -> Value {
     let mut serialized = serialize_fast_control_item(item);
     if let Value::Object(map) = &mut serialized {
+        if let Some(preview_snapshot) = preview_snapshot {
+            map.insert("previewSnapshot".into(), preview_snapshot.clone());
+        }
         map.insert(
             "exposeContext".into(),
             expose_tile_context_for_item(item, ExposeSublabel::ProjectWorktree, "/", tones),
@@ -382,6 +576,112 @@ fn serialize_global_expose_item(
         }
     }
     serialized
+}
+
+fn project_state_dirs_by_id(
+    resolver: &mut PathResolver,
+    projects: &[ProjectsRouteProject],
+) -> BTreeMap<String, PathBuf> {
+    projects
+        .iter()
+        .map(|project| {
+            (
+                project.id.clone(),
+                resolver.project_state_dir_for(&project.path),
+            )
+        })
+        .collect()
+}
+
+fn hot_preview_snapshots_for_global_items(
+    resolver: &mut PathResolver,
+    items: &[crate::project_service::switchable_agents::SwitchableAgentItem],
+) -> BTreeMap<String, Value> {
+    let mut previews = BTreeMap::new();
+    let mut roots = items
+        .iter()
+        .filter_map(|item| item.project_root.as_deref())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots.dedup();
+    for project_root in roots {
+        let project_state_dir = resolver.project_state_dir_for(&project_root);
+        let Some(view) = read_hot_expose_scope_view(
+            project_state_dir,
+            &HotExposeScopeKey {
+                project_root: project_root.clone(),
+                scope: ExposeScope::Project,
+                worktree_key: None,
+                launch_window_id: None,
+            },
+        ) else {
+            continue;
+        };
+        insert_hot_preview_snapshots(&mut previews, &project_root, &view);
+    }
+    previews
+}
+
+fn insert_hot_preview_snapshots(
+    previews: &mut BTreeMap<String, Value>,
+    project_root: &str,
+    view: &ExposeScopeView,
+) {
+    for item in &view.items {
+        let Some(window_id) = item
+            .get("target")
+            .and_then(|target| target.get("windowId"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let Some(preview) = item.get("previewSnapshot") else {
+            continue;
+        };
+        previews.insert(global_preview_key(project_root, window_id), preview.clone());
+    }
+}
+
+fn preview_key_for_item(
+    item: &crate::project_service::switchable_agents::SwitchableAgentItem,
+) -> Option<String> {
+    let project_root = item.project_root.as_deref()?;
+    let window_id = item.target.get("windowId").and_then(Value::as_str)?;
+    Some(global_preview_key(project_root, window_id))
+}
+
+fn global_preview_key(project_root: &str, window_id: &str) -> String {
+    format!("{project_root}\0{window_id}")
+}
+
+fn worker_projects(projects: &[ProjectsRouteProject]) -> Vec<ExposeHotSnapshotWorkerProject> {
+    projects
+        .iter()
+        .map(|project| ExposeHotSnapshotWorkerProject {
+            id: project.id.clone(),
+            name: project.name.clone(),
+            path: project.path.clone(),
+            service_alive: project.service_alive,
+        })
+        .collect()
+}
+
+fn default_global_client_id(kind: &str) -> &str {
+    match kind {
+        "tui" => "tui:global",
+        "web" => "web:global",
+        "mobile" => "mobile:global",
+        "expose" => "expose:global",
+        _ => "api:global",
+    }
+}
+
+fn current_unix_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 fn normalize_path_string(path: &str) -> String {

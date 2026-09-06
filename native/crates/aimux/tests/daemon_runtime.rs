@@ -22,6 +22,8 @@ use aimux::paths::PathResolver;
 use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::TmuxTarget;
+use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
+use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, remove_dir_all};
@@ -186,6 +188,42 @@ fn native_daemon_global_expose_items_read_project_topology_without_waking_cold_p
         },
     )
     .expect("save alpha metadata");
+    let alpha_preview = json!({
+        "output": "alpha preview",
+        "capturedAt": "2026-09-07T00:00:00.000Z",
+        "source": "capture",
+        "windowId": "@1",
+    });
+    write_hot_expose_scope_view(
+        &alpha_state_dir,
+        HotExposeScopeKey {
+            project_root: alpha.to_string_lossy().into_owned(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+        ExposeScopeView {
+            scope: ExposeScope::Project,
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+            items: vec![json!({
+                "id": "alpha-agent",
+                "target": {
+                    "sessionName": "aimux-alpha",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "alpha-agent",
+                },
+                "metadata": {},
+                "label": "alpha-agent",
+                "urgency": 0,
+                "activity": 1,
+                "recentRank": 9007199254740991_i64,
+                "previewSnapshot": alpha_preview.clone(),
+            })],
+        },
+        None,
+    );
     let mut runtime = fixture.runtime();
 
     let response = handle_daemon_runtime_request(
@@ -220,6 +258,7 @@ fn native_daemon_global_expose_items_read_project_topology_without_waking_cold_p
         items[0]["exposeStatus"],
         json!({ "kind": "needs", "label": "Needs input" })
     );
+    assert_eq!(items[0]["previewSnapshot"], alpha_preview);
     assert_eq!(items[1]["projectId"], beta_entry.id);
     fixture.cleanup();
 }
