@@ -60,6 +60,7 @@ pub mod dashboard_terminal;
 pub mod dashboard_tool_picker;
 pub mod dashboard_tui_visibility;
 pub mod dashboard_ui_state;
+pub mod debug_logging_contract;
 pub mod debug_state;
 pub mod default_plugin_gh_pr_context_contract;
 pub mod default_plugin_transcript_length_contract;

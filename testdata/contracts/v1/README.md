@@ -597,6 +597,9 @@ Priority fixture groups:
 
 ## Debug
 
+- `debug/logging.json`: debug logging config precedence, level/category gating,
+  always-log records, and secret redaction behavior captured by running
+  TypeScript `debug` helpers with timestamps and pids normalized.
 - `debug/lifecycle-log.json`: control-plane lifecycle log writes, daemon-log
   destination, process id presence, and sensitive-field redaction captured by
   running TypeScript `logLifecycleAlways`; the Rust fixture is an ignored
