@@ -14,7 +14,7 @@ use crate::dashboard_project_events::DashboardProjectRefreshState;
 use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use crate::dashboard_service_input::render_service_input_overlay;
-use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_key};
+use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use anyhow::{Context, Result};
 use std::fs;
@@ -114,35 +114,38 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             }
         }
 
-        if let Some(key) = read_dashboard_key(&mut stdin).context("read dashboard key")? {
+        let keys = read_dashboard_keys(&mut stdin).context("read dashboard key")?;
+        if !keys.is_empty() {
             let Some(snapshot) = latest_snapshot.as_ref() else {
                 render_now = true;
                 thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
-            match controller.handle_key(snapshot, key) {
-                DashboardControllerEffect::Quit => return Ok(()),
-                DashboardControllerEffect::Request(request) => {
-                    if let Some(endpoint) = latest_endpoint.as_ref() {
-                        if let Err(error) = execute_dashboard_action(endpoint, &request) {
-                            controller.footer_message = Some(error.to_string());
+            for key in keys {
+                match controller.handle_key(snapshot, key) {
+                    DashboardControllerEffect::Quit => return Ok(()),
+                    DashboardControllerEffect::Request(request) => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            if let Err(error) = execute_dashboard_action(endpoint, &request) {
+                                controller.footer_message = Some(error.to_string());
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
                         }
-                    } else {
-                        controller.footer_message =
-                            Some("Dashboard action requires a project-service endpoint".into());
+                        render_now = true;
                     }
-                    render_now = true;
+                    DashboardControllerEffect::OpenAgentToolPicker(mode) => {
+                        let config = load_config_for_project(&options.project_root);
+                        controller.open_tool_picker(enabled_dashboard_tools(&config), mode);
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::Render => {
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::Ignored => {}
                 }
-                DashboardControllerEffect::OpenAgentToolPicker => {
-                    let config = load_config_for_project(&options.project_root);
-                    controller.open_tool_picker(enabled_dashboard_tools(&config));
-                    render_now = true;
-                }
-                DashboardControllerEffect::Render => {
-                    render_now = true;
-                }
-                DashboardControllerEffect::Ignored => {}
             }
         }
         thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);

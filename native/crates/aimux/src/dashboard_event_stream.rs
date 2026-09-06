@@ -42,7 +42,9 @@ impl DashboardEventStreamHandle {
 impl Drop for DashboardEventStreamHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(join) = self.join.take() {
+        if let Some(join) = self.join.take()
+            && join.is_finished()
+        {
             let _ = join.join();
         }
     }

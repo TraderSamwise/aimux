@@ -1,8 +1,8 @@
 use aimux::config::merge_config_layers;
 use aimux::dashboard_create::DashboardCreatePlan;
 use aimux::dashboard_tool_picker::{
-    DashboardToolPickerEffect, DashboardToolPickerState, enabled_dashboard_tools,
-    render_tool_picker_overlay,
+    DashboardToolPickerEffect, DashboardToolPickerMode, DashboardToolPickerState,
+    enabled_dashboard_tools, render_tool_picker_overlay,
 };
 use aimux::project_api_contract::routes;
 use serde_json::json;
@@ -45,7 +45,7 @@ fn create_selected_maps_default_launch_override() {
         })),
     );
     let tools = enabled_dashboard_tools(&config);
-    let mut picker = DashboardToolPickerState::new(tools);
+    let mut picker = DashboardToolPickerState::with_mode(tools, DashboardToolPickerMode::Create);
     picker.index = 1;
 
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
@@ -83,6 +83,62 @@ fn digit_selects_and_creates_tool() {
 
     assert_eq!(picker.index, 1);
     assert_eq!(request.body, json!({ "tool": "codex", "open": false }));
+}
+
+#[test]
+fn fork_mode_maps_selected_tool_to_fork_request() {
+    let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
+    let mut picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::Fork {
+            source_session_id: "codex-source".into(),
+        },
+    );
+    picker.index = 1;
+
+    let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
+        picker.create_selected(Some("/repo/wt"))
+    else {
+        panic!("expected fork request");
+    };
+
+    assert_eq!(request.path, routes::agents::FORK);
+    assert_eq!(
+        request.body,
+        json!({
+            "sourceSessionId": "codex-source",
+            "tool": "codex",
+            "worktreePath": "/repo/wt",
+            "open": false
+        })
+    );
+}
+
+#[test]
+fn switch_mode_maps_selected_tool_to_switch_request() {
+    let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
+    let mut picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::SwitchTool {
+            session_id: "claude-live".into(),
+        },
+    );
+    picker.index = 1;
+
+    let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
+        picker.create_selected(Some("/repo/wt"))
+    else {
+        panic!("expected switch request");
+    };
+
+    assert_eq!(request.path, routes::agents::SWITCH_TOOL);
+    assert_eq!(
+        request.body,
+        json!({
+            "sessionId": "claude-live",
+            "tool": "codex"
+        })
+    );
 }
 
 #[test]

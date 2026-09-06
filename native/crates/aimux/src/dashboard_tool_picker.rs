@@ -1,6 +1,8 @@
+use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_create::{
     DashboardAgentCreateIntent, DashboardCreateIntent, DashboardCreatePlan, plan_dashboard_create,
 };
+use crate::project_api_contract::routes;
 use crate::tui_render::theme::{Tone, footer_hints, pad_visible, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use serde_json::{Map, Value};
@@ -18,6 +20,14 @@ pub struct DashboardToolEntry {
 pub struct DashboardToolPickerState {
     pub tools: Vec<DashboardToolEntry>,
     pub index: usize,
+    pub mode: DashboardToolPickerMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DashboardToolPickerMode {
+    Create,
+    Fork { source_session_id: String },
+    SwitchTool { session_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +39,15 @@ pub enum DashboardToolPickerEffect {
 
 impl DashboardToolPickerState {
     pub fn new(tools: Vec<DashboardToolEntry>) -> Self {
-        Self { tools, index: 0 }
+        Self::with_mode(tools, DashboardToolPickerMode::Create)
+    }
+
+    pub fn with_mode(tools: Vec<DashboardToolEntry>, mode: DashboardToolPickerMode) -> Self {
+        Self {
+            tools,
+            index: 0,
+            mode,
+        }
     }
 
     pub fn move_prev(&mut self) {
@@ -66,16 +84,48 @@ impl DashboardToolPickerState {
         let Some(tool) = self.tools.get(self.index) else {
             return DashboardToolPickerEffect::Render;
         };
-        DashboardToolPickerEffect::Create(plan_dashboard_create(&DashboardCreateIntent::Agent(
-            DashboardAgentCreateIntent {
-                tool: Some(tool.key.clone()),
-                session_id: None,
-                worktree_path: worktree_path.map(str::to_owned),
-                launch_override: default_launch_override(tool),
-                overseer: None,
-                scribe: None,
-            },
-        )))
+        let launch_override = default_launch_override(tool);
+        match &self.mode {
+            DashboardToolPickerMode::Create => DashboardToolPickerEffect::Create(
+                plan_dashboard_create(&DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
+                    tool: Some(tool.key.clone()),
+                    session_id: None,
+                    worktree_path: worktree_path.map(str::to_owned),
+                    launch_override,
+                    overseer: None,
+                    scribe: None,
+                })),
+            ),
+            DashboardToolPickerMode::Fork { source_session_id } => {
+                DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(
+                    dashboard_agent_tool_request(
+                        routes::agents::FORK,
+                        [
+                            ("sourceSessionId", Value::String(source_session_id.clone())),
+                            ("tool", Value::String(tool.key.clone())),
+                            ("open", Value::Bool(false)),
+                        ],
+                        worktree_path,
+                        launch_override,
+                    ),
+                ))
+            }
+            DashboardToolPickerMode::SwitchTool { session_id } => {
+                let mut body = Map::new();
+                body.insert("sessionId".into(), Value::String(session_id.clone()));
+                body.insert("tool".into(), Value::String(tool.key.clone()));
+                if let Some(launch_override) = launch_override {
+                    body.insert("launchOverride".into(), launch_override);
+                }
+                DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(
+                    DashboardActionRequest {
+                        method: "POST",
+                        path: routes::agents::SWITCH_TOOL,
+                        body: Value::Object(body),
+                    },
+                ))
+            }
+        }
     }
 }
 
@@ -96,6 +146,13 @@ pub fn render_tool_picker_overlay(
     cols: usize,
     rows: usize,
 ) -> String {
+    let title = match &state.mode {
+        DashboardToolPickerMode::Create => "Select tool".to_owned(),
+        DashboardToolPickerMode::Fork { source_session_id } => {
+            format!("Fork from {source_session_id}")
+        }
+        DashboardToolPickerMode::SwitchTool { session_id } => format!("Switch {session_id}"),
+    };
     let mut body = Vec::new();
     if state.tools.is_empty() {
         body.push(format!("  {}", style("No enabled tools", Tone::Muted)));
@@ -131,13 +188,39 @@ pub fn render_tool_picker_overlay(
     body.push(String::new());
     body.push(footer_hints("[Enter/1-9] start  [Esc] cancel"));
     render_overlay_box(&OverlayBoxSpec {
-        title: "Select tool",
+        title: &title,
         body: &body,
         cols,
         rows,
         variant: OverlayVariant::Blue,
         icon: None,
     })
+}
+
+fn dashboard_agent_tool_request(
+    path: &'static str,
+    fields: impl IntoIterator<Item = (&'static str, Value)>,
+    worktree_path: Option<&str>,
+    launch_override: Option<Value>,
+) -> DashboardActionRequest {
+    let mut body = Map::new();
+    for (key, value) in fields {
+        body.insert(key.into(), value);
+    }
+    if let Some(worktree_path) = worktree_path {
+        body.insert(
+            "worktreePath".into(),
+            Value::String(worktree_path.to_owned()),
+        );
+    }
+    if let Some(launch_override) = launch_override {
+        body.insert("launchOverride".into(), launch_override);
+    }
+    DashboardActionRequest {
+        method: "POST",
+        path,
+        body: Value::Object(body),
+    }
 }
 
 fn dashboard_tool_entry(key: &str, tool: &Value) -> Option<DashboardToolEntry> {

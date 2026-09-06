@@ -6,6 +6,7 @@ use aimux::dashboard_event_stream::{
 use aimux::dashboard_project_events::DashboardProjectEvent;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -82,6 +83,31 @@ fn reports_non_success_stream_response() {
             "project event stream failed: 503".into()
         )]
     );
+}
+
+#[test]
+fn dropping_stream_handle_does_not_wait_for_silent_peer_timeout() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let port = listener.local_addr().expect("local addr").port();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let _ = read_request_text(&mut stream);
+        ready_tx.send(()).expect("ready");
+        thread::sleep(Duration::from_millis(500));
+    });
+    let handle = spawn_dashboard_project_event_stream(ProjectServiceEndpoint {
+        host: "127.0.0.1".into(),
+        port,
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stream opened request");
+
+    let start = Instant::now();
+    drop(handle);
+    assert!(start.elapsed() < Duration::from_millis(100));
+    server.join().expect("server");
 }
 
 fn serve_once(

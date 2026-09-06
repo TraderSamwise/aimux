@@ -1,9 +1,10 @@
 use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, parse_dashboard_key,
+    parse_dashboard_keys,
 };
 use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use aimux::dashboard_renderer::DashboardNavLevel;
-use aimux::dashboard_tool_picker::DashboardToolEntry;
+use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
 use aimux::project_api_contract::routes;
 use serde_json::json;
 
@@ -80,7 +81,7 @@ fn new_agent_key_opens_tool_picker_effect() {
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::NewAgent),
-        DashboardControllerEffect::OpenAgentToolPicker
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create)
     );
 }
 
@@ -91,13 +92,16 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Sessions;
     controller.navigation.worktree_index = 0;
-    controller.open_tool_picker(vec![DashboardToolEntry {
-        key: "codex".into(),
-        command: "codex".into(),
-        args: vec![],
-        default_args: vec![],
-        default_env: Default::default(),
-    }]);
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec![],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        DashboardToolPickerMode::Create,
+    );
 
     let DashboardControllerEffect::Request(request) =
         controller.handle_key(&snapshot, DashboardKey::Enter)
@@ -115,6 +119,56 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
         })
     );
     assert!(controller.tool_picker.is_none());
+}
+
+#[test]
+fn fork_key_opens_picker_for_selected_live_session() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('f')),
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Fork {
+            source_session_id: "claude-0".into()
+        })
+    );
+}
+
+#[test]
+fn switch_key_opens_picker_for_selected_live_session() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('S')),
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::SwitchTool {
+            session_id: "claude-0".into()
+        })
+    );
+}
+
+#[test]
+fn fork_key_blocks_offline_sessions_before_picker() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 0;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('f')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("codex is offline. Resume it first, then fork it.")
+    );
 }
 
 #[test]
@@ -191,6 +245,28 @@ fn service_input_collects_printable_text_and_dispatches_create() {
 }
 
 #[test]
+fn service_input_handles_pasted_command_sequence() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('v'));
+
+    for key in parse_dashboard_keys(b"yarn dev") {
+        controller.handle_key(&snapshot, key);
+    }
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected service create request");
+    };
+    assert_eq!(
+        request.body,
+        json!({ "command": "yarn dev", "worktreePath": "<ROOT>" })
+    );
+}
+
+#[test]
 fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"j"), DashboardKey::Printable('j'));
     assert_eq!(parse_dashboard_key(b"\x1b[B"), DashboardKey::Down);
@@ -205,8 +281,27 @@ fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"q"), DashboardKey::Printable('q'));
     assert_eq!(parse_dashboard_key(b"n"), DashboardKey::Printable('n'));
     assert_eq!(parse_dashboard_key(b"v"), DashboardKey::Printable('v'));
+    assert_eq!(parse_dashboard_key(b"f"), DashboardKey::Printable('f'));
+    assert_eq!(parse_dashboard_key(b"S"), DashboardKey::Printable('S'));
     assert_eq!(parse_dashboard_key(b"\x7f"), DashboardKey::Backspace);
     assert_eq!(parse_dashboard_key(b"4"), DashboardKey::Printable('4'));
+}
+
+#[test]
+fn parses_pasted_printable_bytes_as_multiple_keys() {
+    assert_eq!(
+        parse_dashboard_keys(b"yarn dev"),
+        vec![
+            DashboardKey::Printable('y'),
+            DashboardKey::Printable('a'),
+            DashboardKey::Printable('r'),
+            DashboardKey::Printable('n'),
+            DashboardKey::Printable(' '),
+            DashboardKey::Printable('d'),
+            DashboardKey::Printable('e'),
+            DashboardKey::Printable('v'),
+        ]
+    );
 }
 
 fn snapshot() -> DesktopStateSnapshot {

@@ -1,4 +1,4 @@
-use crate::dashboard_controller::{DashboardKey, parse_dashboard_key};
+use crate::dashboard_controller::{DashboardKey, parse_dashboard_keys};
 use std::io::{self, IsTerminal, Read, Write};
 
 pub struct DashboardTerminalGuard {
@@ -71,12 +71,16 @@ impl Drop for DashboardTerminalGuard {
 }
 
 pub fn read_dashboard_key(input: &mut impl Read) -> io::Result<Option<DashboardKey>> {
+    Ok(read_dashboard_keys(input)?.into_iter().next())
+}
+
+pub fn read_dashboard_keys(input: &mut impl Read) -> io::Result<Vec<DashboardKey>> {
     let mut buffer = [0_u8; 32];
     match input.read(&mut buffer) {
-        Ok(0) => Ok(None),
-        Ok(count) => Ok(Some(parse_dashboard_key(&buffer[..count]))),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(None),
+        Ok(0) => Ok(Vec::new()),
+        Ok(count) => Ok(parse_dashboard_keys(&buffer[..count])),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(Vec::new()),
         Err(error) => Err(error),
     }
 }

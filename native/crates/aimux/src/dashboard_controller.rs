@@ -2,12 +2,15 @@ use crate::dashboard_actions::{
     DashboardActionKind, DashboardActionPlan, DashboardActionRequest, plan_dashboard_action,
 };
 use crate::dashboard_create::{DashboardCreateBlocked, DashboardCreatePlan};
-use crate::dashboard_model::DesktopStateSnapshot;
-use crate::dashboard_navigation::{DashboardNavigationOutcome, DashboardNavigationState};
+use crate::dashboard_model::{DashboardSession, DesktopStateSnapshot, SessionStatus};
+use crate::dashboard_navigation::{
+    DashboardEntryRef, DashboardNavigationOutcome, DashboardNavigationState,
+};
 use crate::dashboard_renderer::DashboardNavLevel;
 use crate::dashboard_service_input::{DashboardServiceInputEffect, DashboardServiceInputState};
 use crate::dashboard_tool_picker::{
-    DashboardToolEntry, DashboardToolPickerEffect, DashboardToolPickerState,
+    DashboardToolEntry, DashboardToolPickerEffect, DashboardToolPickerMode,
+    DashboardToolPickerState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +25,7 @@ pub struct DashboardController {
 pub enum DashboardControllerEffect {
     Render,
     Request(DashboardActionRequest),
-    OpenAgentToolPicker,
+    OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
     Ignored,
 }
@@ -37,8 +40,12 @@ impl DashboardController {
         }
     }
 
-    pub fn open_tool_picker(&mut self, tools: Vec<DashboardToolEntry>) {
-        self.tool_picker = Some(DashboardToolPickerState::new(tools));
+    pub fn open_tool_picker(
+        &mut self,
+        tools: Vec<DashboardToolEntry>,
+        mode: DashboardToolPickerMode,
+    ) {
+        self.tool_picker = Some(DashboardToolPickerState::with_mode(tools, mode));
     }
 
     pub fn handle_key(
@@ -57,7 +64,11 @@ impl DashboardController {
         let key = normalize_dashboard_command_key(key);
         match key {
             DashboardKey::Quit => DashboardControllerEffect::Quit,
-            DashboardKey::NewAgent => DashboardControllerEffect::OpenAgentToolPicker,
+            DashboardKey::NewAgent => {
+                DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create)
+            }
+            DashboardKey::ForkAgent => self.open_fork_tool_picker(snapshot),
+            DashboardKey::SwitchTool => self.open_switch_tool_picker(snapshot),
             DashboardKey::Down => {
                 self.navigation.move_next(snapshot);
                 DashboardControllerEffect::Render
@@ -132,6 +143,8 @@ impl DashboardController {
             | DashboardKey::Stop
             | DashboardKey::NewAgent
             | DashboardKey::NewService
+            | DashboardKey::ForkAgent
+            | DashboardKey::SwitchTool
             | DashboardKey::Backspace
             | DashboardKey::Digit(_)
             | DashboardKey::Printable(_)
@@ -178,6 +191,8 @@ impl DashboardController {
             | DashboardKey::Stop
             | DashboardKey::NewAgent
             | DashboardKey::NewService
+            | DashboardKey::ForkAgent
+            | DashboardKey::SwitchTool
             | DashboardKey::Quit
             | DashboardKey::Digit(_)
             | DashboardKey::Other => DashboardServiceInputEffect::Render,
@@ -201,6 +216,56 @@ impl DashboardController {
                 });
                 DashboardControllerEffect::Render
             }
+        }
+    }
+
+    fn open_fork_tool_picker(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+            self.footer_message = Some("Select an agent to fork".into());
+            return DashboardControllerEffect::Render;
+        };
+        if !is_live_session(session) {
+            self.footer_message = Some(format!(
+                "{} is offline. Resume it first, then fork it.",
+                session_label(session)
+            ));
+            return DashboardControllerEffect::Render;
+        }
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Fork {
+            source_session_id: session.id.clone(),
+        })
+    }
+
+    fn open_switch_tool_picker(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+            self.footer_message = Some("Select an agent to switch".into());
+            return DashboardControllerEffect::Render;
+        };
+        if !is_live_session(session) {
+            self.footer_message = Some(format!(
+                "{} is offline. Resume it first, then switch tools.",
+                session_label(session)
+            ));
+            return DashboardControllerEffect::Render;
+        }
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::SwitchTool {
+            session_id: session.id.clone(),
+        })
+    }
+
+    fn selected_session_for_tool_action<'a>(
+        &self,
+        snapshot: &'a DesktopStateSnapshot,
+    ) -> Option<&'a DashboardSession> {
+        match self.navigation.selected_entry(snapshot) {
+            Some(DashboardEntryRef::Session(session)) => Some(session),
+            _ => None,
         }
     }
 
@@ -243,6 +308,8 @@ pub enum DashboardKey {
     Stop,
     NewAgent,
     NewService,
+    ForkAgent,
+    SwitchTool,
     Quit,
     Digit(char),
     Backspace,
@@ -251,17 +318,43 @@ pub enum DashboardKey {
 }
 
 pub fn parse_dashboard_key(bytes: &[u8]) -> DashboardKey {
-    match bytes {
-        b"\r" | b"\n" | b"\x1b[C" => DashboardKey::Enter,
-        b"\x1b" | b"\x1b[D" => DashboardKey::Back,
-        b"\x7f" | b"\x08" => DashboardKey::Backspace,
-        b"\x1b[B" => DashboardKey::Down,
-        b"\x1b[A" => DashboardKey::Up,
-        [byte] if byte.is_ascii_graphic() || *byte == b' ' => {
-            DashboardKey::Printable(*byte as char)
+    parse_dashboard_keys(bytes)
+        .into_iter()
+        .next()
+        .unwrap_or(DashboardKey::Other)
+}
+
+pub fn parse_dashboard_keys(bytes: &[u8]) -> Vec<DashboardKey> {
+    let mut keys = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let remaining = &bytes[index..];
+        if remaining.starts_with(b"\x1b[A") {
+            keys.push(DashboardKey::Up);
+            index += 3;
+        } else if remaining.starts_with(b"\x1b[B") {
+            keys.push(DashboardKey::Down);
+            index += 3;
+        } else if remaining.starts_with(b"\x1b[C") {
+            keys.push(DashboardKey::Enter);
+            index += 3;
+        } else if remaining.starts_with(b"\x1b[D") {
+            keys.push(DashboardKey::Back);
+            index += 3;
+        } else {
+            keys.push(match bytes[index] {
+                b'\r' | b'\n' => DashboardKey::Enter,
+                b'\x1b' => DashboardKey::Back,
+                b'\x7f' | b'\x08' => DashboardKey::Backspace,
+                byte if byte.is_ascii_graphic() || byte == b' ' => {
+                    DashboardKey::Printable(byte as char)
+                }
+                _ => DashboardKey::Other,
+            });
+            index += 1;
         }
-        _ => DashboardKey::Other,
     }
+    keys
 }
 
 fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
@@ -274,9 +367,22 @@ fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
         DashboardKey::Printable('x') => DashboardKey::Stop,
         DashboardKey::Printable('n') => DashboardKey::NewAgent,
         DashboardKey::Printable('v') => DashboardKey::NewService,
+        DashboardKey::Printable('f') => DashboardKey::ForkAgent,
+        DashboardKey::Printable('S') => DashboardKey::SwitchTool,
         DashboardKey::Printable('j') => DashboardKey::Down,
         DashboardKey::Printable('k') => DashboardKey::Up,
         DashboardKey::Printable(digit) if digit.is_ascii_digit() => DashboardKey::Digit(digit),
         other => other,
     }
+}
+
+fn is_live_session(session: &DashboardSession) -> bool {
+    !matches!(
+        session.status,
+        SessionStatus::Offline | SessionStatus::Exited
+    )
+}
+
+fn session_label(session: &DashboardSession) -> &str {
+    session.label.as_deref().unwrap_or(session.command.as_str())
 }
