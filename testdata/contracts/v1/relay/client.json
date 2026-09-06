@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "source": "src/full/relay-client.test.ts",
+  "generatedBy": "scripts/capture-relay-client-contract.mjs",
+  "description": "Relay client runtime compatibility, auth-failure notification, security-event notification routing, and project-event subscription forwarding captured by running the TypeScript RelayClient with a notify-module recorder.",
+  "cases": [
+    {
+      "id": "relay-client-001",
+      "name": "fails fast when the Node runtime has no global WebSocket",
+      "source": "src/full/relay-client.test.ts",
+      "api": "RelayClient",
+      "input": { "scenario": "no-global-websocket" },
+      "output": {
+        "status": {
+          "status": "disconnected",
+          "relayUrl": "wss://relay.aimux.app",
+          "lastConnectedAt": null,
+          "lastError": "Node runtime is missing globalThis.WebSocket — upgrade to Node 24+ to use the aimux relay"
+        },
+        "notifications": { "authLost": [], "clientConnected": [] }
+      },
+      "inputSha256": "9f421566f2b1ff50382e3549da27fb0d280eb4e001b0f08803d1187a1327a99b"
+    },
+    {
+      "id": "relay-client-002",
+      "name": "notifies once when relay authentication fails",
+      "source": "src/full/relay-client.test.ts",
+      "api": "RelayClient",
+      "input": { "scenario": "auth-close-notifies-once", "closeCode": 1008 },
+      "output": {
+        "status": {
+          "status": "auth_failed",
+          "relayUrl": "wss://relay.aimux.app",
+          "lastConnectedAt": null,
+          "lastError": "Relay rejected credentials (code 1008) — run `aimux login` again"
+        },
+        "notifications": {
+          "authLost": [{ "body": "Relay rejected credentials (code 1008) — run `aimux login` again" }],
+          "clientConnected": []
+        }
+      },
+      "inputSha256": "3dc7504269060ea3e29b8ee8fe903c198f65117273bdb25e320781cb00490627"
+    },
+    {
+      "id": "relay-client-003",
+      "name": "turns relay new_client_detected security events into local approval notifications",
+      "source": "src/full/relay-client.test.ts",
+      "api": "RelayClient",
+      "input": {
+        "scenario": "security-event-new-client",
+        "message": {
+          "type": "security_event",
+          "event": {
+            "kind": "new_client_detected",
+            "deviceId": "device-1",
+            "title": "Remote approval needed",
+            "body": "iPhone from SG is waiting for approval. Code ABC-123.",
+            "approvalCode": "ABC-123",
+            "createdAt": "2026-04-01T00:00:00.000Z"
+          }
+        }
+      },
+      "output": {
+        "notifications": {
+          "authLost": [],
+          "clientConnected": [
+            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." }
+          ]
+        }
+      },
+      "inputSha256": "ea8d23d3365e0091fd8e59881d03e382b86251d7d17f6afb4cca919197d4d64a"
+    },
+    {
+      "id": "relay-client-004",
+      "name": "notifies every repeated new-client security event",
+      "source": "src/full/relay-client.test.ts",
+      "api": "RelayClient",
+      "input": {
+        "scenario": "security-event-repeated-new-client",
+        "message": {
+          "type": "security_event",
+          "event": {
+            "kind": "new_client_detected",
+            "deviceId": "device-1",
+            "title": "Remote approval needed",
+            "body": "iPhone from SG is waiting for approval. Code ABC-123.",
+            "approvalCode": "ABC-123",
+            "createdAt": "2026-04-01T00:00:00.000Z"
+          }
+        },
+        "count": 3
+      },
+      "output": {
+        "notifications": {
+          "authLost": [],
+          "clientConnected": [
+            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." },
+            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." },
+            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." }
+          ]
+        }
+      },
+      "inputSha256": "af8f4fc7a92ece9a6db770fc7bd728ac2d262e87af8585233737cbe3666c2898"
+    },
+    {
+      "id": "relay-client-005",
+      "name": "turns shared participant security events into distinct local owner notifications",
+      "source": "src/full/relay-client.test.ts",
+      "api": "RelayClient",
+      "input": {
+        "scenario": "security-event-shared-client",
+        "message": {
+          "type": "security_event",
+          "event": {
+            "kind": "shared_client_connected",
+            "deviceId": "shared:share-1:user-guest:device-1",
+            "shareId": "share-1",
+            "sessionId": "claude-abc",
+            "actorUserId": "user-guest",
+            "actorName": "Alex",
+            "title": "Shared chat participant connected",
+            "body": "Alex connected to claude-abc from SG.",
+            "createdAt": "2026-04-01T00:00:00.000Z"
+          }
+        }
+      },
+      "output": {
+        "notifications": {
+          "authLost": [],
+          "clientConnected": [
+            { "title": "Shared chat participant connected", "body": "Alex connected to claude-abc from SG." }
+          ]
+        }
+      },
+      "inputSha256": "bded5b63a093576923b5160854d99550f0de5b6d3d2af31334ec52120f29a535"
+    },
+    {
+      "id": "relay-client-006",
+      "name": "proxies project service SSE events over relay subscriptions",
+      "source": "src/full/relay-client.test.ts",
+      "api": "RelayClient",
+      "input": {
+        "scenario": "project-events-subscribe",
+        "message": { "id": "sub-1", "type": "project_events_subscribe", "path": "/proxy/127.0.0.1/4321/events" },
+        "stream": "event: project_update\ndata: {\"type\":\"project_update\",\"views\":[\"desktop-state\"],\"projectId\":\"p1\",\"ts\":\"now\"}\n\n"
+      },
+      "output": {
+        "fetchCalls": [{ "url": "http://127.0.0.1:4321/events", "method": "GET" }],
+        "sent": [
+          { "id": "sub-1", "type": "project_events_subscribed" },
+          {
+            "id": "sub-1",
+            "type": "project_event",
+            "event": "project_update",
+            "data": { "type": "project_update", "views": ["desktop-state"], "projectId": "p1", "ts": "now" }
+          },
+          { "id": "sub-1", "type": "project_events_error", "status": 502, "message": "Project event stream closed" }
+        ]
+      },
+      "inputSha256": "1638e28b1972760b817daf04d5e286d325a37177f19f39d239fa3fe3b6a26524"
+    },
+    {
+      "id": "relay-client-007",
+      "name": "rejects shared guest project event subscriptions without the authorized session id",
+      "source": "src/full/relay-client.test.ts",
+      "api": "RelayClient",
+      "input": {
+        "scenario": "project-events-subscribe-denied",
+        "message": {
+          "id": "sub-guest",
+          "type": "project_events_subscribe",
+          "path": "/proxy/127.0.0.1/4321/events",
+          "headers": { "X-Aimux-Actor-Role": "guest", "X-Aimux-Share-Session-Id": "shared-1" }
+        }
+      },
+      "output": {
+        "sent": [
+          {
+            "id": "sub-guest",
+            "type": "project_events_error",
+            "status": 403,
+            "message": "shared session route requires a session id"
+          }
+        ]
+      },
+      "inputSha256": "e018fbea537edee5071dacab95a097d70a917c93c7b54bd309fec8e249fffea8"
+    }
+  ]
+}

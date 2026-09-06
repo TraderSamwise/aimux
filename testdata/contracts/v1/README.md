@@ -273,6 +273,13 @@ Priority fixture groups:
   transient disconnect classification captured by running TypeScript
   `app/lib/request-errors` helpers.
 
+## Relay
+
+- `relay/client.json`: RelayClient missing-WebSocket status, auth-failure
+  notification, security-event notification routing, and project-event SSE
+  forwarding behavior captured by running TypeScript `RelayClient` with a
+  notify-module recorder.
+
 ## Project Topology
 
 - `project-topology/topology.json`: project topology health, rollup, worktree
