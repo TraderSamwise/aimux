@@ -458,7 +458,7 @@ impl TmuxRuntimeManager {
                 window_id: existing.id,
                 window_index: existing.index,
                 window_name: dashboard_name.to_owned(),
-                pane_dead: existing.pane_dead,
+                pane_dead: None,
             });
         }
         self.exec_owned(
@@ -480,7 +480,7 @@ impl TmuxRuntimeManager {
                 window_id: created.id,
                 window_index: created.index,
                 window_name: created.name,
-                pane_dead: created.pane_dead,
+                pane_dead: None,
             })
             .ok_or_else(|| {
                 format!("Failed to create dashboard window in tmux session {session_name}")
