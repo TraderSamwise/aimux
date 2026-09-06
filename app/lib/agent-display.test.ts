@@ -20,7 +20,7 @@ describe("agent display labels", () => {
     expect(agentToolName(agent)).toBe("codex");
     expect(isGeneratedAgentLabel(agent.label, agent)).toBe(true);
     expect(agentShortName(agent)).toBe("codex");
-    expect(agentCompactIdentity(agent)).toBe("codex (coder)");
+    expect(agentCompactIdentity(agent)).toBe("codex");
   });
 
   it("keeps custom labels because they carry user intent", () => {
@@ -33,7 +33,7 @@ describe("agent display labels", () => {
 
     expect(isGeneratedAgentLabel(agent.label, agent)).toBe(false);
     expect(agentShortName(agent)).toBe("overseer");
-    expect(agentCompactIdentity(agent)).toBe("overseer (reviewer)");
+    expect(agentCompactIdentity(agent)).toBe("overseer");
   });
 
   it("does not collapse custom labels that happen to start with a tool prefix", () => {

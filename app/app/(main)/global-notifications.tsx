@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { AlertTriangle, Bell, RotateCw } from "lucide-react-native";
+import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
+import { AlertTriangle, Bell, Check, RotateCw } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, PressableCard } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { listNotifications, markNotificationsRead } from "@/lib/api";
@@ -52,6 +53,85 @@ function sortNotificationRows(a: GlobalNotificationRow, b: GlobalNotificationRow
   const aTime = Date.parse(a.notification.createdAt);
   const bTime = Date.parse(b.notification.createdAt);
   return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+}
+
+function SwipeReadAction({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      className="mb-2 ml-2 w-24 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/15 active:opacity-80"
+      accessibilityRole="button"
+      accessibilityLabel="Read notification"
+    >
+      <Check size={18} color="#22c55e" />
+      <Text className="mt-1 text-xs font-semibold text-emerald-500">Read</Text>
+    </Pressable>
+  );
+}
+
+function GlobalNotificationCard({
+  row,
+  onOpen,
+  onRead,
+}: {
+  row: GlobalNotificationRow;
+  onOpen: (row: GlobalNotificationRow) => void;
+  onRead: (row: GlobalNotificationRow) => void;
+}) {
+  const iconColor = row.notification.unread ? "#f59e0b" : "#a1a1aa";
+  const card = (
+    <PressableCard
+      onPress={() => onOpen(row)}
+      className="mb-2 rounded-lg p-3 active:bg-accent/60"
+      accessibilityRole="button"
+      accessibilityLabel={`Open notification ${row.notification.title}`}
+    >
+      <View className="flex-row items-start gap-3">
+        <View className="mt-0.5 rounded-md border border-border bg-background p-2">
+          {row.notification.unread ? (
+            <AlertTriangle size={16} color={iconColor} />
+          ) : (
+            <Bell size={16} color={iconColor} />
+          )}
+        </View>
+        <View className="min-w-0 flex-1">
+          <View className="flex-row items-center">
+            {row.notification.unread ? (
+              <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
+            ) : null}
+            <Text className="min-w-0 flex-1 text-base font-medium text-foreground">
+              {row.notification.title}
+            </Text>
+          </View>
+          <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+            {row.projectName}
+            {row.notification.kind ? ` · ${row.notification.kind}` : ""}
+            {relativeTime(row.notification.createdAt)
+              ? ` · ${relativeTime(row.notification.createdAt)}`
+              : ""}
+          </Text>
+          <Text className="mt-2 text-sm text-foreground/90" numberOfLines={3}>
+            {row.notification.body}
+          </Text>
+        </View>
+      </View>
+    </PressableCard>
+  );
+
+  if (Platform.OS === "web" || !row.notification.unread) return card;
+
+  return (
+    <ReanimatedSwipeable
+      friction={2}
+      rightThreshold={42}
+      overshootRight={false}
+      enableTrackpadTwoFingerGesture
+      onSwipeableOpen={() => onRead(row)}
+      renderRightActions={() => <SwipeReadAction onPress={() => onRead(row)} />}
+    >
+      {card}
+    </ReanimatedSwipeable>
+  );
 }
 
 export default function GlobalNotificationsScreen() {
@@ -183,19 +263,26 @@ export default function GlobalNotificationsScreen() {
     void refresh();
   }, [onlineProjectKey, refresh]);
 
+  const markRowRead = useCallback(
+    (row: GlobalNotificationRow) => {
+      markNotificationsReadLocal({ projectPath: row.projectPath, ids: [row.notification.id] });
+      void (async () => {
+        const project = onlineProjectsRef.current.find((item) => item.path === row.projectPath);
+        const endpoint = project ? getProjectServiceEndpoint(project) : null;
+        if (!endpoint) return;
+        try {
+          const token = await getTokenRef.current();
+          await markNotificationsRead(endpoint, { id: row.notification.id }, { token });
+        } catch {
+          // Device-local read state keeps the row settled if the host drops mid-action.
+        }
+      })();
+    },
+    [markNotificationsReadLocal],
+  );
+
   function openRow(row: GlobalNotificationRow) {
-    markNotificationsReadLocal({ projectPath: row.projectPath, ids: [row.notification.id] });
-    void (async () => {
-      const project = onlineProjectsRef.current.find((item) => item.path === row.projectPath);
-      const endpoint = project ? getProjectServiceEndpoint(project) : null;
-      if (!endpoint) return;
-      try {
-        const token = await getTokenRef.current();
-        await markNotificationsRead(endpoint, { id: row.notification.id }, { token });
-      } catch {
-        // Local read state keeps the row settled even if the project host drops mid-tap.
-      }
-    })();
+    markRowRead(row);
     selectProject(row.projectPath);
     const sessionId = row.notification.sessionId;
     if (sessionId) {
@@ -256,48 +343,14 @@ export default function GlobalNotificationsScreen() {
           body="Project-scoped notifications will appear here as a flattened feed."
         />
       ) : (
-        rows.map((row) => {
-          const iconColor = row.notification.unread ? "#f59e0b" : "#a1a1aa";
-          return (
-            <Pressable
-              key={`${row.projectPath}:${row.notification.id}`}
-              onPress={() => openRow(row)}
-              className="mb-2"
-            >
-              <Card className="rounded-lg p-3 active:bg-accent/60">
-                <View className="flex-row items-start gap-3">
-                  <View className="mt-0.5 rounded-md border border-border bg-background p-2">
-                    {row.notification.unread ? (
-                      <AlertTriangle size={16} color={iconColor} />
-                    ) : (
-                      <Bell size={16} color={iconColor} />
-                    )}
-                  </View>
-                  <View className="min-w-0 flex-1">
-                    <View className="flex-row items-center">
-                      {row.notification.unread ? (
-                        <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
-                      ) : null}
-                      <Text className="min-w-0 flex-1 text-base font-medium text-foreground">
-                        {row.notification.title}
-                      </Text>
-                    </View>
-                    <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
-                      {row.projectName}
-                      {row.notification.kind ? ` · ${row.notification.kind}` : ""}
-                      {relativeTime(row.notification.createdAt)
-                        ? ` · ${relativeTime(row.notification.createdAt)}`
-                        : ""}
-                    </Text>
-                    <Text className="mt-2 text-sm text-foreground/90" numberOfLines={3}>
-                      {row.notification.body}
-                    </Text>
-                  </View>
-                </View>
-              </Card>
-            </Pressable>
-          );
-        })
+        rows.map((row) => (
+          <GlobalNotificationCard
+            key={`${row.projectPath}:${row.notification.id}`}
+            row={row}
+            onOpen={openRow}
+            onRead={markRowRead}
+          />
+        ))
       )}
     </Page>
   );

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AgentCreatePanel } from "@/components/agent-create-panel";
@@ -9,7 +9,7 @@ import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { WorktreeManagementPanel } from "@/components/worktree-management-panel";
 import { StatusDotMini } from "@/components/status-dot";
-import { agentRoleLabel, agentShortName } from "@/lib/agent-display";
+import { agentShortName } from "@/lib/agent-display";
 import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -43,6 +43,7 @@ import {
 // dashboard's card/dot/[n]/pill language. Palette: card #15161a · border
 // #26272d · hairline #202127 · text #edeef0 / muted #7c7e88 / faint #565862.
 const PRESS = "hover:bg-[#1f2025] active:bg-[#232733]";
+const WORKTREE_LIST_MIN_WIDTH = 540;
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -184,7 +185,6 @@ function AgentRow({
   onPress: () => void;
 }) {
   const shortName = agentShortName(session);
-  const role = agentRoleLabel(session);
   const state = deriveAgentState(session);
   const recency = agentRecencyText(session);
   const fullHint = joinHints(recency, session.headline || session.previewLine);
@@ -208,14 +208,6 @@ function AgentRow({
         >
           {shortName}
         </Text>
-        {role ? (
-          <Text
-            className={cn("shrink-0 font-mono text-[12px] text-[#7c7e88]", compact && "ml-auto")}
-            numberOfLines={1}
-          >
-            {role}
-          </Text>
-        ) : null}
       </View>
       {compact ? null : <TrailingHint text={fullHint} />}
     </>
@@ -571,8 +563,9 @@ export function WorktreeList({
   const identityToneForBucket = (bucket: WorktreeBucket) =>
     worktreeToneForBucket(bucket, projectPath);
 
-  return (
-    <View className={cn("py-3", padded && "px-4")}>
+  const listClassName = cn("py-3", padded && "px-4");
+  const content = (
+    <>
       {main ? (
         <WorktreeCard bucket={main} identityTone={identityToneForBucket(main)} {...cardProps} />
       ) : null}
@@ -616,7 +609,23 @@ export function WorktreeList({
             : null}
         </View>
       ) : null}
-    </View>
+    </>
+  );
+
+  if (compact) {
+    return <View className={listClassName}>{content}</View>;
+  }
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator
+      keyboardShouldPersistTaps="handled"
+      className={listClassName}
+      contentContainerStyle={{ minWidth: WORKTREE_LIST_MIN_WIDTH, flexGrow: 1 }}
+    >
+      <View className="flex-1">{content}</View>
+    </ScrollView>
   );
 }
 

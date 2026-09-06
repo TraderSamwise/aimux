@@ -59,7 +59,7 @@ describe("notification policy", () => {
       ),
     ).toMatchObject({
       id: "codex-o6o4kf",
-      label: "codex (coder)",
+      label: "codex",
     });
   });
 

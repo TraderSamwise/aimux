@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import { setAgentLoop, setAgentOverseer } from "@/lib/api";
-import { agentCompactIdentity, agentRoleLabel, agentToolName } from "@/lib/agent-display";
+import { agentCompactIdentity, agentToolName } from "@/lib/agent-display";
 import { useAuth } from "@/lib/auth";
 import type { DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { detailHrefForPath } from "@/lib/view-location";
@@ -449,7 +449,7 @@ function AgentRow({
                 {sessionLabel(entry.session)}
               </Text>
               <Text className="text-[11px] text-muted-foreground" numberOfLines={1}>
-                {agentRoleLabel(entry.session) || agentToolName(entry.session)}
+                {agentToolName(entry.session)}
               </Text>
             </View>
             <Text className="mt-0.5 text-xs text-muted-foreground" numberOfLines={1}>

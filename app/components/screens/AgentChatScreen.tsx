@@ -2854,9 +2854,7 @@ function ChatTranscriptPlaceholder({
           ) : null}
           <View className="flex-1">
             <Text className="text-sm text-muted-foreground">{state.title}</Text>
-            {!loading ? (
-              <Text className="mt-1 text-xs text-muted-foreground">{state.message}</Text>
-            ) : null}
+            <Text className="mt-1 text-xs text-muted-foreground">{state.message}</Text>
           </View>
         </View>
         {retryable ? (
