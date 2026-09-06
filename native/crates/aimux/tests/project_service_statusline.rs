@@ -1,6 +1,9 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::statusline::{
+    StatuslineRefreshInput, refresh_project_statusline_with_tmux_refresh,
+};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use serde_json::{Value, json};
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
@@ -109,6 +112,41 @@ fn statusline_refresh_writes_snapshot_and_tmux_artifacts() {
             .join("bottom-dashboard-client-abc.txt")
             .exists()
     );
+    cleanup(project);
+}
+
+#[test]
+fn statusline_refresh_requests_tmux_refresh_after_writing_artifacts() {
+    let project = temp_project("refresh-client");
+    let state_dir = project.join("state");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_fixture(&project),
+    )
+    .expect("topology");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut calls = Vec::new();
+
+    refresh_project_statusline_with_tmux_refresh(
+        &context,
+        StatuslineRefreshInput {
+            session_id: None,
+            force: false,
+        },
+        |argv| {
+            assert!(
+                state_dir
+                    .join("tmux-statusline")
+                    .join("top-dashboard.txt")
+                    .exists(),
+                "tmux refresh must happen after statusline files are written"
+            );
+            calls.push(argv.to_vec());
+        },
+    )
+    .expect("refresh statusline");
+
+    assert_eq!(calls, vec![vec!["refresh-client", "-S"]]);
     cleanup(project);
 }
 

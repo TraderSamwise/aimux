@@ -2,6 +2,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::atomic_write::write_text_atomic_fast;
@@ -9,6 +10,7 @@ use crate::daemon_state::load_metadata_state;
 use crate::paths::basename_like_node_posix;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
+use crate::tmux::refresh_status_argv;
 
 use super::desktop_state::{DesktopStateInput, build_desktop_state};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -51,6 +53,14 @@ pub fn refresh_project_statusline(
     context: &ProjectServiceRequestContext,
     input: StatuslineRefreshInput,
 ) -> Result<(), String> {
+    refresh_project_statusline_with_tmux_refresh(context, input, refresh_tmux_status)
+}
+
+pub fn refresh_project_statusline_with_tmux_refresh(
+    context: &ProjectServiceRequestContext,
+    input: StatuslineRefreshInput,
+    mut refresh_status: impl FnMut(&[String]),
+) -> Result<(), String> {
     let project_state_dir = context.project_state_dir();
     if input.force {
         invalidate_tmux_statusline_artifacts(&project_state_dir);
@@ -63,7 +73,13 @@ pub fn refresh_project_statusline(
         &snapshot,
         input.session_id.as_deref(),
     )?;
+    let argv = refresh_status_argv();
+    refresh_status(&argv);
     Ok(())
+}
+
+fn refresh_tmux_status(args: &[String]) {
+    let _ = Command::new("tmux").args(args).status();
 }
 
 pub fn build_statusline_snapshot(context: &ProjectServiceRequestContext) -> Result<Value, String> {
