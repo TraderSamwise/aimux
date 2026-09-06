@@ -50,6 +50,8 @@ class AimuxWindow: UIWindow {
       command(input: "=", modifiers: [.control], action: #selector(zoomIn)),
       command(input: "-", modifiers: [.control], action: #selector(zoomOut)),
       command(input: "0", modifiers: [.control], action: #selector(zoomReset)),
+      command(input: "\r", modifiers: [], action: #selector(chatSend)),
+      command(input: UIKeyCommand.inputEscape, modifiers: [], action: #selector(chatInterrupt)),
     ]
   }
 
@@ -72,6 +74,14 @@ class AimuxWindow: UIWindow {
   @objc private func zoomReset() {
     AimuxNativeCommands.emit("desktopZoomReset")
   }
+
+  @objc private func chatSend() {
+    AimuxNativeCommands.emit("chatSend")
+  }
+
+  @objc private func chatInterrupt() {
+    AimuxNativeCommands.emit("chatInterrupt")
+  }
 }
 
 extension UIApplication {
@@ -85,5 +95,13 @@ extension UIApplication {
 
   @objc func aimuxDesktopZoomReset(_ sender: UICommand) {
     AimuxNativeCommands.emit("desktopZoomReset")
+  }
+
+  @objc func aimuxChatSend(_ sender: UICommand) {
+    AimuxNativeCommands.emit("chatSend")
+  }
+
+  @objc func aimuxChatInterrupt(_ sender: UICommand) {
+    AimuxNativeCommands.emit("chatInterrupt")
   }
 }

@@ -17,7 +17,7 @@ import { SharedSidebar } from "@/components/SharedSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
+import { isDesktopZoomCommand, subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
@@ -64,6 +64,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isDesktopNative) return undefined;
     return subscribeNativeAppCommands((command) => {
+      if (!isDesktopZoomCommand(command)) return;
       if (command === "desktopZoomReset") {
         setDesktopAppZoom(100);
         return;

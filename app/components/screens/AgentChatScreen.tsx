@@ -122,6 +122,7 @@ import {
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
+import { subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
 import { parentViewHrefForPath } from "@/lib/view-location";
@@ -525,7 +526,7 @@ export default function ChatScreen() {
   const isSharedSessionView = Boolean(activeShareForRoute);
   const isSharedConversation =
     isCanonicalSharedRoute || isSharedSessionView || isMultiplexedShare(shareSummary);
-  const canUseOwnerControls = !isSharedSessionView;
+  const canUseOwnerControls = !isCanonicalSharedRoute && !isSharedSessionView;
   const userEmail =
     user?.primaryEmailAddress?.emailAddress?.trim() ||
     user?.emailAddresses?.[0]?.emailAddress?.trim() ||
@@ -621,6 +622,9 @@ export default function ChatScreen() {
   const composerInputRef = useRef<TextInput | null>(null);
   const chatViewportRef = useRef<ChatSessionViewportHandle | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
+  const composerFocusedRef = useRef(false);
+  const nativeChatSendRef = useRef<() => void>(() => {});
+  const nativeChatInterruptRef = useRef<() => void>(() => {});
   const sendOperationIdRef = useRef(0);
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
@@ -952,161 +956,172 @@ export default function ChatScreen() {
     (composerSendText || hasPendingAttachments),
   );
 
-  const handleSendMessage = useCallback(async () => {
-    const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
-    const attachments = [...pendingAttachments];
-    if (
-      !serviceEndpoint ||
-      !sessionId ||
-      !session ||
-      ownerShareStatusPending ||
-      sendBusyRef.current ||
-      composerAwaitingAck ||
-      (!text && attachments.length === 0)
-    ) {
-      return;
-    }
-    sendBusyRef.current = true;
-    const sendOperationId = sendOperationIdRef.current + 1;
-    sendOperationIdRef.current = sendOperationId;
-    const sendComposerDraftKey = composerDraftKey;
-    clearLocalInterruptHold(sessionId);
-    const baselineUserMessageCount = userMessageCountRef.current;
-    const baselineMessageCount = allMessageCountRef.current;
-    chatViewportRef.current?.showNewest();
-    setSendBusy(true);
-    setSendError(null);
-    const sendStillOwnsActiveComposer = () =>
-      sendOperationIdRef.current === sendOperationId &&
-      activeComposerDraftKeyRef.current === sendComposerDraftKey;
-    try {
-      for (let idx = 0; idx < attachments.length; idx += 1) {
-        const attachment = attachments[idx];
-        if (attachment.uploadedAttachmentId) continue;
-        const uploaded = await uploadAttachment(
-          serviceEndpoint,
-          {
-            kind: attachment.kind,
-            filename: attachment.filename,
-            mimeType: attachment.mimeType,
-            dataBase64: await pickedAttachmentDataBase64(attachment),
-            sessionId: sessionKey,
-          },
-          { token },
-        );
-        attachments[idx] = {
-          ...attachment,
-          uploadedAttachmentId: uploaded.attachment.id,
-        };
-      }
-      await sendLivePaneInput(serviceEndpoint, sessionId, text, {
-        token,
-        attachmentIds: attachments
-          .map((attachment) => attachment.uploadedAttachmentId)
-          .filter((id): id is string => Boolean(id)),
-        ...(sharedChatActor ? { sharedChatActor } : {}),
-      });
-      const acceptedPending: PendingComposerAck = {
-        attachmentCount: attachments.length,
-        attachmentIds: attachments
-          .map((attachment) => attachment.uploadedAttachmentId)
-          .filter((id): id is string => Boolean(id)),
-        attachmentFilenames: attachments.map((attachment) => attachment.filename),
-        baselineUserMessageCount,
-        id: Date.now(),
-        showTimeoutError: false,
-        text,
-        timedOut: false,
-      };
-      const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
-      const acceptedMessage = buildAcceptedComposerMessage({
-        attachments,
-        clientMessageId,
-        sessionKey,
-        text,
-      });
-      releasePendingAttachmentPreviews(attachments);
-      if (!sendStillOwnsActiveComposer()) {
-        if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+  const handleSendMessage = useCallback(
+    async (options?: { preserveFocus?: boolean }) => {
+      const preserveFocus = options?.preserveFocus === true && Platform.OS !== "web";
+      const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
+      const attachments = [...pendingAttachments];
+      if (
+        !serviceEndpoint ||
+        !sessionId ||
+        !session ||
+        ownerShareStatusPending ||
+        sendBusyRef.current ||
+        composerAwaitingAck ||
+        (!text && attachments.length === 0)
+      ) {
         return;
       }
-      setAcceptedComposerMessages((current) =>
-        [
-          ...current,
-          {
-            baselineMessageCount,
-            clientMessageId,
-            message: acceptedMessage,
-            pending: acceptedPending,
-          },
-        ].slice(-20),
-      );
-      setDraft("");
-      setDraftHasContent(false);
-      setPendingAttachments([]);
-      setPendingComposerAck(null);
-      if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
-      void refreshOutputSnapshot().catch(() => {});
-    } catch (err) {
-      if (!sendStillOwnsActiveComposer()) {
-        if (sendComposerDraftKey) {
-          rememberComposerDraft(sendComposerDraftKey, {
-            draft: text,
-            pendingAttachments: attachments,
-          });
-        } else {
-          releasePendingAttachmentPreviews(attachments);
+      sendBusyRef.current = true;
+      const sendOperationId = sendOperationIdRef.current + 1;
+      sendOperationIdRef.current = sendOperationId;
+      const sendComposerDraftKey = composerDraftKey;
+      clearLocalInterruptHold(sessionId);
+      const baselineUserMessageCount = userMessageCountRef.current;
+      const baselineMessageCount = allMessageCountRef.current;
+      chatViewportRef.current?.showNewest();
+      setSendBusy(true);
+      setSendError(null);
+      const sendStillOwnsActiveComposer = () =>
+        sendOperationIdRef.current === sendOperationId &&
+        activeComposerDraftKeyRef.current === sendComposerDraftKey;
+      try {
+        for (let idx = 0; idx < attachments.length; idx += 1) {
+          const attachment = attachments[idx];
+          if (attachment.uploadedAttachmentId) continue;
+          const uploaded = await uploadAttachment(
+            serviceEndpoint,
+            {
+              kind: attachment.kind,
+              filename: attachment.filename,
+              mimeType: attachment.mimeType,
+              dataBase64: await pickedAttachmentDataBase64(attachment),
+              sessionId: sessionKey,
+            },
+            { token },
+          );
+          attachments[idx] = {
+            ...attachment,
+            uploadedAttachmentId: uploaded.attachment.id,
+          };
         }
-        return;
+        await sendLivePaneInput(serviceEndpoint, sessionId, text, {
+          token,
+          attachmentIds: attachments
+            .map((attachment) => attachment.uploadedAttachmentId)
+            .filter((id): id is string => Boolean(id)),
+          ...(sharedChatActor ? { sharedChatActor } : {}),
+        });
+        const acceptedPending: PendingComposerAck = {
+          attachmentCount: attachments.length,
+          attachmentIds: attachments
+            .map((attachment) => attachment.uploadedAttachmentId)
+            .filter((id): id is string => Boolean(id)),
+          attachmentFilenames: attachments.map((attachment) => attachment.filename),
+          baselineUserMessageCount,
+          id: Date.now(),
+          showTimeoutError: false,
+          text,
+          timedOut: false,
+        };
+        const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
+        const acceptedMessage = buildAcceptedComposerMessage({
+          attachments,
+          clientMessageId,
+          sessionKey,
+          text,
+        });
+        releasePendingAttachmentPreviews(attachments);
+        if (!sendStillOwnsActiveComposer()) {
+          if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+          return;
+        }
+        setAcceptedComposerMessages((current) =>
+          [
+            ...current,
+            {
+              baselineMessageCount,
+              clientMessageId,
+              message: acceptedMessage,
+              pending: acceptedPending,
+            },
+          ].slice(-20),
+        );
+        setDraft("");
+        setDraftHasContent(false);
+        setPendingAttachments([]);
+        setPendingComposerAck(null);
+        if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+        void refreshOutputSnapshot().catch(() => {});
+      } catch (err) {
+        if (!sendStillOwnsActiveComposer()) {
+          if (sendComposerDraftKey) {
+            rememberComposerDraft(sendComposerDraftKey, {
+              draft: text,
+              pendingAttachments: attachments,
+            });
+          } else {
+            releasePendingAttachmentPreviews(attachments);
+          }
+          return;
+        }
+        setPendingComposerAck(
+          isTransientRequestError(err)
+            ? {
+                attachmentCount: attachments.length,
+                attachmentIds: attachments
+                  .map((attachment) => attachment.uploadedAttachmentId)
+                  .filter((id): id is string => Boolean(id)),
+                attachmentFilenames: attachments.map((attachment) => attachment.filename),
+                baselineUserMessageCount,
+                id: Date.now(),
+                showTimeoutError: true,
+                text,
+                timedOut: true,
+              }
+            : null,
+        );
+        setDraft(text);
+        setDraftHasContent(hasComposerDraftContent(text));
+        setPendingAttachments(attachments);
+        setSendError(formatComposerSendFailure(err));
+      } finally {
+        if (sendOperationIdRef.current === sendOperationId) {
+          sendBusyRef.current = false;
+          setSendBusy(false);
+        }
+        if (preserveFocus) {
+          requestAnimationFrame(() => composerInputRef.current?.focus());
+        }
       }
-      setPendingComposerAck(
-        isTransientRequestError(err)
-          ? {
-              attachmentCount: attachments.length,
-              attachmentIds: attachments
-                .map((attachment) => attachment.uploadedAttachmentId)
-                .filter((id): id is string => Boolean(id)),
-              attachmentFilenames: attachments.map((attachment) => attachment.filename),
-              baselineUserMessageCount,
-              id: Date.now(),
-              showTimeoutError: true,
-              text,
-              timedOut: true,
-            }
-          : null,
-      );
-      setDraft(text);
-      setDraftHasContent(hasComposerDraftContent(text));
-      setPendingAttachments(attachments);
-      setSendError(formatComposerSendFailure(err));
-    } finally {
-      if (sendOperationIdRef.current === sendOperationId) {
-        sendBusyRef.current = false;
-        setSendBusy(false);
-      }
-    }
-  }, [
-    clearLocalInterruptHold,
-    composerAwaitingAck,
-    composerDraftKey,
-    composerSendText,
-    ownerShareStatusPending,
-    pendingAttachments,
-    refreshOutputSnapshot,
-    serviceEndpoint,
-    session,
-    sessionId,
-    sessionKey,
-    setAcceptedComposerMessages,
-    setDraft,
-    setDraftHasContent,
-    setPendingAttachments,
-    setPendingComposerAck,
-    setSendBusy,
-    setSendError,
-    sharedChatActor,
-    token,
-  ]);
+    },
+    [
+      clearLocalInterruptHold,
+      composerAwaitingAck,
+      composerDraftKey,
+      composerSendText,
+      ownerShareStatusPending,
+      pendingAttachments,
+      refreshOutputSnapshot,
+      serviceEndpoint,
+      session,
+      sessionId,
+      sessionKey,
+      setAcceptedComposerMessages,
+      setDraft,
+      setDraftHasContent,
+      setPendingAttachments,
+      setPendingComposerAck,
+      setSendBusy,
+      setSendError,
+      sharedChatActor,
+      token,
+    ],
+  );
+
+  const handleSendPress = useCallback(() => {
+    void handleSendMessage({ preserveFocus: Platform.OS !== "web" });
+  }, [handleSendMessage]);
 
   const appendPendingAttachments = useCallback(
     (attachments: PickedAttachment[]) => {
@@ -1228,6 +1243,36 @@ export default function ChatScreen() {
     token,
   ]);
 
+  useEffect(() => {
+    nativeChatSendRef.current = () => {
+      if (!composerFocusedRef.current) return;
+      void handleSendMessage({ preserveFocus: true });
+    };
+  }, [handleSendMessage]);
+
+  useEffect(() => {
+    nativeChatInterruptRef.current = () => {
+      if (canUseOwnerControls) void handleInterrupt();
+    };
+  }, [canUseOwnerControls, handleInterrupt]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS === "web") return undefined;
+      const unsubscribe = subscribeNativeAppCommands((command) => {
+        if (command === "chatSend") {
+          nativeChatSendRef.current();
+          return;
+        }
+        if (command === "chatInterrupt") nativeChatInterruptRef.current();
+      });
+      return () => {
+        composerFocusedRef.current = false;
+        unsubscribe();
+      };
+    }, []),
+  );
+
   const handleComposerKeyPress = useCallback(
     (event: {
       nativeEvent: {
@@ -1265,6 +1310,11 @@ export default function ChatScreen() {
         : undefined,
     [handleComposerPaste],
   );
+
+  const setComposerNativeFocus = useCallback((focused: boolean, updateFocusShell: () => void) => {
+    composerFocusedRef.current = focused;
+    updateFocusShell();
+  }, []);
 
   useEffect(() => {
     if (!shouldLoadShareSummary) {
@@ -1510,8 +1560,8 @@ export default function ChatScreen() {
                     importantForAutofill="no"
                     inputMode="text"
                     textContentType="none"
-                    onFocus={onFocus}
-                    onBlur={onBlur}
+                    onFocus={() => setComposerNativeFocus(true, onFocus)}
+                    onBlur={() => setComposerNativeFocus(false, onBlur)}
                     value={draft}
                     onChangeText={handleDraftChange}
                     onKeyPress={handleComposerKeyPress}
@@ -1603,7 +1653,7 @@ export default function ChatScreen() {
                       accessibilityLabel="Send the message"
                       icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
                       disabled={!canSendMessage}
-                      onPress={handleSendMessage}
+                      onPress={handleSendPress}
                     />
                   </View>
                 </>
@@ -1626,13 +1676,14 @@ export default function ChatScreen() {
       handleDraftChange,
       handleDropAttachments,
       handleInterrupt,
-      handleSendMessage,
+      handleSendPress,
       isSharedSessionView,
       pendingAttachments,
       removePendingAttachment,
       sendBusy,
       sendError,
       setComposerWidth,
+      setComposerNativeFocus,
       setSendError,
       wideControls,
     ],
