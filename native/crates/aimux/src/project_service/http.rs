@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+use super::dispatcher::ProjectServiceStreamPlan;
+
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
@@ -64,6 +66,7 @@ pub struct PreparedProjectServiceResponse {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
     pub body: Vec<u8>,
+    pub stream: Option<ProjectServiceStreamPlan>,
 }
 
 pub fn read_json_body_limited(
@@ -189,6 +192,7 @@ pub fn prepare_project_service_bytes_response(
 pub fn prepare_project_service_sse_response(
     status: u16,
     body: Vec<u8>,
+    stream: Option<ProjectServiceStreamPlan>,
     mut headers: BTreeMap<String, String>,
 ) -> PreparedProjectServiceResponse {
     headers.insert("content-type".to_owned(), "text/event-stream".to_owned());
@@ -202,6 +206,7 @@ pub fn prepare_project_service_sse_response(
         status,
         headers,
         body,
+        stream,
     }
 }
 
@@ -214,6 +219,7 @@ pub fn prepare_project_service_empty_response(
         status,
         headers,
         body: Vec::new(),
+        stream: None,
     }
 }
 
@@ -309,6 +315,7 @@ fn prepare_project_service_response(
         status,
         headers: headers.clone(),
         body,
+        stream: None,
     }
 }
 

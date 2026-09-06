@@ -61,7 +61,12 @@ where
     let response = route(&request.method, &request.path, body.as_ref());
     if let Some(bytes) = response.bytes {
         if response.content_type.as_deref() == Some("text/event-stream") {
-            return prepare_project_service_sse_response(response.status, bytes, cors);
+            return prepare_project_service_sse_response(
+                response.status,
+                bytes,
+                response.stream,
+                cors,
+            );
         }
         return prepare_project_service_bytes_response(
             response.status,

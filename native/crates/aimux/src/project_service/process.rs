@@ -9,7 +9,9 @@ use std::thread;
 use std::time::Duration;
 
 use crate::daemon::http::PreparedDaemonResponse;
-use crate::daemon::listener::{DaemonListenerError, handle_daemon_stream};
+use crate::daemon::listener::{
+    DaemonListenerError, parse_daemon_http_request, prepared_response_bytes, read_http_request,
+};
 use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon_state::{MetadataApiEndpoint, remove_metadata_endpoint, save_metadata_endpoint};
 use crate::expose_socket::{
@@ -21,6 +23,7 @@ use crate::tmux_expose::{
     SystemExposeHttpClient, run_tmux_expose_with_client, tmux_expose_options_from_socket_header,
 };
 
+use super::event_streams::encode_sse_keepalive;
 use super::http::PreparedProjectServiceResponse;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::server::{ProjectServiceHttpRequest, handle_project_service_http_request};
@@ -113,12 +116,32 @@ pub fn handle_project_service_connection<Stream>(
 where
     Stream: std::io::Read + std::io::Write,
 {
-    handle_daemon_stream(stream, &mut |request| {
-        prepared_project_response_to_daemon(handle_project_service_http_request(
-            project_request_from_daemon(request),
-            |method, path, body| route_project_service_request(context, method, path, body),
-        ))
-    })
+    let bytes = read_http_request(stream)?;
+    let request = parse_daemon_http_request(&bytes)?;
+    let response = handle_project_service_http_request(
+        project_request_from_daemon(request),
+        |method, path, body| route_project_service_request(context, method, path, body),
+    );
+    write_project_service_response(stream, &response)
+}
+
+pub fn write_project_service_response(
+    writer: &mut impl std::io::Write,
+    response: &PreparedProjectServiceResponse,
+) -> Result<(), DaemonListenerError> {
+    writer.write_all(&prepared_response_bytes(
+        &prepared_project_response_to_daemon(response),
+    ))?;
+    writer.flush()?;
+    if let Some(stream) = response.stream.as_ref() {
+        let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
+        loop {
+            thread::sleep(Duration::from_millis(interval_ms));
+            writer.write_all(&encode_sse_keepalive())?;
+            writer.flush()?;
+        }
+    }
+    Ok(())
 }
 
 fn serve_project_service_listener(listener: TcpListener, startup: ProjectServiceStartup) {
@@ -258,12 +281,12 @@ fn project_request_from_daemon(request: DaemonHttpRequest) -> ProjectServiceHttp
 }
 
 fn prepared_project_response_to_daemon(
-    response: PreparedProjectServiceResponse,
+    response: &PreparedProjectServiceResponse,
 ) -> PreparedDaemonResponse {
     PreparedDaemonResponse {
         status: response.status,
-        headers: response.headers,
-        body: response.body,
+        headers: response.headers.clone(),
+        body: response.body.clone(),
     }
 }
 

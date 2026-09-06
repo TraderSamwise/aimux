@@ -268,7 +268,7 @@ fn write_prepared_response(
     Ok(())
 }
 
-fn read_http_request(reader: &mut impl Read) -> Result<Vec<u8>, DaemonListenerError> {
+pub fn read_http_request(reader: &mut impl Read) -> Result<Vec<u8>, DaemonListenerError> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 8192];
     loop {

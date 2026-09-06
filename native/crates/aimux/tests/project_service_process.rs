@@ -1,11 +1,13 @@
 use aimux::daemon_state::load_metadata_endpoint;
 #[cfg(unix)]
 use aimux::expose_socket::{expose_socket_path, expose_socket_path_file};
+use aimux::project_service::dispatcher::{ProjectServiceStreamKind, ProjectServiceStreamPlan};
+use aimux::project_service::http::prepare_project_service_sse_response;
 #[cfg(unix)]
 use aimux::project_service::process::start_project_expose_socket;
 use aimux::project_service::process::{
     ProjectServiceStartup, desired_project_service_port, handle_project_service_connection,
-    publish_project_service_endpoint,
+    publish_project_service_endpoint, write_project_service_response,
 };
 use aimux::project_service::router::ProjectServiceRequestContext;
 use std::fs::{read_to_string, remove_dir_all};
@@ -72,6 +74,34 @@ fn project_service_connection_routes_http_to_rust_project_router() {
     cleanup(project);
 }
 
+#[test]
+fn stream_response_writer_keeps_sse_connection_alive_until_client_disconnects() {
+    let response = prepare_project_service_sse_response(
+        200,
+        b"event: ready\ndata: {\"ok\":true}\n\n".to_vec(),
+        Some(ProjectServiceStreamPlan {
+            kind: ProjectServiceStreamKind::ProjectEvents,
+            session_id: None,
+            start_line: None,
+            interval_ms: 100,
+        }),
+        Default::default(),
+    );
+    let mut writer = DisconnectAfterWrites::new(2);
+
+    let error = write_project_service_response(&mut writer, &response).expect_err("disconnect");
+
+    assert!(matches!(
+        error,
+        aimux::daemon::listener::DaemonListenerError::Io(_)
+    ));
+    let output = String::from_utf8(writer.output).expect("sse response");
+    assert!(output.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(output.contains("content-type: text/event-stream\r\n"));
+    assert!(output.contains("event: ready\ndata: {\"ok\":true}\n\n"));
+    assert!(output.contains(": keepalive\n\n"));
+}
+
 #[cfg(unix)]
 #[test]
 fn project_service_expose_socket_publishes_and_cleans_up_path() {
@@ -104,6 +134,38 @@ struct MemoryStream {
     input: Vec<u8>,
     offset: usize,
     output: Vec<u8>,
+}
+
+struct DisconnectAfterWrites {
+    writes_left: usize,
+    output: Vec<u8>,
+}
+
+impl DisconnectAfterWrites {
+    fn new(writes_left: usize) -> Self {
+        Self {
+            writes_left,
+            output: Vec::new(),
+        }
+    }
+}
+
+impl Write for DisconnectAfterWrites {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.writes_left == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "client disconnected",
+            ));
+        }
+        self.writes_left -= 1;
+        self.output.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl MemoryStream {
