@@ -135,7 +135,7 @@ fn task_assign_creates_thread_message_and_derived_indexes() {
 }
 
 #[test]
-fn task_assignment_delivers_to_live_session_and_records_message_delivery() {
+fn task_assignment_records_work_without_tmux_prompt_delivery() {
     let project = temp_project("task-assignment-delivery");
     let state_dir = project.join("state");
     write_delivery_topology(&state_dir, &[("codex-worker", "@worker")]);
@@ -156,18 +156,8 @@ fn task_assignment_delivers_to_live_session_and_records_message_delivery() {
     )
     .unwrap();
     assert_eq!(response.status, 200);
-    assert_eq!(response.body["deliveredTo"], json!(["codex-worker"]));
-
-    let delivered_text = text_sent_to(&runtime, "@worker");
-    assert!(delivered_text.contains("[aimux task assigned]"));
-    assert!(delivered_text.contains("Task id:"));
-    assert!(delivered_text.contains("Run the focused parser checks."));
-    assert!(delivered_text.contains("aimux task accept"));
-    assert!(
-        runtime
-            .actions
-            .contains(&FakeRuntimeAction::CarriageReturn("@worker".into()))
-    );
+    assert_eq!(response.body["deliveredTo"], json!([]));
+    assert!(runtime.actions.is_empty());
 
     let exchange = read_exchange(&state_dir);
     let message_id = response.body["message"]["id"].as_str().unwrap();
@@ -177,13 +167,13 @@ fn task_assignment_delivers_to_live_session_and_records_message_delivery() {
         .iter()
         .find(|message| message["id"] == message_id)
         .unwrap();
-    assert_eq!(message["deliveredTo"], json!(["codex-worker"]));
-    assert!(message["deliveredAt"].as_str().is_some());
+    assert_eq!(message.get("deliveredTo"), None);
+    assert_eq!(message.get("deliveredAt"), None);
     cleanup(project);
 }
 
 #[test]
-fn teammate_task_assigns_direct_teammate_and_delivers_prompt() {
+fn teammate_task_assigns_direct_teammate_without_tmux_prompt_delivery() {
     let project = temp_project("teammate-task");
     let state_dir = project.join("state");
     write_teammate_topology(
@@ -231,12 +221,8 @@ fn teammate_task_assigns_direct_teammate_and_delivers_prompt() {
         response.body["thread"]["worktreePath"],
         "/repo/.aimux/worktrees/review"
     );
-    assert_eq!(response.body["deliveredTo"], json!(["codex-worker"]));
-
-    let delivered_text = text_sent_to(&runtime, "@worker");
-    assert!(delivered_text.contains("[aimux task assigned]"));
-    assert!(delivered_text.contains("Audit parser state drift"));
-    assert!(delivered_text.contains("aimux task accept"));
+    assert_eq!(response.body["deliveredTo"], json!([]));
+    assert!(runtime.actions.is_empty());
 
     let exchange = read_exchange(&state_dir);
     assert!(
@@ -508,25 +494,8 @@ fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
     )
     .unwrap();
     assert_eq!(sent.status, 200);
-    assert_eq!(sent.body["deliveredTo"], json!(["codex-one", "codex-two"]));
-
-    let one_text = text_sent_to(&runtime, "@one");
-    let two_text = text_sent_to(&runtime, "@two");
-    assert!(one_text.contains("[aimux message]"));
-    assert!(one_text.contains("Please inspect this."));
-    assert!(one_text.contains("--from codex-one"));
-    assert!(two_text.contains("[aimux message]"));
-    assert!(two_text.contains("--from codex-two"));
-    assert!(
-        runtime
-            .actions
-            .contains(&FakeRuntimeAction::CarriageReturn("@one".into()))
-    );
-    assert!(
-        runtime
-            .actions
-            .contains(&FakeRuntimeAction::CarriageReturn("@two".into()))
-    );
+    assert_eq!(sent.body["deliveredTo"], json!([]));
+    assert!(runtime.actions.is_empty());
 
     let exchange = read_exchange(&state_dir);
     let message_id = sent.body["message"]["id"].as_str().unwrap();
@@ -536,7 +505,7 @@ fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
         .iter()
         .find(|message| message["id"] == message_id)
         .unwrap();
-    assert_eq!(message["deliveredTo"], json!(["codex-one", "codex-two"]));
+    assert_eq!(message.get("deliveredTo"), None);
     cleanup(project);
 }
 
@@ -1043,18 +1012,6 @@ fn write_teammate_topology(state_dir: &PathBuf, sessions: &[(&str, &str, Option<
         serde_yaml::to_string(&topology).expect("topology yaml"),
     )
     .expect("write topology");
-}
-
-fn text_sent_to(runtime: &FakeDeliveryRuntime, window_id: &str) -> String {
-    runtime
-        .actions
-        .iter()
-        .filter_map(|action| match action {
-            FakeRuntimeAction::Text(target, text) if target == window_id => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn temp_project(label: &str) -> PathBuf {
