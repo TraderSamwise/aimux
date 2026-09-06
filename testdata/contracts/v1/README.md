@@ -617,6 +617,8 @@ Priority fixture groups:
 - `dashboard/order.json`: dashboard saved-order keying, stale-id
   normalization, movement, and per-worktree session/service ordering captured
   by running TypeScript `dashboard/order` helpers.
+- `dashboard/pending-actions.json`: dashboard pending-action blocking-kind
+  policy captured by running TypeScript `isBlockingPendingDashboardActionKind`.
 - `dashboard/visibility.json`: dashboard offline-session classification and
   hide-offline model filtering captured by running TypeScript
   `dashboard/visibility` helpers.
