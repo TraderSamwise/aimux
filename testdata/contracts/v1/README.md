@@ -120,6 +120,12 @@ Priority fixture groups:
   unavailable live-source contracts captured by running TypeScript
   `buildDebugStateReport`.
 
+## Fast Control
+
+- `fast-control/switching.json`: switchable agent filtering, project-control
+  guards, worktree scoping, teammate navigation, liveness handling, and
+  serialized item shape captured by running TypeScript `fast-control` helpers.
+
 ## Hooks
 
 - `hooks/tool-hooks.json`: Claude and Codex hook command construction,
