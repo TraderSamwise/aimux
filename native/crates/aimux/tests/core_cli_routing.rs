@@ -1,12 +1,12 @@
 use aimux::core_cli_routing::{
-    CoreAgentPsArgs, CoreDaemonRestartArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs,
-    CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand, CoreProjectEnsureArgs, CoreRestartArgs,
-    core_command_args, has_core_global_logging_args, is_core_cli_command,
-    is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_ps_args,
-    parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
-    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
-    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
-    parse_core_restart_args, parse_core_runtime_restart_args,
+    CoreAgentInputArgs, CoreAgentPsArgs, CoreDaemonRestartArgs, CoreHostAgentReadArgs,
+    CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand,
+    CoreProjectEnsureArgs, CoreRestartArgs, core_command_args, has_core_global_logging_args,
+    is_core_cli_command, is_core_project_ensure_command, is_valid_core_project_ensure_args,
+    parse_core_agent_input_args, parse_core_agent_ps_args, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
+    parse_core_host_agent_stream_args, parse_core_host_restart_args, parse_core_logs_args,
+    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -149,6 +149,35 @@ fn agent_ps_parser_matches_project_json_forms() {
     assert_eq!(parse_core_agent_ps_args(&["ps", "--project"]), None);
     assert_eq!(parse_core_agent_ps_args(&["ps", "--project=-repo"]), None);
     assert_eq!(parse_core_agent_ps_args(&["ps", "extra"]), None);
+}
+
+#[test]
+fn agent_input_parser_preserves_variadic_text_and_project_option() {
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hello", "there", "--project", "/repo"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "hello there".into(),
+            project: Some("/repo".into()),
+        })
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "--", "--flag"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "--flag".into(),
+            project: None,
+        })
+    );
+    assert_eq!(parse_core_agent_input_args(&["input", "claude-1"]), None);
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "   "]),
+        None
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hello", "--project", "--bad"]),
+        None
+    );
 }
 
 #[test]

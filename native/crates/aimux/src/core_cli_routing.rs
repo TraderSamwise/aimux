@@ -15,6 +15,15 @@ pub struct CoreAgentPsArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreAgentInputArgs {
+    pub session_id: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoreLogsSubcommand {
@@ -269,6 +278,55 @@ pub fn parse_core_agent_ps_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPs
         return None;
     }
     parse_project_json_flags(&args[1..])
+}
+
+pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentInputArgs> {
+    if args.first().map(AsRef::as_ref) != Some("input") {
+        return None;
+    }
+    let mut project = None;
+    let mut positional = Vec::new();
+    let mut literal_text = false;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if literal_text {
+            positional.push(arg.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--" {
+            literal_text = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        positional.push(arg.to_owned());
+        index += 1;
+    }
+    let (session_id, text_parts) = positional.split_first()?;
+    let text = text_parts.join(" ");
+    (!session_id.is_empty() && !text.trim().is_empty()).then(|| CoreAgentInputArgs {
+        session_id: session_id.clone(),
+        text,
+        project,
+    })
 }
 
 #[allow(clippy::collapsible_if)]
@@ -753,6 +811,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     match (command, subcommand) {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
         (Some("ps"), _) => true,
+        (Some("input"), _) => true,
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,

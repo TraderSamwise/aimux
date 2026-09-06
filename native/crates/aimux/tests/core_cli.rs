@@ -299,6 +299,54 @@ fn agent_ps_plans_native_text_route_with_project_resolution() {
 }
 
 #[test]
+fn agent_input_plans_native_text_route_with_variadic_text_body() {
+    let plan = classify_core_cli_with_project_resolver(
+        &[
+            "input",
+            "claude-1",
+            "hello",
+            "there",
+            "--project",
+            "./child",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("input plan");
+    assert_eq!(plan.operation, CoreCliOperation::AgentInput);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/input-text".into(),
+            body: Some(json!({
+                "project": "/resolved/./child",
+                "sessionId": "claude-1",
+                "text": "hello there",
+            })),
+        }
+    );
+
+    let literal = classify_core_cli(&["input", "claude-1", "--", "--flag"], &context(true, true))
+        .expect("literal input plan");
+    assert_eq!(
+        literal.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/input-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "text": "--flag",
+            })),
+        }
+    );
+
+    let empty = classify_core_cli(&["input", "claude-1", "  "], &context(true, true))
+        .expect_err("empty input");
+    assert_eq!(empty.to_string(), "aimux: input requires non-empty text");
+    assert_eq!(empty.exit_code(), 1);
+}
+
+#[test]
 fn invalid_host_agent_stream_args_fail_before_node_fallback() {
     let invalid_lines = classify_core_cli(
         &["host", "agent-stream", "claude-1", "--lines", "-5"],

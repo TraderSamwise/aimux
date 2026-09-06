@@ -139,6 +139,8 @@ impl CoreCliRuntime for FakeRuntime {
             "pane output\n".into()
         } else if path.starts_with("/core/agents/ps-text?") {
             "claude-1  [claude]  ready\n".into()
+        } else if path == "/core/agents/input-text" {
+            "delivered to claude-1\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -520,6 +522,31 @@ fn agent_ps_executes_native_text_route_without_core_command_fallback() {
     assert_eq!(
         runtime.text_routes,
         [("/core/agents/ps-text?project=%2Frepo&json=1".into(), None,)]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn agent_input_executes_native_text_route_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let input = run_core_cli_with(
+        &args(&["input", "claude-1", "hello", "--project", "/repo"]),
+        &mut runtime,
+    );
+
+    assert_eq!(input.code, 0);
+    assert_eq!(input.stdout, ["delivered to claude-1"]);
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            "/core/agents/input-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "text": "hello",
+            })),
+        )]
     );
     assert!(runtime.commands.is_empty());
 }
