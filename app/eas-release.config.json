@@ -16,7 +16,7 @@
     "productionChannel": "production",
     "testflightEnvironment": "production",
     "productionEnvironment": "production",
-    "defaultBuildPlatform": "all",
+    "defaultBuildPlatform": "ios",
     "defaultUpdatePlatform": "all",
     "autoSubmit": true,
     "platformProfiles": {
