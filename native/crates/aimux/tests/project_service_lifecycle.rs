@@ -269,6 +269,7 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
             "tool": "mock",
             "sessionId": "mock-new",
             "worktreePath": worktree,
+            "extraArgs": ["--raw", "value"],
             "open": false,
             "launchOverride": {
                 "command": "/bin/mock",
@@ -296,7 +297,10 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
     );
     assert_eq!(runtime.metadata[0].1["sessionId"], "mock-new");
     assert_eq!(runtime.metadata[0].1["toolConfigKey"], "mock");
-    assert_eq!(runtime.metadata[0].1["args"], json!(["--base", "--fast"]));
+    assert_eq!(
+        runtime.metadata[0].1["args"],
+        json!(["--base", "--fast", "--raw", "value"])
+    );
     let topology = read_topology(&state_dir);
     let session = session(&topology, "mock-new");
     assert_eq!(session["status"], "running");

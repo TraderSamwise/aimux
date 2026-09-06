@@ -531,10 +531,11 @@ fn route_agent_spawn(
         .map(|launch| launch.command.clone())
         .or_else(|| trimmed_string(tool_config.get("command")))
         .unwrap_or_else(|| tool_key.clone());
-    let args = launch_override
+    let mut args = launch_override
         .as_ref()
         .map(|launch| launch.args.clone())
         .unwrap_or_else(|| string_array_field(tool_config.get("args")));
+    args.extend(string_array_field(body.get("extraArgs")));
     let mut env = launch_override
         .as_ref()
         .map(|launch| launch.env.clone())

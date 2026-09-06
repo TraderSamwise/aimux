@@ -1003,16 +1003,20 @@ where
                 .as_deref()
                 .map(&resolve_project_root)
                 .unwrap_or_else(|| context.current_project_root.clone());
+            let mut body = serde_json::Map::from_iter([
+                ("project".into(), json!(project_root)),
+                ("tool".into(), json!(parsed.tool)),
+                ("worktreePath".into(), json!(parsed.worktree)),
+                ("open".into(), json!(parsed.open)),
+            ]);
+            if !parsed.extra_args.is_empty() {
+                body.insert("extraArgs".into(), json!(parsed.extra_args));
+            }
             (
                 CoreCliOperation::LifecycleSpawn,
                 CoreCliAction::TextRoute {
                     path: text_route_path(CORE_API_ROUTES.lifecycle_spawn_text, parsed.json),
-                    body: Some(json!({
-                        "project": project_root,
-                        "tool": parsed.tool,
-                        "worktreePath": parsed.worktree,
-                        "open": parsed.open,
-                    })),
+                    body: Some(Value::Object(body)),
                 },
                 CoreCliFallback::None,
             )

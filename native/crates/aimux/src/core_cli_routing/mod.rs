@@ -388,11 +388,16 @@ pub fn parse_core_lifecycle_spawn_args<S: AsRef<str>>(
     let mut tool = None;
     let mut project = None;
     let mut worktree = None;
+    let mut extra_args = Vec::new();
     let mut open = true;
     let mut json = false;
     let mut index = 1;
     while index < args.len() {
         let arg = args[index].as_ref();
+        if arg == "--" {
+            extra_args.extend(args[index + 1..].iter().map(|arg| arg.as_ref().to_owned()));
+            break;
+        }
         if arg == "--json" {
             json = true;
             index += 1;
@@ -460,6 +465,7 @@ pub fn parse_core_lifecycle_spawn_args<S: AsRef<str>>(
         tool: tool?,
         project,
         worktree,
+        extra_args,
         open,
         json,
     })

@@ -1,3 +1,4 @@
+use aimux::config::load_config_for_project;
 use aimux::core_cli::CoreCommandRequestOptions;
 use aimux::core_cli_executor::run_core_cli;
 use aimux::core_cli_routing::core_command_args;
@@ -11,6 +12,7 @@ use aimux::local_ui_server::{
     DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
     open_url_in_browser, resolve_default_local_ui_root, start_local_ui_server,
 };
+use aimux::paths::PathResolver;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
@@ -134,6 +136,9 @@ fn main() -> Result<ExitCode> {
             if stripped_args.is_empty() {
                 return run_root_dashboard_command();
             }
+            if let Some(args) = native_tool_launch_args(&stripped_args) {
+                return run_core_command_and_print(&args);
+            }
             if !is_native_main_command(&stripped_args) {
                 return run_node_fallback(&raw_args);
             }
@@ -219,14 +224,100 @@ fn run_root_dashboard_command() -> Result<ExitCode> {
     }
 
     let dashboard_args = vec!["dashboard-reload".to_owned(), "--open".to_owned()];
-    let dashboard = run_core_cli(&dashboard_args);
-    for line in dashboard.stdout {
+    run_core_command_and_print(&dashboard_args)
+}
+
+fn run_core_command_and_print(args: &[String]) -> Result<ExitCode> {
+    let execution = run_core_cli(args);
+    for line in execution.stdout {
         println!("{line}");
     }
-    for line in dashboard.stderr {
+    for line in execution.stderr {
         eprintln!("{line}");
     }
-    Ok(ExitCode::from(dashboard.code as u8))
+    Ok(ExitCode::from(execution.code as u8))
+}
+
+fn native_tool_launch_args(args: &[String]) -> Option<Vec<String>> {
+    let (tool, extra_args) = args.split_first()?;
+    if tool.starts_with('-') || is_reserved_main_word(tool) {
+        return None;
+    }
+    let project_root = current_project_root().ok()?;
+    let config = load_config_for_project(project_root);
+    let tool_config = config.get("tools")?.as_object()?.get(tool)?;
+    if tool_config
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        == Some(false)
+    {
+        return None;
+    }
+    let mut spawn_args = vec!["spawn".to_owned(), "--tool".to_owned(), tool.clone()];
+    if !extra_args.is_empty() {
+        spawn_args.push("--".to_owned());
+        spawn_args.extend(extra_args.iter().cloned());
+    }
+    Some(spawn_args)
+}
+
+fn current_project_root() -> Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+    let mut resolver = PathResolver::from_env();
+    Ok(resolver.resolve_repo_root(cwd))
+}
+
+fn is_reserved_main_word(word: &str) -> bool {
+    matches!(
+        word,
+        "build-info"
+            | "contracts"
+            | "daemon"
+            | "dashboard-reload"
+            | "debug-state"
+            | "doctor"
+            | "expose"
+            | "fork"
+            | "graveyard"
+            | "handoff"
+            | "host"
+            | "hosted"
+            | "init"
+            | "input"
+            | "kill"
+            | "list-notifications"
+            | "login"
+            | "logout"
+            | "loop"
+            | "message"
+            | "migrate"
+            | "notifications"
+            | "notify"
+            | "overseer"
+            | "projects"
+            | "ps"
+            | "read-notifications"
+            | "remote"
+            | "rename"
+            | "repair"
+            | "restart"
+            | "restart-runtime"
+            | "review"
+            | "rewrite"
+            | "scribe"
+            | "security"
+            | "serve"
+            | "spawn"
+            | "stop"
+            | "task"
+            | "thread"
+            | "threads"
+            | "ui"
+            | "whoami"
+            | "worktree"
+            | "__dashboard-internal-native"
+            | "__project-service-internal"
+    )
 }
 
 fn run_local_ui_command(

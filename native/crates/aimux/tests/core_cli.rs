@@ -1303,6 +1303,9 @@ fn lifecycle_commands_plan_native_text_routes() {
             "feature",
             "--no-open",
             "--json",
+            "--",
+            "--model",
+            "gpt-5",
         ],
         &context(true, true),
         |project| format!("/resolved/{project}"),
@@ -1317,6 +1320,7 @@ fn lifecycle_commands_plan_native_text_routes() {
                 "project": "/resolved/./child",
                 "tool": "claude",
                 "worktreePath": "feature",
+                "extraArgs": ["--model", "gpt-5"],
                 "open": false,
             })),
         }
