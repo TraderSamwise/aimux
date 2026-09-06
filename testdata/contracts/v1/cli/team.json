@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "source": "src/cli/team.test.ts",
+  "generatedBy": "scripts/capture-cli-team-contract.mjs",
+  "description": "CLI team renderer and payload helper outputs captured by running TypeScript cli/team helpers. Commander route registration is intentionally not captured here because it belongs to the fenced core_cli/daemon text path.",
+  "cases": [
+    {
+      "id": "cli-team-001",
+      "name": "renders team show output with role flags",
+      "source": "src/cli/team.test.ts",
+      "api": "renderTeamShowLines",
+      "input": {
+        "name": "renders team show output with role flags",
+        "api": "renderTeamShowLines",
+        "config": {
+          "defaultRole": "coder",
+          "roles": {
+            "coder": { "description": "Write code", "canEdit": true },
+            "reviewer": { "description": "Review changes", "reviewedBy": "lead" }
+          }
+        }
+      },
+      "output": [
+        "Team Roles:",
+        "  coder: Write code (can edit)",
+        "  reviewer: Review changes (reviewed by: lead)",
+        "",
+        "Default role: coder"
+      ],
+      "inputSha256": "89a2a6164b48e8f6736c261a12fa42d8858ffb8164d28f3a5854cd6df6a4c9d9"
+    },
+    {
+      "id": "cli-team-002",
+      "name": "renders team init output",
+      "source": "src/cli/team.test.ts",
+      "api": "renderTeamInitLines",
+      "input": {
+        "name": "renders team init output",
+        "api": "renderTeamInitLines",
+        "config": {
+          "defaultRole": "coder",
+          "roles": {
+            "coder": { "description": "Write code", "canEdit": true },
+            "reviewer": { "description": "Review changes", "reviewedBy": "lead" }
+          }
+        }
+      },
+      "output": ["Team config initialized with default roles:", "  coder: Write code", "  reviewer: Review changes"],
+      "inputSha256": "0d4be8af693b2c7704a5350fd4b2e3babe4ea467e906e4ce15bda38958200aef"
+    },
+    {
+      "id": "cli-team-003",
+      "name": "builds JSON payloads with optional role",
+      "source": "src/cli/team.test.ts",
+      "api": "buildTeamCliPayload",
+      "input": {
+        "name": "builds JSON payloads with optional role",
+        "api": "buildTeamCliPayload",
+        "projectRoot": "/repo",
+        "role": "coder",
+        "config": {
+          "defaultRole": "coder",
+          "roles": {
+            "coder": { "description": "Write code", "canEdit": true },
+            "reviewer": { "description": "Review changes", "reviewedBy": "lead" }
+          }
+        }
+      },
+      "output": {
+        "ok": true,
+        "projectRoot": "/repo",
+        "config": {
+          "defaultRole": "coder",
+          "roles": {
+            "coder": { "description": "Write code", "canEdit": true },
+            "reviewer": { "description": "Review changes", "reviewedBy": "lead" }
+          }
+        },
+        "role": "coder"
+      },
+      "inputSha256": "d54a3a63d94cf82ee5af4c3a8ad8a0837a1fb1a10f5b2c18da33bad944110bf6"
+    }
+  ]
+}

@@ -640,6 +640,9 @@ Priority fixture groups:
 
 - `cli/agent-id.json`: agent identity JSON payload and human-readable identity
   line rendering captured by running TypeScript `cli/agent-id` helpers.
+- `cli/team.json`: team CLI role-list rendering, init rendering, and JSON
+  payload helper behavior captured by running TypeScript `cli/team` helpers;
+  commander route registration remains on the fenced core CLI/daemon text path.
 - `cli/parsing.json`: process command-line flag value matching and shell/env
   assignment parsing captured by running TypeScript `process-args` and
   `shell-args`.
