@@ -308,6 +308,34 @@ pub fn should_render_after_project_event_refresh(
     true
 }
 
+pub fn dashboard_alert_footer_flash(mode: &str, event: &Map<String, Value>) -> Option<String> {
+    if mode != "dashboard" {
+        return None;
+    }
+    let kind = event.get("kind").and_then(Value::as_str)?;
+    let title = event
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("undefined");
+    let session_id = event
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("agent");
+    match kind {
+        "notification" => Some(format!("◌ {title}")),
+        "needs_input" => Some(format!("◉ {session_id} needs input")),
+        "next_step" => Some(format!("◉ {session_id} ready for next step")),
+        "message_waiting" => Some(format!("✉ Message waiting → {session_id}")),
+        "handoff_waiting" => Some(format!("⇢ Handoff waiting → {session_id}")),
+        "task_assigned" => Some(format!("⧫ Task assigned → {session_id}")),
+        "review_waiting" => Some(format!("◌ Review waiting → {session_id}")),
+        "blocked" => Some(format!("⧗ {title}")),
+        "task_done" => Some(format!("✓ {title}")),
+        "task_failed" => Some(format!("✗ {title}")),
+        _ => None,
+    }
+}
+
 fn touches(views: &[String], candidates: &[&str]) -> bool {
     candidates
         .iter()
