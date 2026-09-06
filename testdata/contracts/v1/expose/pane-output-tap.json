@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "source": "src/expose-pane-output-tap.ts",
+  "generatedBy": "scripts/capture-expose-pane-output-tap-contract.mjs",
+  "description": "Expose pane output tap ownership, adoption, renewal, expiry, compaction, and failure contracts captured by running TypeScript with mocked tmux calls.",
+  "constants": {
+    "EXPOSE_PANE_TAP_ACTIVE_MS": 10000,
+    "EXPOSE_PANE_TAP_MAINTENANCE_MS": 1000,
+    "EXPOSE_PANE_TAP_MAX_BYTES": 128000
+  },
+  "cases": [
+    {
+      "id": "expose-pane-output-tap-001",
+      "name": "starts tmux pipe and reads latest tap output",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": {
+        "items": [
+          {
+            "id": "a",
+            "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }
+          }
+        ],
+        "now": "2026-07-20T13:00:00.000Z"
+      },
+      "output": {
+        "snapshot": {
+          "output": "output for @1\n",
+          "capturedAt": "2026-07-20T13:00:00.000Z",
+          "source": "tap",
+          "windowId": "@1",
+          "byteCount": 14
+        },
+        "filesBeforeStop": ["cc1fdd7d91dcb421.log"],
+        "filesAfterStop": 0,
+        "calls": {
+          "isPanePiped": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }],
+          "pipeTargetToFile": [
+            {
+              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+              "file": "cc1fdd7d91dcb421.log",
+              "onlyIfNotPiped": true,
+              "hasOwnership": true
+            }
+          ],
+          "stopPanePipe": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+        }
+      },
+      "inputSha256": "817511254ec805f52d1d55cd41b58e83c8b65c3b5d0bc761e230fdb10c744407"
+    },
+    {
+      "id": "expose-pane-output-tap-002",
+      "name": "does not restart already tracked target while demand is renewed",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "activeMs": 1000, "renewAfterMs": 500 },
+      "output": {
+        "pipeCalls": 1,
+        "stopCalls": 0,
+        "readOutput": "output for @1\n",
+        "stats": { "running": true, "trackedTargets": 1, "pendingStarts": 0, "foreignLiveTokens": 0 }
+      },
+      "inputSha256": "6291aec08ace20aaf03778d49dc512227c7a5c43bd0a7955097a26bc2c2cc0dd"
+    },
+    {
+      "id": "expose-pane-output-tap-003",
+      "name": "skips panes already piped so stop only detaches owned taps",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "isPanePiped": true },
+      "output": { "pipeCalls": 0, "stopCalls": 0, "read": null, "filesAfterStop": 0 },
+      "inputSha256": "958fe10d1fa8a809e0ff4032aa91efae2518f31cb4d6b469368bec000fc8549e"
+    },
+    {
+      "id": "expose-pane-output-tap-004",
+      "name": "adopts live owned tap after manager restart",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "windowId": "@1" },
+      "output": {
+        "readOutput": "warm tap output\n",
+        "restartedCalls": {
+          "isPanePiped": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }],
+          "pipeTargetToFile": [],
+          "stopPanePipe": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+        },
+        "initialStopCalls": 0,
+        "filesAfterStop": 0
+      },
+      "inputSha256": "81de6c5fb9d471bf55b275bca00e67d945527ee8e9469cb280e0de4bb0e62fd8"
+    },
+    {
+      "id": "expose-pane-output-tap-005",
+      "name": "adopts newly started pipe when ownership is reported late",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "windowId": "@1", "ownership": "late" },
+      "output": {
+        "beforeOwnership": null,
+        "afterOwnership": "late token output\n",
+        "calls": {
+          "isPanePiped": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }],
+          "pipeTargetToFile": [
+            {
+              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+              "file": "cc1fdd7d91dcb421.log",
+              "onlyIfNotPiped": true,
+              "hasOwnership": true
+            }
+          ],
+          "stopPanePipe": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+        },
+        "filesAfterStop": 0
+      },
+      "inputSha256": "1c6c1e8bcd633065c2756b93a42b8d97ac7859c49a5ce52eb0adb2b47c70556e"
+    },
+    {
+      "id": "expose-pane-output-tap-006",
+      "name": "restarts tracked tap after ownership is lost while demand continues",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "windowId": "@1", "tokenRemoved": true },
+      "output": { "firstOutput": "stale output\n", "secondOutput": "fresh output\n", "pipeCalls": 2, "stopCalls": 1 },
+      "inputSha256": "f2070d70e3268c7d0c2ca1a82d5c8ba8096299443c52cc26df2b3d635031954c"
+    },
+    {
+      "id": "expose-pane-output-tap-007",
+      "name": "retries pending start that never reports ownership",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "maintenanceMs": 100, "renewAtMs": [50, 101] },
+      "output": {
+        "afterRenew": 1,
+        "afterRetry": 2,
+        "read": null,
+        "stats": { "running": true, "trackedTargets": 0, "pendingStarts": 1, "foreignLiveTokens": 0 }
+      },
+      "inputSha256": "9e8adb1651f0277fad8a79a6c71ff7fc8d7ac8400f72a6f297c8abfca7030d70"
+    },
+    {
+      "id": "expose-pane-output-tap-008",
+      "name": "preserves different live token seen by pending start",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "windowId": "@1", "foreignToken": "foreign-token" },
+      "output": {
+        "readBefore": null,
+        "pipeCalls": 1,
+        "stopCalls": 0,
+        "logContent": "foreign output\n",
+        "tokenContainsForeign": true,
+        "stats": { "running": true, "trackedTargets": 0, "pendingStarts": 0, "foreignLiveTokens": 1 }
+      },
+      "inputSha256": "54db1992285df76f5f396f1311404c8446ec8a9b18f6589fb298f9fcdd125a04"
+    },
+    {
+      "id": "expose-pane-output-tap-009",
+      "name": "preserves different live token when tracked ownership is lost",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "windowId": "@1", "foreignToken": "foreign-token" },
+      "output": {
+        "read": null,
+        "pipeCalls": 1,
+        "stopCalls": 0,
+        "logContent": "owned output\n",
+        "tokenContainsForeign": true,
+        "stats": { "running": true, "trackedTargets": 0, "pendingStarts": 0, "foreignLiveTokens": 1 }
+      },
+      "inputSha256": "54db1992285df76f5f396f1311404c8446ec8a9b18f6589fb298f9fcdd125a04"
+    },
+    {
+      "id": "expose-pane-output-tap-010",
+      "name": "expires demand and stops active pane pipes on next read",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "activeMs": 1000, "readAfterMs": 1001 },
+      "output": {
+        "read": null,
+        "stopCalls": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }],
+        "filesAfterExpiry": 0,
+        "stats": { "running": true, "trackedTargets": 0, "pendingStarts": 0, "foreignLiveTokens": 0 }
+      },
+      "inputSha256": "49039b87119dc1e3cd137c540390866fbd71d2743df02fffbf94ae9be77ab5da"
+    },
+    {
+      "id": "expose-pane-output-tap-011",
+      "name": "reads and compacts bounded tap files",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "maxBytes": 5, "content": "0123456789" },
+      "output": {
+        "snapshot": {
+          "output": "56789",
+          "capturedAt": "2026-09-06T09:49:13.747Z",
+          "source": "tap",
+          "windowId": "@1",
+          "byteCount": 5
+        },
+        "contents": { "cc1fdd7d91dcb421.log": "56789" }
+      },
+      "inputSha256": "2c0e27900f1d8a6108deb082dd0e622cc3541662c737e1cd80971b5f964a4d4f"
+    },
+    {
+      "id": "expose-pane-output-tap-012",
+      "name": "compacts active tap files when demand is renewed",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "maintenanceMs": 100, "maxBytes": 5, "renewAfterMs": 100 },
+      "output": {
+        "before": { "cc1fdd7d91dcb421.log": "0123456789" },
+        "after": { "cc1fdd7d91dcb421.log": "56789" },
+        "stopCalls": 1
+      },
+      "inputSha256": "a68c3bbf3bd1a1596b904f1390a96dc93df66aacf1a39a09deb49b5f35a557e7"
+    },
+    {
+      "id": "expose-pane-output-tap-013",
+      "name": "does not stop pane pipe after ownership is lost",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "tokenRemovedBeforeStop": true },
+      "output": { "stopCalls": 0, "filesAfterStop": 0 },
+      "inputSha256": "d5987daa12955aec07aba6791eeaad133f460ba2817228843902fbc259e45576"
+    },
+    {
+      "id": "expose-pane-output-tap-014",
+      "name": "does not track pane when starting pipe fails",
+      "source": "src/expose-pane-output-tap.ts",
+      "api": "ExposePaneOutputTap",
+      "input": { "pipeTargetToFile": "throws" },
+      "output": {
+        "read": null,
+        "stopCalls": 0,
+        "filesAfterStop": 0,
+        "stats": { "running": false, "trackedTargets": 0, "pendingStarts": 0, "foreignLiveTokens": 0 }
+      },
+      "inputSha256": "ee9e0351ffb1271e1c76768a89c716581aec12811ff397d5f8ca723e1ee4c9c7"
+    }
+  ]
+}

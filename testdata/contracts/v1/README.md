@@ -74,6 +74,13 @@ Priority fixture groups:
   reachability, sorting, and view composition cases captured by running the
   TypeScript coordination model functions.
 
+## Expose
+
+- `expose/pane-output-tap.json`: pane output tap ownership, adoption, renewal,
+  pending-start retry, expiry, compaction, lost-ownership, and tmux failure
+  cases captured by running TypeScript `ExposePaneOutputTap` with mocked tmux
+  calls and temporary tap files.
+
 ## Metadata Store
 
 - `metadata-store/store.json`: persisted metadata load/save, topology-owned
