@@ -114,6 +114,38 @@ pub fn compose_tool_launch(
     })
 }
 
+pub fn can_resume_with_backend_session_id(
+    tool_cfg: Option<&Value>,
+    backend_session_id: Option<&str>,
+) -> bool {
+    backend_session_id.is_some_and(|backend_session_id| !backend_session_id.is_empty())
+        && tool_cfg.is_some_and(|tool_cfg| {
+            tool_cfg
+                .get("resumeByBackendSessionId")
+                .and_then(Value::as_bool)
+                != Some(false)
+                && string_array_field(tool_cfg, "resumeArgs")
+                    .iter()
+                    .any(|arg| arg.contains("{sessionId}"))
+        })
+}
+
+pub fn get_tool_resume_args(
+    tool_cfg: Option<&Value>,
+    backend_session_id: Option<&str>,
+) -> Option<Vec<String>> {
+    if !can_resume_with_backend_session_id(tool_cfg, backend_session_id) {
+        return None;
+    }
+    let backend_session_id = backend_session_id?;
+    Some(
+        string_array_field(tool_cfg?, "resumeArgs")
+            .into_iter()
+            .map(|arg| arg.replace("{sessionId}", backend_session_id))
+            .collect(),
+    )
+}
+
 fn tool_action_arg_patterns(tool_cfg: Option<&Value>) -> Vec<Vec<String>> {
     ["resumeArgs", "forkArgs"]
         .into_iter()
@@ -507,7 +539,7 @@ fn default_plan_content(session_id: &str, tool: &str, worktree_path: Option<&str
     )
 }
 
-fn build_aimux_agent_instructions(session_id: Option<&str>, include_teammates: bool) -> String {
+pub fn build_aimux_agent_instructions(session_id: Option<&str>, include_teammates: bool) -> String {
     let session_line = session_id
         .map(|id| format!("Your aimux session ID is {id}.\n"))
         .unwrap_or_default();
@@ -523,7 +555,7 @@ fn build_aimux_agent_instructions(session_id: Option<&str>, include_teammates: b
         "For generic delegation or handoff records, create them with `aimux task assign` or the project service task endpoint with `status: \"pending\"`, `assignedBy`, `description`, `prompt`, and timestamps. "
     };
     format!(
-        "You are running inside aimux, an agent multiplexer for this repository. Aimux keeps long-lived Claude, Codex, and shell sessions in the main checkout and git worktrees so the user can switch between them, stop/restart them, and coordinate work.\n{session_line}\n## Aimux Model\n- The user controls aimux from the dashboard and tmux status/footer UI.\n- Agents are normal tool processes running inside aimux-managed tmux windows.\n- Broad cross-agent coordination uses aimux task, handoff, and thread commands backed by the runtime exchange.\n- Chat messages prefixed like `[name]` are shared multi-human or multi-agent messages; treat the bracketed name as the speaker.\n- To show a local output file in GUI chat, publish it with `aimux attachment publish <path> --session <session-id>`.\n{team_coordination_line}\n## Aimux Inventory And Coordination\n- `aimux ps [--project <path>] [--json]` is the authoritative inventory for Aimux-managed agents in a project, across worktrees.\n- `aimux host agent-read <session-id> [--project <path>]` reads another Aimux agent's recent terminal output.\n- `aimux task assign \"<description>\" --from <your-session-id> --to <session-id> --prompt \"<instructions>\" [--project <path>]` creates a durable task.\n- `aimux task complete <task-id> --from <your-session-id> --body \"<result>\" [--project <path>]` completes a task. `--result` is accepted as an alias for `--body`.\n- `aimux handoff send \"<context>\" --to <session-id> [--project <path>]` opens an explicit handoff thread.\n- `aimux message send \"<message>\" --to <session-id> [--project <path>]` sends a directed coordination message.\n- For generic private sub-agent work, use your own tool's native sub-agent mechanism and lifecycle. Do not turn generic sub-agent requests into Aimux coordination unless the user explicitly asks for Aimux.\n- When the user explicitly asks for Aimux channels, Aimux comms, Aimux tasks, Aimux handoffs, teammate coordination, or another Aimux CLI/API operation, use Aimux commands exclusively for that coordination path.\n- Claude/ListAgents-style vendor session lists can be valid for the vendor tool's own native subagents, but they are not Aimux inventory. Do not use them to discover, address, or rule out Aimux-managed Codex, Claude, Aider, or shell sessions.\n- Socket files, context files, and history artifacts are not Aimux inventory. If any non-Aimux source disagrees with `aimux ps`, trust `aimux ps`.\n- If an explicit Aimux coordination request cannot be completed with Aimux CLI/API commands, say you are stuck. Do not work around Aimux by probing sockets, private files, or vendor registries.\n- If an Aimux CLI command is unclear, inspect `aimux --help` and use the concrete shapes above only for coordination actions the user explicitly requested.\n- Do not infer liveness from private implementation files. Use project-service/runtime APIs directly only when the user explicitly asks for an Aimux CLI/API-level operation.\n\n## Shared Context Files\n- .aimux/context/{session_path}/live.md - recent conversation for this session\n- .aimux/context/{session_path}/summary.md - compacted history for this session\n- .aimux/plans/{session_path}.md - optional shared plan for long-running or delegated work\n- .aimux/status/{session_path}.md - optional brief status note for long-running or delegated work\n- .aimux/context/{{other-session-id}}/ - other agents' context when needed\n- .aimux/history/ - raw conversation history artifacts when available (JSONL)\n\nTreat these files as continuity artifacts, not as the source of truth for whether a session is managed or alive. For ordinary agent work, use `aimux ps` and `aimux host agent-read <session-id>` for Aimux liveness and output checks; use project-service/runtime state directly only when explicitly asked for an Aimux CLI/API-level operation.\n\nDo not proactively create or edit `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks. Only update those files when the user asks for coordination/delegation, when the task is explicitly long-running, or when state would materially help another agent continue the work.\n\n## Delegation Protocol\n{delegation_protocol}Optional fields are `assignedTo` for a specific session ID and `tool` for coordination metadata. Treat tasks as shared handoff records for explicit manual coordination flows.\nWhen you accept a task, finish the work and publish the result with `aimux task complete <task-id> --from <your-session-id> --body \"<result>\"`."
+        "You are running inside aimux, an agent multiplexer for this repository. Aimux keeps long-lived Claude, Codex, and shell sessions in the main checkout and git worktrees so the user can switch between them, stop/restart them, and coordinate work.\n{session_line}\n## Aimux Model\n- The user controls aimux from the dashboard and tmux status/footer UI.\n- Agents are normal tool processes running inside aimux-managed tmux windows.\n- Broad cross-agent coordination uses aimux task, handoff, and thread commands backed by the runtime exchange.\n- Chat messages prefixed like `[name]` are shared multi-human or multi-agent messages; treat the bracketed name as the speaker.\n- To show a local output file in GUI chat, publish it with `aimux attachment publish <path> --session <session-id>`.\n{team_coordination_line}\n## Aimux Inventory And Coordination\n- `aimux ps [--project <path>] [--json]` is the authoritative inventory for Aimux-managed agents in a project, across worktrees.\n- `aimux host agent-read <session-id> [--project <path>]` reads another Aimux agent's recent terminal output.\n- `aimux task assign \"<description>\" --from <your-session-id> --to <session-id> --prompt \"<instructions>\" [--project <path>]` creates a durable task.\n- `aimux task complete <task-id> --from <your-session-id> --body \"<result>\" [--project <path>]` completes a task. `--result` is accepted as an alias for `--body`.\n- `aimux handoff send \"<context>\" --to <session-id> [--project <path>]` opens an explicit handoff thread.\n- `aimux message send \"<message>\" --to <session-id> [--project <path>]` sends a directed coordination message.\n- For generic private sub-agent work, use your own tool's native sub-agent mechanism and lifecycle. Do not turn generic sub-agent requests into Aimux coordination unless the user explicitly asks for Aimux.\n- When the user explicitly asks for Aimux channels, Aimux comms, Aimux tasks, Aimux handoffs, teammate coordination, or another Aimux CLI/API operation, use Aimux commands exclusively for that coordination path.\n- Claude/ListAgents-style vendor session lists can be valid for the vendor tool's own native subagents, but they are not Aimux inventory. Do not use them to discover, address, or rule out Aimux-managed Codex, Claude, Aider, or shell sessions.\n- Socket files, context files, and history artifacts are not Aimux inventory. If any non-Aimux source disagrees with `aimux ps`, trust `aimux ps`.\n- If an explicit Aimux coordination request cannot be completed with Aimux CLI/API commands, say you are stuck. Do not work around Aimux by probing sockets, private files, or vendor registries.\n- If an Aimux CLI command is unclear, inspect `aimux --help` and use the concrete shapes above only for coordination actions the user explicitly requested.\n- Do not infer liveness from private implementation files. Use project-service/runtime APIs directly only when the user explicitly asks for an Aimux CLI/API-level operation.\n\n## Shared Context Files\n- .aimux/context/{session_path}/live.md — recent conversation for this session\n- .aimux/context/{session_path}/summary.md — compacted history for this session\n- .aimux/plans/{session_path}.md — optional shared plan for long-running or delegated work\n- .aimux/status/{session_path}.md — optional brief status note for long-running or delegated work\n- .aimux/context/{{other-session-id}}/ — other agents' context when needed\n- .aimux/history/ — raw conversation history artifacts when available (JSONL)\n\nTreat these files as continuity artifacts, not as the source of truth for whether a session is managed or alive. For ordinary agent work, use `aimux ps` and `aimux host agent-read <session-id>` for Aimux liveness and output checks; use project-service/runtime state directly only when explicitly asked for an Aimux CLI/API-level operation.\n\nDo not proactively create or edit `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks. Only update those files when the user asks for coordination/delegation, when the task is explicitly long-running, or when state would materially help another agent continue the work.\n\n## Delegation Protocol\n{delegation_protocol}Optional fields are `assignedTo` for a specific session ID and `tool` for coordination metadata. Treat tasks as shared handoff records for explicit manual coordination flows.\nWhen you accept a task, finish the work and publish the result with `aimux task complete <task-id> --from <your-session-id> --body \"<result>\"`."
     )
 }
 
@@ -602,7 +634,7 @@ fn append_block(target: &mut String, block: &str) {
     target.push_str(block);
 }
 
-fn summarize_fork_source_activity(snapshot: &ForkSourceSnapshot) -> Option<String> {
+pub fn summarize_fork_source_activity(snapshot: &ForkSourceSnapshot) -> Option<String> {
     if let Some(status) = snapshot
         .status_text
         .as_deref()
@@ -615,10 +647,11 @@ fn summarize_fork_source_activity(snapshot: &ForkSourceSnapshot) -> Option<Strin
         .history_text
         .as_deref()
         .or(snapshot.live_text.as_deref())?;
-    let mut lines = source
-        .lines()
+    let mut lines = strip_terminal_footer(source.lines().collect::<Vec<_>>())
+        .into_iter()
         .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|line| !line.trim().is_empty())
+        .filter(|line| !is_terminal_chrome_line(line))
         .collect::<Vec<_>>();
     if lines.len() > 8 {
         lines = lines.split_off(lines.len() - 8);
@@ -629,6 +662,100 @@ fn summarize_fork_source_activity(snapshot: &ForkSourceSnapshot) -> Option<Strin
     } else {
         Some(joined.chars().take(500).collect())
     }
+}
+
+fn strip_terminal_footer(lines: Vec<&str>) -> Vec<&str> {
+    let search_from = lines.len().saturating_sub(15);
+    for index in (search_from..lines.len()).rev() {
+        if is_rule_line(lines[index]) {
+            return lines[..index].to_vec();
+        }
+    }
+    lines
+}
+
+fn is_terminal_chrome_line(line: &str) -> bool {
+    if line.starts_with("# ")
+        || line.starts_with("Updated:")
+        || line.starts_with("Recent terminal output:")
+        || line.starts_with("Tip ")
+        || line.starts_with("⚠ ")
+        || line.starts_with("✻ ")
+        || line.starts_with("✳ ")
+        || line.starts_with("✽ ")
+        || line.starts_with("⏵⏵")
+        || line.starts_with("▶▶")
+    {
+        return true;
+    }
+    let lower = line.to_ascii_lowercase();
+    if lower.contains("shift+tab")
+        || lower.contains("? for shortcuts")
+        || contains_ctrl_shortcut(&lower)
+    {
+        return true;
+    }
+    if is_boxed_line(line) || is_shell_prompt_line(line) || is_agent_status_line(line) {
+        return true;
+    }
+    let decoration = line.chars().filter(|ch| is_decoration_char(*ch)).count();
+    decoration > 0 && decoration * 2 >= line.chars().count()
+}
+
+fn contains_ctrl_shortcut(line: &str) -> bool {
+    line.as_bytes()
+        .windows(6)
+        .any(|window| window[0..5] == *b"ctrl+" && window[5].is_ascii_lowercase())
+}
+
+fn is_shell_prompt_line(line: &str) -> bool {
+    let Some((user_host, rest)) = line.split_once(' ') else {
+        return false;
+    };
+    !user_host.is_empty()
+        && user_host
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+        && (rest.starts_with("~/") || rest.starts_with('/'))
+}
+
+fn is_agent_status_line(line: &str) -> bool {
+    let Some((_model, rest)) = line.split_once(" · ") else {
+        return false;
+    };
+    let words = line
+        .split(" · ")
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .count();
+    words <= 2 && (rest.starts_with("~/") || rest.starts_with('/'))
+}
+
+fn is_boxed_line(line: &str) -> bool {
+    matches!(
+        (line.chars().next(), line.chars().last()),
+        (Some('│' | '┃'), Some('│' | '┃'))
+    )
+}
+
+fn is_rule_line(line: &str) -> bool {
+    let mut run = 0;
+    for ch in line.chars() {
+        if is_decoration_char(ch) {
+            run += 1;
+            if run >= 12 {
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    false
+}
+
+fn is_decoration_char(ch: char) -> bool {
+    matches!(ch as u32, 0x2500..=0x259f)
 }
 
 fn read_history_text(project_root: &Path, session_id: &str, last_n: usize) -> Option<String> {

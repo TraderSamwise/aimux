@@ -253,6 +253,9 @@ Priority fixture groups:
 - `session-bootstrap/action-args.json`: launch action argument stripping and
   launch/persist argument composition captured by running TypeScript
   `session-bootstrap-action-args`.
+- `session-bootstrap/preamble.json`: agent instruction text, targeted resume
+  argument construction, preamble overflow side effects, and fork/switch/migrate
+  continuity preambles captured by running TypeScript `session-bootstrap`.
 
 ## Launch
 
