@@ -98,7 +98,7 @@ printf 'URL=%s\n' "$url" >> "$CURL_LOG"
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/doctor/versions-text*|*/core/doctor/disk-text*|*/core/doctor/exchange-text*|*/core/doctor/lifecycle-text*|*/core/doctor/tmux-text*|*/core/repair-text*|*/core/repair-exchange-text*|*/core/dashboard-reload-text*|*/core/runtime-restart-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/logs/path-text*|*/core/logs/tail-text*|*/core/logs/clear-text*|*/core/metadata-text*|*/core/project-ensure-text*|*/core/project-serve-text*|*/core/project-stop-text*|*/core/project-kill-text*|*/core/project-restart-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/agents/input-text*|*/core/agents/ps-text*|*/core/agents/rename-text*|*/core/agents/migrate-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/notifications/list-text*|*/core/notifications/send-text*|*/core/notifications/read-text*|*/core/notifications/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/cache-cleanup-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
+	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/doctor/versions-text*|*/core/doctor/disk-text*|*/core/doctor/exchange-text*|*/core/doctor/lifecycle-text*|*/core/doctor/tmux-text*|*/core/repair-text*|*/core/repair-exchange-text*|*/core/dashboard-reload-text*|*/core/runtime-restart-text*|*/core/restart-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/logs/path-text*|*/core/logs/tail-text*|*/core/logs/clear-text*|*/core/metadata-text*|*/core/project-ensure-text*|*/core/project-serve-text*|*/core/project-stop-text*|*/core/project-kill-text*|*/core/project-restart-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/agents/input-text*|*/core/agents/ps-text*|*/core/agents/rename-text*|*/core/agents/migrate-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/notifications/list-text*|*/core/notifications/send-text*|*/core/notifications/read-text*|*/core/notifications/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/cache-cleanup-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     [ -n "\${CURL_FORCE_EXIT:-}" ] && exit "$CURL_FORCE_EXIT"
     text_status="\${TEXT_ROUTE_STATUS:-200}"
@@ -291,60 +291,65 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
   });
 
-  it("runs restart through the Node launcher even when the daemon matches", () => {
+  it("serves restart from a matching daemon without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Aimux Restart\n  failures: 0\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["restart"], { NODE_EXIT: "17" });
 
-    expect(result.status).toBe(17);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
-    expect(existsSync(fixture.curlLog)).toBe(false);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Aimux Restart\n  failures: 0\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/restart-text");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
-  it("runs restart JSON and daemon restart alias through the Node launcher", () => {
+  it("serves restart JSON and daemon restart alias from a matching daemon", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+    writeFileSync(fixture.textRouteFile, '{\n  "summary": {\n    "failures": 0\n  }\n}\n');
 
-    expect(fixture.run(["restart", "--json"], { NODE_EXIT: "18" }).status).toBe(18);
-    expect(fixture.run(["daemon", "restart", "--json"], { NODE_EXIT: "19" }).status).toBe(19);
-
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js restart --json\n` +
-        `${fixture.aimuxRoot}/dist/launcher-bin.js daemon restart --json\n`,
+    expect(fixture.run(["restart", "--json"], { NODE_EXIT: "18" }).stdout).toBe(
+      '{\n  "summary": {\n    "failures": 0\n  }\n}\n',
     );
-    expect(existsSync(fixture.curlLog)).toBe(false);
+    expect(fixture.run(["daemon", "restart", "--json"], { NODE_EXIT: "19" }).stdout).toBe(
+      '{\n  "summary": {\n    "failures": 0\n  }\n}\n',
+    );
+
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/restart-text?json=1");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
-  it("passes restart project scope to the Node launcher", () => {
+  it("passes restart project scope to the matching daemon", () => {
     const fixture = makeFixture();
     const projectDir = join(fixture.root, "repo");
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Aimux Restart\n  failures: 0\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["restart", "--project", "."], { NODE_EXIT: "20" }, { cwd: projectDir });
 
-    expect(result.status).toBe(20);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js restart --project .\n`,
-    );
-    expect(realpathSync(projectDir)).toBeTruthy();
-    expect(existsSync(fixture.curlLog)).toBe(false);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Aimux Restart\n  failures: 0\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain(`project=${realpathSync(projectDir)}\n`);
+    expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
-  it("lets the Node launcher handle restart failures", () => {
+  it("returns daemon restart route failures without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Aimux Restart\n  failures: 1\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["restart"], { NODE_EXIT: "21" });
+    const result = fixture.run(["restart"], { TEXT_ROUTE_STATUS: "500", NODE_EXIT: "21" });
 
-    expect(result.status).toBe(21);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
-    expect(existsSync(fixture.curlLog)).toBe(false);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Aimux Restart\n  failures: 1\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/restart-text");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
   it("falls back to the Node launcher for restart when the daemon build is stale", () => {
@@ -358,18 +363,22 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
   });
 
-  it("lets the Node launcher validate restart arguments", () => {
+  it("rejects invalid restart arguments without launching Node when the daemon matches", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    expect(fixture.run(["restart", "--open"], { NODE_EXIT: "22" }).status).toBe(22);
-    expect(fixture.run(["daemon", "restart", "--project", "/repo"], { NODE_EXIT: "23" }).status).toBe(23);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js restart --open\n` +
-        `${fixture.aimuxRoot}/dist/launcher-bin.js daemon restart --project /repo\n`,
+    const open = fixture.run(["restart", "--open"], { NODE_EXIT: "22" });
+    const daemonProject = fixture.run(["daemon", "restart", "--project", "/repo"], { NODE_EXIT: "23" });
+
+    expect(open.status).toBe(1);
+    expect(open.stderr).toContain("Error: invalid or unsupported arguments for `aimux restart --open`.");
+    expect(daemonProject.status).toBe(1);
+    expect(daemonProject.stderr).toContain(
+      "Error: invalid or unsupported arguments for `aimux daemon restart --project /repo`.",
     );
-    expect(existsSync(fixture.curlLog)).toBe(false);
+    expect(readFileSync(fixture.curlLog, "utf8")).not.toContain("/core/restart-text");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
   it("serves doctor and repair commands from a matching daemon without launching Node", () => {

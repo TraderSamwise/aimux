@@ -972,6 +972,53 @@ aimux_resolve_project_arg() {
   esac
 }
 
+aimux_try_restart() {
+  command_name="${1:-}"
+  shift
+  project_root=""
+  json=0
+  case "$command_name" in
+    restart) ;;
+    daemon)
+      [ "${1:-}" = "restart" ] || return 1
+      shift
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json)
+        json=1
+        ;;
+      --project)
+        [ "$command_name" = "restart" ] || return 1
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project=*)
+        [ "$command_name" = "restart" ] || return 1
+        aimux_require_inline_arg_value "${1#--project=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  path="/core/restart-text"
+  [ "$json" -eq 1 ] && path="/core/restart-text?json=1"
+  if [ -n "$project_root" ]; then
+    project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+    aimux_post_query_text_route "$path" 120 --data-urlencode "project=$project_root"
+    return $?
+  fi
+  aimux_post_query_text_route "$path" 120
+}
+
 aimux_resolve_path_arg() {
   path_arg="$1"
   case "$path_arg" in
@@ -2643,6 +2690,13 @@ case "${1:-}" in
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
+  restart)
+    if aimux_try_restart "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
   dashboard-reload)
     if aimux_try_dashboard_reload "$@"; then
       exit 0
@@ -2809,6 +2863,13 @@ case "${1:-} ${2:-}" in
       exit 0
     fi
     aimux_handle_fast_path_failure "$*" 1
+    ;;
+  "daemon restart")
+    if aimux_try_restart "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
     ;;
   "daemon project-ensure")
     if aimux_try_daemon_project_ensure "$@"; then
