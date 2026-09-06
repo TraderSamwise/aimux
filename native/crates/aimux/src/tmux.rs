@@ -99,6 +99,12 @@ pub struct TmuxManagedWindow {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TmuxPersistedCommandText {
+    pub text: Vec<String>,
+    pub complete: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TmuxExecOptions {
     pub cwd: Option<String>,
 }
@@ -306,14 +312,15 @@ impl TmuxRuntimeManager {
     }
 
     pub fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
-        let Ok(pane_dead) = self.display_message("#{pane_dead}", Some(&target.window_id)) else {
+        let Ok(pane_dead) = self.display_message_raw("#{pane_dead}", Some(&target.window_id))
+        else {
             return false;
         };
         pane_dead.trim() != "1"
     }
 
     pub fn is_window_active(&mut self, target: &TmuxTarget) -> bool {
-        self.display_message("#{window_active}", Some(&target.window_id))
+        self.display_message_raw("#{window_active}", Some(&target.window_id))
             .is_ok_and(|value| value.trim() == "1")
     }
 
@@ -853,6 +860,63 @@ impl TmuxRuntimeManager {
             .or_else(|| clients.first().cloned())
     }
 
+    pub fn list_persisted_command_text(&mut self) -> TmuxPersistedCommandText {
+        let mut complete = true;
+        let mut text = Vec::new();
+        for args in [
+            vec!["list-panes", "-a", "-F", "#{pane_start_command}"],
+            vec!["list-keys"],
+            vec!["show-options", "-g"],
+        ] {
+            match self.exec_tmux(&args) {
+                Ok(value) if !value.is_empty() => text.push(value),
+                Ok(_) => {}
+                Err(_) => complete = false,
+            }
+        }
+        for session_name in self.list_session_names() {
+            for args in [
+                vec!["show-options", "-t", session_name.as_str()],
+                vec!["show-options", "-w", "-t", session_name.as_str()],
+                vec!["show-hooks", "-t", session_name.as_str()],
+            ] {
+                match self.exec_tmux(&args) {
+                    Ok(value) if !value.is_empty() => text.push(value),
+                    Ok(_) => {}
+                    Err(_) => complete = false,
+                }
+            }
+        }
+        TmuxPersistedCommandText { text, complete }
+    }
+
+    pub fn current_client_session(&mut self) -> Option<String> {
+        self.display_message("#{client_session}", None)
+    }
+
+    pub fn display_message(&mut self, format: &str, target: Option<&str>) -> Option<String> {
+        self.display_message_raw(format, target)
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn set_return_session(
+        &mut self,
+        session_name: &str,
+        return_session_name: &str,
+    ) -> Result<(), String> {
+        self.set_session_option(session_name, "@aimux-return-session", return_session_name)
+    }
+
+    pub fn get_return_session(&mut self, session_name: &str) -> Option<String> {
+        self.get_session_option(session_name, "@aimux-return-session")
+    }
+
+    pub fn refresh_status(&mut self) {
+        let _ = self.exec_owned(refresh_status_argv(), None);
+    }
+
     pub fn get_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
         self.exec_tmux(&["show-options", "-v", "-t", session_name, key])
             .ok()
@@ -937,7 +1001,11 @@ impl TmuxRuntimeManager {
             })
     }
 
-    fn display_message(&mut self, format: &str, target: Option<&str>) -> Result<String, String> {
+    fn display_message_raw(
+        &mut self,
+        format: &str,
+        target: Option<&str>,
+    ) -> Result<String, String> {
         let argv = match target {
             Some(target) => vec![
                 "display-message".to_owned(),

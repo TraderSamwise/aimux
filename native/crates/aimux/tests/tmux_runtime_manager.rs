@@ -689,6 +689,102 @@ fn configure_managed_session_ignores_unsupported_extended_key_options() {
         ]));
 }
 
+#[test]
+fn collects_persisted_command_text_from_panes_bindings_hooks_and_options() {
+    let mut manager = TmuxRuntimeManager::with_exec(|args, _options| {
+        let joined = args.join(" ");
+        if joined.starts_with("list-panes") {
+            return Ok("bash -lc dashboard".to_owned());
+        }
+        if joined == "list-keys" {
+            return Ok(
+                "bind-key -T root MouseDown1Pane run-shell '/installs/a/scripts/x.sh'".to_owned(),
+            );
+        }
+        if joined == "list-sessions -F #{session_name}" {
+            return Ok("alpha".to_owned());
+        }
+        if joined.starts_with("show-hooks") {
+            return Ok("pane-focus-in run-shell '/installs/b/scripts/y.sh'".to_owned());
+        }
+        if joined.starts_with("show-options") {
+            return Ok("status-format[0] \"#(sh '/installs/c/scripts/z.sh')\"".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    let result = manager.list_persisted_command_text();
+
+    assert!(result.complete);
+    let text = result.text.join("\n");
+    assert!(text.contains("bash -lc dashboard"));
+    assert!(text.contains("/installs/a/scripts/x.sh"));
+    assert!(text.contains("/installs/b/scripts/y.sh"));
+    assert!(text.contains("/installs/c/scripts/z.sh"));
+}
+
+#[test]
+fn reports_incomplete_when_persisted_command_text_reads_fail() {
+    let mut manager = TmuxRuntimeManager::with_exec(|args, _options| {
+        if args.join(" ").starts_with("list-sessions") {
+            return Ok(String::new());
+        }
+        Err("no server running".to_owned())
+    });
+
+    let result = manager.list_persisted_command_text();
+
+    assert_eq!(result.text, Vec::<String>::new());
+    assert!(!result.complete);
+}
+
+#[test]
+fn reads_display_and_return_session_helpers() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        match args.join(" ").as_str() {
+            "display-message -p #{client_session}" => Ok("aimux-mobile-abc\n".to_owned()),
+            "display-message -p -t @9 #{window_active}" => Ok("1\n".to_owned()),
+            "show-options -v -t aimux-mobile-abc @aimux-return-session" => {
+                Ok("origin-client\n".to_owned())
+            }
+            _ => Ok(String::new()),
+        }
+    });
+
+    assert_eq!(
+        manager.current_client_session(),
+        Some("aimux-mobile-abc".to_owned())
+    );
+    assert_eq!(
+        manager.display_message("#{window_active}", Some("@9")),
+        Some("1".to_owned())
+    );
+    manager
+        .set_return_session("aimux-mobile-abc", "origin-client")
+        .expect("set return session");
+    assert_eq!(
+        manager.get_return_session("aimux-mobile-abc"),
+        Some("origin-client".to_owned())
+    );
+    manager.refresh_status();
+
+    assert!(calls.borrow().contains(&vec![
+        "set-option".to_owned(),
+        "-t".to_owned(),
+        "aimux-mobile-abc".to_owned(),
+        "@aimux-return-session".to_owned(),
+        "origin-client".to_owned(),
+    ]));
+    assert!(
+        calls
+            .borrow()
+            .contains(&vec!["refresh-client".to_owned(), "-S".to_owned(),])
+    );
+}
+
 fn test_runtime_config() -> TmuxRuntimeConfig {
     TmuxRuntimeConfig {
         project_state_dir: "/state/mobile".to_owned(),
