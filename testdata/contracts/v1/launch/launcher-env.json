@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "source": "src/launcher-env.test.ts",
+  "generatedBy": "scripts/capture-launcher-env-contract.mjs",
+  "description": "Stable CLI environment defaults and launcher core/main/expose routing captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "launch-launcher-env-001",
+      "name": "fills blank aimux defaults",
+      "source": "src/launcher-env.test.ts",
+      "api": "prepareStableCliEnv",
+      "input": { "env": {} },
+      "output": {
+        "AIMUX_HOME": "/Users/sam/.aimux",
+        "AIMUX_DAEMON_PORT": "43190",
+        "AIMUX_ENV": "production",
+        "AIMUX_WEB_APP_URL": "https://aimux.app"
+      },
+      "inputSha256": "573050e3f36c1d9fcc8a6bf8a640431322b0cfb94b2bdc99c9016c7c7ea1593b"
+    },
+    {
+      "id": "launch-launcher-env-002",
+      "name": "preserves explicit custom targeting",
+      "source": "src/launcher-env.test.ts",
+      "api": "prepareStableCliEnv",
+      "input": {
+        "env": {
+          "AIMUX_HOME": "/Users/sam/.aimux-scratch",
+          "AIMUX_DAEMON_PORT": "44190",
+          "AIMUX_ENV": "development",
+          "AIMUX_WEB_APP_URL": "http://localhost:8081",
+          "AIMUX_SESSION_ID": "codex-custom"
+        }
+      },
+      "output": {
+        "AIMUX_HOME": "/Users/sam/.aimux-scratch",
+        "AIMUX_DAEMON_PORT": "44190",
+        "AIMUX_ENV": "development",
+        "AIMUX_WEB_APP_URL": "http://localhost:8081",
+        "AIMUX_SESSION_ID": "codex-custom"
+      },
+      "inputSha256": "c93f27e5559f5febbedae9eb1b2877666face938056ad0333ff864da4cec6be2"
+    },
+    {
+      "id": "launch-launcher-env-003",
+      "name": "routes sidecar-owned control-plane commands to the lean core CLI",
+      "source": "src/launcher-env.test.ts",
+      "api": "cliEntryForBatch",
+      "input": {
+        "argvs": [
+          ["node", "/p/bin/aimux", "host", "status"],
+          ["node", "/p/bin/aimux", "daemon", "ensure"],
+          ["node", "/p/bin/aimux", "daemon", "status", "--json"],
+          ["node", "/p/bin/aimux", "daemon", "projects"],
+          ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "/p"],
+          ["node", "/p/bin/aimux", "daemon", "restart"],
+          ["node", "/p/bin/aimux", "daemon", "restart", "--json"],
+          ["node", "/p/bin/aimux", "serve"],
+          ["node", "/p/bin/aimux", "host", "stop"],
+          ["node", "/p/bin/aimux", "host", "kill"],
+          ["node", "/p/bin/aimux", "host", "restart"],
+          ["node", "/p/bin/aimux", "host", "restart", "--serve"],
+          ["node", "/p/bin/aimux", "host", "restart", "--open"],
+          ["node", "/p/bin/aimux", "projects", "list"],
+          ["node", "/p/bin/aimux", "remote", "status"],
+          ["/Users/sam/.nvm/versions/node/v24.16.0/bin/node", "/p/bin/aimux", "remote", "status"],
+          ["node", "/p/bin/aimux", "remote", "enable"],
+          ["node", "/p/bin/aimux", "remote", "disable"]
+        ]
+      },
+      "output": [
+        { "argv": ["node", "/p/bin/aimux", "host", "status"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "ensure"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "status", "--json"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "projects"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "/p"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "restart"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "restart", "--json"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "serve"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "host", "stop"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "host", "kill"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "host", "restart"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "host", "restart", "--serve"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "host", "restart", "--open"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "projects", "list"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "status"], "entry": "core" },
+        {
+          "argv": ["/Users/sam/.nvm/versions/node/v24.16.0/bin/node", "/p/bin/aimux", "remote", "status"],
+          "entry": "core"
+        },
+        { "argv": ["node", "/p/bin/aimux", "remote", "enable"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "disable"], "entry": "core" }
+      ],
+      "inputSha256": "3d664258d24525a64147d7bbdd9034e53a52b25b8d522fa01569ebc8b7ad6948"
+    },
+    {
+      "id": "launch-launcher-env-004",
+      "name": "keeps runtime and help commands on the full CLI",
+      "source": "src/launcher-env.test.ts",
+      "api": "cliEntryForBatch",
+      "input": {
+        "argvs": [
+          ["node", "/p/bin/aimux", "--debug", "remote", "status"],
+          ["node", "/p/bin/aimux", "remote", "enable", "--debug"],
+          ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "/p", "--trace"],
+          ["node", "/p/bin/aimux", "daemon", "project-ensure", "--log-level", "debug", "--project", "/p"],
+          ["node", "/p/bin/aimux", "remote", "enable", "--help"],
+          ["node", "/p/bin/aimux", "remote", "enable", "--json"],
+          ["node", "/p/bin/aimux", "remote", "disable", "--dry-run"],
+          ["node", "/p/bin/aimux", "remote", "enable", "extra"],
+          ["node", "/p/bin/aimux", "daemon", "status", "extra"],
+          ["node", "/p/bin/aimux", "projects", "list", "extra", "--json"],
+          ["node", "/p/bin/aimux", "remote", "enable", "extra", "--debug"],
+          ["node", "/p/bin/aimux", "daemon", "project-ensure", "-h"],
+          ["node", "/p/bin/aimux", "expose", "--project-root", "/p"],
+          ["node", "/p/bin/aimux", "spawn"],
+          ["node", "/p/bin/aimux", "daemon", "restart", "--project", "/p"],
+          ["node", "/p/bin/aimux", "serve", "--json"],
+          ["node", "/p/bin/aimux", "host", "stop", "--open"],
+          ["node", "/p/bin/aimux", "host", "agent-stream", "claude-1"],
+          ["node", "/p/bin/aimux", "dashboard-reload", "--client-tty=-x"],
+          ["node", "/p/bin/aimux", "restart-runtime", "--project-root=-x"],
+          ["node", "/p/bin/aimux", "remote", "unlock"],
+          ["node", "/p/bin/aimux", "--help"],
+          ["node", "/p/bin/aimux"]
+        ]
+      },
+      "output": [
+        { "argv": ["node", "/p/bin/aimux", "--debug", "remote", "status"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "enable", "--debug"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "/p", "--trace"], "entry": "main" },
+        {
+          "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "--log-level", "debug", "--project", "/p"],
+          "entry": "main"
+        },
+        { "argv": ["node", "/p/bin/aimux", "remote", "enable", "--help"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "enable", "--json"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "disable", "--dry-run"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "enable", "extra"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "status", "extra"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "projects", "list", "extra", "--json"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "enable", "extra", "--debug"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "-h"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "expose", "--project-root", "/p"], "entry": "expose" },
+        { "argv": ["node", "/p/bin/aimux", "spawn"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "restart", "--project", "/p"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "serve", "--json"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "host", "stop", "--open"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "host", "agent-stream", "claude-1"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "dashboard-reload", "--client-tty=-x"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "restart-runtime", "--project-root=-x"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "remote", "unlock"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "--help"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux"], "entry": "main" }
+      ],
+      "inputSha256": "806adf36ef4bc6e4c570ad196a9b0c99069dd39b96cf1bb2df500a3b808ce1a6"
+    },
+    {
+      "id": "launch-launcher-env-005",
+      "name": "routes the repair commands to main, which is the only place they exist",
+      "source": "src/launcher-env.test.ts",
+      "api": "cliEntryForBatch",
+      "input": {
+        "argvs": [
+          ["node", "/p/bin/aimux", "dashboard-reload"],
+          ["node", "/p/bin/aimux", "dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
+          ["node", "/p/bin/aimux", "restart-runtime"],
+          [
+            "node",
+            "/p/bin/aimux",
+            "restart-runtime",
+            "--project-root=/p",
+            "--current-client-session=aimux-repo-client-1234abcd"
+          ]
+        ]
+      },
+      "output": [
+        { "argv": ["node", "/p/bin/aimux", "dashboard-reload"], "entry": "main" },
+        {
+          "argv": ["node", "/p/bin/aimux", "dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
+          "entry": "main"
+        },
+        { "argv": ["node", "/p/bin/aimux", "restart-runtime"], "entry": "main" },
+        {
+          "argv": [
+            "node",
+            "/p/bin/aimux",
+            "restart-runtime",
+            "--project-root=/p",
+            "--current-client-session=aimux-repo-client-1234abcd"
+          ],
+          "entry": "main"
+        }
+      ],
+      "inputSha256": "fdee9539c36be309b951cb2d8bd537ae4217fffb70dd52c8e3be4a3614ca86e9"
+    },
+    {
+      "id": "launch-launcher-env-006",
+      "name": "routes malformed project-ensure to core so it cannot mutate through Commander parsing",
+      "source": "src/launcher-env.test.ts",
+      "api": "cliEntryForBatch",
+      "input": {
+        "argvs": [
+          ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "--json"],
+          ["node", "/p/bin/aimux", "daemon", "project-ensure", "--dry-run"],
+          ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "--json", "--debug"]
+        ]
+      },
+      "output": [
+        { "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "--json"], "entry": "core" },
+        { "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "--dry-run"], "entry": "core" },
+        {
+          "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "--json", "--debug"],
+          "entry": "core"
+        }
+      ],
+      "inputSha256": "98d53e4673ca5e51ff1769c6c09b5f8bb2ece2706339d259cf15332e8c1ae42b"
+    }
+  ]
+}

@@ -256,6 +256,9 @@ Priority fixture groups:
 - `launch/managed-env.json`: managed launch environment allowlist, terminal
   normalization, proxy passthrough, extra env injection, and `env -i` wrapper
   behavior captured by running TypeScript `managed-launch-env`.
+- `launch/launcher-env.json`: stable CLI targeting environment defaults and
+  launcher core/main/expose entry routing captured by running TypeScript
+  `launcher-env`.
 
 ## Proxy
 
