@@ -570,6 +570,10 @@ Priority fixture groups:
 
 ## Transport
 
+- `transport/route-share.json`: canonical shared route matching, legacy
+  shared-session route fallback, owner/local route exclusion, active-share
+  leakage handling, and shared chat href shape captured by running TypeScript
+  route-share helpers.
 - `transport/security.json`: shared-chat actor attribution plus client device
   proof signing-message and public-key encoding behavior captured by running
   TypeScript transport/security helpers.
