@@ -55,6 +55,9 @@ use crate::daemon_state::{
 };
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
+use crate::process_inspector::{
+    ProjectServiceProcessIdentity, is_native_aimux_project_service_process,
+};
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
@@ -81,8 +84,31 @@ pub struct RealDaemonRuntime {
     info: AimuxDaemonInfo,
     next_command: AtomicU64,
     project_service_launcher: Arc<dyn ProjectServiceLauncher>,
+    project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
     project_service_startup_timeout_ms: u64,
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
+}
+
+pub trait ProjectServiceProcessVerifier: Send + Sync {
+    fn is_live(&self, pid: i32) -> bool;
+    fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemProjectServiceProcessVerifier;
+
+impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
+    fn is_live(&self, pid: i32) -> bool {
+        is_pid_alive(pid)
+    }
+
+    fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool {
+        let expected = ProjectServiceProcessIdentity {
+            project_id: Some(service.project_id.clone()),
+            project_root: Some(service.project_root.clone()),
+        };
+        is_pid_alive(service.pid) && is_native_aimux_project_service_process(service.pid, &expected)
+    }
 }
 
 impl fmt::Debug for RealDaemonRuntime {
@@ -125,6 +151,25 @@ impl RealDaemonRuntime {
             info,
             next_command: AtomicU64::new(0),
             project_service_launcher,
+            project_service_process_verifier: Arc::new(SystemProjectServiceProcessVerifier),
+            project_service_startup_timeout_ms,
+            auth_flows: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn with_project_service_launcher_and_process_verifier(
+        resolver: PathResolver,
+        info: AimuxDaemonInfo,
+        project_service_launcher: Arc<dyn ProjectServiceLauncher>,
+        project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
+        project_service_startup_timeout_ms: u64,
+    ) -> Self {
+        Self {
+            resolver,
+            info,
+            next_command: AtomicU64::new(0),
+            project_service_launcher,
+            project_service_process_verifier,
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
         }
@@ -141,7 +186,21 @@ impl RealDaemonRuntime {
     fn metadata_endpoint_for_root(&self, project_root: &str) -> Option<MetadataApiEndpoint> {
         let mut resolver = self.resolver.clone();
         let state_dir = resolver.project_state_dir_for(project_root);
-        load_metadata_endpoint(state_dir).filter(|endpoint| is_pid_alive(endpoint.pid))
+        let project_id = compute_project_id(Path::new(project_root));
+        load_metadata_endpoint(state_dir).filter(|endpoint| {
+            self.project_service_process_verifier
+                .is_live_native_project_service(&ProjectServiceState {
+                    project_id: project_id.clone(),
+                    project_root: project_root.to_owned(),
+                    pid: endpoint.pid,
+                    started_at: String::new(),
+                    updated_at: String::new(),
+                    status: None,
+                    restart_count: None,
+                    last_restart_at: None,
+                    last_exit: None,
+                })
+        })
     }
 
     fn request_project_service_json(
@@ -294,7 +353,7 @@ impl RealDaemonRuntime {
             }
             if self.project_service_startup_timeout_ms == 0
                 || current_unix_millis() >= deadline
-                || !is_pid_alive(pid)
+                || !self.project_service_process_verifier.is_live(pid)
             {
                 return None;
             }
@@ -523,7 +582,9 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
                     .ok()
                     .is_some_and(|service| {
                         service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
-                            && is_pid_alive(service.pid)
+                            && self
+                                .project_service_process_verifier
+                                .is_live_native_project_service(&service)
                     })
             },
         )
@@ -572,19 +633,26 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_state_dir = resolver.project_state_dir_for(&project_root);
         if let Some(mut service) = self.stored_project_service_state(&project_id)
             && service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
-            && is_pid_alive(service.pid)
+            && self.project_service_process_verifier.is_live(service.pid)
         {
             if self
-                .wait_for_live_project_service(&project_state_dir, service.pid)
-                .is_some()
+                .project_service_process_verifier
+                .is_live_native_project_service(&service)
             {
-                service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
-                service.updated_at = now_iso();
-                self.save_project_service_state(&service)?;
-            } else {
-                service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
+                if self
+                    .wait_for_live_project_service(&project_state_dir, service.pid)
+                    .is_some()
+                {
+                    service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
+                    service.updated_at = now_iso();
+                    self.save_project_service_state(&service)?;
+                } else {
+                    service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
+                }
+                return serde_json::to_value(service).map_err(|error| error.to_string());
             }
-            return serde_json::to_value(service).map_err(|error| error.to_string());
+            let _ = self.project_service_launcher.terminate(&service, false);
+            remove_metadata_endpoint(&project_state_dir);
         }
         let pid = self.project_service_launcher.launch(
             &project_id,

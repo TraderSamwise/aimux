@@ -1,7 +1,8 @@
 use aimux::process_inspector::{
     ProjectServiceProcessIdentity, command_arg_value_matches, is_aimux_daemon_process_args,
-    is_aimux_project_service_process_args, is_exited_process_state, is_pid_alive,
-    list_process_args, list_process_parents, read_process_args,
+    is_aimux_project_service_process_args, is_exited_process_state,
+    is_native_aimux_daemon_process_args, is_native_aimux_project_service_process_args,
+    is_pid_alive, list_process_args, list_process_parents, read_process_args,
 };
 
 #[test]
@@ -83,6 +84,30 @@ fn daemon_process_identity_requires_aimux_daemon_run_command() {
     ));
     assert!(!is_aimux_daemon_process_args(
         "/Users/sam/.aimux/native/current/bin/aimux project start"
+    ));
+}
+
+#[test]
+fn native_process_identity_rejects_node_launcher_control_plane() {
+    let expected = ProjectServiceProcessIdentity {
+        project_id: Some("project-1".into()),
+        project_root: Some("/repo".into()),
+    };
+    assert!(is_native_aimux_project_service_process_args(
+        "/Users/sam/.aimux/native/current/bin/aimux __project-service-internal --project-id project-1 --project-root /repo",
+        None,
+        &expected
+    ));
+    assert!(!is_native_aimux_project_service_process_args(
+        "/opt/homebrew/bin/node /Users/sam/.aimux/native/current/dist/launcher-bin.js __project-service-internal --project-id project-1 --project-root /repo",
+        None,
+        &expected
+    ));
+    assert!(is_native_aimux_daemon_process_args(
+        "/Users/sam/.aimux/native/current/bin/aimux daemon run"
+    ));
+    assert!(!is_native_aimux_daemon_process_args(
+        "/opt/homebrew/bin/node /Users/sam/.aimux/native/current/dist/launcher-bin.js daemon run"
     ));
 }
 

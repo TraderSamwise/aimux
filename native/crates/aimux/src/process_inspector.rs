@@ -224,6 +224,10 @@ pub fn is_aimux_daemon_process(pid: i32) -> bool {
     read_process_args(pid).is_some_and(|args| is_aimux_daemon_process_args(&args))
 }
 
+pub fn is_native_aimux_daemon_process(pid: i32) -> bool {
+    read_process_args(pid).is_some_and(|args| is_native_aimux_daemon_process_args(&args))
+}
+
 pub fn is_aimux_daemon_process_args(args: &str) -> bool {
     let executable_matches = args
         .split_whitespace()
@@ -232,12 +236,39 @@ pub fn is_aimux_daemon_process_args(args: &str) -> bool {
     executable_matches && has_arg_sequence(args, &["daemon", "run"])
 }
 
+pub fn is_native_aimux_daemon_process_args(args: &str) -> bool {
+    first_arg_token(args).is_some_and(is_native_aimux_executable_token)
+        && has_arg_sequence(args, &["daemon", "run"])
+}
+
 fn is_aimux_executable_token(token: &str) -> bool {
     let name = Path::new(token)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(token);
     name == "aimux" || name.starts_with("launcher-bin")
+}
+
+fn is_native_aimux_executable_token(token: &str) -> bool {
+    let name = Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token);
+    name == "aimux"
+}
+
+fn first_arg_token(args: &str) -> Option<&str> {
+    args.split_whitespace().map(trim_shell_quotes).next()
+}
+
+pub fn is_native_aimux_project_service_process(
+    pid: i32,
+    expected: &ProjectServiceProcessIdentity,
+) -> bool {
+    let Some(args) = read_process_args(pid) else {
+        return false;
+    };
+    is_native_aimux_project_service_process_args(&args, read_process_cwd(pid).as_deref(), expected)
 }
 
 pub fn is_aimux_project_service_process_args(
@@ -265,6 +296,15 @@ pub fn is_aimux_project_service_process_args(
         return false;
     }
     true
+}
+
+pub fn is_native_aimux_project_service_process_args(
+    args: &str,
+    cwd: Option<&str>,
+    expected: &ProjectServiceProcessIdentity,
+) -> bool {
+    first_arg_token(args).is_some_and(is_native_aimux_executable_token)
+        && is_aimux_project_service_process_args(args, cwd, expected)
 }
 
 fn has_arg_sequence(args: &str, sequence: &[&str]) -> bool {

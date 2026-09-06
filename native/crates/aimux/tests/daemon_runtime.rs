@@ -7,19 +7,23 @@ use aimux::daemon::expose::{
 use aimux::daemon::json::DaemonJsonRouteRuntime;
 use aimux::daemon::json::ExposeFocusRequest;
 use aimux::daemon::process::handle_daemon_runtime_request;
-use aimux::daemon::runtime::{ProjectServiceLauncher, RealDaemonRuntime};
+use aimux::daemon::runtime::{
+    PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceLauncher, ProjectServiceProcessVerifier,
+    RealDaemonRuntime, SystemProjectServiceLauncher,
+};
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::auth::DaemonAuthTextRuntime;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, ProjectServiceState,
-    ProjectServiceStatus, save_daemon_state, save_metadata_endpoint, save_metadata_state,
+    ProjectServiceStatus, load_metadata_endpoint, save_daemon_state, save_metadata_endpoint,
+    save_metadata_state,
 };
 use aimux::paths::PathResolver;
 use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::TmuxTarget;
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, remove_dir_all};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -605,6 +609,59 @@ fn ensure_project_reuses_existing_live_state_without_launching() {
 }
 
 #[test]
+fn ensure_project_replaces_live_legacy_node_service_with_native_launch() {
+    let fixture = RuntimeFixture::new("ensure-replace-node-service");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_903,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_661));
+    let verifier = Arc::new(FakeProcessVerifier::legacy_node(
+        [std::process::id() as i32],
+    ));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(launcher.clone(), verifier, 0);
+
+    let project_json = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect("ensure project");
+
+    assert_eq!(
+        launcher.calls(),
+        vec![project.to_string_lossy().into_owned()]
+    );
+    assert_eq!(
+        launcher.terminations(),
+        vec![(std::process::id() as i32, false)]
+    );
+    assert_eq!(project_json["pid"], json!(87_661));
+    assert_eq!(project_json["status"], "starting");
+    assert!(
+        load_metadata_endpoint(resolver.project_state_dir_for(&project)).is_none(),
+        "legacy endpoint must be cleared before native relaunch publishes its own endpoint"
+    );
+    fixture.cleanup();
+}
+
+#[test]
 fn ensure_project_keeps_existing_live_pid_starting_until_endpoint_exists() {
     let fixture = RuntimeFixture::new("ensure-wait-endpoint");
     let project = fixture.project("repo");
@@ -1062,7 +1119,13 @@ impl RuntimeFixture {
     }
 
     fn runtime(&self) -> RealDaemonRuntime {
-        RealDaemonRuntime::new(self.resolver(), self.info.clone())
+        RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            self.resolver(),
+            self.info.clone(),
+            Arc::new(SystemProjectServiceLauncher),
+            Arc::new(FakeProcessVerifier::native([std::process::id() as i32])),
+            PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+        )
     }
 
     fn runtime_with_launcher(
@@ -1070,10 +1133,24 @@ impl RuntimeFixture {
         launcher: Arc<dyn ProjectServiceLauncher>,
         startup_timeout_ms: u64,
     ) -> RealDaemonRuntime {
-        RealDaemonRuntime::with_project_service_launcher(
+        self.runtime_with_launcher_and_verifier(
+            launcher,
+            Arc::new(FakeProcessVerifier::native([std::process::id() as i32])),
+            startup_timeout_ms,
+        )
+    }
+
+    fn runtime_with_launcher_and_verifier(
+        &self,
+        launcher: Arc<dyn ProjectServiceLauncher>,
+        verifier: Arc<dyn ProjectServiceProcessVerifier>,
+        startup_timeout_ms: u64,
+    ) -> RealDaemonRuntime {
+        RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
             self.resolver(),
             self.info.clone(),
             launcher,
+            verifier,
             startup_timeout_ms,
         )
     }
@@ -1226,6 +1303,38 @@ impl ProjectServiceLauncher for FakeLauncher {
             .expect("terminations")
             .push((service.pid, force));
         Ok(())
+    }
+}
+
+struct FakeProcessVerifier {
+    live: BTreeSet<i32>,
+    native: BTreeSet<i32>,
+}
+
+impl FakeProcessVerifier {
+    fn native(pids: impl IntoIterator<Item = i32>) -> Self {
+        let native = pids.into_iter().collect::<BTreeSet<_>>();
+        Self {
+            live: native.clone(),
+            native,
+        }
+    }
+
+    fn legacy_node(pids: impl IntoIterator<Item = i32>) -> Self {
+        Self {
+            live: pids.into_iter().collect(),
+            native: BTreeSet::new(),
+        }
+    }
+}
+
+impl ProjectServiceProcessVerifier for FakeProcessVerifier {
+    fn is_live(&self, pid: i32) -> bool {
+        self.live.contains(&pid)
+    }
+
+    fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool {
+        self.native.contains(&service.pid)
     }
 }
 

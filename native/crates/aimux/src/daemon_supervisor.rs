@@ -11,8 +11,8 @@ use crate::daemon_state::{
 use crate::paths::PathResolver;
 use crate::process_inspector::{
     ProcessFingerprint, ProjectServiceProcessIdentity, is_aimux_daemon_process,
-    is_aimux_daemon_process_args, is_aimux_project_service_process, is_pid_alive,
-    process_fingerprint_matches, read_process_fingerprint,
+    is_aimux_daemon_process_args, is_aimux_project_service_process, is_native_aimux_daemon_process,
+    is_pid_alive, process_fingerprint_matches, read_process_fingerprint,
 };
 use crate::project_service_manifest::{
     ProjectServiceManifest, get_project_service_manifest, is_stale_against_daemon, manifests_match,
@@ -241,6 +241,9 @@ pub fn ensure_daemon_running_at(
                         clear_daemon_info(resolver.daemon_info_path())?;
                     } else if !is_matching_daemon_health(&health, &manifest) {
                         clear_daemon_info(resolver.daemon_info_path())?;
+                    } else if !is_native_aimux_daemon_process(existing.pid) {
+                        let _ = terminate_daemon_on_default_port(existing.pid);
+                        clear_daemon_info(resolver.daemon_info_path())?;
                     } else {
                         return Ok(existing);
                     }
@@ -371,6 +374,11 @@ fn probe_default_daemon_with_manifest(
             "aimux daemon on default port is from a different local build; run aimux restart"
                 .into(),
         ));
+    }
+    if !is_native_aimux_daemon_process(pid) {
+        terminate_daemon_on_default_port(pid)?;
+        clear_daemon_info(resolver.daemon_info_path())?;
+        return Ok(None);
     }
     let started_at = load_daemon_info(resolver.daemon_info_path())
         .map(|info| info.started_at)
