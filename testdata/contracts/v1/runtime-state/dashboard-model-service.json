@@ -1,0 +1,591 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-model-service.test.ts",
+  "generatedBy": "scripts/capture-dashboard-model-service-contract.mjs",
+  "description": "Dashboard desktop-state model refresh, cache application, lifecycle staleness, invalid payload, and tmux contradiction contracts captured by running TypeScript refreshDashboardModelFromService.",
+  "normalization": {
+    "timestamps": "Date.now() is fixed at 1770000000000 while executing the TypeScript capture.",
+    "processIds": "The dashboard client id path segment is normalized from the live process id to <pid> after TypeScript execution.",
+    "errors": "Error objects are serialized as name/message plus stable code fields."
+  },
+  "cases": [
+    {
+      "id": "runtime-state-dashboard-model-service-001",
+      "name": "applies dashboard worktree groups provided by /desktop-state",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "applies dashboard worktree groups provided by /desktop-state",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": true, "payload": "service-worktree-groups" },
+      "output": {
+        "result": true,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [
+            [
+              [
+                {
+                  "name": "Main Checkout",
+                  "branch": "main",
+                  "status": "active",
+                  "sessions": [
+                    { "index": 0, "id": "claude-1", "command": "claude", "status": "running", "active": false }
+                  ],
+                  "services": []
+                }
+              ]
+            ]
+          ],
+          "markSelectionDirty": [[]],
+          "listProjectManagedWindows": [["<repo>"]],
+          "isWindowAlive": []
+        },
+        "host": {
+          "dashboardRawSessionsCache": [
+            { "index": 0, "id": "claude-1", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardRawTeammatesCache": [],
+          "dashboardRawServicesCache": [],
+          "dashboardRawWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "claude-1", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardSessionsCache": [
+            { "index": 0, "id": "claude-1", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardTeammatesCache": [],
+          "dashboardServicesCache": [],
+          "dashboardWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "claude-1", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardOperationFailuresCache": [],
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "main" },
+          "dashboardModelServiceRefreshedAt": 1770000000000,
+          "dashboardModelVersion": 1
+        }
+      },
+      "inputSha256": "cf37b3f19f9d7cfcb23c05028a154e04ac1f8539829d341ac1286224dc4464b8"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-002",
+      "name": "can refresh service state for background settlement while inactive",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "can refresh service state for background settlement while inactive",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": true, "options": { "allowInactive": true }, "host": { "mode": "session" } },
+      "output": {
+        "result": true,
+        "calls": {
+          "getFromProjectService": [["/desktop-state?force=1", { "timeoutMs": 5000 }]],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [
+            [
+              [
+                {
+                  "name": "Main Checkout",
+                  "branch": "main",
+                  "status": "active",
+                  "sessions": [
+                    { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+                  ],
+                  "services": []
+                }
+              ]
+            ]
+          ],
+          "markSelectionDirty": [[]],
+          "listProjectManagedWindows": [["<repo>"]],
+          "isWindowAlive": []
+        },
+        "host": {
+          "dashboardRawSessionsCache": [
+            { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardRawTeammatesCache": [],
+          "dashboardRawServicesCache": [],
+          "dashboardRawWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardSessionsCache": [
+            { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardTeammatesCache": [],
+          "dashboardServicesCache": [],
+          "dashboardWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardOperationFailuresCache": [],
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "main" },
+          "dashboardModelServiceRefreshedAt": 1770000000000,
+          "dashboardModelVersion": 1
+        }
+      },
+      "inputSha256": "34ba13b67a9bd6d3ebc6d9eca01beb0f91621db8faadf00e5c09e0f891d1f662"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-003",
+      "name": "does not run ordinary service refreshes while inactive",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "does not run ordinary service refreshes while inactive",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": true, "host": { "mode": "session" } },
+      "output": {
+        "result": false,
+        "calls": {
+          "getFromProjectService": [],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [],
+          "markSelectionDirty": [],
+          "listProjectManagedWindows": [],
+          "isWindowAlive": []
+        },
+        "host": {}
+      },
+      "inputSha256": "e82a965853ad3b9b474e57db257f57688b124d3bd9d54f11b526cc2c11404750"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-004",
+      "name": "probes the runtime guard after a successful refresh only when currently guarded",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "probes the runtime guard after a successful refresh only when currently guarded",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": true, "runtimeGuardState": { "kind": "stale", "reason": "service-mismatch" } },
+      "output": {
+        "result": true,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ],
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [[]],
+          "orderWorktreeGroups": [
+            [
+              [
+                {
+                  "name": "Main Checkout",
+                  "branch": "main",
+                  "status": "active",
+                  "sessions": [
+                    { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+                  ],
+                  "services": []
+                }
+              ]
+            ]
+          ],
+          "markSelectionDirty": [[]],
+          "listProjectManagedWindows": [["<repo>"]],
+          "isWindowAlive": []
+        },
+        "host": {
+          "dashboardRawSessionsCache": [
+            { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardRawTeammatesCache": [],
+          "dashboardRawServicesCache": [],
+          "dashboardRawWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardSessionsCache": [
+            { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardTeammatesCache": [],
+          "dashboardServicesCache": [],
+          "dashboardWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardOperationFailuresCache": [],
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "main" },
+          "dashboardModelServiceRefreshedAt": 1770000000000,
+          "dashboardModelVersion": 1,
+          "dashboardRepairNotices": [
+            {
+              "kind": "tui-api-recovery",
+              "phase": "started",
+              "message": "Aimux API recovery started",
+              "at": 1770000000000
+            },
+            {
+              "kind": "tui-api-recovery",
+              "phase": "waiting",
+              "message": "Aimux API recovery still reconnecting",
+              "at": 1770000000000,
+              "error": "runtime guard is not healthy"
+            }
+          ],
+          "footerFlash": "Aimux API recovery still reconnecting",
+          "footerFlashTicks": 4,
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryFailureStreak": 1
+        }
+      },
+      "inputSha256": "cc7b4d233da01f8006011dc0dba4e57fdd193740f22c54bf9a50f5ac7d1de607"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-005",
+      "name": "lets forced refreshes supersede an older pending background refresh",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "lets forced refreshes supersede an older pending background refresh",
+      "api": "refreshDashboardModelFromService",
+      "input": { "background": "stale", "forced": "fresh" },
+      "output": {
+        "result": { "forced": true, "background": false },
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000",
+              { "timeoutMs": 3000 }
+            ],
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [
+            [
+              [
+                {
+                  "name": "Main Checkout",
+                  "branch": "main",
+                  "status": "active",
+                  "sessions": [
+                    { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+                  ],
+                  "services": []
+                }
+              ]
+            ]
+          ],
+          "markSelectionDirty": [[]],
+          "listProjectManagedWindows": [["<repo>"]],
+          "isWindowAlive": []
+        },
+        "host": {
+          "dashboardRawSessionsCache": [
+            { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardRawTeammatesCache": [],
+          "dashboardRawServicesCache": [],
+          "dashboardRawWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardSessionsCache": [
+            { "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }
+          ],
+          "dashboardTeammatesCache": [],
+          "dashboardServicesCache": [],
+          "dashboardWorktreeGroupsCache": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "active",
+              "sessions": [{ "index": 0, "id": "fresh", "command": "claude", "status": "running", "active": false }],
+              "services": []
+            }
+          ],
+          "dashboardOperationFailuresCache": [],
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "main" },
+          "dashboardModelServiceRefreshedAt": 1770000000000,
+          "dashboardModelVersion": 1
+        }
+      },
+      "inputSha256": "4b8583df912c3c87430745696b3eb548e1ae43b2f0e87f4696cd5f581001b0a4"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-006",
+      "name": "does not apply desktop-state when the refresh lifecycle is stale",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "does not apply desktop-state when the refresh lifecycle is stale",
+      "api": "refreshDashboardModelFromService",
+      "input": {
+        "force": true,
+        "host": { "dashboardInputEpoch": 1 },
+        "options": { "lifecycle": { "mode": "dashboard", "inputEpoch": 0, "requiresInputEpoch": true } }
+      },
+      "output": {
+        "result": false,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [],
+          "markSelectionDirty": [],
+          "listProjectManagedWindows": [],
+          "isWindowAlive": []
+        },
+        "host": {}
+      },
+      "inputSha256": "f0c0d59ea4aa845356b9a36cdd101066c95b618624d8fde8d6bc0c9a48c1f21f"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-007",
+      "name": "does not report stale invalid desktop-state refreshes",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "does not report stale invalid desktop-state refreshes",
+      "api": "refreshDashboardModelFromService",
+      "input": {
+        "force": true,
+        "host": { "dashboardInputEpoch": 1 },
+        "invalidPayload": "missing-worktree-groups",
+        "options": { "lifecycle": { "mode": "dashboard", "inputEpoch": 0, "requiresInputEpoch": true } }
+      },
+      "output": {
+        "result": false,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [],
+          "markSelectionDirty": [],
+          "listProjectManagedWindows": [],
+          "isWindowAlive": []
+        },
+        "host": { "tuiApiRecoveryPending": true }
+      },
+      "inputSha256": "b7c00e6d018bc9d28d7eecbfa4e4b4cfe7fd27fd2e6d29bc90253b79e6ad9829"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-008",
+      "name": "rejects desktop-state payloads without service-composed worktree groups",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "rejects desktop-state payloads without service-composed worktree groups",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": false, "invalidPayload": "missing-worktree-groups" },
+      "output": {
+        "result": false,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000",
+              { "timeoutMs": 3000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [],
+          "markSelectionDirty": [],
+          "listProjectManagedWindows": [],
+          "isWindowAlive": []
+        },
+        "host": {
+          "dashboardModelServiceRefreshError": { "name": "Error", "message": "invalid desktop-state payload" },
+          "tuiApiRecoveryPending": true
+        }
+      },
+      "inputSha256": "669228e7a09585570270a4df209b2f3df6b8c0aa5a7dc197e3f069108c17579f"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-009",
+      "name": "probes the runtime guard when a forced refresh receives an invalid payload",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "probes the runtime guard when a forced refresh receives an invalid payload",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": true, "invalidPayload": "missing-worktree-groups" },
+      "output": {
+        "result": false,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ],
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [[]],
+          "orderWorktreeGroups": [],
+          "markSelectionDirty": [],
+          "listProjectManagedWindows": [],
+          "isWindowAlive": []
+        },
+        "host": {
+          "dashboardModelServiceRefreshError": { "name": "Error", "message": "invalid desktop-state payload" },
+          "dashboardRepairNotices": [
+            {
+              "kind": "tui-api-recovery",
+              "phase": "started",
+              "message": "Aimux API recovery started",
+              "at": 1770000000000
+            },
+            {
+              "kind": "tui-api-recovery",
+              "phase": "waiting",
+              "message": "Aimux API recovery still reconnecting",
+              "at": 1770000000000,
+              "error": "invalid desktop-state payload"
+            }
+          ],
+          "footerFlash": "Aimux API recovery still reconnecting",
+          "footerFlashTicks": 4,
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryFailureStreak": 1
+        }
+      },
+      "inputSha256": "896546e5362b608110845bc79ab4abc912b06024b6acbfcc11a6c2cabba4553c"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-010",
+      "name": "does not apply an empty desktop-state snapshot while tmux still has live agents",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "does not apply an empty desktop-state snapshot while tmux still has live agents",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": true, "tmuxWindow": "live-agent", "payload": "empty-offline-group" },
+      "output": {
+        "result": false,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ],
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [[]],
+          "orderWorktreeGroups": [],
+          "markSelectionDirty": [],
+          "listProjectManagedWindows": [["<repo>"]],
+          "isWindowAlive": [
+            [{ "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+          ]
+        },
+        "host": {
+          "dashboardModelServiceRefreshError": {
+            "name": "Error",
+            "message": "project service returned incomplete state while tmux has live agents"
+          },
+          "dashboardRepairNotices": [
+            {
+              "kind": "tui-api-recovery",
+              "phase": "started",
+              "message": "Aimux API recovery started",
+              "at": 1770000000000
+            },
+            {
+              "kind": "tui-api-recovery",
+              "phase": "succeeded",
+              "message": "Aimux API recovery complete",
+              "at": 1770000000000
+            }
+          ],
+          "footerFlash": "Aimux API recovery complete",
+          "footerFlashTicks": 4,
+          "tuiApiRecoveryPending": false,
+          "tuiApiRecoveryFailureStreak": 0
+        }
+      },
+      "inputSha256": "26886cfc004746db70baeb55c1a7f72ecf7ecb270d71f851b3abfeaa7c67922c"
+    },
+    {
+      "id": "runtime-state-dashboard-model-service-011",
+      "name": "does not reject an empty desktop-state snapshot for dead tmux agent panes",
+      "source": "src/multiplexer/dashboard-model-service.test.ts",
+      "sourceName": "does not reject an empty desktop-state snapshot for dead tmux agent panes",
+      "api": "refreshDashboardModelFromService",
+      "input": { "force": true, "tmuxWindow": "dead-agent", "payload": "empty-offline-group" },
+      "output": {
+        "result": true,
+        "calls": {
+          "getFromProjectService": [
+            [
+              "/desktop-state?includePreview=1&clientKind=tui&clientId=dashboard%3A<pid>&clientTtlMs=5000&force=1",
+              { "timeoutMs": 5000 }
+            ]
+          ],
+          "refreshRuntimeGuard": [],
+          "orderWorktreeGroups": [
+            [[{ "name": "Main Checkout", "branch": "main", "status": "offline", "sessions": [], "services": [] }]]
+          ],
+          "markSelectionDirty": [[]],
+          "listProjectManagedWindows": [["<repo>"]],
+          "isWindowAlive": [
+            [{ "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+          ]
+        },
+        "host": {
+          "dashboardRawSessionsCache": [],
+          "dashboardRawTeammatesCache": [],
+          "dashboardRawServicesCache": [],
+          "dashboardRawWorktreeGroupsCache": [
+            { "name": "Main Checkout", "branch": "main", "status": "offline", "sessions": [], "services": [] }
+          ],
+          "dashboardSessionsCache": [],
+          "dashboardTeammatesCache": [],
+          "dashboardServicesCache": [],
+          "dashboardWorktreeGroupsCache": [
+            { "name": "Main Checkout", "branch": "main", "status": "offline", "sessions": [], "services": [] }
+          ],
+          "dashboardOperationFailuresCache": [],
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "main" },
+          "dashboardModelServiceRefreshedAt": 1770000000000,
+          "dashboardModelVersion": 1
+        }
+      },
+      "inputSha256": "605e2c8d3571e5ebbe983030d320160f166bb6a57fe4dab191dc54388c06b507"
+    }
+  ]
+}
