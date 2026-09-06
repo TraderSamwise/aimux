@@ -159,6 +159,10 @@ Priority fixture groups:
 
 ## Orchestration
 
+- `orchestration/actions.json`: task, handoff, review, thread-reopen, and
+  runtime-exchange side-effect contracts captured by running TypeScript
+  orchestration action helpers with generated IDs and timestamps normalized
+  after structure checks.
 - `orchestration/routing.json`: direct, role, tool, worktree, liveness, and
   workflow-pressure recipient routing captured by running TypeScript
   `orchestration-routing` helpers.

@@ -1,0 +1,1603 @@
+{
+  "version": 1,
+  "source": "src/orchestration-actions.test.ts",
+  "generatedBy": "scripts/capture-orchestration-actions-contract.mjs",
+  "description": "Task, handoff, review, thread-reopen, and runtime-exchange side-effect contracts captured by running TypeScript orchestration action helpers. Generated IDs and timestamps are tokenized in first-appearance order after invariant checks.",
+  "normalization": {
+    "ids": "Dynamic task/thread/message/revision/reopen IDs are replaced with <id:n> in first-appearance order.",
+    "timestamps": "ISO timestamps are replaced with <ts> after per-object monotonicity checks."
+  },
+  "cases": [
+    {
+      "id": "orchestration-actions-001",
+      "name": "creates a targeted task thread and task record",
+      "source": "src/orchestration-actions.test.ts",
+      "input": {
+        "scenario": "assign-task",
+        "operations": [
+          {
+            "route": "/tasks/assign",
+            "body": { "from": "claude-lead", "to": "codex-worker", "description": "Audit the parser failure path" }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "task": {
+            "id": "<id:1>",
+            "status": "pending",
+            "assignedBy": "claude-lead",
+            "assignedTo": "codex-worker",
+            "description": "Audit the parser failure path",
+            "prompt": "Audit the parser failure path",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "type": "task",
+            "threadId": "<id:2>"
+          },
+          "thread": {
+            "id": "<id:2>",
+            "title": "Task: Audit the parser failure path",
+            "kind": "task",
+            "status": "waiting",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "createdBy": "claude-lead",
+            "participants": ["claude-lead", "codex-worker"],
+            "owner": "codex-worker",
+            "waitingOn": ["codex-worker"],
+            "taskId": "<id:1>",
+            "lastMessageId": "<id:3>",
+            "unreadBy": ["codex-worker"]
+          },
+          "message": {
+            "id": "<id:3>",
+            "threadId": "<id:2>",
+            "ts": "<ts>",
+            "from": "claude-lead",
+            "to": ["codex-worker"],
+            "kind": "request",
+            "body": "Audit the parser failure path",
+            "taskId": "<id:1>",
+            "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:2>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-worker"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:3>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:1>",
+              "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:1>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:2>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "waitingOn": ["codex-worker"],
+              "owner": "codex-worker",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:1>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:1>",
+              "waitingOn": ["codex-worker"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:codex-worker:thread:<id:2>",
+              "participantId": "codex-worker",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:codex-worker:task:<id:1>",
+              "participantId": "codex-worker",
+              "subjectKind": "task",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 6,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "f4a8ba4a431b5d4f2729fddf61631d3b1e39b53ba42153825ca810b3fce9cff0"
+    },
+    {
+      "id": "orchestration-actions-002",
+      "name": "creates a handoff thread with a handoff message",
+      "source": "src/orchestration-actions.test.ts",
+      "input": {
+        "scenario": "send-handoff",
+        "operations": [
+          {
+            "route": "/handoff",
+            "body": {
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "body": "Take over the UI debug pass from here.",
+              "title": "UI handoff"
+            }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "thread": {
+            "id": "<id:1>",
+            "title": "UI handoff",
+            "kind": "handoff",
+            "status": "waiting",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "createdBy": "claude-lead",
+            "participants": ["claude-lead", "codex-worker"],
+            "owner": "claude-lead",
+            "waitingOn": ["codex-worker"],
+            "lastMessageId": "<id:2>",
+            "unreadBy": ["codex-worker"],
+            "tags": ["handoff"]
+          },
+          "message": {
+            "id": "<id:2>",
+            "threadId": "<id:1>",
+            "ts": "<ts>",
+            "from": "claude-lead",
+            "to": ["codex-worker"],
+            "kind": "handoff",
+            "body": "Take over the UI debug pass from here."
+          },
+          "threadCreated": false
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "UI handoff",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "claude-lead",
+              "waitingOn": ["codex-worker"],
+              "lastMessageId": "<id:2>",
+              "unreadBy": ["codex-worker"],
+              "tags": ["handoff"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "handoff",
+              "body": "Take over the UI debug pass from here."
+            }
+          ],
+          "tasks": [],
+          "handoffs": [
+            {
+              "id": "handoff:<id:1>",
+              "threadId": "<id:1>",
+              "status": "waiting",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:1>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "waitingOn": ["codex-worker"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:codex-worker:thread:<id:1>",
+              "participantId": "codex-worker",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "6fa09000a00e4d39044e1af63202597b269946710e977dc16ab07b0cd4da3325"
+    },
+    {
+      "id": "orchestration-actions-003",
+      "name": "accepts and completes a handoff with matching derived handoff state",
+      "source": "src/orchestration-actions.test.ts",
+      "input": {
+        "scenario": "handoff-lifecycle",
+        "operations": [
+          {
+            "route": "/handoff",
+            "body": { "from": "claude-lead", "to": ["codex-worker"], "body": "Take over the UI debug pass from here." },
+            "save": "created"
+          },
+          { "route": "/handoff/accept", "body": { "threadIdFrom": "created.thread.id", "from": "codex-worker" } },
+          { "route": "/handoff/complete", "body": { "threadIdFrom": "created.thread.id", "from": "codex-worker" } }
+        ]
+      },
+      "output": {
+        "result": {
+          "created": {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Handoff: claude-lead → codex-worker",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "claude-lead",
+              "waitingOn": ["codex-worker"],
+              "lastMessageId": "<id:2>",
+              "unreadBy": ["codex-worker"],
+              "tags": ["handoff"]
+            },
+            "message": {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "handoff",
+              "body": "Take over the UI debug pass from here."
+            },
+            "threadCreated": false
+          },
+          "accepted": {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Handoff: claude-lead → codex-worker",
+              "kind": "handoff",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": [],
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["claude-lead"],
+              "tags": ["handoff"]
+            },
+            "message": {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Accepted handoff.",
+              "metadata": { "handoffAction": "accepted" }
+            }
+          },
+          "completed": {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Handoff: claude-lead → codex-worker",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["claude-lead"],
+              "lastMessageId": "<id:4>",
+              "unreadBy": ["claude-lead"],
+              "tags": ["handoff"]
+            },
+            "message": {
+              "id": "<id:4>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Completed handoff.",
+              "metadata": { "handoffAction": "completed" }
+            }
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Handoff: claude-lead → codex-worker",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["claude-lead"],
+              "lastMessageId": "<id:4>",
+              "unreadBy": ["claude-lead"],
+              "tags": ["handoff"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:2>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "handoff",
+              "body": "Take over the UI debug pass from here."
+            },
+            {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Accepted handoff.",
+              "metadata": { "handoffAction": "accepted" }
+            },
+            {
+              "id": "<id:4>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Completed handoff.",
+              "metadata": { "handoffAction": "completed" }
+            }
+          ],
+          "tasks": [],
+          "handoffs": [
+            {
+              "id": "handoff:<id:1>",
+              "threadId": "<id:1>",
+              "status": "completed",
+              "from": "claude-lead",
+              "to": ["claude-lead"],
+              "completedBy": "codex-worker",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:1>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "waitingOn": ["claude-lead"],
+              "owner": "codex-worker",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:claude-lead:thread:<id:1>",
+              "participantId": "claude-lead",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "e88a1ebc33a791ad58366cfa1fdab34e772a4882e03316b93c9ec9387bdecfac"
+    },
+    {
+      "id": "orchestration-actions-004",
+      "name": "accepts blocks and completes tasks with matching thread updates",
+      "source": "src/orchestration-actions.test.ts",
+      "input": {
+        "scenario": "task-lifecycle",
+        "operations": [
+          {
+            "route": "/tasks/assign",
+            "body": { "from": "claude-lead", "to": "codex-worker", "description": "Audit the parser failure path" },
+            "save": "created"
+          },
+          { "route": "/tasks/accept", "body": { "taskIdFrom": "created.task.id", "from": "codex-worker" } },
+          {
+            "route": "/tasks/block",
+            "body": {
+              "taskIdFrom": "created.task.id",
+              "from": "codex-worker",
+              "body": "Need a failing reproduction case."
+            }
+          },
+          {
+            "route": "/tasks/complete",
+            "body": {
+              "taskIdFrom": "created.task.id",
+              "from": "codex-worker",
+              "body": "Found and fixed the parser timeout branch."
+            }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "created": {
+            "task": {
+              "id": "<id:1>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task",
+              "threadId": "<id:2>"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-worker"]
+            },
+            "message": {
+              "id": "<id:3>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:1>",
+              "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+            }
+          },
+          "accepted": {
+            "task": {
+              "id": "<id:1>",
+              "status": "in_progress",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": [],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:4>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:4>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Accepted task and started work.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "accepted" }
+            }
+          },
+          "blocked": {
+            "task": {
+              "id": "<id:1>",
+              "status": "blocked",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "error": "Need a failing reproduction case.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "blocked",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:5>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:5>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "reply",
+              "body": "Need a failing reproduction case.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "blocked" }
+            }
+          },
+          "completed": {
+            "task": {
+              "id": "<id:1>",
+              "status": "done",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "result": "Found and fixed the parser timeout branch.",
+              "error": "Need a failing reproduction case.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "notifiedAt": "<ts>",
+              "type": "task"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:6>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:6>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "status",
+              "body": "Found and fixed the parser timeout branch.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "completed" }
+            }
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:2>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:6>",
+              "unreadBy": ["claude-lead"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:3>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:1>",
+              "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+            },
+            {
+              "id": "<id:4>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Accepted task and started work.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "accepted" }
+            },
+            {
+              "id": "<id:5>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "reply",
+              "body": "Need a failing reproduction case.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "blocked" }
+            },
+            {
+              "id": "<id:6>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "status",
+              "body": "Found and fixed the parser timeout branch.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "completed" }
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:1>",
+              "status": "done",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "result": "Found and fixed the parser timeout branch.",
+              "error": "Need a failing reproduction case.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "notifiedAt": "<ts>",
+              "type": "task"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:2>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "waitingOn": ["claude-lead"],
+              "owner": "codex-worker",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:claude-lead:thread:<id:2>",
+              "participantId": "claude-lead",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "548a8cef50891776b2ee7d41b4aacba8b72d18f1a2d93ccc489847bbc65dc8cb"
+    },
+    {
+      "id": "orchestration-actions-005",
+      "name": "reactivates a completed task when its thread waits on the assignee again",
+      "source": "src/orchestration-actions.test.ts",
+      "input": {
+        "scenario": "reactivate-completed-task",
+        "operations": [
+          {
+            "route": "/tasks/assign",
+            "body": { "from": "claude-lead", "to": "codex-worker", "description": "Implement the template engine" },
+            "save": "created"
+          },
+          { "route": "/tasks/accept", "body": { "taskIdFrom": "created.task.id", "from": "codex-worker" } },
+          {
+            "route": "/tasks/complete",
+            "body": { "taskIdFrom": "created.task.id", "from": "codex-worker", "body": "Implementation complete." }
+          },
+          {
+            "route": "/threads/send",
+            "body": {
+              "threadIdFrom": "created.thread.id",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "reply",
+              "body": "Three blockers remain; please fix them before commit."
+            }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "created": {
+            "task": {
+              "id": "<id:1>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "description": "Implement the template engine",
+              "prompt": "Implement the template engine",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task",
+              "threadId": "<id:2>"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Implement the template engine",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-worker"]
+            },
+            "message": {
+              "id": "<id:3>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Implement the template engine",
+              "taskId": "<id:1>",
+              "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+            }
+          },
+          "accepted": {
+            "task": {
+              "id": "<id:1>",
+              "status": "in_progress",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Implement the template engine",
+              "prompt": "Implement the template engine",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Implement the template engine",
+              "kind": "task",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": [],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:4>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:4>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Accepted task and started work.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "accepted" }
+            }
+          },
+          "completed": {
+            "task": {
+              "id": "<id:1>",
+              "status": "done",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Implement the template engine",
+              "prompt": "Implement the template engine",
+              "result": "Implementation complete.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "notifiedAt": "<ts>",
+              "type": "task"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Implement the template engine",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:5>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:5>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "status",
+              "body": "Implementation complete.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "completed" }
+            }
+          },
+          "blocker": {
+            "thread": {
+              "id": "<id:2>",
+              "title": "Task: Implement the template engine",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "claude-lead",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:6>",
+              "unreadBy": ["codex-worker"]
+            },
+            "message": {
+              "id": "<id:6>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "reply",
+              "body": "Three blockers remain; please fix them before commit."
+            },
+            "threadCreated": false
+          },
+          "reconciledTask": {
+            "id": "<id:1>",
+            "status": "pending",
+            "assignedBy": "claude-lead",
+            "assignedTo": "codex-worker",
+            "threadId": "<id:2>",
+            "description": "Implement the template engine",
+            "prompt": "Implement the template engine",
+            "result": "Implementation complete.",
+            "error": "Three blockers remain; please fix them before commit.",
+            "createdAt": "<ts>",
+            "updatedAt": "<ts>",
+            "type": "task"
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:2>",
+              "title": "Task: Implement the template engine",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "claude-lead",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:6>",
+              "unreadBy": ["codex-worker"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:3>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Implement the template engine",
+              "taskId": "<id:1>",
+              "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+            },
+            {
+              "id": "<id:4>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Accepted task and started work.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "accepted" }
+            },
+            {
+              "id": "<id:5>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-worker",
+              "to": ["claude-lead"],
+              "kind": "status",
+              "body": "Implementation complete.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "completed" }
+            },
+            {
+              "id": "<id:6>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "reply",
+              "body": "Three blockers remain; please fix them before commit."
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:1>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:2>",
+              "description": "Implement the template engine",
+              "prompt": "Implement the template engine",
+              "result": "Implementation complete.",
+              "error": "Three blockers remain; please fix them before commit.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:2>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "waitingOn": ["codex-worker"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:1>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:1>",
+              "waitingOn": ["codex-worker"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:codex-worker:thread:<id:2>",
+              "participantId": "codex-worker",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:codex-worker:task:<id:1>",
+              "participantId": "codex-worker",
+              "subjectKind": "task",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 6,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "6218e500bff9c72e7a2c418498f651ac203c2e003ddb600db8a778bea1245c1e"
+    },
+    {
+      "id": "orchestration-actions-006",
+      "name": "approves reviews, requests changes, and reopens workflow chains",
+      "source": "src/orchestration-actions.test.ts",
+      "input": {
+        "scenario": "review-workflow",
+        "operations": [
+          {
+            "route": "/tasks/assign",
+            "body": {
+              "from": "claude-lead",
+              "to": "codex-reviewer",
+              "description": "Review the parser fix",
+              "type": "review"
+            },
+            "save": "approvedReview"
+          },
+          {
+            "route": "/reviews/approve",
+            "body": { "taskIdFrom": "approvedReview.task.id", "from": "codex-reviewer", "body": "Looks good." }
+          },
+          {
+            "route": "/tasks/assign",
+            "body": {
+              "from": "claude-lead",
+              "to": "codex-reviewer",
+              "description": "Review follow-up parser fix",
+              "type": "review"
+            },
+            "save": "changesReview"
+          },
+          {
+            "route": "/reviews/request-changes",
+            "body": {
+              "taskIdFrom": "changesReview.task.id",
+              "from": "codex-reviewer",
+              "body": "Please tighten the timeout assertions."
+            }
+          },
+          {
+            "route": "/tasks/reopen",
+            "body": {
+              "taskIdFrom": "changesReview.task.id",
+              "from": "claude-lead",
+              "body": "Retry the review chain with the latest patch."
+            }
+          }
+        ]
+      },
+      "output": {
+        "result": {
+          "approvedReview": {
+            "task": {
+              "id": "<id:1>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-reviewer",
+              "description": "Review the parser fix",
+              "prompt": "Review the parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "iteration": 1,
+              "threadId": "<id:2>"
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Review: Review the parser fix",
+              "kind": "review",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-reviewer"],
+              "owner": "codex-reviewer",
+              "waitingOn": ["codex-reviewer"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-reviewer"]
+            },
+            "message": {
+              "id": "<id:3>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-reviewer"],
+              "kind": "request",
+              "body": "Review the parser fix",
+              "taskId": "<id:1>",
+              "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+            }
+          },
+          "approved": {
+            "task": {
+              "id": "<id:1>",
+              "status": "done",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-reviewer",
+              "threadId": "<id:2>",
+              "description": "Review the parser fix",
+              "prompt": "Review the parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "notifiedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "approved",
+              "reviewFeedback": "Looks good.",
+              "iteration": 1
+            },
+            "thread": {
+              "id": "<id:2>",
+              "title": "Review: Review the parser fix",
+              "kind": "review",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-reviewer"],
+              "owner": "codex-reviewer",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:4>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:4>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-reviewer",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Looks good.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "completed" }
+            }
+          },
+          "changesReview": {
+            "task": {
+              "id": "<id:5>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-reviewer",
+              "description": "Review follow-up parser fix",
+              "prompt": "Review follow-up parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "iteration": 1,
+              "threadId": "<id:6>"
+            },
+            "thread": {
+              "id": "<id:6>",
+              "title": "Review: Review follow-up parser fix",
+              "kind": "review",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-reviewer"],
+              "owner": "codex-reviewer",
+              "waitingOn": ["codex-reviewer"],
+              "taskId": "<id:5>",
+              "lastMessageId": "<id:7>",
+              "unreadBy": ["codex-reviewer"]
+            },
+            "message": {
+              "id": "<id:7>",
+              "threadId": "<id:6>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-reviewer"],
+              "kind": "request",
+              "body": "Review follow-up parser fix",
+              "taskId": "<id:5>",
+              "metadata": { "taskId": "<id:5>", "taskAction": "assigned" }
+            }
+          },
+          "changes": {
+            "task": {
+              "id": "<id:5>",
+              "status": "done",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-reviewer",
+              "threadId": "<id:6>",
+              "description": "Review follow-up parser fix",
+              "prompt": "Review follow-up parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "notifiedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "changes_requested",
+              "reviewFeedback": "Please tighten the timeout assertions.",
+              "iteration": 1
+            },
+            "thread": {
+              "id": "<id:6>",
+              "title": "Review: Review follow-up parser fix",
+              "kind": "review",
+              "status": "blocked",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-reviewer"],
+              "owner": "codex-reviewer",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:5>",
+              "lastMessageId": "<id:8>",
+              "unreadBy": ["claude-lead"]
+            },
+            "message": {
+              "id": "<id:8>",
+              "threadId": "<id:6>",
+              "ts": "<ts>",
+              "from": "codex-reviewer",
+              "to": ["claude-lead"],
+              "kind": "reply",
+              "body": "Please tighten the timeout assertions.",
+              "metadata": { "taskId": "<id:5>", "taskAction": "blocked" }
+            },
+            "followUpTask": {
+              "id": "<id:9>",
+              "status": "pending",
+              "assignedBy": "codex-reviewer",
+              "description": "Revision 2: Review follow-up parser fix",
+              "prompt": "Changes requested by reviewer:\n\nPlease tighten the timeout assertions.\n\nOriginal task: Review follow-up parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "assignee": "coder",
+              "type": "task",
+              "iteration": 2
+            }
+          },
+          "reopened": {
+            "task": {
+              "id": "<id:10>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "description": "Revision 2: Review follow-up parser fix",
+              "prompt": "Retry the review chain with the latest patch.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "assignee": "coder",
+              "type": "task",
+              "iteration": 2,
+              "reviewOf": "<id:5>"
+            }
+          }
+        },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:2>",
+              "title": "Review: Review the parser fix",
+              "kind": "review",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-reviewer"],
+              "owner": "codex-reviewer",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:1>",
+              "lastMessageId": "<id:4>",
+              "unreadBy": ["claude-lead"]
+            },
+            {
+              "id": "<id:6>",
+              "title": "Review: Review follow-up parser fix",
+              "kind": "review",
+              "status": "blocked",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-reviewer"],
+              "owner": "codex-reviewer",
+              "waitingOn": ["claude-lead"],
+              "taskId": "<id:5>",
+              "lastMessageId": "<id:8>",
+              "unreadBy": ["claude-lead"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:3>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-reviewer"],
+              "kind": "request",
+              "body": "Review the parser fix",
+              "taskId": "<id:1>",
+              "metadata": { "taskId": "<id:1>", "taskAction": "assigned" }
+            },
+            {
+              "id": "<id:4>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "codex-reviewer",
+              "to": ["claude-lead"],
+              "kind": "decision",
+              "body": "Looks good.",
+              "metadata": { "taskId": "<id:1>", "taskAction": "completed" }
+            },
+            {
+              "id": "<id:7>",
+              "threadId": "<id:6>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-reviewer"],
+              "kind": "request",
+              "body": "Review follow-up parser fix",
+              "taskId": "<id:5>",
+              "metadata": { "taskId": "<id:5>", "taskAction": "assigned" }
+            },
+            {
+              "id": "<id:8>",
+              "threadId": "<id:6>",
+              "ts": "<ts>",
+              "from": "codex-reviewer",
+              "to": ["claude-lead"],
+              "kind": "reply",
+              "body": "Please tighten the timeout assertions.",
+              "metadata": { "taskId": "<id:5>", "taskAction": "blocked" }
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:1>",
+              "status": "done",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-reviewer",
+              "threadId": "<id:2>",
+              "description": "Review the parser fix",
+              "prompt": "Review the parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "notifiedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "approved",
+              "reviewFeedback": "Looks good.",
+              "iteration": 1
+            },
+            {
+              "id": "<id:5>",
+              "status": "done",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-reviewer",
+              "threadId": "<id:6>",
+              "description": "Review follow-up parser fix",
+              "prompt": "Review follow-up parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "notifiedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "changes_requested",
+              "reviewFeedback": "Please tighten the timeout assertions.",
+              "iteration": 1
+            },
+            {
+              "id": "<id:9>",
+              "status": "pending",
+              "assignedBy": "codex-reviewer",
+              "assignee": "coder",
+              "description": "Revision 2: Review follow-up parser fix",
+              "prompt": "Changes requested by reviewer:\n\nPlease tighten the timeout assertions.\n\nOriginal task: Review follow-up parser fix",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task",
+              "iteration": 2
+            },
+            {
+              "id": "<id:10>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignee": "coder",
+              "description": "Revision 2: Review follow-up parser fix",
+              "prompt": "Retry the review chain with the latest patch.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task",
+              "iteration": 2,
+              "reviewOf": "<id:5>"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [
+            {
+              "id": "review:<id:1>",
+              "taskId": "<id:1>",
+              "reviewer": "codex-reviewer",
+              "status": "approved",
+              "feedback": "Looks good.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "review:<id:5>",
+              "taskId": "<id:5>",
+              "reviewer": "codex-reviewer",
+              "status": "changes_requested",
+              "feedback": "Please tighten the timeout assertions.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "waits": [
+            {
+              "id": "wait:thread:<id:2>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "waitingOn": ["claude-lead"],
+              "owner": "codex-reviewer",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:thread:<id:6>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:6>",
+              "waitingOn": ["claude-lead"],
+              "owner": "codex-reviewer",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:9>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:9>",
+              "waitingOn": ["coder"],
+              "owner": "codex-reviewer",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:10>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:10>",
+              "waitingOn": ["coder"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:claude-lead:thread:<id:2>",
+              "participantId": "claude-lead",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:claude-lead:thread:<id:6>",
+              "participantId": "claude-lead",
+              "subjectKind": "thread",
+              "subjectId": "<id:6>",
+              "state": "blocked",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:coder:task:<id:9>",
+              "participantId": "coder",
+              "subjectKind": "task",
+              "subjectId": "<id:9>",
+              "state": "waiting",
+              "urgency": 6,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:coder:task:<id:10>",
+              "participantId": "coder",
+              "subjectKind": "task",
+              "subjectId": "<id:10>",
+              "state": "waiting",
+              "urgency": 6,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "inputSha256": "effa53b6b3cbc4a979acf7f76b9051709aae0f9a1d34b80182d61af0d4ae2cf5"
+    }
+  ]
+}

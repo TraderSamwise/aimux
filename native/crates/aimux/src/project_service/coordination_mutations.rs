@@ -210,7 +210,8 @@ fn route_handoff_send(project_state_dir: &Path, body: &Value) -> ProjectServiceD
             return Err("handoff requires at least one recipient".into());
         }
         let thread_input = ThreadInput {
-            title: title.unwrap_or_else(|| format!("Handoff: {from} -> {}", recipients.join(", "))),
+            title: title
+                .unwrap_or_else(|| format!("Handoff: {from} \u{2192} {}", recipients.join(", "))),
             kind: "handoff".into(),
             created_by: from.clone(),
             participants: unique(
@@ -309,7 +310,6 @@ fn route_task_assign(project_state_dir: &Path, body: &Value) -> ProjectServiceDi
         insert_optional_string(&mut task, "assignedTo", to.clone());
         insert_optional_string(&mut task, "assignee", assignee);
         insert_optional_string(&mut task, "tool", tool);
-        task.insert("assigner".into(), Value::Null);
         task.insert("description".into(), Value::String(description.clone()));
         task.insert("prompt".into(), Value::String(prompt));
         task.insert("createdAt".into(), Value::String(now.clone()));
@@ -961,17 +961,17 @@ fn review_lifecycle(
             exchange = upsert_item(exchange, "tasks", follow_up);
         }
         exchange = derive_runtime_exchange_indexes(exchange);
-        Ok((
-            exchange,
-            json!({
-                "ok": true,
-                "task": task,
-                "thread": thread,
-                "message": message,
-                "followUpTask": follow_up.unwrap_or(Value::Null),
-                "deliveredTo": []
-            }),
-        ))
+        let mut response = json!({
+            "ok": true,
+            "task": task,
+            "thread": thread,
+            "message": message,
+            "deliveredTo": []
+        });
+        if let Some(follow_up) = follow_up {
+            object_insert_mut(&mut response, "followUpTask", follow_up);
+        }
+        Ok((exchange, response))
     })
 }
 
@@ -1003,7 +1003,7 @@ fn update_task_thread(
             to: Some(recipients.clone()),
             kind: kind.into(),
             body,
-            task_id: Some(string_field(task, "id")),
+            task_id: None,
             metadata: Some(json!({ "taskId": string_field(task, "id"), "taskAction": action })),
         },
     )?;
@@ -1855,16 +1855,42 @@ fn review_from_task(task: &Value) -> Option<Value> {
     if string_field(task, "type") != "review" {
         return None;
     }
-    Some(json!({
-        "id": format!("review:{}", string_field(task, "id")),
-        "taskId": string_field(task, "id"),
-        "reviewOf": task.get("reviewOf").cloned().unwrap_or(Value::Null),
-        "reviewer": task.get("assignedTo").cloned().or_else(|| task.get("assignee").cloned()).unwrap_or(Value::Null),
-        "status": string_field_with_default(task, "reviewStatus", "pending"),
-        "feedback": task.get("reviewFeedback").cloned().or_else(|| task.get("result").cloned()).unwrap_or(Value::Null),
-        "createdAt": task.get("createdAt").cloned().unwrap_or(Value::Null),
-        "updatedAt": task.get("updatedAt").cloned().unwrap_or(Value::Null),
-    }))
+    let mut review = Map::new();
+    review.insert(
+        "id".into(),
+        Value::String(format!("review:{}", string_field(task, "id"))),
+    );
+    review.insert("taskId".into(), Value::String(string_field(task, "id")));
+    if let Some(review_of) = task.get("reviewOf") {
+        review.insert("reviewOf".into(), review_of.clone());
+    }
+    review.insert(
+        "reviewer".into(),
+        task.get("assignedTo")
+            .cloned()
+            .or_else(|| task.get("assignee").cloned())
+            .unwrap_or(Value::Null),
+    );
+    review.insert(
+        "status".into(),
+        Value::String(string_field_with_default(task, "reviewStatus", "pending")),
+    );
+    if let Some(feedback) = task
+        .get("reviewFeedback")
+        .cloned()
+        .or_else(|| task.get("result").cloned())
+    {
+        review.insert("feedback".into(), feedback);
+    }
+    review.insert(
+        "createdAt".into(),
+        task.get("createdAt").cloned().unwrap_or(Value::Null),
+    );
+    review.insert(
+        "updatedAt".into(),
+        task.get("updatedAt").cloned().unwrap_or(Value::Null),
+    );
+    Some(Value::Object(review))
 }
 
 fn waits_from_thread(thread: &Value) -> Option<Value> {
@@ -1881,7 +1907,7 @@ fn waits_from_thread(thread: &Value) -> Option<Value> {
         string_field(thread, "status").as_str(),
         "done" | "abandoned"
     );
-    Some(json!({
+    let mut wait = json!({
         "id": format!("wait:thread:{}", string_field(thread, "id")),
         "status": if resolved { "satisfied" } else { "waiting" },
         "subjectKind": "thread",
@@ -1890,8 +1916,15 @@ fn waits_from_thread(thread: &Value) -> Option<Value> {
         "owner": thread.get("owner").cloned().unwrap_or(Value::Null),
         "createdAt": thread.get("createdAt").cloned().unwrap_or(Value::Null),
         "updatedAt": thread.get("updatedAt").cloned().unwrap_or(Value::Null),
-        "resolvedAt": if resolved { thread.get("updatedAt").cloned().unwrap_or(Value::Null) } else { Value::Null },
-    }))
+    });
+    if resolved {
+        object_insert_mut(
+            &mut wait,
+            "resolvedAt",
+            thread.get("updatedAt").cloned().unwrap_or(Value::Null),
+        );
+    }
+    Some(wait)
 }
 
 fn waits_from_task(task: &Value) -> Option<Value> {
@@ -1914,7 +1947,7 @@ fn waits_from_task(task: &Value) -> Option<Value> {
         return None;
     }
     let resolved = matches!(string_field(task, "status").as_str(), "done" | "failed");
-    Some(json!({
+    let mut wait = json!({
         "id": format!("wait:task:{}", string_field(task, "id")),
         "status": if resolved { "satisfied" } else { "waiting" },
         "subjectKind": "task",
@@ -1923,8 +1956,15 @@ fn waits_from_task(task: &Value) -> Option<Value> {
         "owner": string_field(task, "assignedBy"),
         "createdAt": task.get("createdAt").cloned().unwrap_or(Value::Null),
         "updatedAt": task.get("updatedAt").cloned().unwrap_or(Value::Null),
-        "resolvedAt": if resolved { task.get("updatedAt").cloned().unwrap_or(Value::Null) } else { Value::Null },
-    }))
+    });
+    if resolved {
+        object_insert_mut(
+            &mut wait,
+            "resolvedAt",
+            task.get("updatedAt").cloned().unwrap_or(Value::Null),
+        );
+    }
+    Some(wait)
 }
 
 fn inbox_from_thread(thread: &Value) -> Vec<Value> {
@@ -2020,7 +2060,7 @@ fn create_rework_task_from_review(review_task: &Value) -> Option<Value> {
     }
     let now = now_iso();
     let review_of = string_field_with_default(review_task, "reviewOf", "unknown");
-    Some(json!({
+    let mut task = json!({
         "id": format!("revision-{review_of}-{}", base36_sequence()),
         "status": "pending",
         "assignedBy": trimmed_string(review_task.get("assignedTo")).unwrap_or_else(|| string_field(review_task, "assignedBy")),
@@ -2035,11 +2075,16 @@ fn create_rework_task_from_review(review_task: &Value) -> Option<Value> {
         "createdAt": now,
         "updatedAt": now,
         "assignee": trimmed_string(review_task.get("assigner")).unwrap_or_else(|| "coder".into()),
-        "assigner": review_task.get("assignee").cloned().unwrap_or(Value::Null),
         "type": "task",
         "iteration": iteration,
-        "reviewOf": review_task.get("reviewOf").cloned().unwrap_or(Value::Null),
-    }))
+    });
+    if let Some(assigner) = review_task.get("assignee").cloned() {
+        object_insert_mut(&mut task, "assigner", assigner);
+    }
+    if let Some(review_of) = review_task.get("reviewOf").cloned() {
+        object_insert_mut(&mut task, "reviewOf", review_of);
+    }
+    Some(task)
 }
 
 fn create_review_task_for_completed_task(task: &Value, team_config: &Value) -> Option<Value> {
