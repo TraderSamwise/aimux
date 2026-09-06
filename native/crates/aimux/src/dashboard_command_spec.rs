@@ -50,8 +50,8 @@ impl Default for DashboardCommandSpecOptions {
             home_dir: env::var_os("HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(".")),
-            platform: node_platform(env::consts::OS).to_owned(),
-            arch: node_arch(env::consts::ARCH).to_owned(),
+            platform: native_platform(env::consts::OS).to_owned(),
+            arch: native_arch(env::consts::ARCH).to_owned(),
         }
     }
 }
@@ -329,14 +329,14 @@ fn hex_prefix(bytes: &[u8], length: usize) -> String {
     value
 }
 
-fn node_platform(platform: &str) -> &str {
+fn native_platform(platform: &str) -> &str {
     match platform {
         "macos" => "darwin",
         value => value,
     }
 }
 
-fn node_arch(arch: &str) -> &str {
+fn native_arch(arch: &str) -> &str {
     match arch {
         "aarch64" => "arm64",
         "x86_64" => "x64",

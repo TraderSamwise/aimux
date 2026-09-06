@@ -237,19 +237,19 @@ fn platform_native_binary_path(install_root: impl AsRef<Path>) -> PathBuf {
 fn platform_native_dirname() -> String {
     format!(
         "{}-{}",
-        node_platform(std::env::consts::OS),
-        node_arch(std::env::consts::ARCH)
+        native_platform(std::env::consts::OS),
+        native_arch(std::env::consts::ARCH)
     )
 }
 
-fn node_platform(platform: &str) -> &str {
+fn native_platform(platform: &str) -> &str {
     match platform {
         "macos" => "darwin",
         value => value,
     }
 }
 
-fn node_arch(arch: &str) -> &str {
+fn native_arch(arch: &str) -> &str {
     match arch {
         "aarch64" => "arm64",
         "x86_64" => "x64",
