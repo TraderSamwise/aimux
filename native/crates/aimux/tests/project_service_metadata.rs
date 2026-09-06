@@ -326,7 +326,7 @@ fn runtime_set_activity_tracks_idle_transitions() {
 }
 
 #[test]
-fn runtime_set_activity_stamps_cold_idle_sessions() {
+fn runtime_set_activity_does_not_stamp_cold_idle_sessions() {
     let project = temp_project("activity-cold-idle");
     let state_dir = project.join("state");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -344,10 +344,8 @@ fn runtime_set_activity_stamps_cold_idle_sessions() {
     let derived = &state.sessions["codex-1"]["derived"];
     assert_eq!(derived["activity"], "idle");
     assert!(
-        derived["becameIdleAt"]
-            .as_str()
-            .is_some_and(|value| value.ends_with('Z')),
-        "cold idle sessions get a becameIdleAt timestamp"
+        derived["becameIdleAt"].is_null(),
+        "cold idle sessions preserve the missing idle timestamp"
     );
     cleanup(project);
 }

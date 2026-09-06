@@ -330,9 +330,13 @@ fn set_derived_activity(current: Value, activity: String) -> Value {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let previous_activity = derived
+        .get("activity")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     if activity == "running" {
         derived.remove("becameIdleAt");
-    } else if !derived.contains_key("becameIdleAt") {
+    } else if previous_activity.as_deref() == Some("running") {
         derived.insert("becameIdleAt".to_owned(), Value::String(now_iso()));
     }
     derived.insert("activity".to_owned(), Value::String(activity));
