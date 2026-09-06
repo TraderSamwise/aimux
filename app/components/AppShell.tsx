@@ -107,14 +107,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Menu size={20} color="#a1a1aa" />
     </Button>
   ) : undefined;
-  const desktopSidebar = overlayTopChrome ? (
-    <View style={{ height: "100%", paddingTop: topChromeHideDistance }}>
-      <Sidebar />
+  const sidebarSurface = overlayTopChrome ? (
+    <View className="flex-1 bg-[#161719]">
+      <View
+        style={{
+          bottom: 0,
+          left: 0,
+          position: "absolute",
+          right: 0,
+          top: topChromeHideDistance,
+        }}
+      >
+        <Sidebar />
+      </View>
     </View>
   ) : (
     <Sidebar />
   );
-
   return (
     <View className="flex-1 bg-background">
       <View style={shellZoomStyle}>
@@ -156,8 +165,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </ChatChromeMotion>
         </View>
         <View className="flex-1 flex-row">
-          {isDesktop ? desktopSidebar : null}
-          {isTablet && sidebarOpen ? desktopSidebar : null}
+          {isDesktop ? sidebarSurface : null}
+          {isTablet && sidebarOpen ? sidebarSurface : null}
           <View className="flex-1">{children}</View>
 
           {isMobile && sidebarOpen ? (
@@ -182,13 +191,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 transform: [{ translateX }],
               }}
             >
-              {isMonitorRoute ? (
-                <MonitorSidebar />
-              ) : isSharedShell ? (
-                <SharedSidebar />
-              ) : (
-                <ProjectSidebar />
-              )}
+              {sidebarSurface}
             </RNAnimated.View>
           ) : null}
         </View>
