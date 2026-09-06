@@ -7,6 +7,14 @@ pub struct CoreProjectEnsureArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreAgentPsArgs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoreLogsSubcommand {
@@ -209,7 +217,7 @@ fn parse_restart_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreRestartArgs> {
             continue;
         }
         if let Some(value) = arg.strip_prefix("--project=") {
-            if value.is_empty() {
+            if value.is_empty() || value.starts_with('-') {
                 return None;
             }
             parsed.project = Some(value.to_owned());
@@ -219,6 +227,48 @@ fn parse_restart_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreRestartArgs> {
         return None;
     }
     Some(parsed)
+}
+
+fn parse_project_json_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPsArgs> {
+    let mut parsed = CoreAgentPsArgs {
+        project: None,
+        json: false,
+    };
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            parsed.project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            parsed.project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(parsed)
+}
+
+pub fn parse_core_agent_ps_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPsArgs> {
+    if args.first().map(AsRef::as_ref) != Some("ps") {
+        return None;
+    }
+    parse_project_json_flags(&args[1..])
 }
 
 #[allow(clippy::collapsible_if)]
@@ -702,6 +752,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     let subcommand = args.get(1).map(AsRef::as_ref);
     match (command, subcommand) {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
+        (Some("ps"), _) => true,
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,

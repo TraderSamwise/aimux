@@ -1,11 +1,12 @@
 use aimux::core_cli_routing::{
-    CoreDaemonRestartArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs,
-    CoreLogsArgs, CoreLogsSubcommand, CoreProjectEnsureArgs, CoreRestartArgs, core_command_args,
-    has_core_global_logging_args, is_core_cli_command, is_core_project_ensure_command,
-    is_valid_core_project_ensure_args, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_host_agent_read_args,
-    parse_core_host_agent_stream_args, parse_core_host_restart_args, parse_core_logs_args,
-    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    CoreAgentPsArgs, CoreDaemonRestartArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs,
+    CoreHostRestartArgs, CoreLogsArgs, CoreLogsSubcommand, CoreProjectEnsureArgs, CoreRestartArgs,
+    core_command_args, has_core_global_logging_args, is_core_cli_command,
+    is_core_project_ensure_command, is_valid_core_project_ensure_args, parse_core_agent_ps_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
+    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
+    parse_core_restart_args, parse_core_runtime_restart_args,
 };
 
 #[test]
@@ -120,6 +121,34 @@ fn restart_parsers_keep_global_and_daemon_forms_distinct() {
         parse_core_restart_args(&["restart", "--project", "-repo"]),
         None
     );
+}
+
+#[test]
+fn agent_ps_parser_matches_project_json_forms() {
+    assert_eq!(
+        parse_core_agent_ps_args(&["ps"]),
+        Some(CoreAgentPsArgs {
+            project: None,
+            json: false,
+        })
+    );
+    assert_eq!(
+        parse_core_agent_ps_args(&["ps", "--project=/repo", "--json"]),
+        Some(CoreAgentPsArgs {
+            project: Some("/repo".into()),
+            json: true,
+        })
+    );
+    assert_eq!(
+        parse_core_agent_ps_args(&["ps", "--project", "./child", "--project", "/repo"]),
+        Some(CoreAgentPsArgs {
+            project: Some("/repo".into()),
+            json: false,
+        })
+    );
+    assert_eq!(parse_core_agent_ps_args(&["ps", "--project"]), None);
+    assert_eq!(parse_core_agent_ps_args(&["ps", "--project=-repo"]), None);
+    assert_eq!(parse_core_agent_ps_args(&["ps", "extra"]), None);
 }
 
 #[test]

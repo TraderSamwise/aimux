@@ -267,6 +267,38 @@ fn host_agent_stream_plans_native_text_route_with_stream_defaults() {
 }
 
 #[test]
+fn agent_ps_plans_native_text_route_with_project_resolution() {
+    let plan = classify_core_cli_with_project_resolver(
+        &["ps", "--project", "./child dir", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("ps plan");
+    assert_eq!(plan.operation, CoreCliOperation::AgentPs);
+    assert_eq!(plan.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/ps-text?project=%2Fresolved%2F.%2Fchild%20dir&json=1".into(),
+            body: None,
+        }
+    );
+
+    let default_project = classify_core_cli(&["ps"], &context(true, true)).expect("default ps");
+    assert_eq!(
+        default_project.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/ps-text?project=%2Frepo".into(),
+            body: None,
+        }
+    );
+
+    let malformed = classify_core_cli(&["ps", "--project", "--json"], &context(true, true))
+        .expect_err("malformed ps");
+    assert_eq!(malformed.exit_code(), 1);
+}
+
+#[test]
 fn invalid_host_agent_stream_args_fail_before_node_fallback() {
     let invalid_lines = classify_core_cli(
         &["host", "agent-stream", "claude-1", "--lines", "-5"],

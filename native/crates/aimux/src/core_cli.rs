@@ -1,9 +1,10 @@
 use crate::core_cli_routing::{
     CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreHostRestartArgs, CoreLogsArgs,
-    CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_host_agent_read_args_result,
-    parse_core_host_agent_stream_args_result, parse_core_host_restart_args, parse_core_logs_args,
-    parse_core_project_ensure_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_ps_args,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
+    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
+    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
+    parse_core_restart_args, parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ pub enum CoreCliOperation {
     HostStatus,
     HostAgentRead,
     HostAgentStream,
+    AgentPs,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -469,6 +471,18 @@ fn host_agent_stream_text_path(
     )
 }
 
+fn agent_ps_text_path(project: &str, json: bool) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.agent_ps_text,
+        encode_query_component(project)
+    );
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
 fn encode_query_component(value: &str) -> String {
     let mut output = String::new();
     for byte in value.bytes() {
@@ -518,6 +532,27 @@ where
             (
                 CoreCliOperation::Restart,
                 CoreCliAction::RestartControlPlane { project_root },
+                CoreCliFallback::None,
+            )
+        }
+        ("ps", _) => {
+            let parsed = parse_core_agent_ps_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid ps arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::AgentPs,
+                CoreCliAction::TextRoute {
+                    path: agent_ps_text_path(&project_root, parsed.json),
+                    body: None,
+                },
                 CoreCliFallback::None,
             )
         }
