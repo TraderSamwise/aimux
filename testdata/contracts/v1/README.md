@@ -13,6 +13,9 @@ Priority fixture groups:
    names, invalidation groups, and mutation-route invalidation mapping by
    running TypeScript `project-api-contract`.
 2. `core-command`: daemon command names and core HTTP route shapes.
+   `core-command/behavior.json` captures daemon route responses for ping,
+   status, unknown command, and missing-project-root errors by running
+   TypeScript `core-command-contract`.
 3. `agent-output`: parser fixtures, streaming diffs, liveness transitions.
 4. `ansi`: SGR spans and terminal display formatting.
 5. `tmux`: command argv, inventory rows, pane captures, statusline artifacts.
