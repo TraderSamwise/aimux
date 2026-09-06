@@ -228,6 +228,13 @@ Priority fixture groups:
   project-service identity contracts captured by running TypeScript
   `process-inspector` helpers against fake `ps`/`lsof` commands.
 
+## Prompt Context
+
+- `prompt-context/context.json`: prompt context normalization, delimiter and
+  zero-width bypass neutralization, byte counting, composition, TTL expiry,
+  per-session replacement/clear, and expired-entry sweeping captured by running
+  TypeScript `prompt-context` helpers.
+
 ## Request Errors
 
 - `request-errors/classification.json`: app request-error message extraction and
