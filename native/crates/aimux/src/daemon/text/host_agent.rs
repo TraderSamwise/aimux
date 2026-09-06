@@ -229,19 +229,26 @@ impl AgentOutputSseTextHandler {
     }
 
     pub fn push_chunk_text(&mut self, chunk: &str) -> Result<String, AgentOutputStreamError> {
+        Ok(self.push_chunk_text_writes(chunk)?.join(""))
+    }
+
+    pub fn push_chunk_text_writes(
+        &mut self,
+        chunk: &str,
+    ) -> Result<Vec<String>, AgentOutputStreamError> {
         self.buffer.push_str(chunk);
-        let mut output = String::new();
+        let mut output = Vec::new();
         while let Some(boundary) = self.buffer.find("\n\n") {
             let block = self.buffer[..boundary].replace('\r', "");
             self.buffer = self.buffer[boundary + 2..].to_owned();
             if !block.is_empty() && !block.starts_with(':') {
-                output.push_str(&self.flush_event_block(&block)?);
+                output.extend(self.flush_event_block(&block)?);
             }
         }
         Ok(output)
     }
 
-    fn flush_event_block(&mut self, block: &str) -> Result<String, AgentOutputStreamError> {
+    fn flush_event_block(&mut self, block: &str) -> Result<Vec<String>, AgentOutputStreamError> {
         let mut event_name = "message";
         let mut data_lines = Vec::new();
         for line in block.split('\n') {
@@ -254,7 +261,7 @@ impl AgentOutputSseTextHandler {
             }
         }
         if event_name == "ready" {
-            return Ok(String::new());
+            return Ok(Vec::new());
         }
         if event_name == "error" {
             let payload = if data_lines.is_empty() {
@@ -272,14 +279,14 @@ impl AgentOutputSseTextHandler {
             return Err(AgentOutputStreamError::new(message));
         }
         if event_name != "output" || data_lines.is_empty() {
-            return Ok(String::new());
+            return Ok(Vec::new());
         }
         let payload: Value = serde_json::from_str(&data_lines.join("\n"))
             .map_err(|error| AgentOutputStreamError::new(error.to_string()))?;
         let Some(next_output) = payload.get("output").and_then(Value::as_str) else {
-            return Ok(String::new());
+            return Ok(Vec::new());
         };
-        let mut render_text = String::new();
+        let mut writes = Vec::new();
         if (payload
             .get("outputTailOnly")
             .and_then(Value::as_bool)
@@ -296,7 +303,7 @@ impl AgentOutputSseTextHandler {
                 .filter(|limit| *limit > 0)
                 .map(|limit| limit.to_string())
                 .unwrap_or_else(|| "bounded".into());
-            render_text.push_str(&format!("[aimux showing last {limit} lines]\n"));
+            writes.push(format!("[aimux showing last {limit} lines]\n"));
             self.wrote_tail_notice = true;
         }
         let delta = if next_output.starts_with(&self.last_output) {
@@ -322,13 +329,13 @@ impl AgentOutputSseTextHandler {
         };
         self.last_output = next_output.to_owned();
         if delta.is_empty() {
-            return Ok(render_text);
+            return Ok(writes);
         }
-        render_text.push_str(&delta);
+        writes.push(delta.clone());
         if !delta.ends_with('\n') {
-            render_text.push('\n');
+            writes.push("\n".to_owned());
         }
-        Ok(render_text)
+        Ok(writes)
     }
 }
 

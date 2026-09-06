@@ -1,0 +1,2 @@
+{"type":"response","content":"Ran git status --short"}
+{"type":"response","content":"Ran yarn test"}

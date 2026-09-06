@@ -28,12 +28,12 @@
       "name": "reports suspicious status text that still parses as an assistant response",
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
-      "input": { "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-0QBuEE"] },
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-001"] },
       "output": {
         "scanned": 1,
         "findings": [
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-0QBuEE/claude-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-001/claude-test.jsonl",
             "recordIndex": 0,
             "tool": "claude",
             "blockIndex": 0,
@@ -50,14 +50,14 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "09ed4178c27a18e18dd9552cfcac99a4d04b95bc65585f18b4cad319b536149b"
+      "inputSha256": "069be5280e229bd339b7f3b749bfdcdd9b6356992e3a44eb6825c382fb4df82d"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-003",
       "name": "does not flag prose or code samples that only mention agent chrome terms",
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
-      "input": { "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-zqj2vN"] },
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-002"] },
       "output": {
         "scanned": 1,
         "findings": [],
@@ -69,14 +69,14 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "ebcd10f34afb51690cd7dfae2f093560b8bacc24fed7b0a1448dfe58d50068ff"
+      "inputSha256": "01bd3ad6ccd06a906d0e653c24bb847cd651fa76632552d0b2d9f21e182372d8"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-004",
       "name": "does not flag Codex chrome that the parser already classifies as metadata",
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
-      "input": { "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-rLyMdr"] },
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-003"] },
       "output": {
         "scanned": 1,
         "findings": [],
@@ -88,14 +88,14 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "63d99c7f07f80ad5df0efdb399a187146f2425337cea18b22864a3d2737296e2"
+      "inputSha256": "c4cc292a3b43b56219ce59aedfaebfa46b5806b89393add971baa4bd67df3084"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-005",
       "name": "does not flag prose that mentions tool-row examples",
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
-      "input": { "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-ASR4oO"] },
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-004"] },
       "output": {
         "scanned": 1,
         "findings": [],
@@ -107,14 +107,14 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "a931a05771871fb2d1687c77fc2e45d4aa4ed3693d5fb67e8aa7c6c9a10749f6"
+      "inputSha256": "813b97f042467c7328e1a7eeb50a7f92424a3874933619f9a0f502f5ece8f67a"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-006",
       "name": "does not flag standalone ran-command rows that now parse as status text",
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
-      "input": { "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-JnJP1w"] },
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-005"] },
       "output": {
         "scanned": 2,
         "findings": [],
@@ -126,7 +126,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "6095ecd3958c7bda0d6cb7c9d2d5aab51afe63c63ff4903b00513ea4c822e066"
+      "inputSha256": "8114413e8d7c6078ccc73cb7fa3f527e051f419cf1b693b94403e0cbbbc7711f"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-007",
@@ -134,14 +134,14 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-NDXIz8"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-006"],
         "flags": ["action-status-leak"]
       },
       "output": {
         "scanned": 2,
         "findings": [
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-NDXIz8/codex-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-006/codex-test.jsonl",
             "recordIndex": 0,
             "tool": "codex",
             "blockIndex": 0,
@@ -150,7 +150,7 @@
             "sample": "Leaked action row: Ran yarn test."
           },
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-NDXIz8/codex-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-006/codex-test.jsonl",
             "recordIndex": 1,
             "tool": "codex",
             "blockIndex": 0,
@@ -167,7 +167,7 @@
           "action-status-leak": 2
         }
       },
-      "inputSha256": "2a342b78b60d12a8dbef2454ab8a3eda42f6ded0727eb7a35480c81141b0599f"
+      "inputSha256": "c5734726b8d2680feac247127a258d635edabb5ee1290dd8588a0b18c3ac5bef"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-008",
@@ -175,14 +175,14 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-IgC7DJ"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-007"],
         "flags": ["activity-status-leak"]
       },
       "output": {
         "scanned": 2,
         "findings": [
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-IgC7DJ/codex-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-007/codex-test.jsonl",
             "recordIndex": 0,
             "tool": "codex",
             "blockIndex": 0,
@@ -191,7 +191,7 @@
             "sample": "Simmered for 12s - leaked assistant prose"
           },
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-IgC7DJ/codex-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-007/codex-test.jsonl",
             "recordIndex": 1,
             "tool": "codex",
             "blockIndex": 0,
@@ -208,7 +208,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "1709666efa1a7b8b25d290eaa40bb67f3a8461de92b0e249dc6da8801fbd2643"
+      "inputSha256": "75fbb5864e4814275a86e18d54eacce9ed068ab7ac0df7bb8fbe71f41c87657c"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-009",
@@ -216,7 +216,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-8RxTAQ"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-008"],
         "flags": ["action-status-leak"]
       },
       "output": {
@@ -230,7 +230,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "b3a70aba68af04add82d90b9528870a98c9aeadc8623f67e7d5eafc3f77c68a4"
+      "inputSha256": "0afde462ba2ba5838a2ab368c5d9955cb83e18e92b6e3380bab29a85b8ff22f0"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-010",
@@ -238,7 +238,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-aloBe8"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-009"],
         "flags": ["action-status-leak"]
       },
       "output": {
@@ -252,14 +252,14 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "77460f5ece9eb096893366c99f5955e03347f62874ef24659f0193b4c1fd44c2"
+      "inputSha256": "21e436abaf5b6afb8214eac75ec3510d1035d4b3f9c0b8ddcc9466069bfefef5"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-011",
       "name": "ignores non-response history records",
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
-      "input": { "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-iy6V37"] },
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-010"] },
       "output": {
         "scanned": 0,
         "findings": [],
@@ -271,7 +271,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "5b00b194f169114f1c2c67e91dbe2173243c9885648154190409d81205b809f3"
+      "inputSha256": "00eb74daf5142b45daa7faa467e1e3202782d4d65b3a5e04bb2759d16f55cdd2"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-012",
@@ -279,14 +279,14 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-XTxDBQ"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-011"],
         "maxFindings": 1
       },
       "output": {
         "scanned": 2,
         "findings": [
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-XTxDBQ/claude-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-011/claude-test.jsonl",
             "recordIndex": 0,
             "tool": "claude",
             "blockIndex": 0,
@@ -303,7 +303,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "fd3d4d697859ac924bab780994ec9a16e6226ebfceea29dc3f148d0999bfbbba"
+      "inputSha256": "3ae582aaae7f51c427be52c683ad9fe40aa5fd268981a84aa7656db05004279f"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-013",
@@ -311,7 +311,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-STQBVP"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-012"],
         "flags": ["raw-block"]
       },
       "output": {
@@ -325,7 +325,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "9eef843037f57a1c1451dfb144e160c2afcba61d543b295c698ad36e27e2e845"
+      "inputSha256": "6dd647e8affea0eaf0bf5a5cd782e30976b4e2fc26e29f65f98d51b029d640ae"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-014",
@@ -333,7 +333,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-rqFB1D"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-013"],
         "flags": ["raw-block"]
       },
       "output": {
@@ -347,7 +347,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "824fc4f84734a0cded46f06a7c909eb970dac7cac6dbe6beb470630b9045f673"
+      "inputSha256": "114db59ac9b14b4f2c238d9a06868d6daf9b7c9534d21641444fd7fa057dd038"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-015",
@@ -355,7 +355,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-6ehZhN"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-014"],
         "flags": ["raw-block"]
       },
       "output": {
@@ -369,7 +369,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "6cda36f3c088662817a7fbce3304270e14504229a913f7252cb6f9d691c1937b"
+      "inputSha256": "022f9c9f3b44af2bba1adcba2079d0912ae1aac8099e54c8533912acb3cd13de"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-016",
@@ -377,7 +377,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-0HjuJx"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-015"],
         "flags": ["raw-block"]
       },
       "output": {
@@ -391,7 +391,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "c36c76917cabb17703617d43fd5eb0225f2dcebaa60b9daa6d1718765f18c0b7"
+      "inputSha256": "7bf051dfc9b02d90153788a3490ecce3dff44998355b10a2c92f6bc04b29c25f"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-017",
@@ -399,14 +399,14 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-69ZPYz"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-016"],
         "flags": ["status-leak-response"]
       },
       "output": {
         "scanned": 2,
         "findings": [
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-69ZPYz/codex-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-016/codex-test.jsonl",
             "recordIndex": 1,
             "tool": "codex",
             "blockIndex": 0,
@@ -423,7 +423,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "1403eb926984e1574cf86bf2dbdf9d8ea34ac0d41ab9cd5cd1f2721bdec8ec56"
+      "inputSha256": "aa1a6555044cace0a71d1f40a4def9e8c5b853b0f891474cc2eafb13f3f10d2c"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-018",
@@ -431,7 +431,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-CQKsCk"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-017"],
         "flags": ["prompt-from-response-record"]
       },
       "output": {
@@ -445,7 +445,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "f46a2c202811349f3a4c170ac27f88fa6a87af9c7a0b81772e6081d5e154aa51"
+      "inputSha256": "b0925f343461d76ea433f69163bcfa18ce484c819f813f57b78b2ac60b1e5b6a"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-019",
@@ -453,14 +453,14 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-t7fQJ3"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-018"],
         "flags": ["prompt-from-response-record"]
       },
       "output": {
         "scanned": 1,
         "findings": [
           {
-            "source": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-t7fQJ3/codex-test.jsonl",
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-018/codex-test.jsonl",
             "recordIndex": 0,
             "tool": "codex",
             "blockIndex": 0,
@@ -477,7 +477,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "275af6e1cca976918ae119039db06b9b54eb0c692f98d23b917f3d2f807a50bf"
+      "inputSha256": "97481283c1072ce7660b13b972f79ec63f4b84e9b17c05ca24aa0dae2875885a"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-020",
@@ -485,7 +485,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-YACCLc"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-019"],
         "flags": ["prompt-from-response-record"]
       },
       "output": {
@@ -499,7 +499,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "801a859be07031a5efa58703e520edc288c47c1949b8a8562a3d2b6bec7f1a44"
+      "inputSha256": "2625ab9e82dfefe27af618aa485aa4b75ea1552e11e00391197c25a1659408a0"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-021",
@@ -507,7 +507,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-UEPD74"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-020"],
         "flags": ["prompt-from-response-record"]
       },
       "output": {
@@ -521,7 +521,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "877401b7b738430a1f60664e699934e291764f5fdd61119a8d76db12d16b5366"
+      "inputSha256": "4735e30e254f3dd08488c200bd4377e4522a36e203ac53416f5f3ba29009843b"
     },
     {
       "id": "src-agent-output-parser-audit-test-ts-audit-022",
@@ -529,7 +529,7 @@
       "source": "src/agent-output-parser-audit.test.ts",
       "api": "auditAgentOutputParserCorpus",
       "input": {
-        "historyDirs": ["/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-parser-audit-BXKHqK"],
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-021"],
         "flags": ["prompt-from-response-record"]
       },
       "output": {
@@ -543,7 +543,7 @@
           "action-status-leak": 0
         }
       },
-      "inputSha256": "2b3195d5c29c1fd701550c34583101d1bb454e599c28a45681d81e83e6b3f768"
+      "inputSha256": "01ff4c85de15b2ac80ddcdc1e7328fc4260b48f7df9f3b6d18433b2b063e170f"
     }
   ]
 }

@@ -3,7 +3,7 @@ use aimux::project_service::agent_output::{
     AgentOutputCaptureWindow, agent_output_capture_window, bounded_agent_output_end_line,
     bounded_agent_output_start_line,
 };
-use aimux::project_service::output_metrics::{AgentOutputReadMetrics, AgentOutputReadRecord};
+use aimux::project_service::output_metrics::{AgentOutputReadMetricRecord, AgentOutputReadMetrics};
 use serde_json::{Map, Value, json};
 
 const BOUNDS: &str = include_str!("../../../../testdata/contracts/v1/agent-output/bounds.json");
@@ -55,9 +55,15 @@ fn fixture_agent_output_stream_matches_typescript() {
         let mut writes = Vec::new();
         let mut errors = Vec::new();
         for chunk in chunks {
-            match handler.push_chunk_text(chunk.as_str().expect("chunk text")) {
-                Ok(text) if !text.is_empty() => writes.push(Value::String(text)),
-                Ok(_) => {}
+            match handler.push_chunk_text_writes(chunk.as_str().expect("chunk text")) {
+                Ok(texts) => {
+                    writes.extend(
+                        texts
+                            .into_iter()
+                            .filter(|text| !text.is_empty())
+                            .map(Value::String),
+                    );
+                }
                 Err(error) => errors.push(Value::String(error.to_string())),
             }
         }
@@ -95,7 +101,10 @@ fn fixture_agent_output_read_metrics_matches_typescript() {
     for case in cases {
         let metrics = AgentOutputReadMetrics::default();
         for record in case["input"]["records"].as_array().expect("metric records") {
-            metrics.record(read_metric_record(&record["input"]));
+            metrics.record_metric_at(
+                read_metric_record(&record["input"]),
+                record["at"].as_str().expect("metric timestamp").to_owned(),
+            );
         }
         let actual = metrics.snapshot();
         let expected = case["output"]["finalMetrics"].clone();
@@ -132,18 +141,39 @@ fn capture_window_json(window: AgentOutputCaptureWindow) -> Value {
     Value::Object(map)
 }
 
-fn read_metric_record(input: &Value) -> AgentOutputReadRecord {
-    AgentOutputReadRecord {
+fn read_metric_record(input: &Value) -> AgentOutputReadMetricRecord {
+    AgentOutputReadMetricRecord {
         source: input["source"].as_str().expect("metric source").to_owned(),
         session_id: input["sessionId"]
             .as_str()
             .expect("metric session id")
             .to_owned(),
+        mode: input.get("mode").and_then(Value::as_str).map(str::to_owned),
+        purpose: input
+            .get("purpose")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        requested_start_line: input.get("requestedStartLine").and_then(Value::as_i64),
+        start_line: input.get("startLine").and_then(Value::as_i64),
+        end_line: input.get("endLine").and_then(Value::as_i64),
+        capture_line_limit: input.get("captureLineLimit").and_then(Value::as_i64),
+        output_bytes: input
+            .get("outputBytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        response_bytes: input
+            .get("responseBytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        duration_ms: input.get("durationMs").and_then(Value::as_u64).unwrap_or(0),
         changed: input.get("changed").and_then(Value::as_bool),
         coalesced: input
             .get("coalesced")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        error: input.get("error").and_then(Value::as_str).is_some(),
+        error: input
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }

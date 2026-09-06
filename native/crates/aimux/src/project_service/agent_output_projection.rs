@@ -1,6 +1,8 @@
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -1021,10 +1023,7 @@ fn looks_like_tool_action_text(text: &str) -> bool {
         return false;
     }
     let lower = trimmed.to_ascii_lowercase();
-    if (lower.starts_with("bash(")
-        && (!trimmed.contains(')')
-            || trimmed.ends_with(')')
-            || lower.contains("terminal-notifier")))
+    if (lower.starts_with("bash(") && (!trimmed.contains(')') || trimmed.ends_with(')')))
         || lower.starts_with("bashoutput")
         || lower.starts_with("background command \"")
         || looks_like_ran_command_text(trimmed)
@@ -1389,7 +1388,7 @@ fn messages_from_blocks(blocks: &[AgentOutputBlock], ansi: Option<&str>) -> Vec<
     let mut seen = Map::new();
     let rich_spans = ansi.map(parse_ansi_spans);
     let mut span_cursor = 0;
-    let mut image_count = 0;
+    let mut labels = AttachmentLabels::default();
     for block in blocks {
         let role = match block.kind {
             "prompt" => "user",
@@ -1397,10 +1396,11 @@ fn messages_from_blocks(blocks: &[AgentOutputBlock], ansi: Option<&str>) -> Vec<
             _ => continue,
         };
         let original_text = block.text.trim();
-        let (text, attachments) = split_attachment_references(original_text);
-        if text.is_empty() {
+        let mut parts = parts_from_text(original_text, &mut labels);
+        if parts.is_empty() {
             continue;
         }
+        let text = transcript_message_text_from_parts(&parts);
         let base_id = content_id(role, original_text);
         let count = seen
             .get(&base_id)
@@ -1413,19 +1413,11 @@ fn messages_from_blocks(blocks: &[AgentOutputBlock], ansi: Option<&str>) -> Vec<
         } else {
             format!("{base_id}#{count}")
         };
-        let mut text_part = Map::new();
-        text_part.insert("type".to_owned(), Value::String("text".to_owned()));
-        text_part.insert("text".to_owned(), Value::String(text.clone()));
-        if let Some(spans) = rich_spans
-            .as_ref()
-            .and_then(|spans| slice_spans_for_text(spans, &text, &mut span_cursor))
-        {
-            text_part.insert("spans".to_owned(), Value::Array(spans));
-        }
-        let mut parts = vec![Value::Object(text_part)];
-        for attachment in attachments {
-            image_count += 1;
-            parts.push(attachment_reference_part(&attachment, image_count));
+        if let Some(spans) = rich_spans.as_ref().and_then(|spans| {
+            let raw = parts_text_for_spans(&parts);
+            slice_spans_for_text(spans, &raw, &mut span_cursor)
+        }) {
+            apply_spans_to_text_parts(&mut parts, &text, spans);
         }
         messages.push(json!({
             "id": id,
@@ -1447,6 +1439,38 @@ struct AttachmentReference {
     attachment_id: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct AttachmentLabels {
+    by_id: BTreeMap<String, String>,
+    next_image: usize,
+    next_file: usize,
+}
+
+impl AttachmentLabels {
+    fn label_for(&mut self, attachment_id: &str, image: bool) -> String {
+        if self.next_image == 0 {
+            self.next_image = 1;
+        }
+        if self.next_file == 0 {
+            self.next_file = 1;
+        }
+        if let Some(existing) = self.by_id.get(attachment_id) {
+            return existing.clone();
+        }
+        let label = if image {
+            let label = format!("[image #{}]", self.next_image);
+            self.next_image += 1;
+            label
+        } else {
+            let label = format!("[file #{}]", self.next_file);
+            self.next_file += 1;
+            label
+        };
+        self.by_id.insert(attachment_id.to_owned(), label.clone());
+        label
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RichSpan {
     text: String,
@@ -1454,41 +1478,47 @@ struct RichSpan {
     bold: bool,
 }
 
-fn split_attachment_references(text: &str) -> (String, Vec<AttachmentReference>) {
-    let mut attachments = Vec::new();
-    let mut kept_lines = Vec::new();
-    let mut lines = text.lines().peekable();
-    while let Some(line) = lines.next() {
-        if let Some((prefix, suffix)) = line.split_once(" Attached files: ") {
-            kept_lines.push(prefix.trim_end().to_owned());
-            if let Some(attachment) = parse_attachment_line(suffix.trim_start_matches("- ")) {
-                attachments.push(attachment);
-            }
-            continue;
-        }
-        if line.trim() == "Attached image files:" || line.trim() == "Attached files:" {
-            while let Some(peeked) = lines.peek() {
-                let trimmed = peeked.trim();
-                if !trimmed.starts_with("- ") {
-                    break;
-                }
-                if let Some(attachment) = parse_attachment_line(trimmed.trim_start_matches("- ")) {
-                    attachments.push(attachment);
-                }
-                lines.next();
-            }
-            continue;
-        }
-        kept_lines.push(line.to_owned());
+fn parts_from_text(text: &str, labels: &mut AttachmentLabels) -> Vec<Value> {
+    if let Some(parts) = parts_from_flattened(text, labels) {
+        return parts;
     }
-    (kept_lines.join("\n").trim().to_owned(), attachments)
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    vec![json!({ "type": "text", "text": trimmed })]
+}
+
+fn parts_from_flattened(text: &str, labels: &mut AttachmentLabels) -> Option<Vec<Value>> {
+    if !text.contains("Attached files:") && !text.contains("Attached image files:") {
+        return None;
+    }
+    let flattened = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (header_start, header_len) = if let Some(index) = flattened.find("Attached image files:") {
+        (index, "Attached image files:".len())
+    } else {
+        let index = flattened.find("Attached files:")?;
+        (index, "Attached files:".len())
+    };
+    let head = flattened[..header_start].trim();
+    let tail = flattened[header_start + header_len..].trim();
+    let mut parts = Vec::new();
+    if !head.is_empty() {
+        parts.push(json!({ "type": "text", "text": head }));
+    }
+    if let Some(attachment) = parse_attachment_line(tail.trim_start_matches("- ")) {
+        parts.push(attachment_reference_part(&attachment, labels));
+        return Some(parts);
+    }
+    None
 }
 
 fn parse_attachment_line(line: &str) -> Option<AttachmentReference> {
     let (filename, rest) = line.split_once(" (")?;
     let (mime_type, rest) = rest.split_once(", ")?;
     let (_, path) = rest.split_once("): ")?;
-    let basename = path.rsplit('/').next().unwrap_or(path);
+    let compact_path = path.replace(' ', "");
+    let basename = compact_path.rsplit('/').next().unwrap_or(&compact_path);
     let attachment_id = basename.split('.').next().unwrap_or(basename);
     Some(AttachmentReference {
         filename: filename.to_owned(),
@@ -1497,14 +1527,1082 @@ fn parse_attachment_line(line: &str) -> Option<AttachmentReference> {
     })
 }
 
-fn attachment_reference_part(attachment: &AttachmentReference, image_count: usize) -> Value {
+fn attachment_reference_part(
+    attachment: &AttachmentReference,
+    labels: &mut AttachmentLabels,
+) -> Value {
+    let is_image = attachment.mime_type.starts_with("image/");
+    let mut part = Map::new();
+    if is_image {
+        part.insert(
+            "type".to_owned(),
+            Value::String("image_reference".to_owned()),
+        );
+        part.insert(
+            "label".to_owned(),
+            Value::String(labels.label_for(&attachment.attachment_id, true)),
+        );
+    } else {
+        part.insert(
+            "type".to_owned(),
+            Value::String("attachment_reference".to_owned()),
+        );
+        part.insert(
+            "label".to_owned(),
+            Value::String(labels.label_for(&attachment.attachment_id, false)),
+        );
+        part.insert(
+            "kind".to_owned(),
+            Value::String(attachment_kind(&attachment.mime_type).to_owned()),
+        );
+    }
+    part.insert(
+        "attachmentId".to_owned(),
+        Value::String(attachment.attachment_id.clone()),
+    );
+    part.insert(
+        "filename".to_owned(),
+        Value::String(attachment.filename.clone()),
+    );
+    part.insert(
+        "mimeType".to_owned(),
+        Value::String(attachment.mime_type.clone()),
+    );
+    Value::Object(part)
+}
+
+fn attachment_kind(mime_type: &str) -> &'static str {
+    if mime_type == "application/pdf" {
+        "pdf"
+    } else if mime_type.starts_with("text/") || mime_type == "application/json" {
+        "text"
+    } else {
+        "file"
+    }
+}
+
+fn transcript_message_text_from_parts(parts: &[Value]) -> String {
+    parts
+        .iter()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_owned()
+}
+
+fn parts_text_for_spans(parts: &[Value]) -> String {
+    parts
+        .iter()
+        .filter_map(|part| {
+            (part.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| part.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn apply_spans_to_text_parts(parts: &mut [Value], raw_text: &str, spans: Vec<Value>) {
+    if spans_text(&spans) != raw_text {
+        return;
+    }
+    let mut cursor = 0;
+    for part in parts {
+        if part.get("type").and_then(Value::as_str) != Some("text") {
+            continue;
+        }
+        let Some(text) = part.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(relative_start) = raw_text.get(cursor..).and_then(|rest| rest.find(text)) else {
+            continue;
+        };
+        let start = cursor + relative_start;
+        let end = start + text.len();
+        cursor = end;
+        let sliced = slice_value_spans(&spans, start, end);
+        if !sliced.is_empty()
+            && let Value::Object(object) = part
+        {
+            object.insert("spans".to_owned(), Value::Array(sliced));
+        }
+    }
+}
+
+fn spans_text(spans: &[Value]) -> String {
+    spans
+        .iter()
+        .filter_map(|span| span.get("text").and_then(Value::as_str))
+        .collect()
+}
+
+fn slice_value_spans(spans: &[Value], start: usize, end: usize) -> Vec<Value> {
+    let mut cursor = 0;
+    let mut sliced = Vec::new();
+    for span in spans {
+        let Some(text) = span.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        let span_start = cursor;
+        let span_end = cursor + text.len();
+        cursor = span_end;
+        if span_end <= start || span_start >= end {
+            continue;
+        }
+        let from = start.saturating_sub(span_start);
+        let to = text.len().min(end.saturating_sub(span_start));
+        let Some(piece) = text.get(from..to) else {
+            continue;
+        };
+        let mut next = span.clone();
+        if let Value::Object(object) = &mut next {
+            object.insert("text".to_owned(), Value::String(piece.to_owned()));
+        }
+        sliced.push(next);
+    }
+    sliced
+}
+
+pub fn messages_from_parsed_agent_output_contract(parsed: &Value, options: &Value) -> Value {
+    let Some(blocks) = parsed.get("blocks").and_then(Value::as_array) else {
+        return Value::Array(Vec::new());
+    };
+    let tool = parsed
+        .get("parser")
+        .and_then(|parser| parser.get("tool"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let mut messages = Vec::new();
+    let mut labels = AttachmentLabels::default();
+    let mut seen = Map::new();
+
+    for block in blocks {
+        let block_type = block
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(block_type, "prompt" | "response") {
+            continue;
+        }
+        let raw_input = block
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let raw = if block_type == "response" {
+            let stripped = strip_trailing_terminal_chrome(raw_input);
+            if tool == "codex" {
+                strip_trailing_codex_message_chrome(&stripped)
+            } else {
+                stripped
+            }
+        } else {
+            raw_input.trim().to_owned()
+        };
+        if raw.is_empty() || (tool == "codex" && looks_like_codex_chat_furniture(&raw)) {
+            continue;
+        }
+        let role = if block_type == "prompt" {
+            "user"
+        } else {
+            "assistant"
+        };
+        let base_id = content_id(role, &raw);
+        let count = seen
+            .get(&base_id)
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            + 1;
+        seen.insert(base_id.clone(), Value::from(count));
+        let id = if count == 1 {
+            base_id
+        } else {
+            format!("{base_id}#{count}")
+        };
+        let mut parts = parts_from_text(&raw, &mut labels);
+        apply_attachment_content(&mut parts, options);
+        if let Some(spans) = rich_spans_from_source_lines(block, options) {
+            apply_spans_to_text_parts(&mut parts, &raw, spans);
+        }
+        let text = transcript_message_text_from_parts(&parts);
+        messages.push(json!({
+            "id": id,
+            "role": role,
+            "parts": parts,
+            "text": text,
+        }));
+    }
+    if let Some(Value::Object(newest)) = messages.last_mut() {
+        newest.insert("latest".to_owned(), Value::Bool(true));
+    }
+    Value::Array(messages)
+}
+
+pub fn transcript_message_text_contract(parts: &[Value]) -> Value {
+    Value::String(transcript_message_text_from_parts(parts))
+}
+
+pub fn merge_published_attachments_contract(messages: &[Value], published: &[Value]) -> Value {
+    if published.is_empty() {
+        return json!({
+            "messages": messages,
+            "anchors": [],
+        });
+    }
+    let mut already_shown = BTreeMap::new();
+    let mut message_ids = BTreeMap::new();
+    for message in messages {
+        if let Some(id) = message.get("id").and_then(Value::as_str) {
+            message_ids.insert(id.to_owned(), true);
+        }
+        for part in message
+            .get("parts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if matches!(
+                part.get("type").and_then(Value::as_str),
+                Some("image_reference" | "attachment_reference")
+            ) && let Some(attachment_id) = part.get("attachmentId").and_then(Value::as_str)
+            {
+                already_shown.insert(attachment_id.to_owned(), true);
+            }
+        }
+    }
+
+    let missing = published
+        .iter()
+        .filter(|entry| {
+            let Some(attachment_id) = entry.get("attachmentId").and_then(Value::as_str) else {
+                return false;
+            };
+            if already_shown.contains_key(attachment_id) {
+                return false;
+            }
+            if let Some(anchor) = entry.get("anchorMessageId").and_then(Value::as_str) {
+                if anchor.starts_with("assistant:published:") {
+                    return true;
+                }
+                if !message_ids.contains_key(anchor) {
+                    return entry
+                        .get("canReanchor")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return json!({
+            "messages": messages,
+            "anchors": [],
+        });
+    }
+
+    let mut labels = AttachmentLabels::default();
+    seed_labels_from_messages(messages, &mut labels);
+    let mut merged = messages.to_vec();
+    let mut anchors = Vec::new();
+    let mut unanchored = Vec::new();
+    for entry in missing.iter().rev() {
+        let anchored_index = entry
+            .get("anchorMessageId")
+            .and_then(Value::as_str)
+            .and_then(|anchor| {
+                merged
+                    .iter()
+                    .position(|message| message.get("id").and_then(Value::as_str) == Some(anchor))
+            });
+        if let Some(index) = anchored_index {
+            let part = published_attachment_part(entry, &mut labels);
+            if let Some(Value::Object(message)) = merged.get_mut(index) {
+                let mut text = None;
+                if let Some(Value::Array(parts)) = message.get_mut("parts") {
+                    parts.push(part);
+                    text = Some(transcript_message_text_from_parts(parts));
+                }
+                if let Some(text) = text {
+                    message.insert("text".to_owned(), Value::String(text));
+                }
+            }
+        } else {
+            unanchored.push(entry.clone());
+        }
+    }
+
+    if !unanchored.is_empty() {
+        let parts = unanchored
+            .iter()
+            .map(|entry| published_attachment_part(entry, &mut labels))
+            .collect::<Vec<_>>();
+        if let Some(Value::Object(tail)) = merged.last_mut()
+            && tail.get("role").and_then(Value::as_str) == Some("assistant")
+        {
+            if let Some(Value::Array(tail_parts)) = tail.get_mut("parts") {
+                tail_parts.extend(parts);
+                let message_id = tail
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                for entry in &unanchored {
+                    if let Some(attachment_id) = entry.get("attachmentId").and_then(Value::as_str) {
+                        anchors.push(
+                            json!({ "attachmentId": attachment_id, "messageId": message_id }),
+                        );
+                    }
+                }
+            }
+        } else {
+            for message in &mut merged {
+                if let Value::Object(object) = message {
+                    object.remove("latest");
+                }
+            }
+            let first_id = unanchored[0]
+                .get("attachmentId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let message_id = format!("assistant:published:{first_id}");
+            for entry in &unanchored {
+                if let Some(attachment_id) = entry.get("attachmentId").and_then(Value::as_str) {
+                    anchors.push(json!({ "attachmentId": attachment_id, "messageId": message_id }));
+                }
+            }
+            merged.push(json!({
+                "id": message_id,
+                "role": "assistant",
+                "parts": parts,
+                "text": "",
+                "latest": true,
+            }));
+        }
+    }
+
     json!({
-        "type": "image_reference",
-        "label": format!("[image #{image_count}]"),
-        "attachmentId": attachment.attachment_id,
-        "filename": attachment.filename,
-        "mimeType": attachment.mime_type,
+        "messages": merged,
+        "anchors": anchors,
     })
+}
+
+pub fn audit_agent_output_parser_contract(options: &Value) -> Value {
+    let requested_flags = options
+        .get("flags")
+        .and_then(Value::as_array)
+        .map(|flags| {
+            flags
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let max_findings = options
+        .get("maxFindings")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(usize::MAX);
+    let mut counts = audit_empty_counts();
+    let mut findings = Vec::new();
+    let mut scanned = 0usize;
+
+    for candidate in audit_candidates(options) {
+        scanned += 1;
+        let projection = project_agent_output(&candidate.content, Some(&candidate.tool));
+        let blocks = projection
+            .parsed
+            .get("blocks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for (block_index, block) in blocks.iter().enumerate() {
+            let block_type = block
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let text = block
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let mut flags = Vec::new();
+            if block_type == "raw" && audit_raw_block_looks_actionable(text) {
+                flags.push("raw-block");
+            }
+            if block_type == "response" && audit_status_leak_response(text) {
+                flags.push("status-leak-response");
+            }
+            if block_type == "response" && audit_activity_status_leak(text) {
+                flags.push("activity-status-leak");
+            }
+            if block_type == "response" && audit_action_status_leak(text) {
+                flags.push("action-status-leak");
+            }
+            if candidate.record_type.as_deref() == Some("response")
+                && block_type == "prompt"
+                && prompt_leak_looks_actionable_from_values(&blocks, block_index)
+            {
+                flags.push("prompt-from-response-record");
+            }
+            if !requested_flags.is_empty() {
+                flags.retain(|flag| requested_flags.iter().any(|requested| requested == flag));
+            }
+            if flags.is_empty() {
+                continue;
+            }
+            for flag in &flags {
+                if let Some(value) = counts.get_mut(*flag) {
+                    *value += 1;
+                }
+            }
+            if findings.len() >= max_findings {
+                continue;
+            }
+            let mut finding = Map::new();
+            finding.insert("source".to_owned(), Value::String(candidate.source.clone()));
+            if let Some(record_index) = candidate.record_index {
+                finding.insert("recordIndex".to_owned(), Value::from(record_index));
+            }
+            finding.insert(
+                "tool".to_owned(),
+                Value::String(projection_tool(&projection)),
+            );
+            finding.insert("blockIndex".to_owned(), Value::from(block_index));
+            finding.insert("blockType".to_owned(), Value::String(block_type.to_owned()));
+            finding.insert(
+                "flags".to_owned(),
+                Value::Array(
+                    flags
+                        .iter()
+                        .map(|flag| Value::String((*flag).to_owned()))
+                        .collect(),
+                ),
+            );
+            finding.insert("sample".to_owned(), Value::String(audit_sample_text(text)));
+            findings.push(Value::Object(finding));
+        }
+    }
+
+    json!({
+        "scanned": scanned,
+        "findings": findings,
+        "countsByFlag": audit_counts_json(&counts),
+    })
+}
+
+#[derive(Debug, Clone)]
+struct AuditCandidate {
+    source: String,
+    record_index: Option<usize>,
+    record_type: Option<String>,
+    tool: String,
+    content: String,
+}
+
+fn audit_empty_counts() -> BTreeMap<&'static str, usize> {
+    [
+        ("prompt-from-response-record", 0),
+        ("raw-block", 0),
+        ("status-leak-response", 0),
+        ("activity-status-leak", 0),
+        ("action-status-leak", 0),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn audit_counts_json(counts: &BTreeMap<&'static str, usize>) -> Value {
+    json!({
+        "prompt-from-response-record": counts.get("prompt-from-response-record").copied().unwrap_or_default(),
+        "raw-block": counts.get("raw-block").copied().unwrap_or_default(),
+        "status-leak-response": counts.get("status-leak-response").copied().unwrap_or_default(),
+        "activity-status-leak": counts.get("activity-status-leak").copied().unwrap_or_default(),
+        "action-status-leak": counts.get("action-status-leak").copied().unwrap_or_default(),
+    })
+}
+
+fn audit_candidates(options: &Value) -> Vec<AuditCandidate> {
+    let mut candidates = Vec::new();
+    if let Some(history_dirs) = options.get("historyDirs").and_then(Value::as_array) {
+        for dir in history_dirs.iter().filter_map(Value::as_str) {
+            candidates.extend(audit_history_candidates(dir));
+        }
+    }
+    if let Some(context_dirs) = options.get("contextDirs").and_then(Value::as_array) {
+        for dir in context_dirs.iter().filter_map(Value::as_str) {
+            candidates.extend(audit_context_candidates(dir));
+        }
+    }
+    candidates
+}
+
+fn audit_history_candidates(history_dir: &str) -> Vec<AuditCandidate> {
+    let mut candidates = Vec::new();
+    let read_dir = audit_resolve_fixture_path(history_dir);
+    let Ok(entries) = fs::read_dir(&read_dir) else {
+        return candidates;
+    };
+    let mut files = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|extension| extension.to_str()) == Some("jsonl")
+                && path.is_file()
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    for file in files {
+        let Some(filename) = file.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let source = format!("{}/{}", history_dir.trim_end_matches('/'), filename);
+        let tool = audit_tool_for_source(&source);
+        let Ok(content) = fs::read_to_string(&file) else {
+            continue;
+        };
+        for (index, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(record) = serde_json::from_str::<Value>(trimmed) else {
+                continue;
+            };
+            if record.get("type").and_then(Value::as_str) != Some("response") {
+                continue;
+            }
+            let Some(record_content) = record.get("content").and_then(Value::as_str) else {
+                continue;
+            };
+            candidates.push(AuditCandidate {
+                source: source.clone(),
+                record_index: Some(index),
+                record_type: Some("response".to_owned()),
+                tool: tool.clone(),
+                content: record_content.to_owned(),
+            });
+        }
+    }
+    candidates
+}
+
+fn audit_context_candidates(context_dir: &str) -> Vec<AuditCandidate> {
+    let mut files = Vec::new();
+    let read_dir = audit_resolve_fixture_path(context_dir);
+    audit_context_files(&read_dir, &mut files);
+    files.sort();
+    files
+        .into_iter()
+        .filter_map(|file| {
+            let name = file.file_name().and_then(|name| name.to_str())?;
+            if name != "live.md" && name != "summary.md" {
+                return None;
+            }
+            let relative = file.strip_prefix(&read_dir).ok()?;
+            let source = format!(
+                "{}/{}",
+                context_dir.trim_end_matches('/'),
+                audit_path_string(relative)
+            );
+            let content = fs::read_to_string(&file).ok()?;
+            Some(AuditCandidate {
+                tool: audit_tool_for_source(&source),
+                source,
+                record_index: None,
+                record_type: None,
+                content,
+            })
+        })
+        .collect()
+}
+
+fn audit_resolve_fixture_path(path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() || candidate.exists() {
+        return candidate;
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join(path)
+}
+
+fn audit_context_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            audit_context_files(&path, files);
+        } else {
+            files.push(path);
+        }
+    }
+}
+
+fn audit_path_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn audit_tool_for_source(source: &str) -> String {
+    let basename = source.rsplit('/').next().unwrap_or(source);
+    if basename.to_ascii_lowercase().starts_with("codex-")
+        || basename.to_ascii_lowercase().starts_with("codex_")
+        || source.to_ascii_lowercase().contains("/codex-")
+        || source.to_ascii_lowercase().contains("/codex_")
+    {
+        "codex".to_owned()
+    } else if basename.to_ascii_lowercase().starts_with("claude-")
+        || basename.to_ascii_lowercase().starts_with("claude_")
+        || source.to_ascii_lowercase().contains("/claude-")
+        || source.to_ascii_lowercase().contains("/claude_")
+    {
+        "claude".to_owned()
+    } else {
+        "unknown".to_owned()
+    }
+}
+
+fn projection_tool(projection: &AgentOutputProjection) -> String {
+    projection
+        .parsed
+        .get("parser")
+        .and_then(|parser| parser.get("tool"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+fn audit_sample_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .chars()
+        .take(320)
+        .collect()
+}
+
+fn audit_status_leak_response(text: &str) -> bool {
+    text.split('\n').any(|line| {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        lower.contains("how is claude doing this session")
+            || lower.contains("starting mcp servers")
+            || lower.contains("bypass permissions")
+            || lower.contains("bash(") && lower.contains("terminal-notifier")
+            || lower.contains("thiscommandrequiresapproval")
+            || lower.contains("doyouwanttoproceed")
+            || lower.contains(">_ openai codex")
+            || lower.starts_with("read ") && lower.contains(" file")
+    })
+}
+
+fn audit_activity_status_leak(text: &str) -> bool {
+    text.split('\n').any(|line| {
+        let trimmed = line
+            .trim()
+            .trim_start_matches(['-', '*', '✻', '✽', '✶', '•'])
+            .trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("working (") && audit_contains_duration(&lower) {
+            return true;
+        }
+        if lower.starts_with("starting mcp servers") {
+            return true;
+        }
+        let Some((first, rest)) = trimmed.split_once(char::is_whitespace) else {
+            return false;
+        };
+        let Some(first_char) = first.chars().next() else {
+            return false;
+        };
+        first_char.is_uppercase()
+            && (first.ends_with("ed") || first.ends_with("ing"))
+            && (rest.contains(" for ") || rest.starts_with("for "))
+            && audit_contains_duration(rest)
+    })
+}
+
+fn audit_contains_duration(text: &str) -> bool {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric()))
+        .any(|part| {
+            let mut digits = 0;
+            for ch in part.chars() {
+                if ch.is_ascii_digit() {
+                    digits += 1;
+                    continue;
+                }
+                return digits > 0
+                    && matches!(ch, 'm' | 's' | 'h')
+                    && part[digits + ch.len_utf8()..].is_empty();
+            }
+            false
+        })
+}
+
+fn audit_action_status_leak(text: &str) -> bool {
+    text.split('\n').any(|line| {
+        let trimmed = line.trim().trim_start_matches(['•', '⏺']).trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(command) = lower.strip_prefix("ran ") {
+            if command.contains(" was ")
+                || command.contains(" is ")
+                || command.contains(" now ")
+                || command.contains(" earlier")
+                || command.contains("...")
+                || command.contains('…')
+            {
+                return false;
+            }
+            return [
+                "aimux", "bash", "bun", "cat", "cd", "curl", "docker", "find", "gh", "git", "grep",
+                "ls", "mkdir", "mv", "node", "npm", "pnpm", "python", "python3", "rg", "rm", "sed",
+                "sh", "tsc", "tsx", "vitest", "yarn",
+            ]
+            .iter()
+            .any(|prefix| command == *prefix || command.starts_with(&format!("{prefix} ")));
+        }
+        lower.starts_with("└ ")
+            || [
+                "bash",
+                "bashoutput",
+                "edit",
+                "explore",
+                "glob",
+                "grep",
+                "killbash",
+                "ls",
+                "multiedit",
+                "notebookedit",
+                "read",
+                "task",
+                "todowrite",
+                "update",
+                "webfetch",
+                "websearch",
+                "write",
+            ]
+            .iter()
+            .any(|prefix| audit_tool_action_line_matches(&lower, prefix))
+    })
+}
+
+fn audit_raw_block_looks_actionable(text: &str) -> bool {
+    let lines = text
+        .split('\n')
+        .map(|line| audit_strip_numbered_prefix(line.trim()))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return false;
+    }
+    if lines
+        .iter()
+        .all(|line| line.chars().all(|ch| "{}][(),;: ".contains(ch)))
+    {
+        return false;
+    }
+    if lines.iter().all(|line| {
+        line.chars().all(|ch| {
+            ch.is_ascii_digit()
+                || matches!(
+                    ch,
+                    '⋮' | ' '
+                        | ':'
+                        | '+'
+                        | '-'
+                        | '{'
+                        | '}'
+                        | ','
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | ';'
+                        | '"'
+                )
+                || ('─'..='╿').contains(&ch)
+        })
+    }) {
+        return false;
+    }
+    if lines.iter().all(|line| audit_looks_like_file_listing(line)) {
+        return false;
+    }
+    true
+}
+
+fn audit_strip_numbered_prefix(line: &str) -> String {
+    let trimmed = line.trim_start();
+    let digit_count = trimmed
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .map(char::len_utf8)
+        .sum::<usize>();
+    if digit_count == 0 {
+        return trimmed.to_owned();
+    }
+    let rest = trimmed[digit_count..].trim_start();
+    let rest = rest
+        .strip_prefix('+')
+        .or_else(|| rest.strip_prefix('-'))
+        .unwrap_or(rest)
+        .trim_start();
+    rest.to_owned()
+}
+
+fn audit_looks_like_file_listing(line: &str) -> bool {
+    let mut chars = line.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !matches!(first, 'b' | 'c' | 'd' | 'l' | 'p' | 's' | '-') {
+        return false;
+    }
+    let permissions = chars.by_ref().take(9).collect::<String>();
+    if permissions.len() != 9
+        || !permissions
+            .chars()
+            .all(|ch| matches!(ch, 'r' | 'w' | 'x' | '-'))
+    {
+        return false;
+    }
+    let rest = chars.as_str().trim_start_matches('@').trim_start();
+    let mut parts = rest.split_whitespace();
+    parts
+        .next()
+        .is_some_and(|value| value.parse::<usize>().is_ok())
+        && parts.next().is_some()
+        && parts.next().is_some()
+        && parts
+            .next()
+            .is_some_and(|value| value.parse::<usize>().is_ok())
+}
+
+fn audit_tool_action_line_matches(lower: &str, prefix: &str) -> bool {
+    if !lower.starts_with(prefix) {
+        return false;
+    }
+    if lower.contains("ctrl+o")
+        || lower.contains("to expand")
+        || lower.contains("running in the background")
+        || lower.contains("exit code")
+    {
+        return true;
+    }
+    let Some(rest) = lower.strip_prefix(prefix) else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    rest.starts_with('(') && rest.ends_with(')')
+}
+
+fn prompt_leak_looks_actionable_from_values(blocks: &[Value], block_index: usize) -> bool {
+    let Some(prompt) = blocks.get(block_index) else {
+        return false;
+    };
+    let prompt_text = prompt
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if prompt_text.trim().len() < 3 {
+        return false;
+    }
+    let Some(next) = blocks.get(block_index + 1) else {
+        return false;
+    };
+    if next.get("type").and_then(Value::as_str) != Some("status") {
+        return false;
+    }
+    let text = next.get("text").and_then(Value::as_str).unwrap_or_default();
+    if text
+        .to_ascii_lowercase()
+        .contains("conversation interrupted")
+        || text.split('\n').any(|line| {
+            line.trim()
+                .trim_start_matches('•')
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("working (")
+        })
+        || text.split('\n').any(|line| {
+            line.trim()
+                .trim_start_matches('•')
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("starting mcp servers")
+        })
+    {
+        return false;
+    }
+    text.split('\n').any(|line| {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        lower.starts_with("gpt-")
+            || lower.starts_with("claude")
+            || lower.contains("bypass permissions")
+            || lower.contains("context)")
+            || lower.contains("permissions:")
+    })
+}
+
+fn strip_trailing_terminal_chrome(text: &str) -> String {
+    let lines = text.split('\n').collect::<Vec<_>>();
+    for index in 0..lines.len() {
+        let trimmed = lines[index].trim();
+        if (trimmed.starts_with('—') || trimmed.starts_with('–')) && trimmed.contains("Worked for")
+        {
+            let tail_is_chrome = lines[index + 1..]
+                .iter()
+                .all(|line| line.trim().is_empty() || is_divider(line));
+            if tail_is_chrome {
+                return lines[..index].join("\n").trim().to_owned();
+            }
+        }
+    }
+    text.trim().to_owned()
+}
+
+fn strip_trailing_codex_message_chrome(text: &str) -> String {
+    for marker in [
+        "\n\n\n  Approaching rate limits",
+        "\n\n  Approaching rate limits",
+        "\nApproaching rate limits",
+    ] {
+        if let Some(index) = text.find(marker) {
+            return text[..index].trim().to_owned();
+        }
+    }
+    text.trim().to_owned()
+}
+
+fn looks_like_codex_chat_furniture(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("? for shortcuts")
+        || lower.starts_with("update available!")
+        || lower.contains("press enter to continue")
+        || lower.contains("press enter to confirm")
+        || lower.contains("do you trust the contents of this directory")
+}
+
+fn apply_attachment_content(parts: &mut [Value], options: &Value) {
+    let Some(content_by_id) = options
+        .get("attachmentContentById")
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    for part in parts {
+        if !matches!(
+            part.get("type").and_then(Value::as_str),
+            Some("image_reference" | "attachment_reference")
+        ) {
+            continue;
+        }
+        let Some(attachment_id) = part
+            .get("attachmentId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(content) = content_by_id.get(&attachment_id).and_then(Value::as_object) else {
+            continue;
+        };
+        if let Value::Object(object) = part {
+            for key in ["contentUrl", "hostedContentUrl", "hostedExpiresAt"] {
+                if let Some(value) = content.get(key).and_then(Value::as_str) {
+                    object.insert(key.to_owned(), Value::String(value.to_owned()));
+                }
+            }
+        }
+    }
+}
+
+fn rich_spans_from_source_lines(block: &Value, options: &Value) -> Option<Vec<Value>> {
+    let source_lines = block.get("sourceLines").and_then(Value::as_array)?;
+    let rich_lines = options.get("richLines").and_then(Value::as_array)?;
+    let mut spans = Vec::new();
+    for source_line in source_lines {
+        let line_index = source_line.get("lineIndex").and_then(Value::as_i64)?;
+        if line_index < 0 {
+            if !spans.is_empty() {
+                spans.push(json!({ "text": "\n" }));
+            }
+            continue;
+        }
+        let line = rich_lines.get(line_index as usize)?.as_array()?;
+        if !spans.is_empty() {
+            spans.push(json!({ "text": "\n" }));
+        }
+        let source_text = source_line
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if source_text.is_empty() {
+            continue;
+        }
+        let line_plain = spans_text(line);
+        let start = line_plain.find(source_text)?;
+        spans.extend(slice_value_spans(line, start, start + source_text.len()));
+    }
+    (!spans.is_empty()).then_some(spans)
+}
+
+fn seed_labels_from_messages(messages: &[Value], labels: &mut AttachmentLabels) {
+    labels.next_image = 1;
+    labels.next_file = 1;
+    for message in messages {
+        for part in message
+            .get("parts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            match part.get("type").and_then(Value::as_str) {
+                Some("image_reference") => labels.next_image += 1,
+                Some("attachment_reference") => labels.next_file += 1,
+                _ => {}
+            }
+        }
+    }
+}
+
+fn published_attachment_part(entry: &Value, labels: &mut AttachmentLabels) -> Value {
+    let attachment = AttachmentReference {
+        filename: entry
+            .get("filename")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        mime_type: entry
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or("image/png")
+            .to_owned(),
+        attachment_id: entry
+            .get("attachmentId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    let mut part = attachment_reference_part(&attachment, labels);
+    if let Value::Object(object) = &mut part {
+        for key in ["contentUrl", "hostedContentUrl", "hostedExpiresAt"] {
+            if let Some(value) = entry.get(key).and_then(Value::as_str) {
+                object.insert(key.to_owned(), Value::String(value.to_owned()));
+            }
+        }
+    }
+    part
 }
 
 fn parse_ansi_spans(ansi: &str) -> Vec<RichSpan> {
@@ -1759,14 +2857,26 @@ fn strip_codex_interrupt_suffix(line: &str) -> String {
 fn starts_with_for_duration(value: &str) -> bool {
     value
         .strip_prefix("for ")
-        .is_some_and(|rest| duration_prefix_len(rest).is_some())
+        .is_some_and(duration_prefix_has_activity_boundary)
 }
 
 fn contains_for_duration(value: &str) -> bool {
     value
         .split("for ")
         .skip(1)
-        .any(|rest| duration_prefix_len(rest).is_some())
+        .any(duration_prefix_has_activity_boundary)
+}
+
+fn duration_prefix_has_activity_boundary(rest: &str) -> bool {
+    let Some(prefix_len) = duration_prefix_len(rest) else {
+        return false;
+    };
+    let tail = rest[prefix_len..].trim_start();
+    tail.is_empty()
+        || tail
+            .chars()
+            .next()
+            .is_some_and(|ch| matches!(ch, '·' | '•' | '.' | ')'))
 }
 
 fn parenthetical_contains_duration(value: &str) -> bool {

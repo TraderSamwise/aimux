@@ -1,5 +1,5 @@
 use aimux::project_service::agent_output_projection::{
-    project_agent_output, project_agent_output_with_source,
+    audit_agent_output_parser_contract, project_agent_output, project_agent_output_with_source,
 };
 use serde_json::{Value, json};
 
@@ -57,14 +57,32 @@ fn fixture_agent_output_parser_activity_text_matches_typescript() {
 }
 
 #[test]
-#[ignore = "Rust has no agent-output-parser-audit equivalent yet"]
-fn fixture_agent_output_parser_audit_cases_are_contract_checklist() {
+fn fixture_agent_output_parser_audit_matches_typescript() {
     let contract: Value =
         serde_json::from_str(PARSER_AUDIT).expect("valid parser audit fixture json");
     let cases = contract["cases"]
         .as_array()
         .expect("parser audit fixture cases");
     assert_eq!(cases.len(), 22, "unexpected parser audit case count");
+    let mut failures = Vec::new();
+    for case in cases {
+        let expected = case["output"].clone();
+        let actual = audit_agent_output_parser_contract(&case["input"]);
+        if actual != expected {
+            failures.push(json!({
+                "id": case["id"],
+                "name": case["name"],
+                "expected": expected,
+                "actual": actual,
+            }));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} parser audit parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
 }
 
 fn assert_parser_contract(label: &str, fixture: &str) {

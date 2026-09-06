@@ -1,0 +1,1 @@
+{"type":"response","content":"This regression fixture compares OpenAI Codex and Claude Code in normal assistant prose.\n\nconst sample = \"OpenAI Codex appears in parser test data\";"}

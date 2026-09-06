@@ -1,4 +1,8 @@
 use aimux::project_service::agent_output_projection::project_agent_output_with_ansi;
+use aimux::project_service::agent_output_projection::{
+    merge_published_attachments_contract, messages_from_parsed_agent_output_contract,
+    transcript_message_text_contract,
+};
 use serde_json::{Value, json};
 
 const TRANSCRIPT: &str =
@@ -46,8 +50,7 @@ fn fixture_agent_transcript_messages_from_agent_output_matches_typescript() {
 }
 
 #[test]
-#[ignore = "Rust has no standalone messagesFromParsedAgentOutput/transcriptMessageText/mergePublishedAttachments API yet"]
-fn fixture_agent_transcript_unimplemented_apis_are_contract_checklist() {
+fn fixture_agent_transcript_standalone_apis_match_typescript() {
     let contract: Value = serde_json::from_str(TRANSCRIPT).expect("valid transcript fixture json");
     let cases = contract["cases"]
         .as_array()
@@ -59,6 +62,46 @@ fn fixture_agent_transcript_unimplemented_apis_are_contract_checklist() {
     assert_eq!(
         missing.len(),
         41,
-        "unexpected transcript unimplemented API case count"
+        "unexpected standalone transcript API case count"
+    );
+    let mut failures = Vec::new();
+    for case in missing {
+        let actual = match case["api"].as_str() {
+            Some("messagesFromParsedAgentOutput") => messages_from_parsed_agent_output_contract(
+                &case["input"]["parsed"],
+                &case["input"]["options"],
+            ),
+            Some("transcriptMessageText") => {
+                let parts = case["input"]["parts"]
+                    .as_array()
+                    .expect("transcriptMessageText parts");
+                transcript_message_text_contract(parts)
+            }
+            Some("mergePublishedAttachments") => {
+                let messages = case["input"]["messages"]
+                    .as_array()
+                    .expect("mergePublishedAttachments messages");
+                let published = case["input"]["published"]
+                    .as_array()
+                    .expect("mergePublishedAttachments published");
+                merge_published_attachments_contract(messages, published)
+            }
+            api => panic!("unexpected transcript API {api:?}"),
+        };
+        if actual != case["output"] {
+            failures.push(json!({
+                "id": case["id"],
+                "name": case["name"],
+                "api": case["api"],
+                "expected": case["output"],
+                "actual": actual,
+            }));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} standalone transcript API parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize standalone transcript failures")
     );
 }

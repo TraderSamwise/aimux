@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { mkdirSync, rmSync as realRmSync, writeFileSync as realWriteFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { dirname, join as pathJoin } from "node:path";
 import { pathToFileURL } from "node:url";
 import prettier from "prettier";
 import ts from "typescript";
@@ -9,6 +11,7 @@ const ROOT = new URL("../", import.meta.url);
 const PARSER_FIXTURE_PATH = new URL("testdata/contracts/v1/agent-output/parser-adversarial.json", ROOT);
 const PARSER_FUZZ_PATH = new URL("testdata/contracts/v1/agent-output/parser-fuzz.json", ROOT);
 const PARSER_AUDIT_PATH = new URL("testdata/contracts/v1/agent-output/parser-audit.json", ROOT);
+const PARSER_AUDIT_CORPUS_DIR = "testdata/contracts/v1/agent-output/parser-audit-corpus";
 const PARSER_ACTIVITY_PATH = new URL("testdata/contracts/v1/agent-output/parser-activity-text.json", ROOT);
 
 const parserModule = await import(new URL("dist/agent-output-parser.js", ROOT));
@@ -67,6 +70,7 @@ const createCaptureRuntime = (sourceName) => {
   let currentTest = "module-scope";
   let callIndex = 0;
   let auditCallIndex = 0;
+  let tempDirIndex = 0;
 
   const recordParse = (raw, options = {}) => {
     const normalizedRaw = String(raw ?? "");
@@ -169,6 +173,19 @@ const createCaptureRuntime = (sourceName) => {
     return output;
   };
 
+  const mkdtempSync = (prefix) => {
+    tempDirIndex += 1;
+    const normalizedPrefix = String(prefix).replace(/[-/\\]+$/, "");
+    const dir = `${normalizedPrefix}-${String(tempDirIndex).padStart(3, "0")}`;
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+
+  const writeFileSync = (file, data) => {
+    mkdirSync(dirname(file), { recursive: true });
+    realWriteFileSync(file, data);
+  };
+
   const vitest = {
     describe: (_name, fn) => fn(),
     expect: noOpExpect(),
@@ -191,6 +208,13 @@ const createCaptureRuntime = (sourceName) => {
     auditCases,
     cases,
     createAgentOutputParserHarness,
+    fs: {
+      join: pathJoin,
+      mkdtempSync,
+      rmSync: () => undefined,
+      tmpdir: () => PARSER_AUDIT_CORPUS_DIR,
+      writeFileSync,
+    },
     pending,
     recordParse,
     vitest,
@@ -204,6 +228,9 @@ const instrumentTestSource = (source) =>
   source
     .replace(/import\s+\{\s*describe,\s*expect,\s*it\s*\}\s+from\s+"vitest";\n/g, "")
     .replace(/import\s+\{\s*afterEach,\s*describe,\s*expect,\s*it\s*\}\s+from\s+"vitest";\n/g, "")
+    .replace(/import\s+\{\s*mkdtempSync,\s*rmSync,\s*writeFileSync\s*\}\s+from\s+"node:fs";\n/g, "")
+    .replace(/import\s+\{\s*tmpdir\s*\}\s+from\s+"node:os";\n/g, "")
+    .replace(/import\s+\{\s*join\s*\}\s+from\s+"node:path";\n/g, "")
     .replace(/import\s+type\s+\{[^}]+\}\s+from\s+"\.\/agent-output-parser\.js";\n/g, "")
     .replace(/import\s+\{\s*parseAgentOutput\s*\}\s+from\s+"\.\/agent-output-parser\.js";\n/g, "")
     .replace(
@@ -228,6 +255,11 @@ const executeInstrumentedTest = async (sourceName) => {
   const instrumented = [
     "const { describe, expect, it } = globalThis.__agentOutputParserCaptureVitest;",
     "const afterEach = globalThis.__agentOutputParserCaptureVitest.afterEach;",
+    "const mkdtempSync = globalThis.__agentOutputParserCaptureFs.mkdtempSync;",
+    "const rmSync = globalThis.__agentOutputParserCaptureFs.rmSync;",
+    "const writeFileSync = globalThis.__agentOutputParserCaptureFs.writeFileSync;",
+    "const tmpdir = globalThis.__agentOutputParserCaptureFs.tmpdir;",
+    "const join = globalThis.__agentOutputParserCaptureFs.join;",
     "const parseAgentOutput = globalThis.__agentOutputParserCaptureParse;",
     "const messagesFromParsedAgentOutput = globalThis.__agentOutputParserCaptureMessages;",
     "const createAgentOutputParserHarness = globalThis.__agentOutputParserCaptureHarness;",
@@ -248,6 +280,7 @@ const executeInstrumentedTest = async (sourceName) => {
   }).outputText;
 
   globalThis.__agentOutputParserCaptureVitest = runtime.vitest;
+  globalThis.__agentOutputParserCaptureFs = runtime.fs;
   globalThis.__agentOutputParserCaptureParse = runtime.recordParse;
   globalThis.__agentOutputParserCaptureMessages = messagesFromParsedAgentOutput;
   globalThis.__agentOutputParserCaptureHarness = runtime.createAgentOutputParserHarness;
@@ -267,6 +300,7 @@ const executeInstrumentedTest = async (sourceName) => {
     await Promise.all(runtime.pending);
   } finally {
     delete globalThis.__agentOutputParserCaptureVitest;
+    delete globalThis.__agentOutputParserCaptureFs;
     delete globalThis.__agentOutputParserCaptureParse;
     delete globalThis.__agentOutputParserCaptureMessages;
     delete globalThis.__agentOutputParserCaptureHarness;
@@ -321,6 +355,7 @@ const parserRuntime = await executeInstrumentedTest("src/agent-output-parser.tes
 const fixturesRuntime = await executeInstrumentedTest("src/agent-output-parser-fixtures.test.ts");
 const compactRuntime = await executeInstrumentedTest("src/agent-output-parser-compact.test.ts");
 const harnessRuntime = await executeInstrumentedTest("src/agent-output-parser-harness.test.ts");
+realRmSync(new URL(PARSER_AUDIT_CORPUS_DIR, ROOT), { recursive: true, force: true });
 const auditRuntime = await executeInstrumentedTest("src/agent-output-parser-audit.test.ts");
 const activityRuntime = await executeInstrumentedTest("src/agent-output-activity-text.test.ts");
 const fuzzRuntime = await executeInstrumentedTest("src/agent-output-parser-fuzz.test.ts");
