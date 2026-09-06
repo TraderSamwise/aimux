@@ -160,3 +160,10 @@ Priority fixture groups:
 - `statusline/model.json`: statusline helper, scoped-session, teammate,
   focused-control-session, metadata projection, and semantic badge cases
   captured by running TypeScript `statusline-model` exports.
+
+## Worktree
+
+- `worktree/cache-cleanup.json`: generated-cache planning, active-runtime
+  protection, dry-run/apply behavior, cleanup-name allowlist, and summarized
+  report rendering captured by running TypeScript `worktree-cache-cleanup`
+  helpers.
