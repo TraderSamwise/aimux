@@ -203,6 +203,32 @@ fn output_projection_reads_tool_progress_activity_text() {
         .activity_text,
         "Jitterbugging… (2m 23s)"
     );
+
+    let transcript = project_agent_output(
+        &[
+            "› should I retry?",
+            "• Working (4s • esc to interrupt)",
+            "• I will wait for 5s before retrying.",
+        ]
+        .join("\n"),
+        Some("codex"),
+    );
+    assert_eq!(
+        transcript
+            .messages
+            .iter()
+            .map(|message| (
+                message["role"].as_str().unwrap(),
+                message["text"].as_str().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user", "should I retry?"),
+            ("assistant", "I will wait for 5s before retrying."),
+        ]
+    );
+    assert_eq!(transcript.messages[0]["latest"], Value::Null);
+    assert_eq!(transcript.messages[1]["latest"], true);
 }
 
 #[test]
@@ -328,7 +354,7 @@ fn output_route_projects_parsed_status_and_activity_text_from_capture() {
     .expect("seed metadata");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     let mut runtime = FakeCaptureRuntime {
-        output: "• Working (12s • esc to interrupt)\nplain response".into(),
+        output: "› Build it\n• Working (12s • esc to interrupt)\n• Built the first slice.".into(),
         calls: Vec::new(),
         actions: Vec::new(),
     };
@@ -346,12 +372,22 @@ fn output_route_projects_parsed_status_and_activity_text_from_capture() {
     assert_eq!(response.body["activityText"], "Working (12s)");
     assert_eq!(response.body["parsed"]["parser"]["tool"], "codex");
     assert_eq!(response.body["parsed"]["parser"]["version"], 1);
-    assert_eq!(response.body["parsed"]["blocks"][0]["type"], "status");
+    assert_eq!(response.body["parsed"]["blocks"][0]["type"], "prompt");
+    assert_eq!(response.body["parsed"]["blocks"][0]["text"], "Build it");
+    assert_eq!(response.body["parsed"]["blocks"][1]["type"], "status");
     assert_eq!(
-        response.body["parsed"]["blocks"][0]["text"],
+        response.body["parsed"]["blocks"][1]["text"],
         "• Working (12s • esc to interrupt)"
     );
-    assert_eq!(response.body["parsed"]["blocks"][1]["type"], "raw");
+    assert_eq!(response.body["parsed"]["blocks"][2]["type"], "response");
+    assert_eq!(response.body["messages"][0]["role"], "user");
+    assert_eq!(response.body["messages"][0]["text"], "Build it");
+    assert_eq!(response.body["messages"][1]["role"], "assistant");
+    assert_eq!(
+        response.body["messages"][1]["text"],
+        "Built the first slice."
+    );
+    assert_eq!(response.body["messages"][1]["latest"], true);
     cleanup(project);
 }
 

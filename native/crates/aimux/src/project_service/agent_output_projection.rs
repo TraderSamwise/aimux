@@ -1,8 +1,10 @@
 use serde_json::{Map, Value, json};
+use sha1::{Digest, Sha1};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentOutputProjection {
     pub parsed: Value,
+    pub messages: Vec<Value>,
     pub activity_text: String,
 }
 
@@ -17,6 +19,7 @@ pub fn project_agent_output(raw: &str, tool: Option<&str>) -> AgentOutputProject
         normalize_tool(tool).unwrap_or_else(|| infer_agent_output_tool(raw).unwrap_or("unknown"));
     let blocks = parse_blocks(raw);
     let activity_text = activity_text_from_blocks(&blocks);
+    let messages = messages_from_blocks(&blocks);
     AgentOutputProjection {
         parsed: json!({
             "blocks": blocks
@@ -29,6 +32,7 @@ pub fn project_agent_output(raw: &str, tool: Option<&str>) -> AgentOutputProject
                 "confidence": "heuristic",
             },
         }),
+        messages,
         activity_text,
     }
 }
@@ -47,19 +51,40 @@ fn parse_blocks(raw: &str) -> Vec<AgentOutputBlock> {
         if trimmed.is_empty() {
             continue;
         }
-        let kind = if looks_like_terminal_status_text(trimmed) {
-            "status"
+        let (kind, text) = if looks_like_terminal_status_text(trimmed) {
+            ("status", trimmed.to_owned())
+        } else if let Some(prompt) = prompt_text(trimmed) {
+            ("prompt", prompt)
+        } else if let Some(response) = response_text(trimmed) {
+            ("response", response)
         } else {
-            "raw"
+            ("raw", trimmed.to_owned())
         };
         if current_kind.is_some_and(|current| current != kind) {
             flush_block(&mut blocks, current_kind, &mut current_lines);
         }
         current_kind = Some(kind);
-        current_lines.push(trimmed.to_owned());
+        current_lines.push(text);
     }
     flush_block(&mut blocks, current_kind, &mut current_lines);
     blocks
+}
+
+fn prompt_text(line: &str) -> Option<String> {
+    strip_prefixed_text(line, &['›', '❯'])
+}
+
+fn response_text(line: &str) -> Option<String> {
+    strip_prefixed_text(line, &['•', '⏺'])
+}
+
+fn strip_prefixed_text(line: &str, markers: &[char]) -> Option<String> {
+    let mut chars = line.chars();
+    let first = chars.next()?;
+    if !markers.contains(&first) {
+        return None;
+    }
+    Some(line[first.len_utf8()..].trim_start().to_owned())
 }
 
 fn flush_block(
@@ -75,6 +100,55 @@ fn flush_block(
         blocks.push(AgentOutputBlock { kind, text });
     }
     lines.clear();
+}
+
+fn messages_from_blocks(blocks: &[AgentOutputBlock]) -> Vec<Value> {
+    let mut messages = Vec::new();
+    let mut seen = Map::new();
+    for block in blocks {
+        let role = match block.kind {
+            "prompt" => "user",
+            "response" => "assistant",
+            _ => continue,
+        };
+        let text = block.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let base_id = content_id(role, text);
+        let count = seen
+            .get(&base_id)
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            + 1;
+        seen.insert(base_id.clone(), Value::from(count));
+        let id = if count == 1 {
+            base_id
+        } else {
+            format!("{base_id}#{count}")
+        };
+        messages.push(json!({
+            "id": id,
+            "role": role,
+            "parts": [{ "type": "text", "text": text }],
+            "text": text,
+        }));
+    }
+    if let Some(Value::Object(newest)) = messages.last_mut() {
+        newest.insert("latest".to_owned(), Value::Bool(true));
+    }
+    messages
+}
+
+fn content_id(role: &str, text: &str) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(text.as_bytes());
+    let digest = hasher.finalize();
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{role}:{}", &hex[..12])
 }
 
 fn activity_text_from_blocks(blocks: &[AgentOutputBlock]) -> String {
@@ -293,6 +367,7 @@ fn infer_agent_output_tool(raw: &str) -> Option<&'static str> {
 pub fn insert_projection_fields(result: &mut Map<String, Value>, raw: &str, tool: Option<&str>) {
     let projection = project_agent_output(raw, tool);
     result.insert("parsed".to_owned(), projection.parsed);
+    result.insert("messages".to_owned(), Value::Array(projection.messages));
     if !result.contains_key("activityText") && !projection.activity_text.is_empty() {
         result.insert(
             "activityText".to_owned(),
