@@ -224,6 +224,12 @@ Priority fixture groups:
   replacement/expiry/drop/rejection, and malformed rail cases captured by
   running the TypeScript metadata store against temporary project state.
 
+## Metadata Watchers
+
+- `metadata-watchers/builtin.json`: builtin status, plan-progress, task, and
+  history watcher metadata side-effect calls captured by running TypeScript
+  `createBuiltinMetadataWatchers` against temporary project state.
+
 ## Orchestration
 
 - `orchestration/actions.json`: task, handoff, review, thread-reopen, and
