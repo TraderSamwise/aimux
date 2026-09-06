@@ -148,7 +148,7 @@ import {
 } from "@/lib/native-app-commands";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
-import { parentViewHrefForPath } from "@/lib/view-location";
+import { buildMainTabHref } from "@/lib/main-tabs";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
@@ -1625,8 +1625,7 @@ export default function ChatScreen() {
       router.replace("/shares");
       return;
     }
-    if (router.canGoBack()) router.back();
-    else router.replace(parentViewHrefForPath(pathname, projectPath));
+    router.replace(buildMainTabHref("project", projectPath));
   }
 
   function toggleSharePanel() {
