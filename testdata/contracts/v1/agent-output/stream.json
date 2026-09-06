@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "source": "src/agent-output-stream.ts",
+  "generatedBy": "scripts/capture-agent-output-io-contracts.mjs",
+  "description": "Agent output SSE text handler contracts captured by running the TypeScript stream handler.",
+  "cases": [
+    {
+      "id": "agent-output-stream-001",
+      "name": "incremental-output-without-duplicate-frames",
+      "source": "src/agent-output-stream.ts",
+      "input": {
+        "sessionId": "codex-1",
+        "chunks": [
+          "event: output\ndata: {\"output\":\"one\"}\n\n",
+          "event: output\ndata: {\"output\":\"one\\ntwo\"}\n\n"
+        ]
+      },
+      "output": { "writes": ["one", "\n", "\ntwo", "\n"], "text": "one\n\ntwo\n", "errors": [] },
+      "inputSha256": "014cd075f9ec10ac14c760139fc50d194c5377bd5c39c706620d4348070f28ea"
+    },
+    {
+      "id": "agent-output-stream-002",
+      "name": "tail-notice-written-once",
+      "source": "src/agent-output-stream.ts",
+      "input": {
+        "sessionId": "codex-1",
+        "chunks": [
+          "event: output\ndata: {\"output\":\"tail\",\"captureLineLimit\":2000,\"outputTailOnly\":true}\n\n",
+          "event: output\ndata: {\"output\":\"tail\\nnew\",\"captureLineLimit\":2000,\"outputTailOnly\":true}\n\n"
+        ]
+      },
+      "output": {
+        "writes": ["[aimux showing last 2000 lines]\n", "tail", "\n", "\nnew", "\n"],
+        "text": "[aimux showing last 2000 lines]\ntail\n\nnew\n",
+        "errors": []
+      },
+      "inputSha256": "8284c566f41f554805db722ce9be27d881160071be51b5894dbc904e51f160a8"
+    },
+    {
+      "id": "agent-output-stream-003",
+      "name": "sliding-tail-overlap-diff",
+      "source": "src/agent-output-stream.ts",
+      "input": {
+        "sessionId": "codex-1",
+        "chunks": [
+          "event: output\ndata: {\"output\":\"a\\nb\\nc\",\"captureLineLimit\":3,\"outputTailOnly\":true}\n\n",
+          "event: output\ndata: {\"output\":\"b\\nc\\nd\",\"captureLineLimit\":3,\"outputTailOnly\":true}\n\n"
+        ]
+      },
+      "output": {
+        "writes": ["[aimux showing last 3 lines]\n", "a\nb\nc", "\n", "\nd", "\n"],
+        "text": "[aimux showing last 3 lines]\na\nb\nc\n\nd\n",
+        "errors": []
+      },
+      "inputSha256": "9dd23e3b331a8fddb3467088b6e78db1efba90c8c5858eb4993ded0c0ac0d849"
+    },
+    {
+      "id": "agent-output-stream-004",
+      "name": "split-sse-block-and-ready-comment-ignore",
+      "source": "src/agent-output-stream.ts",
+      "input": {
+        "sessionId": "codex-1",
+        "chunks": [
+          ": keepalive\n\n",
+          "event: ready\ndata: {}\n\n",
+          "event: output\ndata: {\"output\":\"alpha",
+          "\\nbeta\"}\n\n"
+        ]
+      },
+      "output": { "writes": ["alpha\nbeta", "\n"], "text": "alpha\nbeta\n", "errors": [] },
+      "inputSha256": "bed3891edb25a06c57eedf06138fc1226dc3d1387af39a632b8aed3e262c6dc3"
+    },
+    {
+      "id": "agent-output-stream-005",
+      "name": "resync-when-output-loses-prefix",
+      "source": "src/agent-output-stream.ts",
+      "input": {
+        "sessionId": "codex-1",
+        "chunks": [
+          "event: output\ndata: {\"output\":\"old tail\"}\n\n",
+          "event: output\ndata: {\"output\":\"fresh\"}\n\n"
+        ]
+      },
+      "output": {
+        "writes": ["old tail", "\n", "\n[aimux stream resync]\nfresh", "\n"],
+        "text": "old tail\n\n[aimux stream resync]\nfresh\n",
+        "errors": []
+      },
+      "inputSha256": "1375a39ef5f433709240f0cd1078e377bb186b931f618e77c99fb3d3fad3a027"
+    },
+    {
+      "id": "agent-output-stream-006",
+      "name": "error-event-throws-payload-message",
+      "source": "src/agent-output-stream.ts",
+      "input": { "sessionId": "codex-1", "chunks": ["event: error\ndata: {\"error\":\"pane unavailable\"}\n\n"] },
+      "output": { "writes": [], "text": "", "errors": ["pane unavailable"] },
+      "inputSha256": "8aabc878bb813bbe6bae0ce3ab56726963c35649920d002ae334b7396036fddb"
+    }
+  ]
+}

@@ -30,3 +30,9 @@ Priority fixture groups:
 - `agent-output/tracker.json`: `AgentTracker` event, `markSeen`,
   `setActivity`, `setAttention`, focus-suppression, and derived-count
   transition snapshots captured from the TypeScript metadata store path.
+- `agent-output/bounds.json`: capture-window clamping and end-line contracts
+  captured from the TypeScript `agent-output-bounds` helpers.
+- `agent-output/stream.json`: SSE text handler output, tail notice, overlap,
+  resync, and error contracts captured from the TypeScript stream handler.
+- `agent-output/read-metrics.json`: output-read metric aggregation and recent
+  ring-buffer behavior captured from the TypeScript metric accumulator.
