@@ -218,6 +218,10 @@ pub struct WorktreeGroup {
     pub pending: bool,
     #[serde(default)]
     pub removing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_failure: Option<Value>,
     pub sessions: Vec<DashboardSession>,
     pub services: Vec<DashboardService>,
     #[serde(default, flatten)]

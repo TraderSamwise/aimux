@@ -62,28 +62,35 @@ impl DashboardNavigationState {
         self.clear_quick_jump();
         match self.level {
             DashboardNavLevel::Worktrees => {
-                let last = snapshot.worktree_groups.len().saturating_sub(1);
-                self.worktree_index = self.worktree_index.saturating_add(1).min(last);
+                let count = snapshot.worktree_groups.len();
+                if count > 1 {
+                    self.worktree_index = (self.worktree_index + 1) % count;
+                }
             }
             DashboardNavLevel::Sessions => {
-                let last = entry_count(snapshot, self.worktree_index).saturating_sub(1);
-                self.item_index = self.item_index.saturating_add(1).min(last);
+                let count = entry_count(snapshot, self.worktree_index);
+                if count > 1 {
+                    self.item_index = (self.item_index + 1) % count;
+                }
             }
         }
         DashboardNavigationOutcome::Changed
     }
 
-    pub fn move_prev(
-        &mut self,
-        _snapshot: &DesktopStateSnapshot,
-    ) -> DashboardNavigationOutcome<'_> {
+    pub fn move_prev(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardNavigationOutcome<'_> {
         self.clear_quick_jump();
         match self.level {
             DashboardNavLevel::Worktrees => {
-                self.worktree_index = self.worktree_index.saturating_sub(1);
+                let count = snapshot.worktree_groups.len();
+                if count > 1 {
+                    self.worktree_index = (self.worktree_index + count - 1) % count;
+                }
             }
             DashboardNavLevel::Sessions => {
-                self.item_index = self.item_index.saturating_sub(1);
+                let count = entry_count(snapshot, self.worktree_index);
+                if count > 1 {
+                    self.item_index = (self.item_index + count - 1) % count;
+                }
             }
         }
         DashboardNavigationOutcome::Changed
@@ -94,15 +101,33 @@ impl DashboardNavigationState {
         let Some(group) = self.focused_worktree(snapshot) else {
             return DashboardNavigationOutcome::Ignored;
         };
-        if group.removing {
+        if group.pending_action.as_deref() == Some("creating") || group.pending {
             return DashboardNavigationOutcome::Blocked(format!(
-                "Worktree {} is removing",
+                "Worktree {} is still creating",
                 group.name
             ));
         }
-        if group.pending {
+        if group.pending_action.as_deref() == Some("removing")
+            || group.pending_action.as_deref() == Some("graveyarding")
+            || group.removing
+        {
+            let action = if group.pending_action.as_deref() == Some("graveyarding") {
+                "graveyarding"
+            } else {
+                "removing"
+            };
             return DashboardNavigationOutcome::Blocked(format!(
-                "Worktree {} is still creating",
+                "Worktree {} is {action}",
+                group.name
+            ));
+        }
+        if let Some(failure) = group.operation_failure.as_ref() {
+            let message = failure
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("operation failed");
+            return DashboardNavigationOutcome::Blocked(format!(
+                "Worktree {} failed: {message}",
                 group.name
             ));
         }
