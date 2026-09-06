@@ -78,6 +78,40 @@ function createHost(snapshot) {
     isDashboardScreen(screen) {
       return this.mode === screen;
     },
+    setDashboardScreen(screen) {
+      this.mode = screen;
+      this.calls.push(["setDashboardScreen", screen]);
+    },
+    showHelp() {
+      this.setDashboardScreen("help");
+      this.renders += 1;
+      this.calls.push(["showHelp"]);
+    },
+    showCoordination() {
+      this.setDashboardScreen("coordination");
+      this.renders += 1;
+      this.calls.push(["showCoordination"]);
+    },
+    showProject() {
+      this.setDashboardScreen("project");
+      this.renders += 1;
+      this.calls.push(["showProject"]);
+    },
+    showLibrary() {
+      this.setDashboardScreen("library");
+      this.renders += 1;
+      this.calls.push(["showLibrary"]);
+    },
+    showTopology() {
+      this.setDashboardScreen("topology");
+      this.renders += 1;
+      this.calls.push(["showTopology"]);
+    },
+    showGraveyard() {
+      this.setDashboardScreen("graveyard");
+      this.renders += 1;
+      this.calls.push(["showGraveyard"]);
+    },
     renderDashboard() {
       this.renders += 1;
       this.calls.push(["renderDashboard"]);
@@ -142,6 +176,7 @@ function summarize(host) {
     host.dashboardQuickJumpTimeout = null;
   }
   return {
+    screen: host.mode,
     level: host.dashboardState.level,
     focusedWorktreePath: host.dashboardState.focusedWorktreePath ?? null,
     sessionIndex: host.dashboardState.sessionIndex,
@@ -267,6 +302,18 @@ record(
   },
   ["2", "1"],
 );
+
+record("question mark opens help screen", undefined, ["?"]);
+
+record("c opens coordination screen", undefined, ["c"]);
+
+record("p opens project screen", undefined, ["p"]);
+
+record("shift l opens library screen", undefined, ["L"]);
+
+record("t opens topology screen", undefined, ["t"]);
+
+record("g opens graveyard screen", undefined, ["g"]);
 
 await writeContractJson(FIXTURE_PATH, {
   version: 1,

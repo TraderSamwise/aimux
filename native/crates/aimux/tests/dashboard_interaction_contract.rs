@@ -19,7 +19,7 @@ fn dashboard_interaction_matches_typescript_contract() {
         .expect("dashboard interaction cases");
     assert_eq!(
         cases.len(),
-        7,
+        13,
         "unexpected dashboard interaction case count"
     );
 
@@ -68,6 +68,7 @@ fn run_case(case: &Value) -> Value {
     }
 
     json!({
+        "screen": controller.screen.as_str(),
         "level": match controller.navigation.level {
             DashboardNavLevel::Worktrees => "worktrees",
             DashboardNavLevel::Sessions => "sessions",

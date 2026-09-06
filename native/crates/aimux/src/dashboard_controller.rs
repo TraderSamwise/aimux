@@ -16,6 +16,7 @@ use crate::dashboard_tool_picker::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardController {
+    pub screen: DashboardScreen,
     pub navigation: DashboardNavigationState,
     pub footer_message: Option<String>,
     pub tool_picker: Option<DashboardToolPickerState>,
@@ -37,6 +38,7 @@ pub enum DashboardControllerEffect {
 impl DashboardController {
     pub fn new(snapshot: &DesktopStateSnapshot) -> Self {
         Self {
+            screen: DashboardScreen::Dashboard,
             navigation: DashboardNavigationState::new(snapshot),
             footer_message: None,
             tool_picker: None,
@@ -70,6 +72,9 @@ impl DashboardController {
         }
         if self.tool_picker.is_some() {
             return self.handle_tool_picker_key(snapshot, key);
+        }
+        if let Some(effect) = self.handle_screen_command_key(key) {
+            return effect;
         }
         let key = normalize_dashboard_command_key(key);
         match key {
@@ -145,6 +150,66 @@ impl DashboardController {
             | DashboardKey::FocusIn
             | DashboardKey::Ctrl(_) => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn handle_screen_command_key(
+        &mut self,
+        key: DashboardKey,
+    ) -> Option<DashboardControllerEffect> {
+        if self.screen != DashboardScreen::Dashboard {
+            return Some(self.handle_subscreen_key(key));
+        }
+        match key {
+            DashboardKey::Printable('?') => Some(self.switch_screen(DashboardScreen::Help)),
+            DashboardKey::Printable('c') => Some(self.switch_screen(DashboardScreen::Coordination)),
+            DashboardKey::Printable('p') => Some(self.switch_screen(DashboardScreen::Project)),
+            DashboardKey::Printable('L') => Some(self.switch_screen(DashboardScreen::Library)),
+            DashboardKey::Printable('t') => Some(self.switch_screen(DashboardScreen::Topology)),
+            DashboardKey::Printable('g') => Some(self.switch_screen(DashboardScreen::Graveyard)),
+            _ => None,
+        }
+    }
+
+    fn handle_subscreen_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Printable('q') => DashboardControllerEffect::Quit,
+            DashboardKey::Back | DashboardKey::Printable('d') => {
+                self.switch_screen(DashboardScreen::Dashboard)
+            }
+            DashboardKey::Tab => {
+                self.details_sidebar_visible = !self.details_sidebar_visible;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable('?') => {
+                if self.screen == DashboardScreen::Help {
+                    self.switch_screen(DashboardScreen::Dashboard)
+                } else {
+                    self.switch_screen(DashboardScreen::Help)
+                }
+            }
+            DashboardKey::Printable('c') if self.screen != DashboardScreen::Coordination => {
+                self.switch_screen(DashboardScreen::Coordination)
+            }
+            DashboardKey::Printable('p') if self.screen != DashboardScreen::Project => {
+                self.switch_screen(DashboardScreen::Project)
+            }
+            DashboardKey::Printable('L') if self.screen != DashboardScreen::Library => {
+                self.switch_screen(DashboardScreen::Library)
+            }
+            DashboardKey::Printable('t') if self.screen != DashboardScreen::Topology => {
+                self.switch_screen(DashboardScreen::Topology)
+            }
+            DashboardKey::Printable('g') if self.screen != DashboardScreen::Graveyard => {
+                self.switch_screen(DashboardScreen::Graveyard)
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn switch_screen(&mut self, screen: DashboardScreen) -> DashboardControllerEffect {
+        self.screen = screen;
+        self.navigation.clear_quick_jump();
+        DashboardControllerEffect::Render
     }
 
     fn handle_tool_picker_key(
@@ -433,6 +498,31 @@ impl DashboardController {
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardScreen {
+    Dashboard,
+    Help,
+    Coordination,
+    Project,
+    Library,
+    Topology,
+    Graveyard,
+}
+
+impl DashboardScreen {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dashboard => "dashboard",
+            Self::Help => "help",
+            Self::Coordination => "coordination",
+            Self::Project => "project",
+            Self::Library => "library",
+            Self::Topology => "topology",
+            Self::Graveyard => "graveyard",
         }
     }
 }
