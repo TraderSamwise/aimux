@@ -408,6 +408,92 @@ fn agent_rename_and_migrate_plan_native_text_routes() {
 }
 
 #[test]
+fn lifecycle_commands_plan_native_text_routes() {
+    let spawn = classify_core_cli_with_project_resolver(
+        &[
+            "spawn",
+            "--tool",
+            "claude",
+            "--project",
+            "./child",
+            "--worktree",
+            "feature",
+            "--no-open",
+            "--json",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("spawn plan");
+    assert_eq!(spawn.operation, CoreCliOperation::LifecycleSpawn);
+    assert_eq!(
+        spawn.action,
+        CoreCliAction::TextRoute {
+            path: "/core/lifecycle/spawn-text?json=1".into(),
+            body: Some(json!({
+                "project": "/resolved/./child",
+                "tool": "claude",
+                "worktreePath": "feature",
+                "open": false,
+            })),
+        }
+    );
+
+    let stop = classify_core_cli(&["stop", "claude-1"], &context(true, true)).expect("stop plan");
+    assert_eq!(stop.operation, CoreCliOperation::LifecycleStop);
+    assert_eq!(
+        stop.action,
+        CoreCliAction::TextRoute {
+            path: "/core/lifecycle/stop-text".into(),
+            body: Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+        }
+    );
+
+    let kill = classify_core_cli(&["kill", "claude-1", "--json"], &context(true, true))
+        .expect("kill plan");
+    assert_eq!(kill.operation, CoreCliOperation::LifecycleKill);
+    assert_eq!(
+        kill.action,
+        CoreCliAction::TextRoute {
+            path: "/core/lifecycle/kill-text?json=1".into(),
+            body: Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+        }
+    );
+
+    let fork = classify_core_cli(
+        &[
+            "fork",
+            "claude-1",
+            "--tool",
+            "codex",
+            "--instruction",
+            "continue",
+            "--worktree",
+            "../other",
+        ],
+        &context(true, true),
+    )
+    .expect("fork plan");
+    assert_eq!(fork.operation, CoreCliOperation::LifecycleFork);
+    assert_eq!(
+        fork.action,
+        CoreCliAction::TextRoute {
+            path: "/core/lifecycle/fork-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sourceSessionId": "claude-1",
+                "tool": "codex",
+                "instruction": "continue",
+                "worktreePath": "../other",
+                "open": true,
+            })),
+        }
+    );
+
+    assert!(classify_core_cli(&["stop"], &context(true, true)).is_err());
+}
+
+#[test]
 fn invalid_host_agent_stream_args_fail_before_node_fallback() {
     let invalid_lines = classify_core_cli(
         &["host", "agent-stream", "claude-1", "--lines", "-5"],

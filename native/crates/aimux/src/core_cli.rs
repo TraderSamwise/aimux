@@ -4,7 +4,8 @@ use crate::core_cli_routing::{
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
     parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
-    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
+    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_project_ensure_args,
     parse_core_restart_args, parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES, is_core_command_name};
@@ -33,6 +34,10 @@ pub enum CoreCliOperation {
     AgentRename,
     AgentMigrate,
     AgentPs,
+    LifecycleSpawn,
+    LifecycleStop,
+    LifecycleKill,
+    LifecycleFork,
     DashboardReload,
     RuntimeRestart,
     ProjectServe,
@@ -617,6 +622,108 @@ where
                         "project": project_root,
                         "sessionId": parsed.session_id,
                         "worktreePath": parsed.worktree,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("spawn", _) => {
+            let parsed = parse_core_lifecycle_spawn_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid spawn arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::LifecycleSpawn,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.lifecycle_spawn_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "tool": parsed.tool,
+                        "worktreePath": parsed.worktree,
+                        "open": parsed.open,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("stop", _) => {
+            let parsed = parse_core_lifecycle_status_args(&args, "stop").ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid stop arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::LifecycleStop,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.lifecycle_stop_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("kill", _) => {
+            let parsed = parse_core_lifecycle_status_args(&args, "kill").ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid kill arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::LifecycleKill,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.lifecycle_kill_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("fork", _) => {
+            let parsed = parse_core_lifecycle_fork_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid fork arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::LifecycleFork,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.lifecycle_fork_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sourceSessionId": parsed.source_session_id,
+                        "tool": parsed.tool,
+                        "instruction": parsed.instruction,
+                        "worktreePath": parsed.worktree,
+                        "open": parsed.open,
                     })),
                 },
                 CoreCliFallback::None,

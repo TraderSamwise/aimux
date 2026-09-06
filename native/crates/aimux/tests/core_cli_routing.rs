@@ -6,7 +6,8 @@ use aimux::core_cli_routing::{
     parse_core_agent_input_args, parse_core_agent_migrate_args, parse_core_agent_ps_args,
     parse_core_agent_rename_args, parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
     parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
-    parse_core_host_restart_args, parse_core_logs_args, parse_core_project_ensure_args,
+    parse_core_host_restart_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_project_ensure_args,
     parse_core_restart_args, parse_core_runtime_restart_args,
 };
 
@@ -218,6 +219,57 @@ fn agent_rename_and_migrate_parsers_match_required_options() {
     assert!(parse_core_agent_rename_args(&["rename", "claude-1"]).is_none());
     assert!(parse_core_agent_migrate_args(&["migrate", "claude-1"]).is_none());
     assert!(parse_core_agent_migrate_args(&["migrate", "claude-1", "--worktree", "-x"]).is_none());
+}
+
+#[test]
+fn lifecycle_parsers_match_spawn_stop_kill_and_fork_forms() {
+    let spawn = parse_core_lifecycle_spawn_args(&[
+        "spawn",
+        "--tool",
+        "claude",
+        "--worktree=feature",
+        "--no-open",
+        "--json",
+    ])
+    .expect("spawn args");
+    assert_eq!(spawn.tool, "claude");
+    assert_eq!(spawn.worktree.as_deref(), Some("feature"));
+    assert!(!spawn.open);
+    assert!(spawn.json);
+
+    let stop =
+        parse_core_lifecycle_status_args(&["stop", "claude-1", "--project", "/repo"], "stop")
+            .expect("stop args");
+    assert_eq!(stop.session_id, "claude-1");
+    assert_eq!(stop.project.as_deref(), Some("/repo"));
+
+    let kill = parse_core_lifecycle_status_args(&["kill", "claude-1", "--json"], "kill")
+        .expect("kill args");
+    assert_eq!(kill.session_id, "claude-1");
+    assert!(kill.json);
+
+    let fork = parse_core_lifecycle_fork_args(&[
+        "fork",
+        "claude-1",
+        "--tool=codex",
+        "--instruction",
+        "continue",
+        "--worktree",
+        "../other",
+    ])
+    .expect("fork args");
+    assert_eq!(fork.source_session_id, "claude-1");
+    assert_eq!(fork.tool, "codex");
+    assert_eq!(fork.instruction.as_deref(), Some("continue"));
+    assert_eq!(fork.worktree.as_deref(), Some("../other"));
+    assert!(fork.open);
+
+    assert!(parse_core_lifecycle_spawn_args(&["spawn", "--tool"]).is_none());
+    assert!(parse_core_lifecycle_fork_args(&["fork", "claude-1"]).is_none());
+    assert!(parse_core_lifecycle_status_args(&["stop"], "stop").is_none());
+    assert!(!is_core_cli_command(&["stop"]));
+    assert!(is_core_cli_command(&["stop", "claude-1"]));
+    assert!(is_core_cli_command(&["stop", "--bad"]));
 }
 
 #[test]

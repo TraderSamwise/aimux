@@ -145,6 +145,14 @@ impl CoreCliRuntime for FakeRuntime {
             "renamed claude-1 -> reviewer\n".into()
         } else if path.starts_with("/core/agents/migrate-text") {
             "migrated claude-1 -> feature\n".into()
+        } else if path.starts_with("/core/lifecycle/spawn-text") {
+            "spawned claude-1\n".into()
+        } else if path.starts_with("/core/lifecycle/stop-text") {
+            "stopped claude-1\n".into()
+        } else if path.starts_with("/core/lifecycle/kill-text") {
+            "graveyarded claude-1\n".into()
+        } else if path.starts_with("/core/lifecycle/fork-text") {
+            "forked codex-2\nthread thread-1\n".into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -595,6 +603,75 @@ fn agent_rename_and_migrate_execute_native_text_routes_without_core_command_fall
                     "project": "/repo",
                     "sessionId": "claude-1",
                     "worktreePath": "feature",
+                })),
+            ),
+        ]
+    );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback() {
+    let mut runtime = FakeRuntime::default();
+
+    let spawn = run_core_cli_with(
+        &args(&[
+            "spawn",
+            "--tool",
+            "claude",
+            "--worktree",
+            "feature",
+            "--no-open",
+        ]),
+        &mut runtime,
+    );
+    let stop = run_core_cli_with(&args(&["stop", "claude-1"]), &mut runtime);
+    let kill = run_core_cli_with(&args(&["kill", "claude-1"]), &mut runtime);
+    let fork = run_core_cli_with(
+        &args(&[
+            "fork",
+            "claude-1",
+            "--tool",
+            "codex",
+            "--instruction",
+            "continue",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(spawn.stdout, ["spawned claude-1"]);
+    assert_eq!(stop.stdout, ["stopped claude-1"]);
+    assert_eq!(kill.stdout, ["graveyarded claude-1"]);
+    assert_eq!(fork.stdout, ["forked codex-2\nthread thread-1"]);
+    assert_eq!(
+        runtime.text_routes,
+        [
+            (
+                "/core/lifecycle/spawn-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "tool": "claude",
+                    "worktreePath": "feature",
+                    "open": false,
+                })),
+            ),
+            (
+                "/core/lifecycle/stop-text".into(),
+                Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+            ),
+            (
+                "/core/lifecycle/kill-text".into(),
+                Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+            ),
+            (
+                "/core/lifecycle/fork-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sourceSessionId": "claude-1",
+                    "tool": "codex",
+                    "instruction": "continue",
+                    "worktreePath": null,
+                    "open": true,
                 })),
             ),
         ]

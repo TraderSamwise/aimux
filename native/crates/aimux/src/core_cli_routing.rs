@@ -44,6 +44,42 @@ pub struct CoreAgentMigrateArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreLifecycleStatusArgs {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreLifecycleSpawnArgs {
+    pub tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+    pub open: bool,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreLifecycleForkArgs {
+    pub source_session_id: String,
+    pub tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+    pub open: bool,
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoreLogsSubcommand {
@@ -468,6 +504,269 @@ pub fn parse_core_agent_migrate_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAg
         project,
         json,
     })
+}
+
+pub fn parse_core_lifecycle_status_args<S: AsRef<str>>(
+    args: &[S],
+    command: &str,
+) -> Option<CoreLifecycleStatusArgs> {
+    if args.first().map(AsRef::as_ref) != Some(command) {
+        return None;
+    }
+    let mut session_id = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return None;
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreLifecycleStatusArgs {
+        session_id: session_id?,
+        project,
+        json,
+    })
+}
+
+pub fn parse_core_lifecycle_spawn_args<S: AsRef<str>>(
+    args: &[S],
+) -> Option<CoreLifecycleSpawnArgs> {
+    if args.first().map(AsRef::as_ref) != Some("spawn") {
+        return None;
+    }
+    let mut tool = None;
+    let mut project = None;
+    let mut worktree = None;
+    let mut open = true;
+    let mut json = false;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--no-open" {
+            open = false;
+            index += 1;
+            continue;
+        }
+        if arg == "--tool" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--tool=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--worktree" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--worktree=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(CoreLifecycleSpawnArgs {
+        tool: tool?,
+        project,
+        worktree,
+        open,
+        json,
+    })
+}
+
+pub fn parse_core_lifecycle_fork_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLifecycleForkArgs> {
+    if args.first().map(AsRef::as_ref) != Some("fork") {
+        return None;
+    }
+    let mut source_session_id = None;
+    let mut tool = None;
+    let mut project = None;
+    let mut instruction = None;
+    let mut worktree = None;
+    let mut open = true;
+    let mut json = false;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--no-open" {
+            open = false;
+            index += 1;
+            continue;
+        }
+        if arg == "--tool" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--tool=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            tool = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--instruction" {
+            instruction = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--instruction=") {
+            instruction = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--worktree" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--worktree=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || source_session_id.is_some() {
+            return None;
+        }
+        source_session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreLifecycleForkArgs {
+        source_session_id: source_session_id?,
+        tool: tool?,
+        project,
+        instruction,
+        worktree,
+        open,
+        json,
+    })
+}
+
+fn stop_has_session_or_invalid_agent_shape<S: AsRef<str>>(args: &[S]) -> bool {
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" || arg == "--no-open" {
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let Some(value) = args.get(index + 1).map(AsRef::as_ref) else {
+                return true;
+            };
+            if value.starts_with('-') {
+                return true;
+            }
+            index += 2;
+            continue;
+        }
+        if arg.starts_with("--project=") {
+            index += 1;
+            continue;
+        }
+        return true;
+    }
+    false
 }
 
 #[allow(clippy::collapsible_if)]
@@ -955,6 +1254,10 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("input"), _) => true,
         (Some("rename"), _) => true,
         (Some("migrate"), _) => true,
+        (Some("spawn"), _) => true,
+        (Some("fork"), _) => true,
+        (Some("kill"), _) => true,
+        (Some("stop"), _) => stop_has_session_or_invalid_agent_shape(args),
         (Some("dashboard-reload"), _) => true,
         (Some("restart-runtime"), _) => true,
         (Some("serve"), _) => args.len() == 1,
