@@ -1,5 +1,10 @@
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+pub const AGENT_OUTPUT_PROJECTION_CACHE_TTL_MS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentOutputProjection {
@@ -12,6 +17,69 @@ pub struct AgentOutputProjection {
 struct AgentOutputBlock {
     kind: &'static str,
     text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AgentOutputProjectionCacheKey {
+    digest: String,
+    tool: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentOutputProjectionCache {
+    inner: Arc<Mutex<BTreeMap<AgentOutputProjectionCacheKey, AgentOutputProjectionCacheEntry>>>,
+    ttl: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct AgentOutputProjectionCacheEntry {
+    projection: AgentOutputProjection,
+    projected_at: Instant,
+}
+
+impl Default for AgentOutputProjectionCache {
+    fn default() -> Self {
+        Self::new(Duration::from_millis(AGENT_OUTPUT_PROJECTION_CACHE_TTL_MS))
+    }
+}
+
+impl AgentOutputProjectionCache {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(BTreeMap::new())),
+            ttl,
+        }
+    }
+
+    pub fn key_for(raw: &str, tool: Option<&str>) -> AgentOutputProjectionCacheKey {
+        AgentOutputProjectionCacheKey {
+            digest: sha1_hex(raw),
+            tool: normalize_tool(tool).unwrap_or("unknown").to_owned(),
+        }
+    }
+
+    pub fn project_or_reuse(
+        &self,
+        key: AgentOutputProjectionCacheKey,
+        project: impl FnOnce() -> AgentOutputProjection,
+    ) -> AgentOutputProjection {
+        let Ok(mut cached) = self.inner.lock() else {
+            return project();
+        };
+        cached.retain(|_, entry| entry.projected_at.elapsed() <= self.ttl);
+        if let Some(entry) = cached.get(&key) {
+            return entry.projection.clone();
+        }
+        let projection = project();
+        cached.insert(
+            key,
+            AgentOutputProjectionCacheEntry {
+                projection: projection.clone(),
+                projected_at: Instant::now(),
+            },
+        );
+        projection
+    }
 }
 
 pub fn project_agent_output(raw: &str, tool: Option<&str>) -> AgentOutputProjection {
@@ -141,14 +209,17 @@ fn messages_from_blocks(blocks: &[AgentOutputBlock]) -> Vec<Value> {
 }
 
 fn content_id(role: &str, text: &str) -> String {
+    format!("{role}:{}", &sha1_hex(text)[..12])
+}
+
+fn sha1_hex(text: &str) -> String {
     let mut hasher = Sha1::new();
     hasher.update(text.as_bytes());
     let digest = hasher.finalize();
-    let hex = digest
+    digest
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("{role}:{}", &hex[..12])
+        .collect::<String>()
 }
 
 fn activity_text_from_blocks(blocks: &[AgentOutputBlock]) -> String {
@@ -364,8 +435,14 @@ fn infer_agent_output_tool(raw: &str) -> Option<&'static str> {
     }
 }
 
-pub fn insert_projection_fields(result: &mut Map<String, Value>, raw: &str, tool: Option<&str>) {
-    let projection = project_agent_output(raw, tool);
+pub fn insert_projection_fields(
+    result: &mut Map<String, Value>,
+    cache: &AgentOutputProjectionCache,
+    raw: &str,
+    tool: Option<&str>,
+) {
+    let key = AgentOutputProjectionCache::key_for(raw, tool);
+    let projection = cache.project_or_reuse(key, || project_agent_output(raw, tool));
     result.insert("parsed".to_owned(), projection.parsed);
     result.insert("messages".to_owned(), Value::Array(projection.messages));
     if !result.contains_key("activityText") && !projection.activity_text.is_empty() {

@@ -6,7 +6,9 @@ use aimux::project_service::agent_output::{
     normalize_submitted_prompt, parse_agent_output_read_purpose, parse_agent_output_response_mode,
     project_agent_output_payload, route_agent_output_request_with_runtime, strip_sgr,
 };
-use aimux::project_service::agent_output_projection::project_agent_output;
+use aimux::project_service::agent_output_projection::{
+    AgentOutputProjectionCache, project_agent_output,
+};
 use aimux::project_service::metadata::update_session_metadata;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
@@ -16,6 +18,7 @@ use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -229,6 +232,26 @@ fn output_projection_reads_tool_progress_activity_text() {
     );
     assert_eq!(transcript.messages[0]["latest"], Value::Null);
     assert_eq!(transcript.messages[1]["latest"], true);
+}
+
+#[test]
+fn output_projection_cache_reuses_projection_for_same_output_version() {
+    let cache = AgentOutputProjectionCache::new(Duration::from_secs(1));
+    let key = AgentOutputProjectionCache::key_for("› hi", Some("codex"));
+    let mut projections = 0;
+
+    let first = cache.project_or_reuse(key.clone(), || {
+        projections += 1;
+        project_agent_output("› hi", Some("codex"))
+    });
+    let second = cache.project_or_reuse(key, || {
+        projections += 1;
+        project_agent_output("› changed", Some("codex"))
+    });
+
+    assert_eq!(projections, 1);
+    assert_eq!(first.messages[0]["text"], "hi");
+    assert_eq!(second.messages[0]["text"], "hi");
 }
 
 #[test]

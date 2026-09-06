@@ -407,7 +407,12 @@ pub(super) fn read_agent_output_payload(
         }
     }
     let tool = resolve_session_tool(&topology, session_id);
-    insert_projection_fields(&mut result, &output, tool.as_deref());
+    insert_projection_fields(
+        &mut result,
+        &context.output_projection_cache,
+        &output,
+        tool.as_deref(),
+    );
     let mut body = Map::new();
     body.insert("ok".into(), Value::Bool(true));
     let payload = project_agent_output_payload(

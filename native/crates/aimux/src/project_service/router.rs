@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
 
+use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
 
 use super::agent_controls::route_agent_control_request;
@@ -49,6 +50,7 @@ pub struct ProjectServiceRequestContext {
     pub request_headers: BTreeMap<String, String>,
     pub desktop_state: Option<Value>,
     pub output_cache: AgentOutputCaptureCache,
+    pub output_projection_cache: AgentOutputProjectionCache,
 }
 
 impl ProjectServiceRequestContext {
@@ -60,6 +62,7 @@ impl ProjectServiceRequestContext {
             request_headers: BTreeMap::new(),
             desktop_state: None,
             output_cache: AgentOutputCaptureCache::default(),
+            output_projection_cache: AgentOutputProjectionCache::default(),
         }
     }
 
@@ -74,6 +77,7 @@ impl ProjectServiceRequestContext {
             request_headers: BTreeMap::new(),
             desktop_state: None,
             output_cache: AgentOutputCaptureCache::default(),
+            output_projection_cache: AgentOutputProjectionCache::default(),
         }
     }
 
