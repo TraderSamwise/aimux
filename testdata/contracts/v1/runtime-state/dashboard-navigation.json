@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/navigation.test.ts",
+  "generatedBy": "scripts/capture-dashboard-navigation-contract.mjs",
+  "description": "Dashboard migrate-picker worktree selection and overlay side effects captured by running TypeScript showMigratePicker.",
+  "cases": [
+    {
+      "id": "runtime-state-dashboard-navigation-001",
+      "name": "builds dashboard migrate choices from service-backed worktree groups",
+      "source": "src/multiplexer/navigation.test.ts",
+      "sourceName": "builds dashboard migrate choices from service-backed worktree groups",
+      "api": "showMigratePicker",
+      "input": {
+        "host": {
+          "mode": "dashboard",
+          "projectRoot": "/repo",
+          "sessions": [{ "id": "codex-1" }],
+          "activeIndex": 0,
+          "dashboardWorktreeGroupsCache": [
+            { "name": "Main Checkout", "branch": "main" },
+            { "name": "feature", "branch": "feature", "path": "/repo/.aimux/worktrees/feature" }
+          ]
+        }
+      },
+      "output": {
+        "migratePickerWorktrees": [
+          { "name": "(main)", "path": "/repo" },
+          { "name": "feature", "path": "/repo/.aimux/worktrees/feature" }
+        ],
+        "migratePickerSessionId": "codex-1",
+        "calls": { "openDashboardOverlay": [["migrate-picker"]], "redrawDashboardWithOverlay": [[]] }
+      },
+      "inputSha256": "d2570668de37ab743934afc999beb0df982cd6b5a6ac68868919947c346b51c8"
+    }
+  ]
+}

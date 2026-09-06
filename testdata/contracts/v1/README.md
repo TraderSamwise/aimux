@@ -702,6 +702,9 @@ Priority fixture groups:
   currentness checks, render gating, stale async suppression, and swallowed
   handler exception behavior captured by running TypeScript
   `multiplexer/dashboard-lifecycle`.
+- `runtime-state/dashboard-navigation.json`: dashboard migrate-picker worktree
+  selection and overlay side effects captured by running TypeScript
+  `multiplexer/navigation`.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
