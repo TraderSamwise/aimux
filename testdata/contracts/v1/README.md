@@ -246,6 +246,13 @@ Priority fixture groups:
   stripping, CRLF parsing, and mtime fallback captured by running TypeScript
   `library`.
 
+## Proxy
+
+- `proxy/project-binding.json`: proxy path parsing and project-service target
+  binding/refusal behavior for live, dead, ambiguous, host-mismatched, pathless,
+  null-endpoint, and nonsensical-port candidates captured by running TypeScript
+  `proxy-project-binding`.
+
 ## Graveyard
 
 - `graveyard/cleanup.json`: graveyard cleanup plan cutoffs, retention
