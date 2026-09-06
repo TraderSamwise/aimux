@@ -7,7 +7,7 @@ use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl, text_or_json_l
 use crate::daemon_projects::ProjectsRouteProject;
 use crate::daemon_state::{AimuxDaemonInfo, DaemonState};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const DAEMON_HEALTH_KIND: &str = "aimux-daemon";
@@ -139,13 +139,14 @@ pub fn daemon_ensure_payload(runtime: &impl DaemonStatusRuntime, issued_at: &str
 pub fn daemon_status_payload(
     runtime: &impl DaemonStatusRuntime,
     issued_at: &str,
-    projects: &[ProjectsRouteProject],
+    route_projects: &[ProjectsRouteProject],
 ) -> Value {
-    let service_alive_by_id = projects
+    let service_alive_by_id = route_projects
         .iter()
         .map(|project| (project.id.clone(), project.service_alive))
         .collect::<BTreeMap<_, _>>();
     let state = runtime.daemon_state();
+    let project_service_fleet = project_service_fleet_json(route_projects, &state);
     let projects = state
         .projects
         .into_values()
@@ -165,7 +166,30 @@ pub fn daemon_status_payload(
     json!({
         "daemon": daemon_info_json(runtime.current_daemon_info(issued_at), runtime.project_service_info()),
         "projects": projects,
+        "projectServiceFleet": project_service_fleet,
         "relay": runtime.relay_status(),
+    })
+}
+
+pub fn project_service_fleet_json(projects: &[ProjectsRouteProject], state: &DaemonState) -> Value {
+    let catalog_project_ids = projects
+        .iter()
+        .map(|project| project.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let live_project_service_count = projects
+        .iter()
+        .filter(|project| project.service_alive)
+        .count();
+    json!({
+        "catalogProjectCount": projects.len(),
+        "liveProjectServiceCount": live_project_service_count,
+        "coldCatalogProjectCount": projects.len().saturating_sub(live_project_service_count),
+        "daemonStateProjectCount": state.projects.len(),
+        "staleDaemonStateProjectCount": state
+            .projects
+            .keys()
+            .filter(|project_id| !catalog_project_ids.contains(project_id.as_str()))
+            .count(),
     })
 }
 

@@ -153,6 +153,16 @@ fn daemon_status_uses_persisted_state_but_live_flags_from_route_projects() {
     assert_eq!(payload["projects"][0]["serviceAlive"], true);
     assert_eq!(payload["projects"][1]["projectId"], "cold-id");
     assert_eq!(payload["projects"][1]["serviceAlive"], false);
+    assert_eq!(
+        payload["projectServiceFleet"],
+        json!({
+            "catalogProjectCount": 1,
+            "liveProjectServiceCount": 1,
+            "coldCatalogProjectCount": 0,
+            "daemonStateProjectCount": 2,
+            "staleDaemonStateProjectCount": 1
+        })
+    );
 
     let mut runtime = runtime();
     let text = route_status_request(

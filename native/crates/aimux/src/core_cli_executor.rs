@@ -30,7 +30,7 @@ use crate::remote_login::{LoginAction, run_login_flow};
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{attach_session_argv, switch_client_argv};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -630,6 +630,7 @@ fn daemon_status_payload(
     state: DaemonState,
     info: Option<AimuxDaemonInfo>,
 ) -> Value {
+    let project_service_fleet = project_service_fleet_from_status(&status, &state);
     let service_alive_by_id = status["projects"]
         .as_array()
         .map(Vec::as_slice)
@@ -645,6 +646,7 @@ fn daemon_status_payload(
     json!({
         "daemon": status.get("daemon").cloned().or_else(|| info.map(|info| serde_json::to_value(info).expect("daemon info JSON"))).unwrap_or(Value::Null),
         "projects": state_projects_with_liveness(state, &service_alive_by_id),
+        "projectServiceFleet": project_service_fleet,
         "relay": status.get("relay").cloned().unwrap_or_else(|| json!({ "status": "off" })),
     })
 }
@@ -659,10 +661,42 @@ fn payload_field(request: &CoreCommandCall, key: &str) -> Value {
 }
 
 fn daemon_status_fallback_payload(info: Option<AimuxDaemonInfo>, state: DaemonState) -> Value {
+    let project_service_fleet =
+        project_service_fleet_from_status(&json!({ "projects": [] }), &state);
     json!({
         "daemon": info.map(|info| serde_json::to_value(info).expect("daemon info JSON")).unwrap_or(Value::Null),
         "projects": state_projects_with_liveness(state, &BTreeMap::new()),
+        "projectServiceFleet": project_service_fleet,
         "relay": { "status": "off" },
+    })
+}
+
+fn project_service_fleet_from_status(status: &Value, state: &DaemonState) -> Value {
+    if let Some(fleet) = status.get("projectServiceFleet") {
+        return fleet.clone();
+    }
+    let projects = status["projects"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let catalog_project_ids = projects
+        .iter()
+        .filter_map(|project| project.get("id").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let live_project_service_count = projects
+        .iter()
+        .filter(|project| project.get("serviceAlive").and_then(Value::as_bool) == Some(true))
+        .count();
+    json!({
+        "catalogProjectCount": projects.len(),
+        "liveProjectServiceCount": live_project_service_count,
+        "coldCatalogProjectCount": projects.len().saturating_sub(live_project_service_count),
+        "daemonStateProjectCount": state.projects.len(),
+        "staleDaemonStateProjectCount": state
+            .projects
+            .keys()
+            .filter(|project_id| !catalog_project_ids.contains(project_id.as_str()))
+            .count(),
     })
 }
 

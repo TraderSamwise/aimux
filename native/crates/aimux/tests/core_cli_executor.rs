@@ -307,6 +307,13 @@ fn status_result() -> Value {
             "serviceEndpoint": { "host": "127.0.0.1", "port": 44000 },
             "dashboardSessionName": "aimux-repo"
         }],
+        "projectServiceFleet": {
+            "catalogProjectCount": 1,
+            "liveProjectServiceCount": 1,
+            "coldCatalogProjectCount": 0,
+            "daemonStateProjectCount": 1,
+            "staleDaemonStateProjectCount": 0
+        },
         "relay": { "status": "off" }
     })
 }
@@ -463,6 +470,20 @@ fn daemon_status_uses_stored_state_when_daemon_request_fails() {
     assert_eq!(runtime.commands[0].command, CORE_COMMAND_NAMES.status);
     assert!(!runtime.commands[0].options.ensure_daemon);
     assert_eq!(runtime.commands[0].options.timeout_ms, Some(1000));
+
+    let json_execution = run_core_cli_with(&args(&["daemon", "status", "--json"]), &mut runtime);
+    assert_eq!(json_execution.code, 0);
+    let parsed: Value = serde_json::from_str(&json_execution.stdout[0]).expect("status JSON");
+    assert_eq!(
+        parsed["projectServiceFleet"],
+        json!({
+            "catalogProjectCount": 0,
+            "liveProjectServiceCount": 0,
+            "coldCatalogProjectCount": 0,
+            "daemonStateProjectCount": 1,
+            "staleDaemonStateProjectCount": 1
+        })
+    );
 }
 
 #[test]
