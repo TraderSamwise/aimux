@@ -217,6 +217,12 @@ Priority fixture groups:
   replacement save, runtime reconciliation, service preservation, and topology
   reference-pruning behavior captured by running TypeScript
   `runtime-core/topology-sessions`.
+- `runtime-topology/services.json`: service upsert, batch update, live tmux
+  binding, stopped-service cleanup, and worktree-scoped removal behavior
+  captured by running TypeScript `runtime-core/topology-services`.
+- `runtime-topology/worktrees.json`: active worktree tracking, graveyard
+  movement, deleted graveyard audit entries, resurrection, and active-removal
+  behavior captured by running TypeScript `runtime-core/topology-worktrees`.
 
 ## Connection Targets
 

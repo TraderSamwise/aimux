@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "source": "src/runtime-core/topology-worktrees.test.ts",
+  "generatedBy": "scripts/capture-runtime-topology-worktrees-contract.mjs",
+  "description": "Runtime topology worktree lifecycle and graveyard contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-topology-worktrees-001",
+      "name": "tracks active worktrees in topology",
+      "source": "src/runtime-core/topology-worktrees.test.ts",
+      "api": "upsert-list",
+      "input": {
+        "worktree": {
+          "path": "feature-a",
+          "name": "feature-a",
+          "branch": "feature-a",
+          "basePath": "<repo>",
+          "createdAt": "2026-05-25T00:00:00.000Z"
+        },
+        "status": "active"
+      },
+      "output": {
+        "active": [
+          {
+            "id": "<worktree-id:1>",
+            "path": "<tmp>/feature-a",
+            "name": "feature-a",
+            "status": "active",
+            "branch": "feature-a",
+            "basePath": "<repo>",
+            "createdAt": "2026-05-25T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "fe2909dacbc7e3e20ee58adb58f2b4df26b454cfd72010cd19869007c8444ab6"
+    },
+    {
+      "id": "runtime-topology-worktrees-002",
+      "name": "moves worktrees to topology graveyard without deleting the authority record",
+      "source": "src/runtime-core/topology-worktrees.test.ts",
+      "api": "move-graveyard",
+      "input": {
+        "worktree": { "path": "feature-b", "name": "feature-b", "branch": "feature-b" },
+        "reason": "user-requested"
+      },
+      "output": {
+        "moved": {
+          "id": "<worktree-graveyard-id:1>",
+          "worktreeId": "<worktree-id:1>",
+          "path": "<tmp>/feature-b",
+          "name": "feature-b",
+          "branch": "feature-b",
+          "graveyardedAt": "2026-05-25T01:00:00.000Z",
+          "reason": "user-requested"
+        },
+        "graveyardStates": [
+          {
+            "id": "<worktree-id:1>",
+            "path": "<tmp>/feature-b",
+            "name": "feature-b",
+            "status": "graveyard",
+            "branch": "feature-b",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "removedAt": "2026-05-25T01:00:00.000Z"
+          }
+        ],
+        "graveyardPaths": ["<tmp>/feature-b"]
+      },
+      "inputSha256": "5b0bd7ebe50f4d9de1fd441144cfe5e0cf33a3e6c4ff3ae3bf4168698d437d26"
+    },
+    {
+      "id": "runtime-topology-worktrees-003",
+      "name": "marks graveyard entries deleted while preserving audit history",
+      "source": "src/runtime-core/topology-worktrees.test.ts",
+      "api": "delete-graveyard-entry",
+      "input": { "worktree": { "path": "feature-c", "name": "feature-c" } },
+      "output": {
+        "deleted": {
+          "id": "<worktree-graveyard-id:1>",
+          "worktreeId": "<worktree-id:1>",
+          "path": "<tmp>/feature-c",
+          "name": "feature-c",
+          "graveyardedAt": "2026-05-25T01:00:00.000Z",
+          "deletedAt": "2026-05-25T02:00:00.000Z"
+        },
+        "visibleGraveyard": [],
+        "allGraveyard": [
+          {
+            "id": "<worktree-graveyard-id:1>",
+            "worktreeId": "<worktree-id:1>",
+            "path": "<tmp>/feature-c",
+            "name": "feature-c",
+            "graveyardedAt": "2026-05-25T01:00:00.000Z",
+            "deletedAt": "2026-05-25T02:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "9bb0ae5d0014c8141d8f855634746636a29ee8df81ae28583ff5919ed5b336e5"
+    },
+    {
+      "id": "runtime-topology-worktrees-004",
+      "name": "resurrects topology graveyard entries back to active worktrees",
+      "source": "src/runtime-core/topology-worktrees.test.ts",
+      "api": "resurrect-graveyard-entry",
+      "input": { "worktree": { "path": "feature-resurrect", "name": "feature-resurrect" } },
+      "output": {
+        "resurrected": {
+          "id": "<worktree-id:1>",
+          "path": "<tmp>/feature-resurrect",
+          "name": "feature-resurrect",
+          "status": "active",
+          "createdAt": "2026-05-25T00:00:00.000Z"
+        },
+        "graveyard": [],
+        "active": [
+          {
+            "id": "<worktree-id:1>",
+            "path": "<tmp>/feature-resurrect",
+            "name": "feature-resurrect",
+            "status": "active",
+            "createdAt": "2026-05-25T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "cb4cb7a5f5ecc602a83f8c044c8182d9fe20e73f9857740ad5cc5977116779cf"
+    },
+    {
+      "id": "runtime-topology-worktrees-005",
+      "name": "removes active worktree topology without creating graveyard state",
+      "source": "src/runtime-core/topology-worktrees.test.ts",
+      "api": "remove-worktree",
+      "input": { "worktree": { "path": "feature-d", "name": "feature-d" } },
+      "output": {
+        "removed": {
+          "id": "<worktree-id:1>",
+          "path": "<tmp>/feature-d",
+          "name": "feature-d",
+          "status": "active",
+          "createdAt": "2026-05-25T00:00:00.000Z"
+        },
+        "worktrees": [],
+        "graveyard": []
+      },
+      "inputSha256": "a75ee2357a98fdecdb3cc67ff8ad7b985a48affdd317e33128a71bf3956eb4de"
+    }
+  ]
+}
