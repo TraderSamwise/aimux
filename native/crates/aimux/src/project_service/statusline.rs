@@ -1230,6 +1230,32 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     (days >= 0).then_some(days)
 }
 
+fn insert_string(map: &mut Map<String, Value>, key: &str, value: &str) {
+    map.insert(key.to_owned(), Value::String(value.to_owned()));
+}
+
+fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
+    if let Some(value) = value
+        && !value.is_null()
+    {
+        map.insert(key.to_owned(), value);
+    }
+}
+
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1541,30 +1567,4 @@ mod tests {
             "hasActiveTask": false
         })
     }
-}
-
-fn insert_string(map: &mut Map<String, Value>, key: &str, value: &str) {
-    map.insert(key.to_owned(), Value::String(value.to_owned()));
-}
-
-fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
-    if let Some(value) = value
-        && !value.is_null()
-    {
-        map.insert(key.to_owned(), value);
-    }
-}
-
-fn now_iso() -> String {
-    let now = time::OffsetDateTime::now_utc();
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        now.year(),
-        u8::from(now.month()),
-        now.day(),
-        now.hour(),
-        now.minute(),
-        now.second(),
-        now.millisecond()
-    )
 }
