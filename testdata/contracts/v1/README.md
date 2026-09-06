@@ -147,6 +147,9 @@ Priority fixture groups:
 
 ## Coordination
 
+- `coordination/loop-watcher.json`: loop candidate selection, overseer
+  briefing templating, scan cooldown, auto-nudge, and failed-send retry
+  behavior captured by running TypeScript `loop-watcher` helpers.
 - `coordination/mutations.json`: thread-helper and direct-message mutation
   contracts captured by running TypeScript `threads` and `orchestration`
   helpers, including runtime-exchange side effects. Current Rust route parity
