@@ -50,6 +50,13 @@ Priority fixture groups:
   auto-scroll command behavior captured by running TypeScript
   `app/lib/agent-lifecycle` and `app/lib/chat-scroll-policy` helpers.
 
+## App Navigation
+
+- `app-navigation/navigation.json`: initial main route selection, main tab
+  href/path mapping, public/internal route separation, and project picker
+  online-agent filtering captured by running TypeScript `app/lib/initial-main-route`,
+  `app/lib/main-tabs`, and `app/lib/project-picker` helpers.
+
 ## Agent Output
 
 - `agent-display/labels.json`: app generated-label detection, tool-name

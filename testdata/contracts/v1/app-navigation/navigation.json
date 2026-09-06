@@ -1,0 +1,347 @@
+{
+  "version": 1,
+  "source": ["app/lib/initial-main-route.test.ts", "app/lib/main-tabs.test.ts", "app/lib/project-picker.test.ts"],
+  "generatedBy": "scripts/capture-app-navigation-contract.mjs",
+  "description": "App initial route selection, main tab href/path mapping, public/internal tab route separation, and project picker online-agent filtering captured by running TypeScript app navigation helpers.",
+  "cases": [
+    {
+      "id": "app-navigation-001",
+      "name": "initial route defaults to project when signed out",
+      "source": "app/lib/initial-main-route.test.ts",
+      "api": "initialMainRoute",
+      "input": {
+        "name": "initial route defaults to project when signed out",
+        "source": "app/lib/initial-main-route.test.ts",
+        "api": "initialMainRoute",
+        "value": {
+          "isSignedIn": false,
+          "realSharedChatCount": 1,
+          "activeProjectCount": 1,
+          "projectDiscoverySynced": true,
+          "relayConfigured": true,
+          "relayStatus": "connected"
+        }
+      },
+      "output": "project",
+      "inputSha256": "e611bcafb811ea858f380790b684de134941195d381763347ed73d0a97c31e03"
+    },
+    {
+      "id": "app-navigation-002",
+      "name": "initial route defaults to project without shared chats",
+      "source": "app/lib/initial-main-route.test.ts",
+      "api": "initialMainRoute",
+      "input": {
+        "name": "initial route defaults to project without shared chats",
+        "source": "app/lib/initial-main-route.test.ts",
+        "api": "initialMainRoute",
+        "value": {
+          "isSignedIn": true,
+          "realSharedChatCount": 0,
+          "activeProjectCount": 1,
+          "projectDiscoverySynced": true,
+          "relayConfigured": true,
+          "relayStatus": "connected"
+        }
+      },
+      "output": "project",
+      "inputSha256": "9aa4a660fa260065c43b477d7c3708183024ffc52bb662c280757c271aea2cde"
+    },
+    {
+      "id": "app-navigation-003",
+      "name": "initial route waits for project discovery before shared fallback",
+      "source": "app/lib/initial-main-route.test.ts",
+      "api": "initialMainRoute",
+      "input": {
+        "name": "initial route waits for project discovery before shared fallback",
+        "source": "app/lib/initial-main-route.test.ts",
+        "api": "initialMainRoute",
+        "value": {
+          "isSignedIn": true,
+          "realSharedChatCount": 1,
+          "activeProjectCount": 0,
+          "projectDiscoverySynced": false,
+          "relayConfigured": false,
+          "relayStatus": "disconnected"
+        }
+      },
+      "output": "project",
+      "inputSha256": "674c20b1f93ddcde5037c14098149458ba572f2e5c030d5c9101b78fc81e7eba"
+    },
+    {
+      "id": "app-navigation-004",
+      "name": "initial route uses shared when no active projects remain",
+      "source": "app/lib/initial-main-route.test.ts",
+      "api": "initialMainRoute",
+      "input": {
+        "name": "initial route uses shared when no active projects remain",
+        "source": "app/lib/initial-main-route.test.ts",
+        "api": "initialMainRoute",
+        "value": {
+          "isSignedIn": true,
+          "realSharedChatCount": 1,
+          "activeProjectCount": 0,
+          "projectDiscoverySynced": true,
+          "relayConfigured": true,
+          "relayStatus": "connected"
+        }
+      },
+      "output": "shared",
+      "inputSha256": "232b45479044c9d880702a36110ecaebccb856e8f0cf983451b5331cc3adfeb9"
+    },
+    {
+      "id": "app-navigation-005",
+      "name": "initial route uses shared when relay CLI lane is unavailable",
+      "source": "app/lib/initial-main-route.test.ts",
+      "api": "initialMainRoute",
+      "input": {
+        "name": "initial route uses shared when relay CLI lane is unavailable",
+        "source": "app/lib/initial-main-route.test.ts",
+        "api": "initialMainRoute",
+        "value": {
+          "isSignedIn": true,
+          "realSharedChatCount": 1,
+          "activeProjectCount": 2,
+          "projectDiscoverySynced": true,
+          "relayConfigured": true,
+          "relayStatus": "device_pending"
+        }
+      },
+      "output": "shared",
+      "inputSha256": "25b09147226357d08223cbddbaa728be2ca79e79ac7045302d25590085f91ed0"
+    },
+    {
+      "id": "app-navigation-006",
+      "name": "builds project tab href with project param",
+      "source": "app/lib/main-tabs.test.ts",
+      "api": "buildMainTabHref",
+      "input": {
+        "name": "builds project tab href with project param",
+        "source": "app/lib/main-tabs.test.ts",
+        "api": "buildMainTabHref",
+        "tabId": "project",
+        "projectPath": "/Users/sam/cs/tealstreet-next"
+      },
+      "output": { "pathname": "/(main)/(tabs)/project", "params": { "project": "/Users/sam/cs/tealstreet-next" } },
+      "inputSha256": "452f976017796760280f02e4d0132007dde7b276ab75eac223a3fdae96b3bdc6"
+    },
+    {
+      "id": "app-navigation-007",
+      "name": "builds threads tab href",
+      "source": "app/lib/main-tabs.test.ts",
+      "api": "buildMainTabHref",
+      "input": {
+        "name": "builds threads tab href",
+        "source": "app/lib/main-tabs.test.ts",
+        "api": "buildMainTabHref",
+        "tabId": "threads",
+        "projectPath": "/Users/sam/cs/aimux"
+      },
+      "output": { "pathname": "/(main)/(tabs)/threads", "params": { "project": "/Users/sam/cs/aimux" } },
+      "inputSha256": "1edf93765d1eccdfdd864b4f1664e5aa34d013783fcac634dc85a2bf9e1cbeea"
+    },
+    {
+      "id": "app-navigation-008",
+      "name": "builds inbox internal notification tab href",
+      "source": "app/lib/main-tabs.test.ts",
+      "api": "buildMainTabHref",
+      "input": {
+        "name": "builds inbox internal notification tab href",
+        "source": "app/lib/main-tabs.test.ts",
+        "api": "buildMainTabHref",
+        "tabId": "inbox",
+        "projectPath": "/Users/sam/cs/aimux"
+      },
+      "output": { "pathname": "/(main)/(tabs)/notifications", "params": { "project": "/Users/sam/cs/aimux" } },
+      "inputSha256": "ad34862a49b6dfd46bd1a9a673d7611469a253080c5b86356fe5b44d84a3d320"
+    },
+    {
+      "id": "app-navigation-009",
+      "name": "omits empty project params",
+      "source": "app/lib/main-tabs.test.ts",
+      "api": "buildMainTabHref",
+      "input": {
+        "name": "omits empty project params",
+        "source": "app/lib/main-tabs.test.ts",
+        "api": "buildMainTabHref",
+        "tabId": "project",
+        "projectPath": ""
+      },
+      "output": { "pathname": "/(main)/(tabs)/project", "params": {} },
+      "inputSha256": "92b94eb1fd2cf670faa471efbdff9d6927ae4f867db750c57778615e5759aad9"
+    },
+    {
+      "id": "app-navigation-010",
+      "name": "keeps public threads route separate",
+      "source": "app/lib/main-tabs.test.ts",
+      "api": "MAIN_TAB_ROUTES",
+      "input": {
+        "name": "keeps public threads route separate",
+        "source": "app/lib/main-tabs.test.ts",
+        "api": "MAIN_TAB_ROUTES",
+        "tabId": "threads"
+      },
+      "output": { "id": "threads", "href": "/threads", "internalHref": "/(main)/(tabs)/threads", "screen": "threads" },
+      "inputSha256": "82135d01a515a5cbc502bb03d1536e4313f5053621e21813c4e81971c273d4d3"
+    },
+    {
+      "id": "app-navigation-011",
+      "name": "maps notification paths to inbox tab",
+      "source": "app/lib/main-tabs.ts",
+      "api": "mainTabForPath",
+      "input": {
+        "name": "maps notification paths to inbox tab",
+        "source": "app/lib/main-tabs.ts",
+        "api": "mainTabForPath",
+        "pathname": "/notifications"
+      },
+      "output": "inbox",
+      "inputSha256": "7f7ced031d94499b0783a87528ae8ba331593d3e4b9c1bd8349c7e21a4eb5cdc"
+    },
+    {
+      "id": "app-navigation-012",
+      "name": "maps settings paths to settings tab",
+      "source": "app/lib/main-tabs.ts",
+      "api": "mainTabForPath",
+      "input": {
+        "name": "maps settings paths to settings tab",
+        "source": "app/lib/main-tabs.ts",
+        "api": "mainTabForPath",
+        "pathname": "/settings/profile"
+      },
+      "output": "settings",
+      "inputSha256": "9142b6eaddcf6c526d0447118f98ce3b7d90f9db7e6587dcd9d91d055f403f6a"
+    },
+    {
+      "id": "app-navigation-013",
+      "name": "maps unknown paths to dashboard tab",
+      "source": "app/lib/main-tabs.ts",
+      "api": "mainTabForPath",
+      "input": {
+        "name": "maps unknown paths to dashboard tab",
+        "source": "app/lib/main-tabs.ts",
+        "api": "mainTabForPath",
+        "pathname": "/unknown"
+      },
+      "output": "dashboard",
+      "inputSha256": "fc701b2550b8eee66fd2f5c6715581fd12d4758c5eaee08ace7a4e9de552be07"
+    },
+    {
+      "id": "app-navigation-014",
+      "name": "project picker defaults to projects with known online agents",
+      "source": "app/lib/project-picker.test.ts",
+      "api": "filterProjectPickerProjects",
+      "input": {
+        "name": "project picker defaults to projects with known online agents",
+        "source": "app/lib/project-picker.test.ts",
+        "api": "filterProjectPickerProjects",
+        "projects": [
+          {
+            "dashboardSessionName": "aimux-active",
+            "path": "/repo/active",
+            "service": null,
+            "serviceAlive": true,
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 43190 },
+            "id": "active",
+            "name": "active",
+            "onlineAgentCount": 2
+          },
+          {
+            "dashboardSessionName": "aimux-empty",
+            "path": "/repo/empty",
+            "service": null,
+            "serviceAlive": true,
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 43190 },
+            "id": "empty",
+            "name": "empty",
+            "onlineAgentCount": 0
+          },
+          {
+            "dashboardSessionName": "aimux-unknown",
+            "path": "/repo/unknown",
+            "service": null,
+            "serviceAlive": true,
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 43190 },
+            "id": "unknown",
+            "name": "unknown"
+          }
+        ],
+        "options": { "showAll": false }
+      },
+      "output": ["active", "unknown"],
+      "inputSha256": "30f2ccf9695c453a6bef2c4dc98b1de02a1cf24ebbdc22dad6fe7bba618aaeba"
+    },
+    {
+      "id": "app-navigation-015",
+      "name": "project picker can show every project",
+      "source": "app/lib/project-picker.test.ts",
+      "api": "filterProjectPickerProjects",
+      "input": {
+        "name": "project picker can show every project",
+        "source": "app/lib/project-picker.test.ts",
+        "api": "filterProjectPickerProjects",
+        "projects": [
+          {
+            "dashboardSessionName": "aimux-active",
+            "path": "/repo/active",
+            "service": null,
+            "serviceAlive": true,
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 43190 },
+            "id": "active",
+            "name": "active",
+            "onlineAgentCount": 2
+          },
+          {
+            "dashboardSessionName": "aimux-empty",
+            "path": "/repo/empty",
+            "service": null,
+            "serviceAlive": true,
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 43190 },
+            "id": "empty",
+            "name": "empty",
+            "onlineAgentCount": 0
+          },
+          {
+            "dashboardSessionName": "aimux-unknown",
+            "path": "/repo/unknown",
+            "service": null,
+            "serviceAlive": true,
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 43190 },
+            "id": "unknown",
+            "name": "unknown"
+          }
+        ],
+        "options": { "showAll": true }
+      },
+      "output": ["active", "empty", "unknown"],
+      "inputSha256": "3eaeb2af2f7191e3cea87571dff35b788ea7542be8e6563314f17b9aa25dd12b"
+    },
+    {
+      "id": "app-navigation-016",
+      "name": "known online agent count accepts unknown counts",
+      "source": "app/lib/project-picker.ts",
+      "api": "hasKnownOnlineAgents",
+      "input": {
+        "name": "known online agent count accepts unknown counts",
+        "source": "app/lib/project-picker.ts",
+        "api": "hasKnownOnlineAgents",
+        "project": {}
+      },
+      "output": true,
+      "inputSha256": "dff4b69c2ffdfc405d9d9ac455b34bee5f3c7baec879b067f798e9ae3be46dc6"
+    },
+    {
+      "id": "app-navigation-017",
+      "name": "known online agent count rejects zero",
+      "source": "app/lib/project-picker.ts",
+      "api": "hasKnownOnlineAgents",
+      "input": {
+        "name": "known online agent count rejects zero",
+        "source": "app/lib/project-picker.ts",
+        "api": "hasKnownOnlineAgents",
+        "project": { "onlineAgentCount": 0 }
+      },
+      "output": false,
+      "inputSha256": "f18f9feb625d129a3118067f874a3f572df2e6b9da9743fcecd6d647a22b4c0c"
+    }
+  ]
+}
