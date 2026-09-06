@@ -1,0 +1,258 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-expose-model-contract.mjs",
+  "source": "src/tmux/expose-model.ts",
+  "subject": "src/tmux/expose-model.ts + src/tmux/expose-ui-state.ts",
+  "description": "Expose scope, HTTP request, focus, overseer, and UI-state behavior captured by running TypeScript.",
+  "caseCount": 7,
+  "cases": [
+    {
+      "id": "tmux-expose-model-001",
+      "name": "walks and clamps expose scope ladder",
+      "source": "src/tmux/expose-model.ts",
+      "api": "nextExposeScope",
+      "input": { "name": "walks and clamps expose scope ladder", "scopes": ["worktree", "project", "global"] },
+      "output": { "values": ["project", "global", "global"] },
+      "inputSha256": "370c5aa537676e4a5cb109f0bad2e542991f34b6fe63f343de9c3650bfb54172"
+    },
+    {
+      "id": "tmux-expose-model-002",
+      "name": "derives initial scope from launch context and config",
+      "source": "src/tmux/expose-model.ts",
+      "api": "initialExposeScope",
+      "input": {
+        "name": "derives initial scope from launch context and config",
+        "cases": [
+          {
+            "crossProject": true,
+            "context": {
+              "projectRoot": "/repo",
+              "currentPath": "/repo/worktree",
+              "currentWindow": "codex",
+              "currentWindowId": "@2",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001"
+            },
+            "config": { "initialScope": "worktree" }
+          },
+          {
+            "crossProject": false,
+            "context": {
+              "projectRoot": "/repo",
+              "currentPath": "/repo/worktree",
+              "currentWindow": "codex",
+              "currentWindowId": "@2",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001"
+            },
+            "config": { "initialScope": "worktree" }
+          },
+          {
+            "crossProject": false,
+            "context": {
+              "projectRoot": "/repo",
+              "currentPath": "/repo/worktree",
+              "currentWindow": "dashboard",
+              "currentWindowId": "@9",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001"
+            },
+            "config": { "initialScope": "worktree" }
+          },
+          {
+            "crossProject": false,
+            "context": {
+              "projectRoot": "/repo",
+              "currentPath": "/repo/worktree",
+              "currentWindow": "codex",
+              "currentWindowId": "@2",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001"
+            },
+            "config": { "initialScope": "project" }
+          },
+          {
+            "crossProject": false,
+            "context": {
+              "projectRoot": "/repo",
+              "currentPath": "/repo/worktree",
+              "currentWindow": "codex",
+              "currentWindowId": "",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001"
+            },
+            "config": { "initialScope": "worktree" }
+          },
+          {
+            "crossProject": false,
+            "context": {
+              "projectRoot": "/repo",
+              "currentPath": "/repo/worktree",
+              "currentWindow": "codex",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001"
+            },
+            "config": {}
+          }
+        ]
+      },
+      "output": { "values": ["global", "worktree", "project", "project", "project", "project"] },
+      "inputSha256": "b5f717a62883bed30f266e85e9130a52e092b8e846cc9fdc94de34bf60737324"
+    },
+    {
+      "id": "tmux-expose-model-003",
+      "name": "loads worktree project and global scope items with expose lease params",
+      "source": "src/tmux/expose-model.ts",
+      "api": "loadExposeScopeItems",
+      "input": {
+        "name": "loads worktree project and global scope items with expose lease params",
+        "responses": [
+          {
+            "ok": true,
+            "items": [{ "id": "wt-agent", "target": { "windowId": "@1" }, "previewSnapshot": { "output": "warm\n" } }]
+          },
+          { "ok": false, "items": [{ "id": "ignored", "target": { "windowId": "@2" } }] },
+          { "ok": true, "items": [{ "id": "global-agent", "projectRoot": "/other", "target": { "windowId": "@9" } }] }
+        ]
+      },
+      "output": {
+        "views": [
+          {
+            "scope": "worktree",
+            "scopeLabel": "this worktree",
+            "sublabel": "none",
+            "itemIds": ["wt-agent"],
+            "items": [{ "id": "wt-agent", "target": { "windowId": "@1" }, "previewSnapshot": { "output": "warm\n" } }]
+          },
+          { "scope": "project", "scopeLabel": "all worktrees", "sublabel": "worktree", "itemIds": [], "items": [] },
+          {
+            "scope": "global",
+            "scopeLabel": "all projects",
+            "sublabel": "project-worktree",
+            "itemIds": ["global-agent"],
+            "items": [{ "id": "global-agent", "projectRoot": "/other", "target": { "windowId": "@9" } }]
+          }
+        ],
+        "requests": [
+          {
+            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
+            "method": "GET",
+            "body": null,
+            "timeoutMs": 4000
+          },
+          {
+            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
+            "method": "GET",
+            "body": null,
+            "timeoutMs": 4000
+          },
+          {
+            "url": "http://127.0.0.1:43190/core/expose/items?includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000",
+            "method": "GET",
+            "body": null,
+            "timeoutMs": 4000
+          }
+        ]
+      },
+      "inputSha256": "babde2e8610a468a9b190cae87d59e44e38e557a28770419f8fb37aede514eb8"
+    },
+    {
+      "id": "tmux-expose-model-004",
+      "name": "loads overseer through opt in project query",
+      "source": "src/tmux/expose-model.ts",
+      "api": "loadOverseerExposeItem",
+      "input": {
+        "name": "loads overseer through opt in project query",
+        "responses": [
+          {
+            "ok": true,
+            "items": [
+              { "id": "agent", "target": { "windowId": "@1" } },
+              { "id": "boss", "overseer": true }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "item": { "id": "boss", "overseer": true },
+        "requests": [
+          {
+            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&includeOverseer=1&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
+            "method": "GET",
+            "body": null,
+            "timeoutMs": 4000
+          }
+        ],
+        "stateFile": null
+      },
+      "inputSha256": "0b3ee849e1efee4d111e4702eea634f6c3d8d436d2662b65c84cb26b852ef13a"
+    },
+    {
+      "id": "tmux-expose-model-005",
+      "name": "focuses local and global expose items through correct routes",
+      "source": "src/tmux/expose-model.ts",
+      "api": "focusExposeItem",
+      "input": {
+        "name": "focuses local and global expose items through correct routes",
+        "responses": [{ "ok": true }, { "ok": false }]
+      },
+      "output": {
+        "results": [true, false],
+        "requests": [
+          {
+            "url": "http://127.0.0.1:43191/control/focus-window",
+            "method": "POST",
+            "body": {
+              "windowId": "@1",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001",
+              "focus": true
+            },
+            "timeoutMs": 4000
+          },
+          {
+            "url": "http://127.0.0.1:43190/core/expose/focus",
+            "method": "POST",
+            "body": {
+              "windowId": "@9",
+              "projectRoot": "/other",
+              "currentClientSession": "aimux-test-client-12345678",
+              "clientTty": "/dev/ttys001",
+              "focus": true
+            },
+            "timeoutMs": 4000
+          }
+        ]
+      },
+      "inputSha256": "b0d2562db818f5ba2982540a569ea2c8ab89622009413f2721e26d80c6dafed4"
+    },
+    {
+      "id": "tmux-expose-model-006",
+      "name": "reads default ui state for missing invalid or unknown sort mode",
+      "source": "src/tmux/expose-model.ts",
+      "api": "readExposeUiState",
+      "input": {
+        "name": "reads default ui state for missing invalid or unknown sort mode",
+        "stateFile": "{\"version\":1,\"sortMode\":\"unknown\"}"
+      },
+      "output": {
+        "states": [{ "sortMode": "default" }, { "sortMode": "default" }],
+        "stateFile": "{\"version\":1,\"sortMode\":\"unknown\"}"
+      },
+      "inputSha256": "fc4a228abc3d55c1cc9892a78d488ae232b203fc5b5d1a18b6aa83df6b3bf329"
+    },
+    {
+      "id": "tmux-expose-model-007",
+      "name": "writes and reads recent output ui state",
+      "source": "src/tmux/expose-model.ts",
+      "api": "writeExposeUiState",
+      "input": { "name": "writes and reads recent output ui state" },
+      "output": {
+        "state": { "sortMode": "recent-output" },
+        "stateFile": "{\n  \"version\": 1,\n  \"sortMode\": \"recent-output\"\n}\n"
+      },
+      "inputSha256": "762d273171c9551f8ac974a4c12d56231311c0ec120d17236ddda6c5cfb1d24b"
+    }
+  ]
+}
