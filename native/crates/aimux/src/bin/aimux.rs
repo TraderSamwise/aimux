@@ -152,6 +152,9 @@ fn main() -> Result<ExitCode> {
             if let Some(args) = native_tool_launch_args(&stripped_args) {
                 return run_core_command_and_print(&args);
             }
+            if let Some(code) = handle_known_native_command_fallback(&stripped_args) {
+                return Ok(code);
+            }
             if !is_native_main_command(&stripped_args) {
                 return run_node_fallback(&raw_args);
             }
@@ -318,7 +321,7 @@ fn run_root_resume_command(tool_filter: Option<&str>) -> Result<ExitCode> {
 
 fn native_tool_launch_args(args: &[String]) -> Option<Vec<String>> {
     let (tool, extra_args) = args.split_first()?;
-    if tool.starts_with('-') || is_reserved_main_word(tool) {
+    if tool.starts_with('-') || is_known_aimux_command_word(tool) {
         return None;
     }
     let project_root = current_project_root().ok()?;
@@ -345,10 +348,30 @@ fn current_project_root() -> Result<PathBuf> {
     Ok(resolver.resolve_repo_root(cwd))
 }
 
-fn is_reserved_main_word(word: &str) -> bool {
+fn handle_known_native_command_fallback(args: &[String]) -> Option<ExitCode> {
+    let command = args.first()?;
+    if !is_known_aimux_command_word(command) || is_native_main_command(args) {
+        return None;
+    }
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        print_root_help();
+        return Some(ExitCode::SUCCESS);
+    }
+    eprintln!(
+        "error: unsupported or invalid aimux command: {}",
+        args.join(" ")
+    );
+    Some(ExitCode::from(2))
+}
+
+fn is_known_aimux_command_word(word: &str) -> bool {
     matches!(
         word,
-        "build-info"
+        "attachment"
+            | "build-info"
             | "contracts"
             | "daemon"
             | "dashboard-reload"
@@ -366,12 +389,15 @@ fn is_reserved_main_word(word: &str) -> bool {
             | "list-notifications"
             | "login"
             | "logout"
+            | "logs"
             | "loop"
             | "message"
+            | "metadata"
             | "migrate"
             | "migration"
             | "notifications"
             | "notify"
+            | "outline"
             | "overseer"
             | "projects"
             | "ps"
@@ -389,6 +415,7 @@ fn is_reserved_main_word(word: &str) -> bool {
             | "spawn"
             | "stop"
             | "task"
+            | "team"
             | "thread"
             | "threads"
             | "ui"

@@ -363,6 +363,66 @@ fn notifications_test_stays_native_even_when_node_fallback_is_configured() {
     cleanup(root);
 }
 
+#[test]
+fn known_auxiliary_command_help_stays_native_even_when_node_fallback_is_configured() {
+    for command in ["metadata", "logs", "team", "outline", "attachment"] {
+        let root = temp_root(&format!("native-{command}-help"));
+        fs::create_dir_all(root.join("dist")).expect("create dist");
+        fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
+        let log = root.join("node.log");
+        let node = fake_node(&root, &log, 9);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+            .env("AIMUX_ROOT", &root)
+            .env("AIMUX_NODE_BIN", node)
+            .args([command, "--help"])
+            .output()
+            .expect("run native aimux known command help");
+
+        assert!(output.status.success(), "{command} --help should succeed");
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Native CLI agent multiplexer"),
+            "{command} --help should render native help"
+        );
+        assert!(
+            !log.exists(),
+            "{command} --help should not invoke node fallback"
+        );
+        cleanup(root);
+    }
+}
+
+#[test]
+fn malformed_known_auxiliary_commands_fail_native_without_node_fallback() {
+    for args in [
+        vec!["metadata", "event"],
+        vec!["logs", "unknown"],
+        vec!["team", "add"],
+        vec!["outline", "show"],
+        vec!["attachment", "publish"],
+    ] {
+        let root = temp_root(&format!("native-{}-invalid", args[0]));
+        fs::create_dir_all(root.join("dist")).expect("create dist");
+        fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
+        let log = root.join("node.log");
+        let node = fake_node(&root, &log, 9);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+            .env("AIMUX_ROOT", &root)
+            .env("AIMUX_NODE_BIN", node)
+            .args(args)
+            .output()
+            .expect("run native aimux malformed known command");
+
+        assert!(
+            !output.status.success(),
+            "malformed known command should fail natively"
+        );
+        assert!(!log.exists(), "known malformed command should stay native");
+        cleanup(root);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_delegate_to_node_launcher_with_original_args() {
