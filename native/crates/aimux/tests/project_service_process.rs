@@ -131,6 +131,7 @@ fn stream_response_writer_keeps_sse_connection_alive_until_client_disconnects() 
 fn project_event_stream_writer_emits_queued_project_events() {
     let project = temp_project("project-events-stream");
     let state_dir = project.join("state");
+    write_output_stream_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     context.project_events.publish(json!({
         "type": "project_update",
@@ -162,7 +163,10 @@ fn project_event_stream_writer_emits_queued_project_events() {
         Default::default(),
     );
     let mut writer = DisconnectAfterWrites::new(3);
-    let mut runtime = FakeStreamRuntime::default();
+    let mut runtime = FakeStreamRuntime {
+        output: "› Build it\n• Built it.".into(),
+        calls: Vec::new(),
+    };
 
     let error = write_project_service_response_with_runtime(
         &mut writer,
@@ -181,6 +185,8 @@ fn project_event_stream_writer_emits_queued_project_events() {
     assert!(output.contains("event: project_update\n"));
     assert!(output.contains("\"reason\":\"POST /event\""));
     assert!(!output.contains("\"reason\":\"other\""));
+    assert!(output.contains("event: agent_output\n"));
+    assert!(output.contains("\"sessionId\":\"codex-1\""));
     assert!(output.contains(": keepalive\n\n"));
     cleanup(project);
 }

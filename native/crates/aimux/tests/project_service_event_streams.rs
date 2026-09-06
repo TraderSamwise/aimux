@@ -26,7 +26,7 @@ fn project_events_stream_returns_ready_snapshot() {
     assert_eq!(stream.session_id.as_deref(), Some("codex-1"));
     assert_eq!(stream.start_line, Some(-2000));
     assert_eq!(stream.interval_ms, 250);
-    assert!(stream.mode.is_none());
+    assert_eq!(stream.mode.as_deref(), Some("chat"));
     assert_eq!(stream.event_cursor, Some(0));
     let body = String::from_utf8(response.bytes.unwrap()).unwrap();
     assert!(body.starts_with("event: ready\n"));

@@ -160,7 +160,9 @@ pub fn write_project_service_response_with_runtime(
                 ProjectServiceStreamKind::ProjectEvents => encode_project_event_stream_frame(
                     stream,
                     context,
+                    runtime,
                     &mut last_project_event_sequence,
+                    &mut last_output_fingerprint,
                 ),
                 ProjectServiceStreamKind::AgentOutput => encode_agent_output_stream_frame(
                     stream,
@@ -180,18 +182,17 @@ pub fn write_project_service_response_with_runtime(
 fn encode_project_event_stream_frame(
     stream: &super::dispatcher::ProjectServiceStreamPlan,
     context: Option<&ProjectServiceRequestContext>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
     last_sequence: &mut u64,
+    last_output_fingerprint: &mut Option<String>,
 ) -> Vec<u8> {
     let Some(context) = context else {
         return encode_sse_keepalive();
     };
+    let mut bytes = Vec::new();
     let records = context
         .project_events
         .events_since(*last_sequence, stream.session_id.as_deref());
-    if records.is_empty() {
-        return encode_sse_keepalive();
-    }
-    let mut bytes = Vec::new();
     for record in records {
         *last_sequence = (*last_sequence).max(record.sequence);
         let event_name = record
@@ -201,7 +202,66 @@ fn encode_project_event_stream_frame(
             .unwrap_or("project_update");
         bytes.extend(encode_sse_event(event_name, &record.event));
     }
+    if let Some(session_id) = stream.session_id.as_deref() {
+        bytes.extend(encode_project_event_output_frame(
+            stream,
+            context,
+            runtime,
+            session_id,
+            last_output_fingerprint,
+        ));
+    }
+    if bytes.is_empty() {
+        return encode_sse_keepalive();
+    }
     bytes
+}
+
+fn encode_project_event_output_frame(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: &ProjectServiceRequestContext,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+    session_id: &str,
+    last_output_fingerprint: &mut Option<String>,
+) -> Vec<u8> {
+    let mode = match stream.mode.as_deref() {
+        Some("chat") => AgentOutputResponseMode::Chat,
+        _ => AgentOutputResponseMode::Full,
+    };
+    match read_agent_output_payload(context, session_id, stream.start_line, mode, runtime) {
+        Ok(payload) => {
+            let fingerprint = agent_output_stream_fingerprint(&payload);
+            if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+                context.output_metrics.record(AgentOutputReadRecord {
+                    source: "events".to_owned(),
+                    session_id: session_id.to_owned(),
+                    changed: Some(false),
+                    coalesced: false,
+                    error: false,
+                });
+                return Vec::new();
+            }
+            *last_output_fingerprint = Some(fingerprint);
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "events".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: Some(true),
+                coalesced: false,
+                error: false,
+            });
+            encode_sse_event("agent_output", &payload)
+        }
+        Err(response) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "events".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: None,
+                coalesced: false,
+                error: true,
+            });
+            encode_sse_event("error", &response.body)
+        }
+    }
 }
 
 fn encode_agent_output_stream_frame(

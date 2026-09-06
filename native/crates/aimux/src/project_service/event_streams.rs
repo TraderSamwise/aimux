@@ -62,7 +62,7 @@ fn route_project_events_stream(
             session_id: parsed.session_id,
             start_line: Some(capture_window.start_line),
             interval_ms: parsed.interval_ms,
-            mode: None,
+            mode: Some(response_mode_name(parsed.mode).to_owned()),
             event_cursor: Some(context.project_events.latest_sequence()),
         }),
     )
