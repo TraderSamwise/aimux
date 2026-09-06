@@ -796,6 +796,9 @@ Priority fixture groups:
 - `runtime-state/tui-runtime-mutations.json`: TUI runtime mutation queue
   context coalescing, mark-seen retry, backoff preemption, and teardown side
   effects captured by running TypeScript `multiplexer/tui-runtime-mutations`.
+- `multiplexer/tui-api-runtime.json`: TUI API mutation-blocking,
+  recoverable-error, and read-transport policy decisions captured by running
+  TypeScript `multiplexer/tui-api-runtime` pure helpers.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend

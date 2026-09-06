@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/tui-api-runtime.test.ts",
+  "generatedBy": "scripts/capture-tui-api-runtime-contract.mjs",
+  "description": "TUI API runtime pure connection policy contracts captured by running TypeScript mutation-blocking, recoverable-error, and read-transport helpers.",
+  "cases": [
+    {
+      "id": "tui-api-runtime-001",
+      "name": "allows mutations while ready",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isTuiApiConnectionMutationBlocked",
+      "input": {
+        "name": "allows mutations while ready",
+        "api": "isTuiApiConnectionMutationBlocked",
+        "snapshot": { "state": "ready", "failedCriticalResources": [] }
+      },
+      "output": false,
+      "inputSha256": "5d9b752ca42cbdbb2c689fd462c3a27a29994e41c47a351ae7601aa49f1e3a93"
+    },
+    {
+      "id": "tui-api-runtime-002",
+      "name": "blocks mutations while reconnecting",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isTuiApiConnectionMutationBlocked",
+      "input": {
+        "name": "blocks mutations while reconnecting",
+        "api": "isTuiApiConnectionMutationBlocked",
+        "snapshot": { "state": "reconnecting", "failedCriticalResources": [] }
+      },
+      "output": true,
+      "inputSha256": "55d29bad1760a2ba6ecddfc73e82fbd41511d8b1c2644637954270cdf250a6df"
+    },
+    {
+      "id": "tui-api-runtime-003",
+      "name": "allows explicit recovery probes while reconnecting",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isTuiApiConnectionMutationBlocked",
+      "input": {
+        "name": "allows explicit recovery probes while reconnecting",
+        "api": "isTuiApiConnectionMutationBlocked",
+        "snapshot": { "state": "reconnecting", "failedCriticalResources": [] },
+        "options": { "allowDuringReconnect": true }
+      },
+      "output": false,
+      "inputSha256": "12229fa3e4016f2c44c519262101a20be3260f96016cf8d0c5942e7e260be351"
+    },
+    {
+      "id": "tui-api-runtime-004",
+      "name": "blocks ready mutations when critical resources failed",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isTuiApiConnectionMutationBlocked",
+      "input": {
+        "name": "blocks ready mutations when critical resources failed",
+        "api": "isTuiApiConnectionMutationBlocked",
+        "snapshot": { "state": "ready", "failedCriticalResources": ["desktop-state"] }
+      },
+      "output": true,
+      "inputSha256": "e51e4a34e1f51d3eb55e1f0fb594cc8605baf2126e2692a70bba08b5f3ea42e0"
+    },
+    {
+      "id": "tui-api-runtime-005",
+      "name": "blocks stale repairing and failed states",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isTuiApiConnectionMutationBlocked",
+      "input": {
+        "name": "blocks stale repairing and failed states",
+        "api": "isTuiApiConnectionMutationBlocked",
+        "snapshots": [
+          { "state": "stale", "failedCriticalResources": [] },
+          { "state": "repairing", "failedCriticalResources": [] },
+          { "state": "failed", "failedCriticalResources": [] }
+        ]
+      },
+      "output": [
+        { "snapshot": { "state": "stale", "failedCriticalResources": [] }, "blocked": true },
+        { "snapshot": { "state": "repairing", "failedCriticalResources": [] }, "blocked": true },
+        { "snapshot": { "state": "failed", "failedCriticalResources": [] }, "blocked": true }
+      ],
+      "inputSha256": "c0d29c6af87cbbaed78d865ee8f7b9bc721b97d10ce57f5e40aaab01bdacef9b"
+    },
+    {
+      "id": "tui-api-runtime-006",
+      "name": "honors explicit recoverable error override",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isRecoverableTuiApiError",
+      "input": {
+        "name": "honors explicit recoverable error override",
+        "api": "isRecoverableTuiApiError",
+        "error": { "tuiApiRecoverable": true, "status": 400 }
+      },
+      "output": true,
+      "inputSha256": "3a8b8525bef8d37c24636bff3e04fe4d83b25399b5dfa6866370cbb07efa2fa4"
+    },
+    {
+      "id": "tui-api-runtime-007",
+      "name": "honors explicit nonrecoverable error override",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isRecoverableTuiApiError",
+      "input": {
+        "name": "honors explicit nonrecoverable error override",
+        "api": "isRecoverableTuiApiError",
+        "error": { "tuiApiRecoverable": false, "status": 503 }
+      },
+      "output": false,
+      "inputSha256": "50bcd21d88445b07b90b5aa8e643a0250ba66f7acad1baecaf9343eb5b1853ff"
+    },
+    {
+      "id": "tui-api-runtime-008",
+      "name": "treats retryable HTTP statuses as recoverable",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isRecoverableTuiApiError",
+      "input": {
+        "name": "treats retryable HTTP statuses as recoverable",
+        "api": "isRecoverableTuiApiError",
+        "errors": [
+          { "status": 408 },
+          { "status": 409 },
+          { "status": 425 },
+          { "status": 429 },
+          { "status": 500 },
+          { "status": 503 }
+        ]
+      },
+      "output": [
+        { "error": { "status": 408 }, "recoverable": true },
+        { "error": { "status": 409 }, "recoverable": true },
+        { "error": { "status": 425 }, "recoverable": true },
+        { "error": { "status": 429 }, "recoverable": true },
+        { "error": { "status": 500 }, "recoverable": true },
+        { "error": { "status": 503 }, "recoverable": true }
+      ],
+      "inputSha256": "f8e8f126c279c75c7a18c8974e85f08625d2d30983b8e9be76e532c11f6d75cc"
+    },
+    {
+      "id": "tui-api-runtime-009",
+      "name": "treats most 4xx statuses as semantic failures",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isRecoverableTuiApiError",
+      "input": {
+        "name": "treats most 4xx statuses as semantic failures",
+        "api": "isRecoverableTuiApiError",
+        "errors": [{ "status": 400 }, { "status": 401 }, { "status": 404 }]
+      },
+      "output": [
+        { "error": { "status": 400 }, "recoverable": false },
+        { "error": { "status": 401 }, "recoverable": false },
+        { "error": { "status": 404 }, "recoverable": false }
+      ],
+      "inputSha256": "0a163486409a93ff3fdfd128ab0a642ef08cea055c7ad644c3155745ab3adb7f"
+    },
+    {
+      "id": "tui-api-runtime-010",
+      "name": "treats transient socket codes as recoverable",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isRecoverableTuiApiError",
+      "input": {
+        "name": "treats transient socket codes as recoverable",
+        "api": "isRecoverableTuiApiError",
+        "errors": [{ "code": "ETIMEDOUT" }, { "code": "ECONNREFUSED" }, { "code": "ECONNRESET" }, { "code": "EPIPE" }]
+      },
+      "output": [
+        { "error": { "code": "ETIMEDOUT" }, "recoverable": true },
+        { "error": { "code": "ECONNREFUSED" }, "recoverable": true },
+        { "error": { "code": "ECONNRESET" }, "recoverable": true },
+        { "error": { "code": "EPIPE" }, "recoverable": true }
+      ],
+      "inputSha256": "43a6ae62b9a0c46b58f8c14669cc2ccebccc61adfaa65654c5f63e70d0d6e3a7"
+    },
+    {
+      "id": "tui-api-runtime-011",
+      "name": "defaults unknown errors to recoverable",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isRecoverableTuiApiError",
+      "input": {
+        "name": "defaults unknown errors to recoverable",
+        "api": "isRecoverableTuiApiError",
+        "errors": [{ "code": "UNKNOWN" }, {}, null]
+      },
+      "output": [
+        { "error": { "code": "UNKNOWN" }, "recoverable": true },
+        { "error": {}, "recoverable": true },
+        { "error": null, "recoverable": true }
+      ],
+      "inputSha256": "da5fd3e49699cac906aa37f5a402659dfecbe00cf2e27496c5ab31be70f5fd79"
+    },
+    {
+      "id": "tui-api-runtime-012",
+      "name": "detects host read transport presence",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "hasTuiApiRuntimeReadTransport",
+      "input": {
+        "name": "detects host read transport presence",
+        "api": "hasTuiApiRuntimeReadTransport",
+        "hosts": ["with-read-transport", "with-nonfunction-read-transport", "empty"]
+      },
+      "output": [
+        { "host": "with-read-transport", "hasReadTransport": true },
+        { "host": "with-nonfunction-read-transport", "hasReadTransport": false },
+        { "host": "empty", "hasReadTransport": false }
+      ],
+      "inputSha256": "cbcc9b6812291b17dbdadbf37b0424188de184569037f31bb643df89e514d186"
+    }
+  ]
+}
