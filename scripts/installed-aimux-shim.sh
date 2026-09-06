@@ -1067,6 +1067,14 @@ aimux_try_project_serve() {
   aimux_post_query_text_route "/core/project-serve-text" 120 --data-urlencode "project=$project_root"
 }
 
+aimux_try_root_dashboard() {
+  [ "$#" -eq 0 ] || return 1
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  aimux_post_query_text_route "/core/project-serve-text" 120 --data-urlencode "project=$project_root" >/dev/null || return $?
+  aimux_try_dashboard_reload dashboard-reload --open
+}
+
 aimux_try_host_service() {
   shift
   subcommand="${1:-}"
@@ -2603,6 +2611,18 @@ aimux_try_notifications_mutation() {
   [ -n "$session_id" ] && set -- "$@" --data-urlencode "sessionId=$session_id"
   aimux_post_query_text_route "$path" 60 "$@"
 }
+
+if [ "$#" -eq 0 ]; then
+  if aimux_try_root_dashboard "$@"; then
+    exit 0
+  else
+    root_dashboard_status="$?"
+  fi
+  [ "$root_dashboard_status" -eq 2 ] && exit 1
+  if aimux_matching_daemon_port >/dev/null 2>&1; then
+    exit 1
+  fi
+fi
 
 case "${1:-}" in
   notify)

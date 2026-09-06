@@ -543,6 +543,40 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("opens the root dashboard through daemon routes without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Reloaded dashboard for aimux-repo\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run([], { TMUX: "/tmp/tmux-client", NODE_EXIT: "42" }, { cwd: projectDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Reloaded dashboard for aimux-repo\n");
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("/core/project-serve-text");
+    expect(curlLog).toContain("/core/dashboard-reload-text");
+    expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
+    expect(curlLog).toContain(`projectRoot=${realpathSync(projectDir)}\n`);
+    expect(curlLog).toContain("open=1\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for root dashboard when daemon health is stale", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run([], { NODE_EXIT: "42" }, { cwd: projectDir });
+
+    expect(result.status).toBe(42);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js\n`);
+  });
+
   it("opens dashboard reload targets from the caller tmux client without launching Node", () => {
     const fixture = makeFixture();
     const projectDir = join(fixture.root, "repo");
