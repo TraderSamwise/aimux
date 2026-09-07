@@ -20,6 +20,7 @@ pub mod cli_agent_list_contract;
 pub mod cli_attachment_contract;
 pub mod cli_launcher;
 pub mod cli_project_service_contract;
+pub mod cli_wrappers_contract;
 pub mod composer_protocol_contract;
 pub mod config;
 pub mod connection_targets_contract;
