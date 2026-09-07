@@ -2,7 +2,7 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 227 covered modules, and 18 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 228 covered modules, and 17 uncovered modules remaining.
 
 There are 34 ignored corpus entries below, covering 166 captured checklist cases.
 
@@ -57,7 +57,6 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | `src/metadata-server.test.ts` | Project-service metadata HTTP routes; needs request/response corpus. | project_service/routes/ |
 | `src/multiplexer/archives.test.ts` | Dashboard archive/graveyard TUI API runtime state machine; needs mocked API input/output capture. | dashboard_* |
 | `src/multiplexer/dashboard-control.test.ts` | Dashboard control-plane recovery and focus integration; needs mocked endpoint/tmux input/output capture. | dashboard_* |
-| `src/multiplexer/dashboard-interaction.test.ts` | Dashboard keyboard interaction state machine; needs input/output event corpus. | dashboard_* |
 | `src/multiplexer/dashboard-ops.test.ts` | Dashboard service/session operation state machine; needs mocked state transition corpus. | dashboard_* |
 | `src/multiplexer/dashboard-tail-methods.test.ts` | Dashboard tail/heartbeat/stream methods; needs mocked stream/state corpus. | dashboard_* |
 | `src/multiplexer/dashboard-view-methods.test.ts` | Dashboard view refresh and stale-render suppression; needs mocked refresh/state corpus. | dashboard_* |
