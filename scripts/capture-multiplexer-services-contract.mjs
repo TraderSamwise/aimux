@@ -5,7 +5,7 @@ import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/services.json", ROOT);
-const { buildServiceStateFromMetadata, getServiceLaunchCommandLine, serviceLabelForCommand } = await import(
+const { buildServiceStateFromMetadata, generateServiceId, getServiceLaunchCommandLine, serviceLabelForCommand } = await import(
   new URL("dist/multiplexer/services.js", ROOT)
 );
 
@@ -19,6 +19,14 @@ async function writeContractJson(url, contract) {
 
 function run(input) {
   switch (input.api) {
+    case "generateServiceId": {
+      const ids = Array.from({ length: input.count }, () => generateServiceId());
+      return normalizeServiceIds({
+        ids,
+        allMatch: ids.every((id) => /^service-[0-9a-f]{8}$/.test(id)),
+        unique: new Set(ids).size === ids.length,
+      });
+    }
     case "getServiceLaunchCommandLine":
       return getServiceLaunchCommandLine(input.metadata);
     case "serviceLabelForCommand":
@@ -30,7 +38,24 @@ function run(input) {
   }
 }
 
+function normalizeServiceIds(value) {
+  const seen = new Map();
+  let next = 1;
+  return JSON.parse(
+    JSON.stringify(value, (_key, entry) => {
+      if (typeof entry !== "string" || !/^service-[0-9a-f]{8}$/.test(entry)) return entry;
+      if (!seen.has(entry)) seen.set(entry, `<service-id:${next++}>`);
+      return seen.get(entry);
+    }),
+  );
+}
+
 const inputs = [
+  {
+    name: "generates service ids with a service prefix and eight hex characters",
+    api: "generateServiceId",
+    count: 3,
+  },
   {
     name: "recovers launch commands from shell -lc metadata",
     api: "getServiceLaunchCommandLine",

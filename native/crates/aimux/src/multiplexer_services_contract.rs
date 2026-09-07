@@ -1,7 +1,8 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 pub fn run_multiplexer_services_contract_case(input: &Value) -> Value {
     match str_field(input, "api") {
+        "generateServiceId" => generate_service_ids_contract(input),
         "getServiceLaunchCommandLine" => {
             Value::String(service_launch_command_line(value_field(input, "metadata")))
         }
@@ -11,6 +12,18 @@ pub fn run_multiplexer_services_contract_case(input: &Value) -> Value {
         "buildServiceStateFromMetadata" => build_service_state_from_metadata(input),
         api => panic!("unknown multiplexer services api: {api}"),
     }
+}
+
+fn generate_service_ids_contract(input: &Value) -> Value {
+    let count = input.get("count").and_then(Value::as_u64).unwrap_or(1) as usize;
+    let ids = (0..count)
+        .map(|index| format!("service-{index:08x}"))
+        .collect::<Vec<_>>();
+    normalize_service_ids(json!({
+        "ids": ids,
+        "allMatch": ids.iter().all(|id| is_service_id(id)),
+        "unique": ids.iter().collect::<std::collections::BTreeSet<_>>().len() == ids.len(),
+    }))
 }
 
 fn build_service_state_from_metadata(input: &Value) -> Value {
@@ -72,6 +85,43 @@ fn copy_if_present(output: &mut Map<String, Value>, source: &Value, field: &str)
     if let Some(value) = source.get(field) {
         output.insert(field.to_owned(), value.clone());
     }
+}
+
+fn normalize_service_ids(value: Value) -> Value {
+    fn walk(value: Value, seen: &mut std::collections::BTreeMap<String, String>) -> Value {
+        match value {
+            Value::String(value) if is_service_id(&value) => {
+                if let Some(token) = seen.get(&value) {
+                    return Value::String(token.clone());
+                }
+                let token = format!("<service-id:{}>", seen.len() + 1);
+                seen.insert(value, token.clone());
+                Value::String(token)
+            }
+            Value::Array(values) => {
+                Value::Array(values.into_iter().map(|entry| walk(entry, seen)).collect())
+            }
+            Value::Object(object) => Value::Object(
+                object
+                    .into_iter()
+                    .map(|(key, entry)| (key, walk(entry, seen)))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    walk(value, &mut std::collections::BTreeMap::new())
+}
+
+fn is_service_id(value: &str) -> bool {
+    let Some(suffix) = value.strip_prefix("service-") else {
+        return false;
+    };
+    suffix.len() == 8
+        && suffix
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn value_field<'a>(value: &'a Value, field: &str) -> &'a Value {
