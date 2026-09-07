@@ -13,6 +13,14 @@ const FIXED_NOW = "2026-06-01T00:00:00.000Z";
 
 const { initPaths } = await import(new URL("dist/paths.js", ROOT));
 const { Multiplexer } = await import(new URL("dist/multiplexer/index.js", ROOT));
+const { dashboardActionMethods } = await import(new URL("dist/multiplexer/dashboard-actions-methods.js", ROOT));
+const { agentIoMethods } = await import(new URL("dist/multiplexer/agent-io-methods.js", ROOT));
+const { dashboardInteractionMethods } = await import(new URL("dist/multiplexer/dashboard-interaction.js", ROOT));
+const { dashboardStateMethods } = await import(new URL("dist/multiplexer/dashboard-state-methods.js", ROOT));
+const { persistenceMethods } = await import(new URL("dist/multiplexer/persistence-methods.js", ROOT));
+const { dashboardTailMethods } = await import(new URL("dist/multiplexer/dashboard-tail-methods.js", ROOT));
+const { runtimeLifecycleMethods } = await import(new URL("dist/multiplexer/runtime-lifecycle-methods.js", ROOT));
+const { dashboardViewMethods } = await import(new URL("dist/multiplexer/dashboard-view-methods.js", ROOT));
 const { saveMetadataState } = await import(new URL("dist/metadata-store.js", ROOT));
 const { createRuntimeTopologyStore, emptyRuntimeTopology } = await import(
   new URL("dist/runtime-core/topology-store.js", ROOT)
@@ -164,6 +172,32 @@ function summarizeMultiplexer(mux) {
   };
 }
 
+function summarizeMethodSurface(mux) {
+  const groups = {
+    dashboardInteractionMethods,
+    dashboardViewMethods,
+    dashboardActionMethods,
+    dashboardTailMethods,
+    persistenceMethods,
+    dashboardStateMethods,
+    agentIoMethods,
+    runtimeLifecycleMethods,
+  };
+  const delegatedGroups = Object.fromEntries(
+    Object.entries(groups).map(([name, methods]) => [name, Object.keys(methods).sort()]),
+  );
+  const delegatedMethods = [...new Set(Object.values(delegatedGroups).flat())].sort();
+  const ownPrototypeMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(mux)).sort();
+  const ownPrototypeSet = new Set(ownPrototypeMethods);
+  return {
+    delegatedGroups,
+    delegatedMethodCount: delegatedMethods.length,
+    missingDelegatedMethods: delegatedMethods.filter((name) => !ownPrototypeSet.has(name)),
+    nonFunctionDelegatedMethods: delegatedMethods.filter((name) => typeof mux[name] !== "function"),
+    corePrototypeMethods: ownPrototypeMethods.filter((name) => !delegatedMethods.includes(name)),
+  };
+}
+
 async function withProject(input, runCase) {
   const repoRoot = join(tmpdir(), `aimux-index-helpers-${process.pid}-${Math.random().toString(36).slice(2)}`);
   const aimuxHome = join(repoRoot, "home");
@@ -212,6 +246,12 @@ async function runCase(input) {
       }
       return {
         result: summarizeMultiplexer(mux),
+        calls: rec.calls,
+      };
+    }
+    if (input.api === "MultiplexerMethodSurface") {
+      return {
+        result: summarizeMethodSurface(mux),
         calls: rec.calls,
       };
     }
@@ -275,6 +315,12 @@ const cases = [
         { id: "codex-2", command: "codex" },
       ],
       postConstructActiveIndex: 1,
+    },
+  },
+  {
+    name: "prototype exposes all delegated multiplexer method groups",
+    input: {
+      api: "MultiplexerMethodSurface",
     },
   },
   {
