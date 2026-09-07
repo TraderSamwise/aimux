@@ -1,0 +1,325 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-interaction.ts",
+  "generatedBy": "scripts/capture-dashboard-interaction-command-keys-contract.mjs",
+  "description": "Dashboard interaction command-key host dispatch, flashes, and preview/offline toggles captured by running TypeScript handleDashboardKey.",
+  "cases": [
+    {
+      "id": "dashboard-interaction-command-keys-001",
+      "name": "question mark opens help",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "?" },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showHelp", "args": [] }
+        ]
+      },
+      "inputSha256": "449a9fa6d0bd450e570c1a324c901dfd7f9db1ae9898b5188a7b2a15ec1b9052"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-002",
+      "name": "basic dashboard command keys dispatch host methods",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "keys": ["n", "c", "v", "q", "w", "g", "p", "t", "u"] },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showToolPicker", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showCoordination", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showServiceCreatePrompt", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "exitDashboardClientOrProcess", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showWorktreeCreatePrompt", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showGraveyard", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showProject", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showTopology", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "activateNextAttentionEntry", "args": [] }
+        ]
+      },
+      "inputSha256": "4b70cfc3b58a20fe6cd61e21d2d8fa389484a1e83dd69400107e65d03972ad98"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-003",
+      "name": "lowercase s opens message route picker",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "s" },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showOrchestrationRoutePicker", "args": ["message"] }
+        ]
+      },
+      "inputSha256": "707997da9e3329fa8dd5a12355db5053b0333297dc9384cfc5bcb03cf4363b43"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-004",
+      "name": "shifted handoff task library worktree delete overseer outline shortcuts",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "keys": ["H", "T", "L", "W", "D", "O", "P"] },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showOrchestrationRoutePicker", "args": ["handoff"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showOrchestrationRoutePicker", "args": ["task"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showLibrary", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showWorktreeList", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showWorktreeCacheCleanupPreview", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "showOverseerOverlay", "args": [] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          { "method": "showWorkOutlineOverlay", "args": [null] }
+        ]
+      },
+      "inputSha256": "5fd6f61ed32da82237a1e33c3491fff79a38275b02f04475138229a70fcf65b5"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-005",
+      "name": "toggle hidden offline agents",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "a", "hideOfflineAgents": false },
+      "output": {
+        "footerFlash": "Offline agents hidden",
+        "footerFlashTicks": 3,
+        "hideOfflineAgents": true,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "clearDashboardQuickJump", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "63aafad49dfc69824e688914e105ebc87db6243a07701b177fcd7c916a0663f9"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-006",
+      "name": "shift v toggles scribe preview when live scribe exists",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": {
+        "key": "V",
+        "previewSource": "output",
+        "dashboardSessionsCache": [{ "id": "scribe-1", "status": "running", "team": { "role": "scribe" } }]
+      },
+      "output": {
+        "footerFlash": "Previewing scribe summaries",
+        "footerFlashTicks": 2,
+        "hideOfflineAgents": false,
+        "previewSource": "scribe",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "refreshDashboardScribePreviewEntries", "args": [] },
+          { "method": "persistDashboardUiState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "f759e2101e0965b61c14baf19a811ac1af49734fa44bffde73a952ba56ce218c"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-007",
+      "name": "shift r opens relevant thread when work waits on user",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "R", "selectedSession": { "id": "codex-1", "label": "Codex", "threadWaitingOnMeCount": 2 } },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          { "method": "openRelevantThreadForSession", "args": ["codex-1"] }
+        ]
+      },
+      "inputSha256": "23b90f73f139c001f9bd2b9140a12dea766249cbd3da12e32368b3dee06f555c"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-008",
+      "name": "shift r flashes when nothing waits on user",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "R", "selectedSession": { "id": "codex-1", "label": "Codex", "threadWaitingOnMeCount": 0 } },
+      "output": {
+        "footerFlash": "Nothing waiting on you for Codex",
+        "footerFlashTicks": 3,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "337fab1149b1fda6aa2648355165a6c0dc789d0bff87bfc4c49678140691997d"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-009",
+      "name": "shift s blocks when no session is selected",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "S", "selectedSession": null, "hasWorktrees": true, "level": "worktrees" },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "handleDashboardQuickJumpDigit", "args": ["s"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          {
+            "method": "showDashboardError",
+            "args": [
+              "Select an agent to switch",
+              ["Press Enter to step into a worktree, then select a session and press Shift+S."]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "1e4b4c13ae60c394dbd97cfa6b9ba807aca7ef785bb4b850fa41a71c2b7016db"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-010",
+      "name": "shift s blocks offline selected session",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "S", "selectedSession": { "id": "codex-1", "label": "Codex", "status": "offline" } },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          {
+            "method": "showDashboardError",
+            "args": ["Cannot switch offline agent", ["Codex is offline. Resume it first, then switch tools."]]
+          }
+        ]
+      },
+      "inputSha256": "226bd1bd560be6795591f59d6ce60e252cf0e35d681de68a20eabf0fbd661cbe"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-011",
+      "name": "shift s opens switch tool picker for live session",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "S", "selectedSession": { "id": "codex-1", "label": "Codex", "status": "running" } },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          { "method": "showToolPicker", "args": ["codex-1", { "mode": "switch-tool" }] }
+        ]
+      },
+      "inputSha256": "e5636bdaa757fb3a70e8c93f2a2f1e273febd6586c3678c0ff770a010d64d64e"
+    },
+    {
+      "id": "dashboard-interaction-command-keys-012",
+      "name": "f blocks for offline selected session",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "dashboardInteractionMethods.handleDashboardKey",
+      "input": { "key": "f", "selectedSession": { "id": "codex-1", "label": "Codex", "status": "offline" } },
+      "output": {
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "hideOfflineAgents": false,
+        "previewSource": "output",
+        "calls": [
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          {
+            "method": "showDashboardError",
+            "args": ["Cannot fork offline agent", ["Codex is offline. Resume it first, then fork it."]]
+          }
+        ]
+      },
+      "inputSha256": "ebf7d8aefb01997a297ef78b6cc465e9a2f6965ed7ad2d035f89437afbf73440"
+    }
+  ]
+}
