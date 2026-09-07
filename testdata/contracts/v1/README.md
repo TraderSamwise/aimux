@@ -1063,6 +1063,9 @@ Priority fixture groups:
   projection, worklist filtering, target labels/states, and notification
   mutation input shape captured by running TypeScript multiplexer notification
   helpers.
+- `multiplexer/persistence-statusline-snapshot.json`: statusline session,
+  teammate, metadata, task-count, and dashboard-order projection behavior
+  captured by running TypeScript `persistenceMethods.buildStatuslineSnapshot`.
 - `multiplexer/project-refresh.json`: project observability refresh return
   values, host-state transitions, payload validation, coalescing, and
   project-service call logs captured by running TypeScript
