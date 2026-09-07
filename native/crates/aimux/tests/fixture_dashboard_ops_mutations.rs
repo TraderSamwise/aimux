@@ -26,7 +26,7 @@ fn fixture_dashboard_ops_mutations_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("dashboard ops mutations fixture parses");
     assert_eq!(contract.source, "src/multiplexer/dashboard-ops.ts");
-    assert_eq!(contract.cases.len(), 16);
+    assert_eq!(contract.cases.len(), 19);
 
     let mut failures = Vec::new();
     for case in contract.cases {

@@ -268,6 +268,168 @@
     },
     {
       "id": "dashboard-ops-mutations-006",
+      "name": "restores an offline dashboard agent after live row appears",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "resumeOfflineSessionWithFeedback",
+      "input": {
+        "api": "resumeOfflineSessionWithFeedback",
+        "session": { "id": "sess-restore", "command": "codex", "label": "codex", "status": "offline" },
+        "sessionSnapshots": [
+          [{ "id": "sess-restore", "command": "codex", "label": "codex", "status": "offline" }],
+          [{ "id": "sess-restore", "command": "codex", "label": "codex", "status": "running" }]
+        ]
+      },
+      "output": {
+        "result": "settled",
+        "footerFlash": "Restored codex",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [{ "id": "sess-restore", "command": "codex", "label": "codex", "status": "running" }],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "sess-restore",
+              "starting",
+              { "sessionSeed": { "id": "sess-restore", "command": "codex", "label": "codex", "status": "offline" } }
+            ]
+          },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "sess-restore",
+              "starting",
+              { "sessionSeed": { "id": "sess-restore", "command": "codex", "label": "codex", "status": "offline" } }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": ["/agents/resume", { "sessionId": "sess-restore" }, { "timeoutMs": 60000 }]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-restore", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "af7b72cdead3235a0c8150061ec2b8c8416c3270ae15a976815c5add509d2d3c"
+    },
+    {
+      "id": "dashboard-ops-mutations-007",
+      "name": "coalesces duplicate offline dashboard agent restore",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "resumeOfflineSessionWithFeedback",
+      "input": {
+        "api": "resumeOfflineSessionWithFeedback",
+        "session": { "id": "sess-restore", "command": "codex", "label": "codex", "status": "offline" },
+        "pendingActions": [{ "targetKind": "session", "id": "sess-restore", "kind": "starting", "token": 1 }],
+        "sessionSnapshots": [[{ "id": "sess-restore", "command": "codex", "label": "codex", "status": "offline" }]]
+      },
+      "output": {
+        "result": "pending",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "pendingSessions": [{ "id": "sess-restore", "kind": "starting", "token": 1 }],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [{ "id": "sess-restore", "command": "codex", "label": "codex", "status": "offline" }],
+        "calls": []
+      },
+      "inputSha256": "4eebe1c8eebe92bf72d9b1f8b4bde9b09cc265f0a12c320fa3e0b33bfefd9896"
+    },
+    {
+      "id": "dashboard-ops-mutations-008",
+      "name": "offline dashboard agent restore reports teammate warnings when it stays offline",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "resumeOfflineSessionWithFeedback",
+      "input": {
+        "api": "resumeOfflineSessionWithFeedback",
+        "session": { "id": "sess-restore", "command": "claude", "label": "claude", "status": "offline" },
+        "routeResults": {
+          "/agents/resume": {
+            "warning": "teammates failed",
+            "teammateFailures": [{ "sessionId": "teammate-1", "error": "missing backend session" }]
+          }
+        },
+        "sessionSnapshots": [
+          [{ "id": "sess-restore", "command": "claude", "label": "claude", "status": "offline" }],
+          [{ "id": "sess-restore", "command": "claude", "label": "claude", "status": "offline" }]
+        ]
+      },
+      "output": {
+        "result": "settled",
+        "footerFlash": "claude stayed offline",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [{ "id": "sess-restore", "command": "claude", "label": "claude", "status": "offline" }],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "sess-restore",
+              "starting",
+              { "sessionSeed": { "id": "sess-restore", "command": "claude", "label": "claude", "status": "offline" } }
+            ]
+          },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "sess-restore",
+              "starting",
+              { "sessionSeed": { "id": "sess-restore", "command": "claude", "label": "claude", "status": "offline" } }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": ["/agents/resume", { "sessionId": "sess-restore" }, { "timeoutMs": 60000 }]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-restore", null] },
+          {
+            "method": "showDashboardError",
+            "args": ["Restored \"claude\" with teammate issues", ["teammate-1: missing backend session"]]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "d1d89e0b4dc250717f4816f0eccd7d2c30be1bd62184b28e8dd05955e3df9ca2"
+    },
+    {
+      "id": "dashboard-ops-mutations-009",
       "name": "does not stop a service while model-backed startup is pending",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "stopDashboardServiceWithFeedback",
@@ -300,7 +462,7 @@
       "inputSha256": "7140e8a377343564af0d22d21148b8170379543b8527e5305e74d1bba4c3fb6d"
     },
     {
-      "id": "dashboard-ops-mutations-007",
+      "id": "dashboard-ops-mutations-010",
       "name": "stops a running service after it settles offline",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "stopDashboardServiceWithFeedback",
@@ -348,7 +510,7 @@
       "inputSha256": "38dbf385dbdfaa6a677382a1e9d78e3933e8a976ccee2ce636c30964f81c07dd"
     },
     {
-      "id": "dashboard-ops-mutations-008",
+      "id": "dashboard-ops-mutations-011",
       "name": "removes an offline service after stable row absence",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "removeDashboardServiceWithFeedback",
@@ -391,7 +553,7 @@
       "inputSha256": "2b63e12fc9ce46619c120a8f764ac8aeabf7811a2f3836aebbde2abdac3fa9cc"
     },
     {
-      "id": "dashboard-ops-mutations-009",
+      "id": "dashboard-ops-mutations-012",
       "name": "stops a dashboard agent after session row settles offline",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "stopSessionToOfflineWithFeedback",
@@ -444,7 +606,7 @@
       "inputSha256": "c05c8aabf28270643a1e7dab3b6d4fcb92a995b63786afc54f77cddf891844ba"
     },
     {
-      "id": "dashboard-ops-mutations-010",
+      "id": "dashboard-ops-mutations-013",
       "name": "coalesces duplicate session stop",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "stopSessionToOfflineWithFeedback",
@@ -476,7 +638,7 @@
       "inputSha256": "6d1f75fbf69f85642a147944ad3892bd36048f6cadabef808f20b3393a528132"
     },
     {
-      "id": "dashboard-ops-mutations-011",
+      "id": "dashboard-ops-mutations-014",
       "name": "does not let graveyard supersede pending stop for same agent",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "graveyardSessionWithFeedback",
@@ -521,7 +683,7 @@
       "inputSha256": "04ea7eebfe6490b3f1ce9f1c81a764fb138f5337ddea587abedecbbe39122ef8"
     },
     {
-      "id": "dashboard-ops-mutations-012",
+      "id": "dashboard-ops-mutations-015",
       "name": "coalesces duplicate service removal",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "removeDashboardServiceWithFeedback",
@@ -551,7 +713,7 @@
       "inputSha256": "ddd8dab2c4008c3cc7d9d9d43d677cdbbdcaed48f84159ba4550d41f6a6cc2e6"
     },
     {
-      "id": "dashboard-ops-mutations-013",
+      "id": "dashboard-ops-mutations-016",
       "name": "migrates a dashboard agent through project API and settles when row remains live",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "migrateSessionWithFeedback",
@@ -637,7 +799,7 @@
       "inputSha256": "196ce62161736c83c9a7157db31561323a7bcc7ccded5c3d24a249548568d1d4"
     },
     {
-      "id": "dashboard-ops-mutations-014",
+      "id": "dashboard-ops-mutations-017",
       "name": "coalesces duplicate dashboard migration",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "migrateSessionWithFeedback",
@@ -674,7 +836,7 @@
       "inputSha256": "faf08bae3b033f5d946eeb65bf57b27e48b67f13c9cd2ed1121602edd0001f62"
     },
     {
-      "id": "dashboard-ops-mutations-015",
+      "id": "dashboard-ops-mutations-018",
       "name": "migrates through local runtime path and waits for source exit",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "migrateSessionWithFeedback",
@@ -708,7 +870,7 @@
       "inputSha256": "51a1bf682a800f3a6a25702c7297d3f38a0b08bc7edca6d89b355e83bf34198b"
     },
     {
-      "id": "dashboard-ops-mutations-016",
+      "id": "dashboard-ops-mutations-019",
       "name": "local migration failure clears pending and reports error",
       "source": "src/multiplexer/dashboard-ops.ts",
       "api": "migrateSessionWithFeedback",

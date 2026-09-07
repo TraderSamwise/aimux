@@ -11,6 +11,9 @@ pub fn run_dashboard_ops_mutations_contract_case(api: &str, input: &Value) -> Va
         "resumeOfflineServiceWithFeedback" => {
             resume_offline_service_with_feedback(&mut state, value_field(input, "service"))
         }
+        "resumeOfflineSessionWithFeedback" => {
+            resume_offline_session_with_feedback(&mut state, value_field(input, "session"))
+        }
         "stopDashboardServiceWithFeedback" => {
             stop_dashboard_service_with_feedback(&mut state, value_field(input, "service"));
             Value::Null
@@ -375,6 +378,93 @@ fn resume_offline_service_with_feedback(state: &mut OpsState, service: &Value) -
         vec![json!("Failed to start service"), json!(["boom"])],
     );
     json!("failed")
+}
+
+fn resume_offline_session_with_feedback(state: &mut OpsState, session: &Value) -> Value {
+    let session_id = string_field(session, "id");
+    let label = display_label(session);
+    if state.get_session_action(&session_id).as_deref() == Some("starting") {
+        return json!("pending");
+    }
+    let session_seed = state
+        .get_dashboard_sessions()
+        .into_iter()
+        .find(|entry| string_field(entry, "id") == session_id)
+        .unwrap_or_else(|| {
+            json!({
+                "index": -1,
+                "id": session_id,
+                "command": string_field(session, "command"),
+                "label": label,
+                "status": "offline",
+                "active": false,
+                "worktreePath": optional_string(session, "worktreePath"),
+                "team": value_field(session, "team"),
+            })
+        });
+
+    state.footer_flash = format!("Queued restore {label}");
+    state.footer_flash_ticks = 3;
+    state.set_session_action(
+        &session_id,
+        Some("starting"),
+        Some(json!({ "sessionSeed": session_seed.clone() })),
+    );
+    state.call("renderDashboard", vec![]);
+
+    state.footer_flash = format!("Restoring {label}");
+    state.footer_flash_ticks = 3;
+    state.set_session_action(
+        &session_id,
+        Some("starting"),
+        Some(json!({ "sessionSeed": session_seed })),
+    );
+    state.render_mutation_frame();
+    state.call(
+        "postToProjectService",
+        vec![
+            json!("/agents/resume"),
+            json!({ "sessionId": session_id }),
+            json!({ "timeoutMs": 60000 }),
+        ],
+    );
+
+    let route_result = state
+        .input
+        .get("routeResults")
+        .and_then(|routes| routes.get("/agents/resume"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let mut restored = false;
+    for _ in 0..4 {
+        state.refresh_model();
+        let sessions = state.get_dashboard_sessions();
+        if sessions.iter().any(|entry| {
+            string_field(entry, "id") == session_id && string_field(entry, "status") == "running"
+        }) {
+            restored = true;
+            state.render_mutation_frame();
+            break;
+        }
+    }
+    state.set_session_action(&session_id, None, None);
+    if let Some(lines) = restore_warning_lines(&route_result).filter(|lines| !lines.is_empty()) {
+        state.call(
+            "showDashboardError",
+            vec![
+                json!(format!("Restored \"{label}\" with teammate issues")),
+                Value::Array(lines.into_iter().map(Value::String).collect()),
+            ],
+        );
+    }
+    state.footer_flash = if restored {
+        format!("Restored {label}")
+    } else {
+        format!("{label} stayed offline")
+    };
+    state.footer_flash_ticks = 3;
+    state.render_mutation_frame();
+    json!("settled")
 }
 
 fn stop_dashboard_service_with_feedback(state: &mut OpsState, service: &Value) {
@@ -864,6 +954,13 @@ impl<'a> OpsState<'a> {
             .map(|action| action.kind.clone())
     }
 
+    fn get_session_action(&self, id: &str) -> Option<String> {
+        self.pending
+            .sessions
+            .get(id)
+            .map(|action| action.kind.clone())
+    }
+
     fn existing_service_action(&mut self, id: &str) -> Option<String> {
         if let Some(action) = self.pending.services.get(id) {
             return Some(action.kind.clone());
@@ -960,6 +1057,50 @@ fn display_label(value: &Value) -> String {
         }
     }
     String::new()
+}
+
+fn restore_warning_lines(result: &Value) -> Option<Vec<String>> {
+    let failures = result
+        .get("teammateFailures")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|failure| {
+            let session_id = string_field(failure, "sessionId");
+            let message = optional_string(failure, "error")
+                .or_else(|| optional_string(failure, "message"))
+                .unwrap_or_default();
+            if session_id.is_empty() || message.trim().is_empty() {
+                return None;
+            }
+            if message.contains(&session_id) {
+                Some(message)
+            } else {
+                Some(format!("{session_id}: {message}"))
+            }
+        })
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        return Some(unique_lines(failures));
+    }
+    let warning = optional_string(result, "warning")?;
+    if warning.trim().is_empty() {
+        return None;
+    }
+    Some(unique_lines(vec![
+        warning,
+        "Stale teammates remain offline; create a new team to replace them.".into(),
+    ]))
+}
+
+fn unique_lines(lines: Vec<String>) -> Vec<String> {
+    let mut unique = Vec::new();
+    for line in lines {
+        if !unique.contains(&line) {
+            unique.push(line);
+        }
+    }
+    unique
 }
 
 fn optional_string(value: &Value, key: &str) -> Option<String> {

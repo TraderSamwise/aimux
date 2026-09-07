@@ -12,6 +12,7 @@ const {
   migrateSessionWithFeedback,
   removeDashboardServiceWithFeedback,
   resumeOfflineServiceWithFeedback,
+  resumeOfflineSessionWithFeedback,
   stopDashboardServiceWithFeedback,
   stopSessionToOfflineWithFeedback,
 } = await import(new URL("dist/multiplexer/dashboard-ops.js", ROOT));
@@ -251,6 +252,9 @@ async function runCase(input) {
     case "resumeOfflineServiceWithFeedback":
       result = await resumeOfflineServiceWithFeedback(host, clone(input.service));
       break;
+    case "resumeOfflineSessionWithFeedback":
+      result = await resumeOfflineSessionWithFeedback(host, clone(input.session));
+      break;
     case "stopDashboardServiceWithFeedback":
       result = await stopDashboardServiceWithFeedback(host, clone(input.service));
       break;
@@ -325,6 +329,43 @@ const cases = [
       mode: "agent",
       service: { id: "svc-1", label: "shell" },
       localServiceResumeError: "boom",
+    },
+  },
+  {
+    name: "restores an offline dashboard agent after live row appears",
+    input: {
+      api: "resumeOfflineSessionWithFeedback",
+      session: { id: "sess-restore", command: "codex", label: "codex", status: "offline" },
+      sessionSnapshots: [
+        [{ id: "sess-restore", command: "codex", label: "codex", status: "offline" }],
+        [{ id: "sess-restore", command: "codex", label: "codex", status: "running" }],
+      ],
+    },
+  },
+  {
+    name: "coalesces duplicate offline dashboard agent restore",
+    input: {
+      api: "resumeOfflineSessionWithFeedback",
+      session: { id: "sess-restore", command: "codex", label: "codex", status: "offline" },
+      pendingActions: [{ targetKind: "session", id: "sess-restore", kind: "starting", token: 1 }],
+      sessionSnapshots: [[{ id: "sess-restore", command: "codex", label: "codex", status: "offline" }]],
+    },
+  },
+  {
+    name: "offline dashboard agent restore reports teammate warnings when it stays offline",
+    input: {
+      api: "resumeOfflineSessionWithFeedback",
+      session: { id: "sess-restore", command: "claude", label: "claude", status: "offline" },
+      routeResults: {
+        "/agents/resume": {
+          warning: "teammates failed",
+          teammateFailures: [{ sessionId: "teammate-1", error: "missing backend session" }],
+        },
+      },
+      sessionSnapshots: [
+        [{ id: "sess-restore", command: "claude", label: "claude", status: "offline" }],
+        [{ id: "sess-restore", command: "claude", label: "claude", status: "offline" }],
+      ],
     },
   },
   {
