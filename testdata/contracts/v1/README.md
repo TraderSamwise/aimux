@@ -19,6 +19,9 @@ Priority fixture groups:
    `core-command/behavior.json` captures daemon route responses for ping,
    status, unknown command, and missing-project-root errors by running
    TypeScript `core-command-contract`.
+   `core-command/ownership.json` captures core CLI command ownership,
+   dispatch classification, and installed-shim route retirement by running
+   TypeScript `isCoreCliCommand` and source inventory checks.
 3. `agent-output`: parser fixtures, streaming diffs, liveness transitions.
 4. `ansi`: SGR spans and terminal display formatting.
 5. `tmux`: command argv, inventory rows, pane captures, statusline artifacts.

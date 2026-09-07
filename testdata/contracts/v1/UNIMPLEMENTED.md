@@ -1,12 +1,12 @@
 # Unimplemented Contract Consumers
 
-This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet or the implementation sits behind an ownership fence. It deliberately does not count Vitest reporter output as coverage.
+This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 214 covered modules, and 31 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 215 covered modules, and 30 uncovered modules remaining.
 
-There are 24 ignored corpus entries below, covering 106 captured checklist cases.
+There are 25 ignored corpus entries below, covering 109 captured checklist cases.
 
-| Consumer | Corpus | Cases | Missing Rust API | Ownership fence |
+| Consumer | Corpus | Cases | Missing Rust API / parity bug | Ownership fence |
 | --- | --- | ---: | --- | --- |
 | `fixture_agent_io_methods.rs` | `testdata/contracts/v1/agent-output/io-methods.json` | 1 | agentIoMethods.deliverOrchestrationMessage orchestration-delivery API | No explicit fence; needs a new public Rust API for the multiplexer agent-I/O helper |
 | `fixture_cli_wrappers.rs` | `testdata/contracts/v1/cli/metadata-command.json` | 4 | serviceMetadataFromUrls / registerMetadataCommand CLI wrapper behavior | core_cli* |
@@ -14,6 +14,7 @@ There are 24 ignored corpus entries below, covering 106 captured checklist cases
 | `fixture_cli_wrappers.rs` | `testdata/contracts/v1/cli/work-outline-command.json` | 4 | renderWorkOutlineEntries / registerWorkOutlineCommand CLI wrapper behavior | core_cli* |
 | `fixture_coordination_mutations.rs` | `testdata/contracts/v1/coordination/mutations.json` | 6 | Direct threads.ts compatibility helpers for thread creation/reply/reuse | No explicit fence for helper API; route exposure may touch project_service/routes/ |
 | `fixture_core_command_behavior.rs` | `testdata/contracts/v1/core-command/behavior.json` | 6 | AimuxDaemon.routeRequest daemon-route behavior | daemon_* |
+| `fixture_core_command_ownership.rs` | `testdata/contracts/v1/core-command/ownership.json` | 3 | Parity bug: Rust core_cli_routing claims dashboard-reload/restart-runtime commands that TypeScript leaves on the full CLI path | core_cli* |
 | `fixture_dashboard_navigation.rs` | `testdata/contracts/v1/runtime-state/dashboard-navigation.json` | 1 | showMigratePicker navigation decision API | dashboard_* |
 | `fixture_dashboard_repair_notices.rs` | `testdata/contracts/v1/runtime-state/dashboard-repair-notices.json` | 1 | recordDashboardRepairNotice runtime notice-store behavior | dashboard_* |
 | `fixture_debug_lifecycle_log.rs` | `testdata/contracts/v1/debug/lifecycle-log.json` | 3 | logLifecycleAlways logging API and event formatting | No explicit fence; needs Rust logging subsystem parity surface |
@@ -40,7 +41,6 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | Source module | Reason real corpus is still missing | Ownership fence |
 | --- | --- | --- |
 | `src/core-cli.test.ts` | Core CLI end-to-end sidecar runner; needs per-command input/output capture from runCoreCli, not Vitest reporter metadata. | core_cli* |
-| `src/core-command-ownership.test.ts` | Mostly source-inventory plus installed-shim dispatch ownership; needs command disposition/input-output capture or source-inventory contract. | core_cli* |
 | `src/core-project-actor.test.ts` | Child-process lifecycle supervisor integration; no pure captured API selected yet. | daemon_* / project actor lifecycle |
 | `src/daemon.test.ts` | Daemon HTTP/core-command/expose/project actor integration; no pure captured API selected yet. | daemon_* |
 | `src/daemon/projects-route.test.ts` | Daemon projects route count/cache projection; should be captured as route input/output. | daemon_* |

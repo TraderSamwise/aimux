@@ -1,0 +1,469 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-core-command-ownership-contract.mjs",
+  "source": "src/core-command-ownership.test.ts",
+  "sources": ["src/core-command-ownership.test.ts", "src/core-cli-routing.ts", "scripts/installed-aimux-shim.sh"],
+  "description": "Core command ownership and installed-shim dispatch inventory captured by running TypeScript routing helpers.",
+  "caseCount": 3,
+  "cases": [
+    {
+      "id": "core-command-ownership-001",
+      "name": "classifies every routed core command used by the installed CLI",
+      "source": "src/core-command-ownership.test.ts",
+      "input": {
+        "api": "isCoreCliCommand",
+        "commands": [
+          { "command": "daemon ensure", "args": ["daemon", "ensure"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon ensure --json",
+            "args": ["daemon", "ensure", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "daemon status", "args": ["daemon", "status"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon status --json",
+            "args": ["daemon", "status", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "daemon projects", "args": ["daemon", "projects"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon projects --json",
+            "args": ["daemon", "projects", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "projects list", "args": ["projects", "list"], "disposition": "shim-fast-path" },
+          {
+            "command": "projects list --json",
+            "args": ["projects", "list", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "host status", "args": ["host", "status"], "disposition": "shim-fast-path" },
+          { "command": "host status --json", "args": ["host", "status", "--json"], "disposition": "shim-fast-path" },
+          { "command": "logs path", "args": ["logs", "path"], "disposition": "shim-fast-path" },
+          {
+            "command": "logs tail",
+            "args": ["logs", "tail", "--project", "/tmp/project", "--lines", "100"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "logs clear", "args": ["logs", "clear", "--daemon"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon project-ensure",
+            "args": ["daemon", "project-ensure", "--project", "/tmp/project"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "daemon project-ensure --json",
+            "args": ["daemon", "project-ensure", "--project", "/tmp/project", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "daemon restart", "args": ["daemon", "restart"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon restart --json",
+            "args": ["daemon", "restart", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "serve", "args": ["serve"], "disposition": "shim-fast-path" },
+          { "command": "dashboard-reload", "args": ["dashboard-reload"], "disposition": "shim-fast-path" },
+          {
+            "command": "dashboard-reload --open",
+            "args": ["dashboard-reload", "--open"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "dashboard-reload --open --client-tty",
+            "args": ["dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "dashboard-reload --open --current-client-session",
+            "args": ["dashboard-reload", "--open", "--current-client-session=aimux-repo-client-1234abcd"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "restart-runtime", "args": ["restart-runtime"], "disposition": "shim-fast-path" },
+          {
+            "command": "restart-runtime --json",
+            "args": ["restart-runtime", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "restart-runtime --open --client-tty",
+            "args": ["restart-runtime", "--open", "--client-tty", "/dev/ttys001"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "restart-runtime --project-root --current-client-session",
+            "args": [
+              "restart-runtime",
+              "--project-root=/tmp/project",
+              "--current-client-session=aimux-repo-client-1234abcd"
+            ],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "host stop", "args": ["host", "stop"], "disposition": "shim-fast-path" },
+          { "command": "host kill", "args": ["host", "kill"], "disposition": "shim-fast-path" },
+          { "command": "host restart", "args": ["host", "restart"], "disposition": "shim-fast-path" },
+          {
+            "command": "host restart --serve",
+            "args": ["host", "restart", "--serve"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "host restart --open", "args": ["host", "restart", "--open"], "disposition": "shim-fast-path" },
+          { "command": "remote status", "args": ["remote", "status"], "disposition": "shim-fast-path" },
+          {
+            "command": "remote status --json",
+            "args": ["remote", "status", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "remote enable", "args": ["remote", "enable"], "disposition": "shim-fast-path" },
+          { "command": "remote disable", "args": ["remote", "disable"], "disposition": "shim-fast-path" },
+          { "command": "whoami", "args": ["whoami"], "disposition": "shim-fast-path" },
+          { "command": "whoami --json", "args": ["whoami", "--json"], "disposition": "shim-fast-path" },
+          { "command": "logout", "args": ["logout"], "disposition": "shim-fast-path" },
+          { "command": "login", "args": ["login"], "disposition": "shim-fast-path" },
+          { "command": "security unlock", "args": ["security", "unlock"], "disposition": "shim-fast-path" }
+        ],
+        "invalidProbes": [
+          ["restart-runtime", "--open", "--json"],
+          ["dashboard-reload", "--client-tty=-x"],
+          ["dashboard-reload", "--current-client-session=-x"],
+          ["restart-runtime", "--project-root=-x"],
+          ["restart-runtime", "--client-tty=-x"],
+          ["restart-runtime", "--current-client-session=-x"]
+        ]
+      },
+      "output": {
+        "commands": [
+          "daemon ensure",
+          "daemon ensure --json",
+          "daemon status",
+          "daemon status --json",
+          "daemon projects",
+          "daemon projects --json",
+          "projects list",
+          "projects list --json",
+          "host status",
+          "host status --json",
+          "logs path",
+          "logs tail",
+          "logs clear",
+          "daemon project-ensure",
+          "daemon project-ensure --json",
+          "daemon restart",
+          "daemon restart --json",
+          "serve",
+          "dashboard-reload",
+          "dashboard-reload --open",
+          "dashboard-reload --open --client-tty",
+          "dashboard-reload --open --current-client-session",
+          "restart-runtime",
+          "restart-runtime --json",
+          "restart-runtime --open --client-tty",
+          "restart-runtime --project-root --current-client-session",
+          "host stop",
+          "host kill",
+          "host restart",
+          "host restart --serve",
+          "host restart --open",
+          "remote status",
+          "remote status --json",
+          "remote enable",
+          "remote disable",
+          "whoami",
+          "whoami --json",
+          "logout",
+          "login",
+          "security unlock"
+        ],
+        "classifications": [
+          { "command": "daemon ensure", "args": ["daemon", "ensure"], "isCoreCliCommand": true },
+          { "command": "daemon ensure --json", "args": ["daemon", "ensure", "--json"], "isCoreCliCommand": true },
+          { "command": "daemon status", "args": ["daemon", "status"], "isCoreCliCommand": true },
+          { "command": "daemon status --json", "args": ["daemon", "status", "--json"], "isCoreCliCommand": true },
+          { "command": "daemon projects", "args": ["daemon", "projects"], "isCoreCliCommand": true },
+          { "command": "daemon projects --json", "args": ["daemon", "projects", "--json"], "isCoreCliCommand": true },
+          { "command": "projects list", "args": ["projects", "list"], "isCoreCliCommand": true },
+          { "command": "projects list --json", "args": ["projects", "list", "--json"], "isCoreCliCommand": true },
+          { "command": "host status", "args": ["host", "status"], "isCoreCliCommand": true },
+          { "command": "host status --json", "args": ["host", "status", "--json"], "isCoreCliCommand": true },
+          { "command": "logs path", "args": ["logs", "path"], "isCoreCliCommand": true },
+          {
+            "command": "logs tail",
+            "args": ["logs", "tail", "--project", "/tmp/project", "--lines", "100"],
+            "isCoreCliCommand": true
+          },
+          { "command": "logs clear", "args": ["logs", "clear", "--daemon"], "isCoreCliCommand": true },
+          {
+            "command": "daemon project-ensure",
+            "args": ["daemon", "project-ensure", "--project", "/tmp/project"],
+            "isCoreCliCommand": true
+          },
+          {
+            "command": "daemon project-ensure --json",
+            "args": ["daemon", "project-ensure", "--project", "/tmp/project", "--json"],
+            "isCoreCliCommand": true
+          },
+          { "command": "daemon restart", "args": ["daemon", "restart"], "isCoreCliCommand": true },
+          { "command": "daemon restart --json", "args": ["daemon", "restart", "--json"], "isCoreCliCommand": true },
+          { "command": "serve", "args": ["serve"], "isCoreCliCommand": true },
+          { "command": "dashboard-reload", "args": ["dashboard-reload"], "isCoreCliCommand": false },
+          { "command": "dashboard-reload --open", "args": ["dashboard-reload", "--open"], "isCoreCliCommand": false },
+          {
+            "command": "dashboard-reload --open --client-tty",
+            "args": ["dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
+            "isCoreCliCommand": false
+          },
+          {
+            "command": "dashboard-reload --open --current-client-session",
+            "args": ["dashboard-reload", "--open", "--current-client-session=aimux-repo-client-1234abcd"],
+            "isCoreCliCommand": false
+          },
+          { "command": "restart-runtime", "args": ["restart-runtime"], "isCoreCliCommand": false },
+          { "command": "restart-runtime --json", "args": ["restart-runtime", "--json"], "isCoreCliCommand": false },
+          {
+            "command": "restart-runtime --open --client-tty",
+            "args": ["restart-runtime", "--open", "--client-tty", "/dev/ttys001"],
+            "isCoreCliCommand": false
+          },
+          {
+            "command": "restart-runtime --project-root --current-client-session",
+            "args": [
+              "restart-runtime",
+              "--project-root=/tmp/project",
+              "--current-client-session=aimux-repo-client-1234abcd"
+            ],
+            "isCoreCliCommand": false
+          },
+          { "command": "host stop", "args": ["host", "stop"], "isCoreCliCommand": true },
+          { "command": "host kill", "args": ["host", "kill"], "isCoreCliCommand": true },
+          { "command": "host restart", "args": ["host", "restart"], "isCoreCliCommand": true },
+          { "command": "host restart --serve", "args": ["host", "restart", "--serve"], "isCoreCliCommand": true },
+          { "command": "host restart --open", "args": ["host", "restart", "--open"], "isCoreCliCommand": true },
+          { "command": "remote status", "args": ["remote", "status"], "isCoreCliCommand": true },
+          { "command": "remote status --json", "args": ["remote", "status", "--json"], "isCoreCliCommand": true },
+          { "command": "remote enable", "args": ["remote", "enable"], "isCoreCliCommand": true },
+          { "command": "remote disable", "args": ["remote", "disable"], "isCoreCliCommand": true },
+          { "command": "whoami", "args": ["whoami"], "isCoreCliCommand": true },
+          { "command": "whoami --json", "args": ["whoami", "--json"], "isCoreCliCommand": true },
+          { "command": "logout", "args": ["logout"], "isCoreCliCommand": true },
+          { "command": "login", "args": ["login"], "isCoreCliCommand": true },
+          { "command": "security unlock", "args": ["security", "unlock"], "isCoreCliCommand": true }
+        ],
+        "invalidClassifications": [
+          { "args": ["restart-runtime", "--open", "--json"], "isCoreCliCommand": false },
+          { "args": ["dashboard-reload", "--client-tty=-x"], "isCoreCliCommand": false },
+          { "args": ["dashboard-reload", "--current-client-session=-x"], "isCoreCliCommand": false },
+          { "args": ["restart-runtime", "--project-root=-x"], "isCoreCliCommand": false },
+          { "args": ["restart-runtime", "--client-tty=-x"], "isCoreCliCommand": false },
+          { "args": ["restart-runtime", "--current-client-session=-x"], "isCoreCliCommand": false }
+        ]
+      },
+      "inputSha256": "a451566fcdd2850edba97be96b8311b92f899dbdf87b8c02dee3fb053407c728"
+    },
+    {
+      "id": "core-command-ownership-002",
+      "name": "keeps retired installed shell routes out of the native dispatch shim",
+      "source": "src/core-command-ownership.test.ts",
+      "input": {
+        "api": "installedShimFastPaths",
+        "fastPaths": [
+          { "command": "input <sessionId> <text>", "shimNeedle": "/core/agents/input-text" },
+          { "command": "ps", "shimNeedle": "/core/agents/ps-text" },
+          { "command": "rename <sessionId>", "shimNeedle": "/core/agents/rename-text" },
+          { "command": "migrate <sessionId>", "shimNeedle": "/core/agents/migrate-text" },
+          { "command": "spawn", "shimNeedle": "/core/lifecycle/spawn-text" },
+          { "command": "stop <sessionId>", "shimNeedle": "/core/lifecycle/stop-text" },
+          { "command": "kill <sessionId>", "shimNeedle": "/core/lifecycle/kill-text" },
+          { "command": "fork <sourceSessionId>", "shimNeedle": "/core/lifecycle/fork-text" },
+          { "command": "loop add <sessionId>", "shimNeedle": "/core/loop/add-text" },
+          { "command": "loop remove <sessionId>", "shimNeedle": "/core/loop/remove-text" },
+          { "command": "loop done", "shimNeedle": "/core/loop/done-text" },
+          { "command": "loop block", "shimNeedle": "/core/loop/block-text" },
+          { "command": "overseer start", "shimNeedle": "/core/overseer/start-text" },
+          { "command": "overseer clear <sessionId>", "shimNeedle": "/core/overseer/clear-text" },
+          { "command": "team show", "shimNeedle": "/core/team/show-text" },
+          { "command": "team init", "shimNeedle": "/core/team/init-text" },
+          { "command": "team add <role>", "shimNeedle": "/core/team/add-text" },
+          { "command": "team remove <role>", "shimNeedle": "/core/team/remove-text" },
+          { "command": "team default <role>", "shimNeedle": "/core/team/default-text" },
+          { "command": "doctor versions", "shimNeedle": "/core/doctor/versions-text" },
+          { "command": "doctor disk", "shimNeedle": "/core/doctor/disk-text" },
+          { "command": "doctor exchange", "shimNeedle": "/core/doctor/exchange-text" },
+          { "command": "doctor lifecycle", "shimNeedle": "/core/doctor/lifecycle-text" },
+          { "command": "doctor tmux", "shimNeedle": "/core/doctor/tmux-text" },
+          { "command": "logs path", "shimNeedle": "/core/logs/path-text" },
+          { "command": "logs tail", "shimNeedle": "/core/logs/tail-text" },
+          { "command": "logs clear", "shimNeedle": "/core/logs/clear-text" },
+          { "command": "metadata ...", "shimNeedle": "/core/metadata-text" },
+          { "command": "repair", "shimNeedle": "/core/repair-text" },
+          { "command": "dashboard-reload", "shimNeedle": "/core/dashboard-reload-text" },
+          { "command": "restart-runtime", "shimNeedle": "/core/runtime-restart-text" },
+          { "command": "serve", "shimNeedle": "/core/project-serve-text" },
+          { "command": "worktree", "shimNeedle": "/core/worktree/list-text" },
+          { "command": "worktree list", "shimNeedle": "/core/worktree/list-text" },
+          { "command": "worktree create <name>", "shimNeedle": "/core/worktree/create-text" },
+          { "command": "worktree cleanup-caches", "shimNeedle": "/core/worktree/cache-cleanup-text" },
+          { "command": "worktree remove <path>", "shimNeedle": "/core/worktree/remove-text" },
+          { "command": "worktree graveyard <path>", "shimNeedle": "/core/worktree/graveyard-text" },
+          { "command": "worktree resurrect <path>", "shimNeedle": "/core/worktree/resurrect-text" },
+          { "command": "worktree delete-graveyard <path>", "shimNeedle": "/core/worktree/delete-graveyard-text" },
+          { "command": "graveyard list", "shimNeedle": "/core/graveyard/list-text" },
+          { "command": "graveyard send <id>", "shimNeedle": "/core/graveyard/send-text" },
+          { "command": "graveyard resurrect <id>", "shimNeedle": "/core/graveyard/resurrect-text" },
+          { "command": "graveyard cleanup", "shimNeedle": "/core/graveyard/cleanup-text" },
+          { "command": "threads", "shimNeedle": "/core/threads/list-text" },
+          { "command": "thread list", "shimNeedle": "/core/thread/list-text" },
+          { "command": "thread show <threadId>", "shimNeedle": "/core/thread/show-text" },
+          { "command": "thread open", "shimNeedle": "/core/thread/open-text" },
+          { "command": "thread send <threadId> <body>", "shimNeedle": "/core/thread/send-text" },
+          { "command": "thread mark-seen <threadId>", "shimNeedle": "/core/thread/mark-seen-text" },
+          { "command": "thread status <threadId>", "shimNeedle": "/core/thread/status-text" },
+          { "command": "message send <body>", "shimNeedle": "/core/message/send-text" },
+          { "command": "notify", "shimNeedle": "/core/notifications/send-text" },
+          { "command": "list-notifications", "shimNeedle": "/core/notifications/list-text" },
+          { "command": "read-notifications", "shimNeedle": "/core/notifications/read-text" },
+          { "command": "clear-notifications", "shimNeedle": "/core/notifications/clear-text" },
+          { "command": "handoff send <body>", "shimNeedle": "/core/handoff/send-text" },
+          { "command": "handoff accept <threadId>", "shimNeedle": "/core/handoff/accept-text" },
+          { "command": "handoff complete <threadId>", "shimNeedle": "/core/handoff/complete-text" },
+          { "command": "task list", "shimNeedle": "/core/task/list-text" },
+          { "command": "task show <taskId>", "shimNeedle": "/core/task/show-text" },
+          { "command": "task assign <description>", "shimNeedle": "/core/task/assign-text" },
+          { "command": "task accept <taskId>", "shimNeedle": "/core/task/accept-text" },
+          { "command": "task block <taskId>", "shimNeedle": "/core/task/block-text" },
+          { "command": "task complete <taskId>", "shimNeedle": "/core/task/complete-text" },
+          { "command": "task reopen <taskId>", "shimNeedle": "/core/task/reopen-text" },
+          { "command": "review approve <taskId>", "shimNeedle": "/core/review/approve-text" },
+          { "command": "review request-changes <taskId>", "shimNeedle": "/core/review/request-changes-text" },
+          { "command": "host agent-read <sessionId>", "shimNeedle": "/core/host-agent-read-text" },
+          { "command": "host agent-stream <sessionId>", "shimNeedle": "/core/host-agent-stream-text" },
+          { "command": "host stop", "shimNeedle": "/core/project-stop-text" },
+          { "command": "host kill", "shimNeedle": "/core/project-kill-text" },
+          { "command": "host restart", "shimNeedle": "/core/project-restart-text" }
+        ]
+      },
+      "output": { "containsAimuxNodeBin": false, "presentNeedles": [] },
+      "inputSha256": "4c83c18d574251421df93f6a51845a2a5f6f8a7a00b677b1776f89087fdfd4a6"
+    },
+    {
+      "id": "core-command-ownership-003",
+      "name": "keeps the core-routable Node fallback backlog explicit",
+      "source": "src/core-command-ownership.test.ts",
+      "input": {
+        "api": "nodeCoreFallbackBacklog",
+        "commands": [
+          { "command": "daemon ensure", "args": ["daemon", "ensure"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon ensure --json",
+            "args": ["daemon", "ensure", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "daemon status", "args": ["daemon", "status"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon status --json",
+            "args": ["daemon", "status", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "daemon projects", "args": ["daemon", "projects"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon projects --json",
+            "args": ["daemon", "projects", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "projects list", "args": ["projects", "list"], "disposition": "shim-fast-path" },
+          {
+            "command": "projects list --json",
+            "args": ["projects", "list", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "host status", "args": ["host", "status"], "disposition": "shim-fast-path" },
+          { "command": "host status --json", "args": ["host", "status", "--json"], "disposition": "shim-fast-path" },
+          { "command": "logs path", "args": ["logs", "path"], "disposition": "shim-fast-path" },
+          {
+            "command": "logs tail",
+            "args": ["logs", "tail", "--project", "/tmp/project", "--lines", "100"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "logs clear", "args": ["logs", "clear", "--daemon"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon project-ensure",
+            "args": ["daemon", "project-ensure", "--project", "/tmp/project"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "daemon project-ensure --json",
+            "args": ["daemon", "project-ensure", "--project", "/tmp/project", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "daemon restart", "args": ["daemon", "restart"], "disposition": "shim-fast-path" },
+          {
+            "command": "daemon restart --json",
+            "args": ["daemon", "restart", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "serve", "args": ["serve"], "disposition": "shim-fast-path" },
+          { "command": "dashboard-reload", "args": ["dashboard-reload"], "disposition": "shim-fast-path" },
+          {
+            "command": "dashboard-reload --open",
+            "args": ["dashboard-reload", "--open"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "dashboard-reload --open --client-tty",
+            "args": ["dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "dashboard-reload --open --current-client-session",
+            "args": ["dashboard-reload", "--open", "--current-client-session=aimux-repo-client-1234abcd"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "restart-runtime", "args": ["restart-runtime"], "disposition": "shim-fast-path" },
+          {
+            "command": "restart-runtime --json",
+            "args": ["restart-runtime", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "restart-runtime --open --client-tty",
+            "args": ["restart-runtime", "--open", "--client-tty", "/dev/ttys001"],
+            "disposition": "shim-fast-path"
+          },
+          {
+            "command": "restart-runtime --project-root --current-client-session",
+            "args": [
+              "restart-runtime",
+              "--project-root=/tmp/project",
+              "--current-client-session=aimux-repo-client-1234abcd"
+            ],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "host stop", "args": ["host", "stop"], "disposition": "shim-fast-path" },
+          { "command": "host kill", "args": ["host", "kill"], "disposition": "shim-fast-path" },
+          { "command": "host restart", "args": ["host", "restart"], "disposition": "shim-fast-path" },
+          {
+            "command": "host restart --serve",
+            "args": ["host", "restart", "--serve"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "host restart --open", "args": ["host", "restart", "--open"], "disposition": "shim-fast-path" },
+          { "command": "remote status", "args": ["remote", "status"], "disposition": "shim-fast-path" },
+          {
+            "command": "remote status --json",
+            "args": ["remote", "status", "--json"],
+            "disposition": "shim-fast-path"
+          },
+          { "command": "remote enable", "args": ["remote", "enable"], "disposition": "shim-fast-path" },
+          { "command": "remote disable", "args": ["remote", "disable"], "disposition": "shim-fast-path" },
+          { "command": "whoami", "args": ["whoami"], "disposition": "shim-fast-path" },
+          { "command": "whoami --json", "args": ["whoami", "--json"], "disposition": "shim-fast-path" },
+          { "command": "logout", "args": ["logout"], "disposition": "shim-fast-path" },
+          { "command": "login", "args": ["login"], "disposition": "shim-fast-path" },
+          { "command": "security unlock", "args": ["security", "unlock"], "disposition": "shim-fast-path" }
+        ]
+      },
+      "output": { "backlog": [] },
+      "inputSha256": "db136c3631f3648fc20ffbece82d76b7818eced2a297dc56521f9a45c2e9b673"
+    }
+  ]
+}
