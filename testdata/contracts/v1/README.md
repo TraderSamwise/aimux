@@ -35,6 +35,9 @@ Priority fixture groups:
 
 ## Dashboard
 
+- `dashboard/command-spec.json`: dashboard tmux launch command wrapping,
+  environment allowlist, shell quoting, cleanup traps, and build-stamp
+  relationships captured by running TypeScript `getDashboardCommandSpec`.
 - `dashboard/desktop-state-golden.json`: runtime-light/runtime-full desktop
   state snapshots and snapshot cost model captured by running TypeScript
   `buildDesktopStateSnapshot`.
