@@ -1,0 +1,591 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/persistence-methods.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-persistence-desktop-projection-contract.mjs",
+  "description": "Persistence buildDesktopState and projected worktree pending-action behavior captured by running TypeScript persistenceMethods with DashboardPendingActions.",
+  "cases": [
+    {
+      "id": "multiplexer-persistence-desktop-projection-001",
+      "name": "projects in-flight worktree creates into desktop-state snapshots",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "buildDesktopState",
+      "input": {
+        "name": "projects in-flight worktree creates into desktop-state snapshots",
+        "api": "buildDesktopState",
+        "host": {
+          "desktopStateSnapshot": {
+            "sessions": [],
+            "teammates": [],
+            "services": [],
+            "worktrees": [],
+            "worktreeGroups": [],
+            "operationFailures": [],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+            "mainCheckoutPath": "/repo"
+          },
+          "pendingActions": [
+            {
+              "target": "worktree",
+              "path": "/repo/.aimux/worktrees/demo",
+              "kind": "creating",
+              "opts": {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "createdAt": "2026-05-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "returned": {
+          "sessions": [],
+          "teammates": [],
+          "services": [],
+          "worktrees": [
+            {
+              "name": "demo",
+              "branch": "demo",
+              "path": "/repo/.aimux/worktrees/demo",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "status": "offline",
+              "isBare": false,
+              "sessions": [],
+              "services": [],
+              "removing": false,
+              "pending": true,
+              "pendingAction": "creating",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "worktreeGroups": [
+            {
+              "name": "demo",
+              "branch": "demo",
+              "path": "/repo/.aimux/worktrees/demo",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "status": "offline",
+              "isBare": false,
+              "sessions": [],
+              "services": [],
+              "removing": false,
+              "pending": true,
+              "pendingAction": "creating",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "operationFailures": [],
+          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+          "mainCheckoutPath": "/repo",
+          "statusline": {}
+        },
+        "calls": [
+          { "method": "pendingActions.onChange", "args": [] },
+          { "method": "buildStatuslineSnapshot", "args": [] }
+        ]
+      },
+      "inputSha256": "8ad6762933ade342bc1105483e6dc7c4de7a7f965810c0b36f3051bdf827f469"
+    },
+    {
+      "id": "multiplexer-persistence-desktop-projection-002",
+      "name": "can build API desktop state without the statusline snapshot",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "buildDesktopState",
+      "input": {
+        "name": "can build API desktop state without the statusline snapshot",
+        "api": "buildDesktopState",
+        "arg": { "includeStatusline": false },
+        "host": {
+          "desktopStateSnapshot": {
+            "sessions": [],
+            "teammates": [],
+            "services": [],
+            "worktrees": [],
+            "worktreeGroups": [],
+            "operationFailures": [],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+            "mainCheckoutPath": "/repo"
+          }
+        }
+      },
+      "output": {
+        "returned": {
+          "sessions": [],
+          "teammates": [],
+          "services": [],
+          "worktrees": [],
+          "worktreeGroups": [],
+          "operationFailures": [],
+          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+          "mainCheckoutPath": "/repo"
+        },
+        "calls": []
+      },
+      "inputSha256": "3d2b410280275e230874eba8fc24b08bb2824ec7305ec025384854c5bf28678e"
+    },
+    {
+      "id": "multiplexer-persistence-desktop-projection-003",
+      "name": "projects in-flight worktree creates into projected worktree lists",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "listProjectedDesktopWorktrees",
+      "input": {
+        "name": "projects in-flight worktree creates into projected worktree lists",
+        "api": "listProjectedDesktopWorktrees",
+        "host": {
+          "listDesktopWorktrees": [],
+          "pendingActions": [
+            {
+              "target": "worktree",
+              "path": "/repo/.aimux/worktrees/demo",
+              "kind": "creating",
+              "opts": {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "createdAt": "2026-05-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "returned": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "status": "offline",
+            "isBare": false,
+            "sessions": [],
+            "services": [],
+            "removing": false,
+            "pending": true,
+            "pendingAction": "creating",
+            "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+            "optimistic": true
+          }
+        ],
+        "calls": [
+          { "method": "pendingActions.onChange", "args": [] },
+          { "method": "listDesktopWorktrees", "args": [] }
+        ]
+      },
+      "inputSha256": "64e765e3202ca08c88ffd52468a0029bf59241991c72cac4b295dbd08c7a8e4d"
+    },
+    {
+      "id": "multiplexer-persistence-desktop-projection-004",
+      "name": "projects remove worktree pending actions into desktop-state snapshots",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "buildDesktopState",
+      "input": {
+        "name": "projects remove worktree pending actions into desktop-state snapshots",
+        "api": "buildDesktopState",
+        "host": {
+          "desktopStateSnapshot": {
+            "sessions": [],
+            "teammates": [],
+            "services": [],
+            "worktrees": [
+              {
+                "name": "demo",
+                "branch": "demo",
+                "path": "/repo/.aimux/worktrees/demo",
+                "status": "offline",
+                "isBare": false,
+                "sessions": [],
+                "services": []
+              }
+            ],
+            "worktreeGroups": [
+              {
+                "name": "demo",
+                "branch": "demo",
+                "path": "/repo/.aimux/worktrees/demo",
+                "status": "offline",
+                "isBare": false,
+                "sessions": [],
+                "services": []
+              }
+            ],
+            "operationFailures": [],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+            "mainCheckoutPath": "/repo"
+          },
+          "pendingActions": [{ "target": "worktree", "path": "/repo/.aimux/worktrees/demo", "kind": "removing" }]
+        }
+      },
+      "output": {
+        "returned": {
+          "sessions": [],
+          "teammates": [],
+          "services": [],
+          "worktrees": [
+            {
+              "name": "demo",
+              "branch": "demo",
+              "path": "/repo/.aimux/worktrees/demo",
+              "status": "offline",
+              "isBare": false,
+              "sessions": [],
+              "services": [],
+              "pending": true,
+              "removing": true,
+              "pendingAction": "removing",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "worktreeGroups": [
+            {
+              "name": "demo",
+              "branch": "demo",
+              "path": "/repo/.aimux/worktrees/demo",
+              "status": "offline",
+              "isBare": false,
+              "sessions": [],
+              "services": [],
+              "pending": true,
+              "removing": true,
+              "pendingAction": "removing",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "operationFailures": [],
+          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+          "mainCheckoutPath": "/repo",
+          "statusline": {}
+        },
+        "calls": [
+          { "method": "pendingActions.onChange", "args": [] },
+          { "method": "buildStatuslineSnapshot", "args": [] }
+        ]
+      },
+      "inputSha256": "d20e8dd4edd9a08ed50cee1da8a18c6eb924f36f85eba2a433ed9f52a373c584"
+    },
+    {
+      "id": "multiplexer-persistence-desktop-projection-005",
+      "name": "projects session and service pending actions into desktop-state snapshots",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "buildDesktopState",
+      "input": {
+        "name": "projects session and service pending actions into desktop-state snapshots",
+        "api": "buildDesktopState",
+        "host": {
+          "desktopStateSnapshot": {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "claude-1",
+                "command": "claude",
+                "label": "claude",
+                "status": "running",
+                "active": false,
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ],
+            "teammates": [],
+            "services": [
+              {
+                "id": "service-1",
+                "command": "shell",
+                "args": [],
+                "label": "shell",
+                "status": "offline",
+                "active": false,
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ],
+            "worktrees": [
+              {
+                "name": "demo",
+                "branch": "demo",
+                "path": "/repo/.aimux/worktrees/demo",
+                "status": "offline",
+                "isBare": false,
+                "sessions": [],
+                "services": []
+              }
+            ],
+            "worktreeGroups": [
+              {
+                "name": "demo",
+                "branch": "demo",
+                "path": "/repo/.aimux/worktrees/demo",
+                "status": "active",
+                "isBare": false,
+                "sessions": [
+                  {
+                    "index": 1,
+                    "id": "claude-1",
+                    "command": "claude",
+                    "label": "claude",
+                    "status": "running",
+                    "active": false,
+                    "worktreePath": "/repo/.aimux/worktrees/demo"
+                  }
+                ],
+                "services": [
+                  {
+                    "id": "service-1",
+                    "command": "shell",
+                    "args": [],
+                    "label": "shell",
+                    "status": "offline",
+                    "active": false,
+                    "worktreePath": "/repo/.aimux/worktrees/demo"
+                  }
+                ]
+              }
+            ],
+            "operationFailures": [],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+            "mainCheckoutPath": "/repo"
+          },
+          "pendingActions": [
+            {
+              "target": "session",
+              "id": "claude-1",
+              "kind": "stopping",
+              "opts": {
+                "sessionSeed": {
+                  "index": 1,
+                  "id": "claude-1",
+                  "command": "claude",
+                  "label": "claude",
+                  "status": "running",
+                  "active": false,
+                  "worktreePath": "/repo/.aimux/worktrees/demo"
+                }
+              }
+            },
+            {
+              "target": "service",
+              "id": "service-1",
+              "kind": "removing",
+              "opts": {
+                "serviceSeed": {
+                  "id": "service-1",
+                  "command": "shell",
+                  "args": [],
+                  "label": "shell",
+                  "status": "offline",
+                  "active": false,
+                  "worktreePath": "/repo/.aimux/worktrees/demo"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "returned": {
+          "sessions": [
+            {
+              "index": 1,
+              "id": "claude-1",
+              "command": "claude",
+              "label": "claude",
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "pending": true,
+              "pendingAction": "stopping",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "teammates": [],
+          "services": [
+            {
+              "id": "service-1",
+              "command": "shell",
+              "args": [],
+              "label": "shell",
+              "status": "offline",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "pending": true,
+              "pendingAction": "removing",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "worktrees": [
+            {
+              "name": "demo",
+              "branch": "demo",
+              "path": "/repo/.aimux/worktrees/demo",
+              "status": "offline",
+              "isBare": false,
+              "sessions": [],
+              "services": []
+            }
+          ],
+          "worktreeGroups": [
+            {
+              "name": "demo",
+              "branch": "demo",
+              "path": "/repo/.aimux/worktrees/demo",
+              "status": "active",
+              "isBare": false,
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "claude-1",
+                  "command": "claude",
+                  "label": "claude",
+                  "status": "running",
+                  "active": false,
+                  "worktreePath": "/repo/.aimux/worktrees/demo",
+                  "pending": true,
+                  "pendingAction": "stopping",
+                  "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+                  "optimistic": true
+                }
+              ],
+              "services": [
+                {
+                  "id": "service-1",
+                  "command": "shell",
+                  "args": [],
+                  "label": "shell",
+                  "status": "offline",
+                  "active": false,
+                  "worktreePath": "/repo/.aimux/worktrees/demo",
+                  "pending": true,
+                  "pendingAction": "removing",
+                  "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+                  "optimistic": true
+                }
+              ]
+            }
+          ],
+          "operationFailures": [],
+          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+          "mainCheckoutPath": "/repo",
+          "statusline": {}
+        },
+        "calls": [
+          { "method": "pendingActions.onChange", "args": [] },
+          { "method": "pendingActions.onChange", "args": [] },
+          { "method": "buildStatuslineSnapshot", "args": [] }
+        ]
+      },
+      "inputSha256": "659078d28a8fc84157299c8cb5a25f667f1783f85b409ea8039b94ae0f0ce572"
+    },
+    {
+      "id": "multiplexer-persistence-desktop-projection-006",
+      "name": "keeps normal pending sessions out of teammate desktop-state payloads",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "buildDesktopState",
+      "input": {
+        "name": "keeps normal pending sessions out of teammate desktop-state payloads",
+        "api": "buildDesktopState",
+        "host": {
+          "desktopStateSnapshot": {
+            "sessions": [],
+            "teammates": [],
+            "services": [],
+            "worktrees": [],
+            "worktreeGroups": [],
+            "operationFailures": [],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+            "mainCheckoutPath": "/repo"
+          },
+          "pendingActions": [
+            {
+              "target": "session",
+              "id": "codex-normal",
+              "kind": "creating",
+              "opts": {
+                "sessionSeed": {
+                  "index": 0,
+                  "id": "codex-normal",
+                  "command": "codex",
+                  "status": "running",
+                  "active": false
+                }
+              }
+            },
+            {
+              "target": "session",
+              "id": "codex-teammate",
+              "kind": "creating",
+              "opts": {
+                "sessionSeed": {
+                  "index": 1,
+                  "id": "codex-teammate",
+                  "command": "codex",
+                  "status": "running",
+                  "active": false,
+                  "team": { "teamId": "team-1", "parentSessionId": "claude-parent", "role": "reviewer" }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "returned": {
+          "sessions": [
+            {
+              "index": 0,
+              "id": "codex-normal",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "pending": true,
+              "pendingAction": "creating",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "teammates": [
+            {
+              "index": 1,
+              "id": "codex-teammate",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "team": { "teamId": "team-1", "parentSessionId": "claude-parent", "role": "reviewer" },
+              "pending": true,
+              "pendingAction": "creating",
+              "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+              "optimistic": true
+            }
+          ],
+          "services": [],
+          "worktrees": [],
+          "worktreeGroups": [],
+          "operationFailures": [],
+          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+          "mainCheckoutPath": "/repo",
+          "statusline": {}
+        },
+        "calls": [
+          { "method": "pendingActions.onChange", "args": [] },
+          { "method": "pendingActions.onChange", "args": [] },
+          { "method": "buildStatuslineSnapshot", "args": [] }
+        ]
+      },
+      "inputSha256": "a7516cbbb7f23e6d2d3fc8190b4f89a217ef06437caf5d03c528c3141786fbbb"
+    }
+  ]
+}
