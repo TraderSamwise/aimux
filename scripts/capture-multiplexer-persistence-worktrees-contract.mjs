@@ -36,6 +36,7 @@ const paths = await import(new URL("dist/paths.js", ROOT));
 const topologySessions = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
 const topologyServices = await import(new URL("dist/runtime-core/topology-services.js", ROOT));
 const topologyWorktrees = await import(new URL("dist/runtime-core/topology-worktrees.js", ROOT));
+const operationFailures = await import(new URL("dist/dashboard/operation-failures.js", ROOT));
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -85,6 +86,14 @@ function normalizeGeneratedIds(value) {
     if (typeof nested.worktreeId === "string" && typeof nested.path === "string") {
       generatedIds.set(nested.worktreeId, `<worktree-id:${nested.path}>`);
     }
+    if (
+      typeof nested.id === "string" &&
+      typeof nested.targetKind === "string" &&
+      typeof nested.operation === "string" &&
+      typeof nested.message === "string"
+    ) {
+      generatedIds.set(nested.id, `<operation-failure-id:${generatedIds.size + 1}>`);
+    }
     for (const item of Object.values(nested)) collect(item);
   };
   const visit = (nested) => {
@@ -118,8 +127,31 @@ function callRecorder(calls, name, impl = () => undefined) {
   };
 }
 
+function pendingActionsFor(calls) {
+  const worktreeActions = new Map();
+  return {
+    setWorktreeAction(path, kind, opts = {}) {
+      calls.push({ method: "dashboardPendingActions.setWorktreeAction", args: clone([path, kind, opts]) });
+      worktreeActions.set(path, {
+        kind,
+        timeoutMs: opts.timeoutMs ?? null,
+        worktreeSeed: opts.worktreeSeed ? clone(opts.worktreeSeed) : null,
+      });
+      return worktreeActions.size;
+    },
+    clearWorktreeAction(path) {
+      calls.push({ method: "dashboardPendingActions.clearWorktreeAction", args: clone([path]) });
+      worktreeActions.delete(path);
+    },
+    snapshot() {
+      return [...worktreeActions.entries()].map(([path, entry]) => ({ path, ...clone(entry) }));
+    },
+  };
+}
+
 function hostFor(input) {
   const calls = [];
+  const dashboardPendingActions = pendingActionsFor(calls);
   const host = {
     projectRoot: input.projectRoot,
     mode: input.mode ?? "project-service",
@@ -130,11 +162,18 @@ function hostFor(input) {
     listDesktopWorktrees: callRecorder(calls, "listDesktopWorktrees", () => clone(input.worktrees ?? [])),
     isSessionRuntimeLive: callRecorder(calls, "isSessionRuntimeLive", (session) => input.liveSessionIds?.includes(session.id) ?? false),
     saveState: callRecorder(calls, "saveState"),
+    syncSessionsFromTopology: callRecorder(calls, "syncSessionsFromTopology"),
     invalidateDesktopStateSnapshot: callRecorder(calls, "invalidateDesktopStateSnapshot"),
     refreshLocalDashboardModel: callRecorder(calls, "refreshLocalDashboardModel"),
     renderDashboard: callRecorder(calls, "renderDashboard"),
     refreshDashboardWorktreeProjection: callRecorder(calls, "refreshDashboardWorktreeProjection"),
     noteLastUsedItem: callRecorder(calls, "noteLastUsedItem"),
+    publishAlert: callRecorder(calls, "publishAlert"),
+    showDashboardError: callRecorder(calls, "showDashboardError"),
+    dashboardPendingActions,
+    pendingWorktreeCreates: new Map(input.pendingWorktreeCreates ?? []),
+    pendingWorktreeRemovals: new Map(input.pendingWorktreeRemovals ?? []),
+    dashboardWorktreeGroupsCache: clone(input.dashboardWorktreeGroupsCache ?? []),
     metadataServer: { notifyChange: callRecorder(calls, "metadataServer.notifyChange") },
     tmuxRuntimeManager: {
       listProjectManagedWindows: callRecorder(calls, "tmuxRuntimeManager.listProjectManagedWindows", () =>
@@ -162,7 +201,10 @@ function snapshotHost(host, calls) {
     offlineServices: clone(host.offlineServices ?? []),
     footerFlash: host.footerFlash ?? null,
     footerFlashTicks: host.footerFlashTicks ?? null,
-    calls,
+    pendingWorktreeCreatePaths: [...(host.pendingWorktreeCreates?.keys?.() ?? [])],
+    pendingWorktreeRemovalPaths: [...(host.pendingWorktreeRemovals?.keys?.() ?? [])],
+    dashboardWorktreeActions: host.dashboardPendingActions?.snapshot?.() ?? [],
+    calls: clone(calls),
   };
 }
 
@@ -187,8 +229,34 @@ async function invoke(api, ctx, input) {
   const actualInput = denormalize(input, ctx);
   const { host, calls } = hostFor(actualInput);
   try {
-    const returned = await persistenceMethods[api].call(host, actualInput.path);
-    return normalize({ ok: true, returned, host: snapshotHost(host, calls), topology: snapshotTopology() }, ctx);
+    const arg = api === "createDesktopWorktree" ? actualInput.name : actualInput.path;
+    const returned = await persistenceMethods[api].call(host, arg);
+    let immediate;
+    let completion = null;
+    if (api === "createDesktopWorktree") {
+      immediate = { host: snapshotHost(host, calls), topology: snapshotTopology() };
+      const pending = host.pendingWorktreeCreates.get(returned.path);
+      if (pending) {
+        try {
+          completion = { ok: true, returned: await pending };
+        } catch (error) {
+          completion = { ok: false, error: error instanceof Error ? error.message : String(error) };
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+    return normalize(
+      {
+        ok: true,
+        returned,
+        immediate,
+        completion,
+        host: snapshotHost(host, calls),
+        topology: snapshotTopology(),
+        operationFailures: operationFailures.listDashboardOperationFailures(),
+      },
+      ctx,
+    );
   } catch (error) {
     return normalize(
       {
@@ -196,6 +264,7 @@ async function invoke(api, ctx, input) {
         error: error instanceof Error ? error.message : String(error),
         host: snapshotHost(host, calls),
         topology: snapshotTopology(),
+        operationFailures: operationFailures.listDashboardOperationFailures(),
       },
       ctx,
     );
@@ -283,6 +352,97 @@ await record(
       projectRoot,
       path: worktreePath,
       worktrees: [{ name: "demo", branch: "demo", path: worktreePath }],
+      sessions: [{ id: "codex-live", label: "Codex Live" }],
+      liveSessionIds: ["codex-live"],
+      sessionWorktreePaths: [["codex-live", worktreePath]],
+      managedWindows: [],
+    };
+  },
+);
+
+await record(cases, "creates a desktop worktree and settles topology active", "createDesktopWorktree", "create", ({ projectRoot, worktreeRoot }) => {
+  const worktreePath = join(worktreeRoot, "demo");
+  mkdirSync(worktreeRoot, { recursive: true });
+  return {
+    projectRoot,
+    name: "demo",
+    path: worktreePath,
+    worktrees: [],
+    sessions: [],
+    sessionWorktreePaths: [],
+    managedWindows: [],
+  };
+});
+
+await record(
+  cases,
+  "records duplicate worktree create failures through the service owner",
+  "createDesktopWorktree",
+  "create-duplicate",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    return {
+      projectRoot,
+      name: "demo",
+      path: worktreePath,
+      worktrees: [
+        {
+          name: "demo",
+          branch: "demo",
+          path: worktreePath,
+          status: "offline",
+          sessions: [],
+          services: [],
+        },
+      ],
+      sessions: [],
+      sessionWorktreePaths: [],
+      managedWindows: [],
+    };
+  },
+);
+
+await record(
+  cases,
+  "removes an existing desktop worktree and dependent topology",
+  "removeDesktopWorktree",
+  "remove",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    mkdirSync(worktreeRoot, { recursive: true });
+    execFileSync("git", ["worktree", "add", "-q", "-b", "demo", worktreePath], { cwd: projectRoot });
+    topologyWorktrees.upsertTopologyWorktree(
+      { path: worktreePath, name: "demo", branch: "demo", createdAt: "2026-05-01T00:00:00.000Z" },
+      "active",
+    );
+    topologySessions.upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    topologyServices.upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
+    return {
+      projectRoot,
+      path: worktreePath,
+      worktrees: [{ name: "demo", branch: "demo", path: worktreePath, createdAt: "2026-05-01T00:00:00.000Z" }],
+      sessions: [],
+      sessionWorktreePaths: [],
+      offlineSessions: [{ id: "codex-demo", worktreePath }],
+      offlineServices: [{ id: "service-demo", worktreePath }],
+      managedWindows: [],
+    };
+  },
+);
+
+await record(
+  cases,
+  "blocks removing a worktree while a live agent is attached",
+  "removeDesktopWorktree",
+  "remove-live-agent",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    mkdirSync(worktreeRoot, { recursive: true });
+    execFileSync("git", ["worktree", "add", "-q", "-b", "demo", worktreePath], { cwd: projectRoot });
+    return {
+      projectRoot,
+      path: worktreePath,
+      worktrees: [{ name: "demo", branch: "demo", path: worktreePath, createdAt: "2026-05-01T00:00:00.000Z" }],
       sessions: [{ id: "codex-live", label: "Codex Live" }],
       liveSessionIds: ["codex-live"],
       sessionWorktreePaths: [["codex-live", worktreePath]],

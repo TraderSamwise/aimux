@@ -828,8 +828,9 @@ Priority fixture groups:
   worktree create input, removal confirmation, removal completion, and list
   dismissal contracts captured by running TypeScript `multiplexer/worktrees`
   helpers against deterministic fake dashboard hosts.
-- `multiplexer/persistence-worktrees.json`: persistence worktree graveyard,
-  resurrection, deletion, host side effects, and topology transitions captured
+- `multiplexer/persistence-worktrees.json`: persistence worktree create,
+  remove, graveyard, resurrection, deletion, host side effects, operation
+  failure records, pending dashboard actions, and topology transitions captured
   by running TypeScript `multiplexer/persistence-methods` against temporary git
   repositories and isolated topology state.
 - `multiplexer/runtime-state-methods.json`: runtime-state dashboard removal

@@ -5,6 +5,8 @@ const NOW: &str = "2026-06-01T00:00:00.000Z";
 pub fn run_multiplexer_persistence_worktrees_contract_case(api: &str, input: &Value) -> Value {
     let mut state = PersistenceWorktreeState::new(input);
     match api {
+        "createDesktopWorktree" => state.create_desktop_worktree(),
+        "removeDesktopWorktree" => state.remove_desktop_worktree(),
         "graveyardDesktopWorktree" => state.graveyard_desktop_worktree(),
         "resurrectGraveyardWorktree" => state.resurrect_graveyard_worktree(),
         "deleteGraveyardWorktree" => state.delete_graveyard_worktree(),
@@ -18,6 +20,12 @@ struct PersistenceWorktreeState<'a> {
     topology: Value,
     offline_sessions: Vec<Value>,
     offline_services: Vec<Value>,
+    pending_worktree_create_paths: Vec<Value>,
+    pending_worktree_removal_paths: Vec<Value>,
+    dashboard_worktree_actions: Vec<Value>,
+    footer_flash: Value,
+    footer_flash_ticks: Value,
+    operation_failures: Vec<Value>,
     calls: Vec<Value>,
 }
 
@@ -32,8 +40,175 @@ impl<'a> PersistenceWorktreeState<'a> {
             topology,
             offline_sessions: array_field(input, "offlineSessions"),
             offline_services: array_field(input, "offlineServices"),
+            pending_worktree_create_paths: Vec::new(),
+            pending_worktree_removal_paths: Vec::new(),
+            dashboard_worktree_actions: Vec::new(),
+            footer_flash: Value::Null,
+            footer_flash_ticks: Value::Null,
+            operation_failures: Vec::new(),
             calls: Vec::new(),
         }
+    }
+
+    fn create_desktop_worktree(&mut self) -> Value {
+        let project_root = string_field(self.input, "projectRoot");
+        let name = string_field(self.input, "name");
+        let path = string_field(self.input, "path");
+        self.call("listDesktopWorktrees", vec![]);
+
+        if array_field(self.input, "worktrees").iter().any(|worktree| {
+            string_field(worktree, "path") == path
+                && !bool_field(worktree, "pending")
+                && worktree.get("operationFailure").is_none()
+        }) {
+            let message = format!("Worktree \"{name}\" already exists");
+            self.record_operation_failure(
+                "create",
+                &format!("Failed to create worktree \"{name}\""),
+                &message,
+                &path,
+                &name,
+            );
+            self.call(
+                "publishAlert",
+                vec![json!({
+                    "kind": "task_failed",
+                    "title": format!("Failed to create worktree \"{name}\""),
+                    "message": message,
+                    "worktreePath": path,
+                    "dedupeKey": format!("dashboard-operation-failed:worktree:create:{path}:Worktree \"{name}\" already exists"),
+                })],
+            );
+            self.refresh_dashboard_worktree_projection();
+            return self.error(format!("Worktree \"{name}\" already exists"));
+        }
+
+        self.pending_worktree_create_paths.push(json!(path));
+        let seed = json!({
+            "name": name,
+            "branch": name,
+            "path": path,
+            "createdAt": NOW,
+            "status": "offline",
+            "isBare": false,
+            "sessions": [],
+            "services": [],
+        });
+        self.set_worktree_action(&path, "creating", seed);
+        replace_by_path(
+            &mut self.topology["worktrees"],
+            &path,
+            json!({
+                "id": stable_worktree_id(&path),
+                "path": path,
+                "name": name,
+                "status": "creating",
+                "branch": name,
+                "createdAt": NOW,
+            }),
+        );
+        self.call("invalidateDesktopStateSnapshot", vec![]);
+        self.call("refreshLocalDashboardModel", vec![]);
+        let immediate = json!({
+            "host": self.host_snapshot(),
+            "topology": self.topology,
+        });
+
+        replace_by_path(
+            &mut self.topology["worktrees"],
+            &path,
+            json!({
+                "id": stable_worktree_id(&path),
+                "path": path,
+                "name": name,
+                "status": "active",
+                "branch": name,
+                "basePath": project_root,
+                "createdAt": NOW,
+            }),
+        );
+        self.footer_flash = json!(format!("Created: {name}"));
+        self.footer_flash_ticks = json!(3);
+        self.pending_worktree_create_paths.clear();
+        self.clear_worktree_action(&path);
+        self.call("invalidateDesktopStateSnapshot", vec![]);
+        self.call("refreshLocalDashboardModel", vec![]);
+        self.call("metadataServer.notifyChange", vec![]);
+
+        json!({
+            "ok": true,
+            "returned": { "path": path, "status": "creating" },
+            "immediate": immediate,
+            "completion": { "ok": true, "returned": { "path": path, "status": "created" } },
+            "host": self.host_snapshot(),
+            "topology": self.topology,
+            "operationFailures": self.operation_failures,
+        })
+    }
+
+    fn remove_desktop_worktree(&mut self) -> Value {
+        let project_root = string_field(self.input, "projectRoot");
+        let path = string_field(self.input, "path");
+        self.set_remove_pending(&path);
+        self.call("syncSessionsFromTopology", vec![]);
+
+        if !bool_field(self.input, "checkoutExists") {
+            retain_not_path(&mut self.topology["worktrees"], &path);
+            retain_not_path(&mut self.topology["sessions"], &path);
+            retain_not_path(&mut self.topology["services"], &path);
+            self.offline_sessions
+                .retain(|session| string_field(session, "worktreePath") != path);
+            self.offline_services
+                .retain(|service| string_field(service, "worktreePath") != path);
+            self.call("saveState", vec![]);
+            self.finish_remove_success(&path);
+            return self.ok(json!({ "path": path, "status": "removed" }));
+        }
+
+        self.call("listDesktopWorktrees", vec![]);
+        let worktrees = array_field(self.input, "worktrees");
+        let Some(matching) = worktrees
+            .iter()
+            .find(|worktree| string_field(worktree, "path") == path)
+            .cloned()
+        else {
+            let message = format!("Worktree \"{path}\" not found");
+            self.finish_remove_failure(&path, &message);
+            return self.error(message);
+        };
+        if let Some(attached) = self.attached_live_session(&path) {
+            let name = string_field(&matching, "name");
+            let label = string_field(&attached, "label");
+            let session_id = string_field(&attached, "id");
+            let actor = if label.is_empty() { session_id } else { label };
+            let message = format!("Cannot remove \"{name}\" while agent \"{actor}\" is attached");
+            self.finish_remove_failure(&path, &message);
+            return self.error(message);
+        }
+
+        replace_by_path(
+            &mut self.topology["worktrees"],
+            &path,
+            json!({
+                "id": stable_worktree_id(&path),
+                "path": path,
+                "name": string_field(&matching, "name"),
+                "status": "removing",
+                "branch": string_field(&matching, "branch"),
+                "createdAt": optional_string(&matching, "createdAt").unwrap_or_else(|| NOW.to_owned()),
+            }),
+        );
+        self.detach_worktree_services(&project_root, &path);
+        self.offline_sessions
+            .retain(|session| string_field(session, "worktreePath") != path);
+        self.offline_services
+            .retain(|service| string_field(service, "worktreePath") != path);
+        retain_not_path(&mut self.topology["sessions"], &path);
+        retain_not_path(&mut self.topology["services"], &path);
+        retain_not_path(&mut self.topology["worktrees"], &path);
+        self.call("saveState", vec![]);
+        self.finish_remove_success(&path);
+        self.ok(json!({ "path": path, "status": "removed" }))
     }
 
     fn graveyard_desktop_worktree(&mut self) -> Value {
@@ -201,6 +376,30 @@ impl<'a> PersistenceWorktreeState<'a> {
         }
     }
 
+    fn detach_worktree_services(&mut self, project_root: &str, path: &str) {
+        self.call(
+            "tmuxRuntimeManager.listProjectManagedWindows",
+            vec![json!(project_root)],
+        );
+        for window in array_field(self.input, "managedWindows") {
+            let metadata = value_field(&window, "metadata");
+            if string_field(metadata, "kind") != "service"
+                || string_field(metadata, "worktreePath") != path
+            {
+                continue;
+            }
+            let service_id = string_field(metadata, "sessionId");
+            self.call("noteLastUsedItem", vec![json!(service_id)]);
+            self.call(
+                "tmuxRuntimeManager.killWindow",
+                vec![value_field(&window, "target").clone()],
+            );
+        }
+        self.offline_services
+            .retain(|service| string_field(service, "worktreePath") != path);
+        retain_not_path(&mut self.topology["services"], path);
+    }
+
     fn attached_live_session(&mut self, path: &str) -> Option<Value> {
         let pairs = array_field(self.input, "sessionWorktreePaths");
         let live_ids = array_field(self.input, "liveSessionIds")
@@ -230,8 +429,10 @@ impl<'a> PersistenceWorktreeState<'a> {
         json!({
             "ok": true,
             "returned": returned,
+            "completion": Value::Null,
             "host": self.host_snapshot(),
             "topology": self.topology,
+            "operationFailures": self.operation_failures,
         })
     }
 
@@ -241,6 +442,7 @@ impl<'a> PersistenceWorktreeState<'a> {
             "error": error,
             "host": self.host_snapshot(),
             "topology": self.topology,
+            "operationFailures": self.operation_failures,
         })
     }
 
@@ -248,14 +450,125 @@ impl<'a> PersistenceWorktreeState<'a> {
         json!({
             "offlineSessions": self.offline_sessions,
             "offlineServices": self.offline_services,
-            "footerFlash": Value::Null,
-            "footerFlashTicks": Value::Null,
+            "footerFlash": self.footer_flash,
+            "footerFlashTicks": self.footer_flash_ticks,
+            "pendingWorktreeCreatePaths": self.pending_worktree_create_paths,
+            "pendingWorktreeRemovalPaths": self.pending_worktree_removal_paths,
+            "dashboardWorktreeActions": self.dashboard_worktree_actions,
             "calls": self.calls,
         })
     }
 
     fn call(&mut self, method: &str, args: Vec<Value>) {
         self.calls.push(json!({ "method": method, "args": args }));
+    }
+
+    fn set_worktree_action(&mut self, path: &str, kind: &str, worktree_seed: Value) {
+        let entry = json!({
+            "path": path,
+            "kind": kind,
+            "timeoutMs": 180000,
+            "worktreeSeed": worktree_seed,
+        });
+        self.dashboard_worktree_actions.push(entry);
+        self.call(
+            "dashboardPendingActions.setWorktreeAction",
+            vec![
+                json!(path),
+                json!(kind),
+                json!({ "worktreeSeed": worktree_seed, "timeoutMs": 180000 }),
+            ],
+        );
+    }
+
+    fn clear_worktree_action(&mut self, path: &str) {
+        self.dashboard_worktree_actions
+            .retain(|entry| string_field(entry, "path") != path);
+        self.call(
+            "dashboardPendingActions.clearWorktreeAction",
+            vec![json!(path)],
+        );
+    }
+
+    fn set_remove_pending(&mut self, path: &str) {
+        self.call("listDesktopWorktrees", vec![]);
+        let worktree_seed = array_field(self.input, "worktrees")
+            .into_iter()
+            .find(|worktree| string_field(worktree, "path") == path)
+            .map(|worktree| {
+                json!({
+                    "name": string_field(&worktree, "name"),
+                    "branch": string_field(&worktree, "branch"),
+                    "path": path,
+                    "createdAt": string_field(&worktree, "createdAt"),
+                    "status": "offline",
+                    "sessions": [],
+                    "services": [],
+                })
+            });
+        self.pending_worktree_removal_paths.push(json!(path));
+        self.set_worktree_action(path, "removing", worktree_seed.unwrap_or(Value::Null));
+        self.refresh_dashboard_worktree_projection();
+    }
+
+    fn refresh_dashboard_worktree_projection(&mut self) {
+        self.call("invalidateDesktopStateSnapshot", vec![]);
+        self.call("refreshLocalDashboardModel", vec![]);
+        self.call("metadataServer.notifyChange", vec![]);
+    }
+
+    fn finish_remove_success(&mut self, path: &str) {
+        self.pending_worktree_removal_paths
+            .retain(|existing| existing.as_str() != Some(path));
+        self.clear_worktree_action(path);
+        self.refresh_dashboard_worktree_projection();
+    }
+
+    fn finish_remove_failure(&mut self, path: &str, message: &str) {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        self.record_operation_failure(
+            "remove",
+            &format!("Failed to remove worktree \"{name}\""),
+            message,
+            path,
+            name,
+        );
+        self.footer_flash = json!(format!("Failed: {message}"));
+        self.footer_flash_ticks = json!(5);
+        self.call(
+            "publishAlert",
+            vec![json!({
+                "kind": "task_failed",
+                "title": format!("Failed to remove worktree \"{name}\""),
+                "message": message,
+                "worktreePath": path,
+                "dedupeKey": format!("dashboard-operation-failed:worktree:remove:{path}:{message}"),
+            })],
+        );
+        self.pending_worktree_removal_paths
+            .retain(|existing| existing.as_str() != Some(path));
+        self.clear_worktree_action(path);
+        self.refresh_dashboard_worktree_projection();
+    }
+
+    fn record_operation_failure(
+        &mut self,
+        operation: &str,
+        title: &str,
+        message: &str,
+        worktree_path: &str,
+        worktree_name: &str,
+    ) {
+        self.operation_failures.push(json!({
+            "id": format!("<operation-failure-id:{}>", self.operation_failures.len() + 1),
+            "targetKind": "worktree",
+            "operation": operation,
+            "title": title,
+            "message": message,
+            "worktreePath": worktree_path,
+            "worktreeName": worktree_name,
+            "createdAt": NOW,
+        }));
     }
 }
 

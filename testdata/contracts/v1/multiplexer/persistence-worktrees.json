@@ -58,11 +58,15 @@
       "output": {
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "graveyarded" },
+        "completion": null,
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
           "calls": [
             { "method": "listDesktopWorktrees", "args": [] },
             { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<repo>"] },
@@ -131,7 +135,8 @@
               "createdAt": "2026-06-01T00:00:00.000Z"
             }
           ]
-        }
+        },
+        "operationFailures": []
       },
       "inputSha256": "3713a16931e421e0fa4cd84ced455f396553fb8e780fb4d481ff3c28f444d76f"
     },
@@ -175,6 +180,7 @@
       "output": {
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "graveyarded" },
+        "completion": null,
         "host": {
           "offlineSessions": [],
           "offlineServices": [
@@ -191,6 +197,9 @@
           ],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
           "calls": [
             { "method": "listDesktopWorktrees", "args": [] },
             { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<repo>"] },
@@ -253,7 +262,8 @@
               "createdAt": "2026-05-01T00:00:00.000Z"
             }
           ]
-        }
+        },
+        "operationFailures": []
       },
       "inputSha256": "3be28e1acce25b5098c232c36907d0b13b8128fc71d67a306a746a7b1fd6c9bf"
     },
@@ -287,17 +297,465 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
           "calls": [
             { "method": "listDesktopWorktrees", "args": [] },
             { "method": "isSessionRuntimeLive", "args": [{ "id": "codex-live", "label": "Codex Live" }] }
           ]
         },
-        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] }
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
       },
       "inputSha256": "7b913fb751f52367317fdd746a6a5c279dfba08c5321818c544e5540825aabff"
     },
     {
       "id": "multiplexer-persistence-worktrees-004",
+      "name": "creates a desktop worktree and settles topology active",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "createDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "name": "demo",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "worktrees": [],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "creating" },
+        "immediate": {
+          "host": {
+            "offlineSessions": [],
+            "offlineServices": [],
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "pendingWorktreeCreatePaths": ["<repo>/.aimux/worktrees/demo"],
+            "pendingWorktreeRemovalPaths": [],
+            "dashboardWorktreeActions": [
+              {
+                "path": "<repo>/.aimux/worktrees/demo",
+                "kind": "creating",
+                "timeoutMs": 180000,
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "<repo>/.aimux/worktrees/demo",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ],
+            "calls": [
+              { "method": "listDesktopWorktrees", "args": [] },
+              {
+                "method": "dashboardPendingActions.setWorktreeAction",
+                "args": [
+                  "<repo>/.aimux/worktrees/demo",
+                  "creating",
+                  {
+                    "worktreeSeed": {
+                      "name": "demo",
+                      "branch": "demo",
+                      "path": "<repo>/.aimux/worktrees/demo",
+                      "createdAt": "2026-06-01T00:00:00.000Z",
+                      "status": "offline",
+                      "isBare": false,
+                      "sessions": [],
+                      "services": []
+                    },
+                    "timeoutMs": 180000
+                  }
+                ]
+              },
+              { "method": "invalidateDesktopStateSnapshot", "args": [] },
+              { "method": "refreshLocalDashboardModel", "args": [] }
+            ]
+          },
+          "topology": {
+            "worktrees": [
+              {
+                "id": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+                "path": "<repo>/.aimux/worktrees/demo",
+                "name": "demo",
+                "status": "creating",
+                "branch": "demo",
+                "createdAt": "2026-06-01T00:00:00.000Z"
+              }
+            ],
+            "visibleGraveyard": [],
+            "allGraveyard": [],
+            "sessions": [],
+            "services": []
+          }
+        },
+        "completion": { "ok": true, "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "created" } },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": "Created: demo",
+          "footerFlashTicks": 3,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            {
+              "method": "dashboardPendingActions.setWorktreeAction",
+              "args": [
+                "<repo>/.aimux/worktrees/demo",
+                "creating",
+                {
+                  "worktreeSeed": {
+                    "name": "demo",
+                    "branch": "demo",
+                    "path": "<repo>/.aimux/worktrees/demo",
+                    "createdAt": "2026-06-01T00:00:00.000Z",
+                    "status": "offline",
+                    "isBare": false,
+                    "sessions": [],
+                    "services": []
+                  },
+                  "timeoutMs": 180000
+                }
+              ]
+            },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "dashboardPendingActions.clearWorktreeAction", "args": ["<repo>/.aimux/worktrees/demo"] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "status": "active",
+              "branch": "demo",
+              "basePath": "<repo>",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "operationFailures": []
+      },
+      "inputSha256": "b191a05330ee563d14a8bf9be4b18ac40f5c3797cf33372eea801793eb4a38f8"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-005",
+      "name": "records duplicate worktree create failures through the service owner",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "createDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "name": "demo",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "worktrees": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "<repo>/.aimux/worktrees/demo",
+            "status": "offline",
+            "sessions": [],
+            "services": []
+          }
+        ],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": false,
+        "error": "Worktree \"demo\" already exists",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            {
+              "method": "publishAlert",
+              "args": [
+                {
+                  "kind": "task_failed",
+                  "title": "Failed to create worktree \"demo\"",
+                  "message": "Worktree \"demo\" already exists",
+                  "worktreePath": "<repo>/.aimux/worktrees/demo",
+                  "dedupeKey": "dashboard-operation-failed:worktree:create:<repo>/.aimux/worktrees/demo:Worktree \"demo\" already exists"
+                }
+              ]
+            },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": [
+          {
+            "id": "<operation-failure-id:1>",
+            "targetKind": "worktree",
+            "operation": "create",
+            "title": "Failed to create worktree \"demo\"",
+            "message": "Worktree \"demo\" already exists",
+            "worktreePath": "<repo>/.aimux/worktrees/demo",
+            "worktreeName": "demo",
+            "createdAt": "2026-06-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "af5571520793d0e2332901236213916fbf52fae21285eedd95a4056b268106ab"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-006",
+      "name": "removes an existing desktop worktree and dependent topology",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "removeDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "worktrees": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "<repo>/.aimux/worktrees/demo",
+            "createdAt": "2026-05-01T00:00:00.000Z"
+          }
+        ],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "offlineSessions": [{ "id": "codex-demo", "worktreePath": "<repo>/.aimux/worktrees/demo" }],
+        "offlineServices": [{ "id": "service-demo", "worktreePath": "<repo>/.aimux/worktrees/demo" }],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "status": "active",
+              "branch": "demo",
+              "createdAt": "2026-05-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-demo",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/demo"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-demo",
+              "status": "stopped",
+              "command": "zsh",
+              "args": [],
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "cwd": "<repo>/.aimux/worktrees/demo",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "checkoutExists": true
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "removed" },
+        "completion": null,
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            {
+              "method": "dashboardPendingActions.setWorktreeAction",
+              "args": [
+                "<repo>/.aimux/worktrees/demo",
+                "removing",
+                {
+                  "worktreeSeed": {
+                    "name": "demo",
+                    "branch": "demo",
+                    "path": "<repo>/.aimux/worktrees/demo",
+                    "createdAt": "2026-05-01T00:00:00.000Z",
+                    "status": "offline",
+                    "sessions": [],
+                    "services": []
+                  },
+                  "timeoutMs": 180000
+                }
+              ]
+            },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] },
+            { "method": "syncSessionsFromTopology", "args": [] },
+            { "method": "listDesktopWorktrees", "args": [] },
+            { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<repo>"] },
+            { "method": "saveState", "args": [] },
+            { "method": "dashboardPendingActions.clearWorktreeAction", "args": ["<repo>/.aimux/worktrees/demo"] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "25f85481e7ee96a05f88d823f3f54b3a7633ff164cae6bdb2d8757c19b0418d2"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-007",
+      "name": "blocks removing a worktree while a live agent is attached",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "removeDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "worktrees": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "<repo>/.aimux/worktrees/demo",
+            "createdAt": "2026-05-01T00:00:00.000Z"
+          }
+        ],
+        "sessions": [{ "id": "codex-live", "label": "Codex Live" }],
+        "liveSessionIds": ["codex-live"],
+        "sessionWorktreePaths": [["codex-live", "<repo>/.aimux/worktrees/demo"]],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": true
+      },
+      "output": {
+        "ok": false,
+        "error": "Cannot remove \"demo\" while agent \"Codex Live\" is attached",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": "Failed: Cannot remove \"demo\" while agent \"Codex Live\" is attached",
+          "footerFlashTicks": 5,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            {
+              "method": "dashboardPendingActions.setWorktreeAction",
+              "args": [
+                "<repo>/.aimux/worktrees/demo",
+                "removing",
+                {
+                  "worktreeSeed": {
+                    "name": "demo",
+                    "branch": "demo",
+                    "path": "<repo>/.aimux/worktrees/demo",
+                    "createdAt": "2026-05-01T00:00:00.000Z",
+                    "status": "offline",
+                    "sessions": [],
+                    "services": []
+                  },
+                  "timeoutMs": 180000
+                }
+              ]
+            },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] },
+            { "method": "syncSessionsFromTopology", "args": [] },
+            { "method": "listDesktopWorktrees", "args": [] },
+            { "method": "isSessionRuntimeLive", "args": [{ "id": "codex-live", "label": "Codex Live" }] },
+            {
+              "method": "publishAlert",
+              "args": [
+                {
+                  "kind": "task_failed",
+                  "title": "Failed to remove worktree \"demo\"",
+                  "message": "Cannot remove \"demo\" while agent \"Codex Live\" is attached",
+                  "worktreePath": "<repo>/.aimux/worktrees/demo",
+                  "dedupeKey": "dashboard-operation-failed:worktree:remove:<repo>/.aimux/worktrees/demo:Cannot remove \"demo\" while agent \"Codex Live\" is attached"
+                }
+              ]
+            },
+            { "method": "dashboardPendingActions.clearWorktreeAction", "args": ["<repo>/.aimux/worktrees/demo"] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": [
+          {
+            "id": "<operation-failure-id:1>",
+            "targetKind": "worktree",
+            "operation": "remove",
+            "title": "Failed to remove worktree \"demo\"",
+            "message": "Cannot remove \"demo\" while agent \"Codex Live\" is attached",
+            "worktreePath": "<repo>/.aimux/worktrees/demo",
+            "worktreeName": "demo",
+            "createdAt": "2026-06-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "6ce62f517beef9dec6fbb737903a0b63c10f860a7d7367a8e6b938b4579c15b2"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-008",
       "name": "resurrects topology worktree graveyard entries",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardWorktree",
@@ -344,11 +802,15 @@
       "output": {
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "active" },
+        "completion": null,
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
           "calls": [
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
@@ -370,12 +832,13 @@
           "allGraveyard": [],
           "sessions": [],
           "services": []
-        }
+        },
+        "operationFailures": []
       },
       "inputSha256": "93e56701d4fd1e2bcd0bd0c00a4a52a87b42298f04017a8e5d3d4b58750079da"
     },
     {
-      "id": "multiplexer-persistence-worktrees-005",
+      "id": "multiplexer-persistence-worktrees-009",
       "name": "does not resurrect graveyarded worktrees when the checkout is missing",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardWorktree",
@@ -427,6 +890,9 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
           "calls": []
         },
         "topology": {
@@ -463,12 +929,13 @@
           ],
           "sessions": [],
           "services": []
-        }
+        },
+        "operationFailures": []
       },
       "inputSha256": "372a7f151173c39ba3ded8549e77455fa55adf160056d90cbe735481e72b930f"
     },
     {
-      "id": "multiplexer-persistence-worktrees-006",
+      "id": "multiplexer-persistence-worktrees-010",
       "name": "deletes missing graveyarded worktree topology and dependent assets",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "deleteGraveyardWorktree",
@@ -540,11 +1007,15 @@
       "output": {
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/gone", "status": "removed" },
+        "completion": null,
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
           "calls": [
             { "method": "saveState", "args": [] },
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
@@ -568,7 +1039,8 @@
           ],
           "sessions": [],
           "services": []
-        }
+        },
+        "operationFailures": []
       },
       "inputSha256": "356280c94e68198cf559d449f9dc90be93ef306cf76cb7fde04ce0872c502933"
     }
