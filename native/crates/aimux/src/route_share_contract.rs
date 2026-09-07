@@ -47,10 +47,9 @@ fn resolve_route_share(input: &Value) -> Value {
 
     if let Some(legacy_match) =
         find_legacy_path_share(legacy_active_share, session_id, route_project_path)
+        && str_field(legacy_match, "ownerUserId") != current_user_id
     {
-        if str_field(legacy_match, "ownerUserId") != current_user_id {
-            return legacy_match.clone();
-        }
+        return legacy_match.clone();
     }
 
     accepted_shares
