@@ -22,6 +22,8 @@ App-required `src` subgraph: 8 files / 2246 LOC.
 
 Main finding: resolving the three v2 no-proof roots collapses the survivor closure to zero. The source checkout has a small permanent app contract surface and no remaining unclassified `src/**/*.ts` survivors under the graph-cut rule.
 
+Dry-run graph cut addendum: the successful Phase 8 dry run removed the 527 DELETE `src/**/*.ts` files plus 276 capture-harness/Vitest support scripts and config files. The real cut should land support changes first, then make the deletion commit a graph-level removal.
+
 ## Resolved v2 Roots
 
 | File | Resolution | Evidence |

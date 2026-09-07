@@ -77,7 +77,14 @@ pub fn compute_build_stamp(artifact_paths: &[PathBuf]) -> io::Result<String> {
 
 pub fn project_service_artifact_paths(module_dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
     let candidates = runtime_native_artifact_candidates();
-    project_service_artifact_paths_with_native_candidates(module_dir, &candidates)
+    match project_service_source_artifact_paths(module_dir) {
+        Ok(paths) => Ok(paths),
+        Err(source_error) => candidates
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+            .map(|candidate| vec![candidate])
+            .ok_or(source_error),
+    }
 }
 
 pub fn project_service_artifact_paths_with_native_candidates(
@@ -89,6 +96,10 @@ pub fn project_service_artifact_paths_with_native_candidates(
             return Ok(vec![candidate.clone()]);
         }
     }
+    project_service_source_artifact_paths(module_dir)
+}
+
+fn project_service_source_artifact_paths(module_dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
     let module_dir = module_dir.as_ref();
     Ok(vec![
         resolve_artifact(
@@ -111,6 +122,13 @@ fn runtime_native_artifact_candidates() -> Vec<PathBuf> {
         && path.file_name().and_then(|value| value.to_str()) == Some("aimux")
     {
         candidates.push(path);
+    }
+    if let Ok(path) = std::env::current_exe()
+        && let Some(profile_dir) = path.parent().and_then(|deps_dir| deps_dir.parent())
+        && path.parent().and_then(|deps_dir| deps_dir.file_name())
+            == Some(std::ffi::OsStr::new("deps"))
+    {
+        candidates.push(profile_dir.join("aimux"));
     }
     if let Some(root) = std::env::var_os("AIMUX_ROOT")
         .map(PathBuf::from)

@@ -15,7 +15,7 @@ fn rewrite_status_tracks_translation_first_phases() {
     assert_eq!(status.version, 2);
     assert!(status.strategy.contains("translation first"));
     assert!(status.end_state.contains("zero Node"));
-    assert_eq!(status.progress_estimate_percent, 20);
+    assert_eq!(status.progress_estimate_percent, 21);
     assert!(status.active_slice.contains("legacy Node"));
     assert!(
         status
@@ -27,7 +27,7 @@ fn rewrite_status_tracks_translation_first_phases() {
         status
             .checkpoints
             .iter()
-            .any(|checkpoint| checkpoint.contains("feature-parity default"))
+            .any(|checkpoint| checkpoint.contains("production dashboard launch default"))
     );
     assert!(
         status

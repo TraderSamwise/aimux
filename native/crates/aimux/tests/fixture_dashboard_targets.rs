@@ -66,7 +66,11 @@ fn normalize_dashboard_stamps_inner(value: Value, stamps: &mut Vec<String>) -> V
                 .map(|(key, value)| (key, normalize_dashboard_stamps_inner(value, stamps)))
                 .collect(),
         ),
-        Value::String(text) if is_dashboard_stamp(&text) => {
+        Value::String(text) => {
+            let text = normalize_dashboard_launcher_path(&text);
+            if !is_dashboard_stamp(&text) {
+                return Value::String(text);
+            }
             let index = stamps
                 .iter()
                 .position(|existing| existing == &text)
@@ -78,6 +82,21 @@ fn normalize_dashboard_stamps_inner(value: Value, stamps: &mut Vec<String>) -> V
         }
         value => value,
     }
+}
+
+fn normalize_dashboard_launcher_path(value: &str) -> String {
+    const MARKER: &str = "/dist/launcher-bin.js";
+    let mut rest = value;
+    let mut normalized = String::new();
+    while let Some(marker_start) = rest.find(MARKER) {
+        let prefix = &rest[..marker_start];
+        let path_start = prefix.rfind('\'').map_or(0, |index| index + 1);
+        normalized.push_str(&prefix[..path_start]);
+        normalized.push_str("<repo>/dist/launcher-bin.js");
+        rest = &rest[marker_start + MARKER.len()..];
+    }
+    normalized.push_str(rest);
+    normalized
 }
 
 fn is_dashboard_stamp(value: &str) -> bool {

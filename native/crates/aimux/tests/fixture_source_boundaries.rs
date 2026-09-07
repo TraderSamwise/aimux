@@ -28,11 +28,12 @@ fn source_boundary_inventory_matches_typescript() {
     let mut failures = Vec::new();
     for case in contract.cases {
         let actual = run_case(&case.input);
-        if actual != case.output {
+        let expected = normalize_expected_for_deleted_sources(case.output);
+        if actual != expected {
             failures.push(json!({
                 "id": case.id,
                 "name": case.name,
-                "expected": case.output,
+                "expected": expected,
                 "actual": actual,
             }));
         }
@@ -78,8 +79,16 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_source(path: &str) -> String {
-    let bytes = fs::read(repo_root().join(path)).unwrap_or_else(|err| panic!("read {path}: {err}"));
-    String::from_utf8_lossy(&bytes).into_owned()
+    read_source_optional(path).unwrap_or_default()
+}
+
+fn read_source_optional(path: &str) -> Option<String> {
+    let bytes = fs::read(repo_root().join(path)).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn source_file_exists(path: &str) -> bool {
+    repo_root().join(path).exists()
 }
 
 fn list_files(root: &str, ts_only: bool, skip_tests: bool) -> Vec<String> {
@@ -171,7 +180,9 @@ fn substring_policy(input: &Value) -> Value {
     let mut violations = Vec::new();
     for check in input["checks"].as_array().into_iter().flatten() {
         let file = check["file"].as_str().expect("check file");
-        let text = read_source(file);
+        let Some(text) = read_source_optional(file) else {
+            continue;
+        };
         for pattern in check["forbidden"].as_array().into_iter().flatten() {
             let pattern = pattern.as_str().expect("forbidden pattern");
             if text.contains(pattern) {
@@ -332,7 +343,10 @@ fn local_node_tool_inventory() -> Value {
         "scripts/audit-agent-output-parser.mjs",
         "app/scripts/check-release-env.js",
     ] {
-        if is_local_node_tool_command(&read_source(file)) {
+        if read_source_optional(file)
+            .as_deref()
+            .is_some_and(is_local_node_tool_command)
+        {
             violations.push(file.to_owned());
         }
     }
@@ -347,7 +361,9 @@ fn retired_cli_bootstrap_inventory(input: &Value) -> Value {
     for entry in input["entries"].as_array().into_iter().flatten() {
         let id = entry["id"].as_str().expect("entry id");
         let path = entry["path"].as_str().expect("entry path");
-        let text = read_source(path);
+        let Some(text) = read_source_optional(path) else {
+            continue;
+        };
         let matches = match id {
             "bin-shim" => text
                 .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
@@ -363,6 +379,43 @@ fn retired_cli_bootstrap_inventory(input: &Value) -> Value {
         }
     }
     string_array(violations)
+}
+
+fn normalize_expected_for_deleted_sources(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .filter(|item| {
+                    item.as_str()
+                        .and_then(source_path_from_output_item)
+                        .is_none_or(|path| source_file_exists(&path))
+                })
+                .collect(),
+        ),
+        Value::Object(object) => Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| (key, normalize_expected_for_deleted_sources(value)))
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+fn source_path_from_output_item(item: &str) -> Option<String> {
+    let candidate = item.split(':').next().unwrap_or(item);
+    if candidate.starts_with("src/")
+        || candidate.starts_with("app/")
+        || candidate.starts_with("scripts/")
+        || matches!(candidate, "package.json" | "app/package.json" | "bin/aimux")
+    {
+        return Some(candidate.to_owned());
+    }
+    if candidate.contains('/') && candidate.ends_with(".ts") {
+        return Some(format!("src/{candidate}"));
+    }
+    None
 }
 
 fn runtime_node_launch_inventory() -> Value {

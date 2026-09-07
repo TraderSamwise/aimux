@@ -11,6 +11,7 @@ use crate::tmux::{
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::PathBuf;
 
 const DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS: u64 = 20_000;
@@ -447,12 +448,16 @@ pub fn run_dashboard_targets_contract_case(case_id: &str, input: &Value) -> Valu
 }
 
 fn contract_dashboard_context() -> Result<DashboardTargetContext, String> {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("..")
-        .canonicalize()
+    let repo_root = std::env::temp_dir().join(format!(
+        "aimux-dashboard-targets-contract-{}",
+        std::process::id()
+    ));
+    let script_path = repo_root.join("dist/launcher-bin.js");
+    let implementation_path = repo_root.join("dist/main.js");
+    fs::create_dir_all(script_path.parent().expect("contract dist parent"))
         .map_err(|error| error.to_string())?;
+    fs::write(&script_path, "launcher-one").map_err(|error| error.to_string())?;
+    fs::write(&implementation_path, "main-one").map_err(|error| error.to_string())?;
     let spec = get_dashboard_command_spec_with_options(
         CONTRACT_PROJECT_ROOT,
         DashboardCommandSpecOptions {
@@ -461,8 +466,8 @@ fn contract_dashboard_context() -> Result<DashboardTargetContext, String> {
                 ("AIMUX_DAEMON_PORT".to_owned(), "43190".to_owned()),
                 ("AIMUX_ENV".to_owned(), "production".to_owned()),
             ]),
-            script_path: repo_root.join("dist/launcher-bin.js"),
-            implementation_path: repo_root.join("dist/main.js"),
+            script_path,
+            implementation_path,
             process_exec_path: CONTRACT_NODE_EXEC_PATH.to_owned(),
             home_dir: PathBuf::from(CONTRACT_HOME_DIR),
             platform: std::env::consts::OS.to_owned(),

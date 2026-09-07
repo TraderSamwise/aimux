@@ -362,7 +362,11 @@ where
     F: Fn(&str) -> String,
 {
     let args = core_command_args(raw_args);
-    if !is_core_cli_command(&args) {
+    let native_cutover_command = matches!(
+        args.first().map(String::as_str),
+        Some("dashboard-reload" | "restart-runtime")
+    );
+    if !native_cutover_command && !is_core_cli_command(&args) {
         return Err(CoreCliPlanError::Unsupported { args });
     }
     let mode = output_mode(&args);

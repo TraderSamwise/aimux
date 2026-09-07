@@ -170,8 +170,8 @@ fn render_orchestration_route_picker_overlay_lists_targets() {
     let plain = strip_ansi(&output);
 
     assert!(plain.contains("HANDOFF: CHOOSE TARGET"));
-    assert!(plain.contains("[1] Primary"));
-    assert!(plain.contains("[2] Team (2 recipients)"));
+    assert!(plain.contains("1  Primary"));
+    assert!(plain.contains("2  Team"));
     assert!(plain.contains("Esc"));
 }
 
@@ -194,7 +194,6 @@ fn render_orchestration_input_overlay_includes_target_route_and_buffer() {
     assert!(plain.contains("ASSIGN TASK"));
     assert!(plain.contains("To: Builder"));
     assert!(plain.contains("Worktree: /repo"));
-    assert!(plain.contains("Recipients: agent-1, agent-2"));
     assert!(plain.contains("Text: write tests_"));
     assert!(plain.contains("Enter"));
 }

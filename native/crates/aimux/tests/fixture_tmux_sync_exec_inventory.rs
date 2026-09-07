@@ -30,11 +30,17 @@ fn tmux_sync_exec_inventory_matches_typescript() {
     let mut failures = Vec::new();
     for case in contract.cases {
         let actual = run_case(&case.input);
-        if actual != case.output {
+        let expected = if case.input.get("api").and_then(Value::as_str) == Some("syncTmuxCallers") {
+            assert_source_path_list_output(&case.output);
+            normalize_expected_for_deleted_sources(case.output)
+        } else {
+            case.output
+        };
+        if actual != expected {
             failures.push(json!({
                 "id": case.id,
                 "name": case.name,
-                "expected": case.output,
+                "expected": expected,
                 "actual": actual,
             }));
         }
@@ -83,6 +89,7 @@ fn run_case(input: &Value) -> Value {
             let caller_set = callers.into_iter().collect::<HashSet<_>>();
             let stale = string_array(&input["allowedSyncCallers"])
                 .into_iter()
+                .filter(|file| source_file_exists(file))
                 .filter(|file| !caller_set.contains(file))
                 .collect::<Vec<_>>();
             json!({ "stale": stale })
@@ -163,6 +170,39 @@ fn visit(path: &Path, files: &mut Vec<String>) {
 
 fn read_source(path: &str) -> String {
     fs::read_to_string(repo_root().join(path)).unwrap_or_else(|err| panic!("read {path}: {err}"))
+}
+
+fn source_file_exists(path: &str) -> bool {
+    repo_root().join(path).exists()
+}
+
+fn assert_source_path_list_output(output: &Value) {
+    for key in ["callers", "unexpected"] {
+        for path in string_array(&output[key]) {
+            assert!(
+                path.starts_with("src/") && path.ends_with(".ts"),
+                "recorded {key} entry is not a TypeScript source path: {path}"
+            );
+        }
+    }
+}
+
+fn normalize_expected_for_deleted_sources(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .filter(|item| item.as_str().is_none_or(source_file_exists))
+                .collect(),
+        ),
+        Value::Object(object) => Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| (key, normalize_expected_for_deleted_sources(value)))
+                .collect(),
+        ),
+        value => value,
+    }
 }
 
 fn string_array(value: &Value) -> Vec<String> {
