@@ -1,14 +1,60 @@
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use serde_json::{Value, json};
+
+use crate::project_service::notifications::{
+    NotificationMutation, NotificationQuery, NotificationWriteInput, add_notification,
+    clear_notifications, list_notification_snapshot, mark_notifications_read,
+};
+
+static CONTRACT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn inbox_cleanup_contract(case: &Value) -> Value {
     match case["api"].as_str().unwrap_or_default() {
         "buildInboxCleanupPlan" => build_inbox_cleanup_plan(&case["input"]),
         "runInboxCleanup" => run_inbox_cleanup_contract(&case["input"]),
+        "persistenceMethods.cleanupInbox" => run_inbox_cleanup_runtime_contract_case(case),
         _ => Value::Null,
     }
+}
+
+pub fn run_inbox_cleanup_runtime_contract_case(case: &Value) -> Value {
+    let temp = ContractTempDir::new("aimux-inbox-cleanup-runtime");
+    let project_state_dir = temp.path();
+    let scenario_name = case.get("name").and_then(Value::as_str).unwrap_or_default();
+    let input = case.get("input").unwrap_or(&Value::Null);
+
+    if scenario_name.contains("archives a read+aged notification") {
+        let record = seed_notification(project_state_dir, Some("2026-01-01T00:00:00.000Z"));
+        if let Some(id) = record.get("id").and_then(Value::as_str) {
+            mark_notifications_read(
+                project_state_dir,
+                NotificationMutation {
+                    id: Some(id.to_owned()),
+                    ..NotificationMutation::default()
+                },
+            );
+        }
+    } else {
+        seed_notification(project_state_dir, None);
+    }
+
+    let notifications_before = notification_snapshot_value(project_state_dir);
+    let (result, calls) = cleanup_inbox_runtime(project_state_dir, input);
+    let notifications_after = notification_snapshot_value(project_state_dir);
+
+    normalize_runtime_output(
+        json!({
+            "result": result,
+            "calls": calls.value(),
+            "notificationsBefore": notifications_before,
+            "notificationsAfter": notifications_after,
+        }),
+        preserved_timestamps_for_case(scenario_name),
+    )
 }
 
 pub fn build_inbox_cleanup_plan(input: &Value) -> Value {
@@ -176,6 +222,269 @@ fn run_inbox_cleanup(plan: &Value, dry_run: bool, clear_results: &Value) -> Valu
         "plan": plan,
         "results": results,
     })
+}
+
+fn cleanup_inbox_runtime(project_state_dir: &Path, input: &Value) -> (Value, RuntimeCleanupCalls) {
+    let notifications = list_notification_snapshot(
+        project_state_dir,
+        NotificationQuery {
+            include_cleared: false,
+            ..NotificationQuery::default()
+        },
+    )
+    .notifications;
+    let protected_ids = notifications
+        .iter()
+        .filter(|notification| {
+            notification
+                .get("unread")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter_map(|notification| notification.get("id").and_then(Value::as_str))
+        .map(|id| Value::String(id.to_owned()))
+        .collect::<Vec<_>>();
+    let now = input
+        .get("now")
+        .and_then(Value::as_str)
+        .unwrap_or("1970-01-01T00:00:00.000Z");
+    let plan = build_inbox_cleanup_plan(&json!({
+        "now": now,
+        "notifications": notifications,
+        "protectedIds": protected_ids,
+    }));
+    let dry_run = input
+        .get("dryRun")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let result = run_inbox_cleanup_project(project_state_dir, &plan, dry_run);
+    let changed = result
+        .get("results")
+        .and_then(Value::as_array)
+        .is_some_and(|results| {
+            results
+                .iter()
+                .any(|item| item.get("status").and_then(Value::as_str) == Some("cleared"))
+        });
+    let mut calls = RuntimeCleanupCalls::default();
+    if changed && !dry_run {
+        calls.metadata_server_notify_change.push(json!([]));
+        if calls.is_dashboard_screen("coordination") {
+            let lifecycle = json!({
+                "mode": "dashboard",
+                "inputEpoch": 0,
+                "requiresInputEpoch": true,
+                "screen": "coordination",
+            });
+            calls
+                .refresh_coordination_from_service
+                .push(json!([{ "lifecycle": lifecycle }]));
+            if calls.is_dashboard_screen("coordination") {
+                calls.render_current_dashboard_view.push(json!([]));
+            }
+        }
+    }
+    (result, calls)
+}
+
+fn run_inbox_cleanup_project(project_state_dir: &Path, plan: &Value, dry_run: bool) -> Value {
+    let mut results = Vec::new();
+    if plan
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        for target in plan
+            .get("targets")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let id = target
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let reason = target
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            if dry_run {
+                results.push(json!({ "id": id, "reason": reason, "status": "dry-run" }));
+                continue;
+            }
+            let cleared = clear_notifications(
+                project_state_dir,
+                NotificationMutation {
+                    id: Some(id.clone()),
+                    ..NotificationMutation::default()
+                },
+            );
+            if cleared > 0 {
+                results.push(json!({ "id": id, "reason": reason, "status": "cleared" }));
+            } else {
+                results.push(json!({
+                    "id": id,
+                    "reason": reason,
+                    "status": "failed",
+                    "error": "notification not found",
+                }));
+            }
+        }
+    }
+    json!({
+        "dryRun": dry_run,
+        "plan": plan,
+        "results": results,
+    })
+}
+
+#[derive(Debug, Default)]
+struct RuntimeCleanupCalls {
+    is_dashboard_screen: Vec<Value>,
+    metadata_server_notify_change: Vec<Value>,
+    refresh_coordination_from_service: Vec<Value>,
+    render_current_dashboard_view: Vec<Value>,
+}
+
+impl RuntimeCleanupCalls {
+    fn is_dashboard_screen(&mut self, screen: &str) -> bool {
+        self.is_dashboard_screen.push(json!([screen]));
+        true
+    }
+
+    fn value(self) -> Value {
+        json!({
+            "isDashboardScreen": self.is_dashboard_screen,
+            "metadataServerNotifyChange": self.metadata_server_notify_change,
+            "refreshCoordinationFromService": self.refresh_coordination_from_service,
+            "renderCurrentDashboardView": self.render_current_dashboard_view,
+        })
+    }
+}
+
+fn seed_notification(project_state_dir: &Path, created_at: Option<&str>) -> Value {
+    add_notification(
+        project_state_dir,
+        NotificationWriteInput {
+            title: "needs input".to_owned(),
+            body: "waiting".to_owned(),
+            session_id: Some("claude-1".to_owned()),
+            kind: Some("needs_input".to_owned()),
+            created_at: created_at.map(str::to_owned),
+            ..NotificationWriteInput::default()
+        },
+    )
+    .expect("seed notification")
+}
+
+fn notification_snapshot_value(project_state_dir: &Path) -> Value {
+    let snapshot = list_notification_snapshot(
+        project_state_dir,
+        NotificationQuery {
+            include_cleared: true,
+            ..NotificationQuery::default()
+        },
+    );
+    json!({
+        "notifications": snapshot.notifications,
+        "total": snapshot.total,
+        "unreadCount": snapshot.unread_count,
+        "truncated": snapshot.truncated,
+    })
+}
+
+fn preserved_timestamps_for_case(name: &str) -> BTreeSet<&'static str> {
+    let mut timestamps = BTreeSet::from(["2026-05-18T00:00:00.000Z", "2026-06-01T00:00:00.000Z"]);
+    if name.contains("archives a read+aged notification") {
+        timestamps.insert("2026-01-01T00:00:00.000Z");
+    }
+    timestamps
+}
+
+fn normalize_runtime_output(mut value: Value, preserved_timestamps: BTreeSet<&str>) -> Value {
+    let mut ids = BTreeMap::new();
+    let mut timestamps = BTreeMap::new();
+    normalize_contract_value(&mut value, &preserved_timestamps, &mut ids, &mut timestamps);
+    value
+}
+
+fn normalize_contract_value(
+    value: &mut Value,
+    preserved_timestamps: &BTreeSet<&str>,
+    ids: &mut BTreeMap<String, String>,
+    timestamps: &mut BTreeMap<String, String>,
+) {
+    match value {
+        Value::String(text) => {
+            if looks_like_generated_notification_id(text) {
+                *text = next_token(ids, text, "id");
+            } else if looks_like_iso_timestamp(text)
+                && !preserved_timestamps.contains(text.as_str())
+            {
+                *text = next_token(timestamps, text, "ts");
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                normalize_contract_value(item, preserved_timestamps, ids, timestamps);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                normalize_contract_value(item, preserved_timestamps, ids, timestamps);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn next_token(tokens: &mut BTreeMap<String, String>, value: &str, prefix: &str) -> String {
+    if let Some(token) = tokens.get(value) {
+        return token.clone();
+    }
+    let token = format!("<{prefix}:{}>", tokens.len() + 1);
+    tokens.insert(value.to_owned(), token.clone());
+    token
+}
+
+fn looks_like_generated_notification_id(value: &str) -> bool {
+    value.starts_with("notification-record-") || value.starts_with("notification-")
+}
+
+fn looks_like_iso_timestamp(value: &str) -> bool {
+    value.len() == 24
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value.as_bytes().get(7) == Some(&b'-')
+        && value.as_bytes().get(10) == Some(&b'T')
+        && value.as_bytes().get(23) == Some(&b'Z')
+        && parse_iso_date(value).is_some()
+}
+
+struct ContractTempDir {
+    path: PathBuf,
+}
+
+impl ContractTempDir {
+    fn new(prefix: &str) -> Self {
+        let sequence = CONTRACT_TEMP_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("{prefix}-{}-{}", std::process::id(), sequence));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("create contract temp dir");
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for ContractTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 fn cleanup_target(notification: &Value, reason: &str) -> Value {
