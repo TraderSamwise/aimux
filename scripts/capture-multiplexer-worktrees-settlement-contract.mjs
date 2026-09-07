@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,11 @@ execFileSync("git", ["init", "-q"], { cwd: projectRoot });
 process.chdir(projectRoot);
 process.env.AIMUX_HOME = join(tmpRoot, "home");
 const projectRealRoot = projectRoot;
+const canonicalWorktreeRoot = join(tmpRoot, "canonical-worktrees");
+const canonicalLinkRoot = join(projectRoot, ".aimux", "worktrees");
+mkdirSync(join(canonicalWorktreeRoot, "demo"), { recursive: true });
+mkdirSync(join(projectRoot, ".aimux"), { recursive: true });
+symlinkSync(canonicalWorktreeRoot, canonicalLinkRoot, "dir");
 
 globalThis.Date = class FixedDate extends RealDate {
   constructor(...args) {
@@ -52,7 +57,10 @@ function normalizeRepo(value) {
   return JSON.parse(
     JSON.stringify(value, (_key, nested) => {
       if (typeof nested !== "string") return nested;
-      return nested.replaceAll(projectRealRoot, "/repo").replaceAll(projectRoot, "/repo");
+      return nested
+        .replaceAll(canonicalWorktreeRoot, "/canonical-worktrees")
+        .replaceAll(projectRealRoot, "/repo")
+        .replaceAll(projectRoot, "/repo");
     }),
   );
 }
@@ -61,7 +69,7 @@ function denormalizeRepo(value) {
   return JSON.parse(
     JSON.stringify(value, (_key, nested) => {
       if (typeof nested !== "string") return nested;
-      return nested.replaceAll("/repo", projectRoot);
+      return nested.replaceAll("/canonical-worktrees", canonicalWorktreeRoot).replaceAll("/repo", projectRoot);
     }),
   );
 }
@@ -377,6 +385,20 @@ const casesInput = [
     },
   },
   {
+    name: "waits for service-projected create failures after overlapping refreshes",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    waitMs: 700,
+    host: {
+      worktreeInputBuffer: "demo",
+      dashboardModelServiceRefreshedAt: 0,
+      refreshSteps: [
+        { result: false, refreshedAt: 1 },
+        { result: true, worktrees: [failedWorktree] },
+      ],
+    },
+  },
+  {
     name: "keeps immediate unprojected worktree create errors transient",
     api: "handleWorktreeInputKey",
     data: "\r",
@@ -385,6 +407,52 @@ const casesInput = [
       worktreeInputBuffer: "demo",
       postSteps: [{ type: "reject", message: "branch already exists", props: { status: 422, tuiApiRecoverable: false } }],
       refreshSteps: [{ result: true, worktrees: [] }],
+    },
+  },
+  {
+    name: "settles worktree create when optimistic and rendered paths canonicalize to the same directory",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    host: {
+      worktreeInputBuffer: "demo",
+      dashboardModelServiceRefreshedAt: 0,
+      refreshSteps: [
+        {
+          result: true,
+          worktrees: [{ ...realWorktree, path: "/canonical-worktrees/demo" }],
+        },
+      ],
+    },
+  },
+  {
+    name: "keeps project-service worktree creates pending while snapshots are temporarily unreachable",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    waitMs: 700,
+    host: {
+      worktreeInputBuffer: "demo",
+      refreshSteps: [
+        { result: false, worktrees: [] },
+        { result: false, worktrees: [] },
+        { result: true, worktrees: [realWorktree] },
+      ],
+    },
+  },
+  {
+    name: "moves slow worktree creates into background reconciliation instead of failing",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    waitMs: 700,
+    host: {
+      worktreeInputBuffer: "demo",
+      dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeStableSettleMs: 0,
+      dashboardWorktreeMutationReconcileMaxMs: 5000,
+      refreshSteps: [
+        { result: false, worktrees: [] },
+        { result: false, worktrees: [] },
+        { result: true, worktrees: [realWorktree] },
+      ],
     },
   },
   {

@@ -319,7 +319,8 @@ impl SettlementHost {
     ) {
         match status {
             AsyncStatus::Posted => {
-                self.refresh_dashboard_model();
+                let mut refreshed = self.refresh_dashboard_model();
+                let mut saw_unavailable_refresh = !refreshed;
                 if turns <= 1 {
                     self.reapply_pending();
                     self.call("renderDashboard", vec![]);
@@ -346,8 +347,61 @@ impl SettlementHost {
                     );
                     return;
                 }
+                while !self.has_rendered_real_worktree(&path) && self.wait_ms > 0 {
+                    if refreshed
+                        && self.mode == "dashboard"
+                        && self.dashboard_input_epoch == lifecycle_epoch
+                    {
+                        self.reapply_pending();
+                        self.call("renderDashboard", vec![]);
+                    }
+                    if self.refresh_steps.is_empty() {
+                        break;
+                    }
+                    refreshed = self.refresh_dashboard_model();
+                    saw_unavailable_refresh = saw_unavailable_refresh || !refreshed;
+                    if self.has_create_failure(&path) {
+                        break;
+                    }
+                }
+                if self.has_create_failure(&path) {
+                    if saw_unavailable_refresh {
+                        self.footer_flash = json!("worktree creating is still settling");
+                        self.footer_flash_ticks = json!(4);
+                        self.call("renderDashboard", vec![]);
+                        self.reapply_pending();
+                        self.call("renderDashboard", vec![]);
+                        self.call(
+                            "dashboardPendingActionsGetWorktreeAction",
+                            vec![json!(path)],
+                        );
+                        return;
+                    }
+                    self.footer_flash = json!("worktree creating is still settling");
+                    self.footer_flash_ticks = json!(4);
+                    self.call("renderDashboard", vec![]);
+                    self.call(
+                        "dashboardPendingActionsGetWorktreeAction",
+                        vec![json!(path)],
+                    );
+                    if !self.clear_worktree_action_if_token(&path, token) {
+                        return;
+                    }
+                    self.call("dashboardUiStateStoreMarkSelectionDirty", vec![]);
+                    self.call(
+                        "showDashboardError",
+                        vec![
+                            json!(format!("Failed to create \"{name}\"")),
+                            json!([format!("Path: {path}"), "Error: branch already exists"]),
+                        ],
+                    );
+                    return;
+                }
                 if !self.has_rendered_real_worktree(&path) {
-                    if self.mode == "dashboard" && self.dashboard_input_epoch == lifecycle_epoch {
+                    if self.mode == "dashboard"
+                        && self.dashboard_input_epoch == lifecycle_epoch
+                        && refreshed
+                    {
                         self.reapply_pending();
                         self.call("renderDashboard", vec![]);
                     }
@@ -401,35 +455,48 @@ impl SettlementHost {
         _turns: i64,
     ) {
         match status {
-            AsyncStatus::Posted => loop {
-                self.refresh_dashboard_model();
-                if !self.raw_has_worktree(&path) {
-                    if self.mode != "dashboard" && self.wait_ms > 0 {
-                        self.call(
-                            "dashboardPendingActionsGetWorktreeAction",
-                            vec![json!(path)],
-                        );
+            AsyncStatus::Posted => {
+                let mut polls = 0;
+                loop {
+                    self.refresh_dashboard_model();
+                    polls += 1;
+                    if !self.raw_has_worktree(&path) {
+                        if self.mode != "dashboard" && self.wait_ms > 0 {
+                            self.call(
+                                "dashboardPendingActionsGetWorktreeAction",
+                                vec![json!(path)],
+                            );
+                        }
+                        self.clear_worktree_action_if_token(&path, token);
+                        if self.mode == "dashboard" {
+                            self.finish_worktree_removal_success(&path, &name);
+                        } else {
+                            self.worktree_removal_jobs.remove(&path);
+                            self.set_current_worktree_removal_job();
+                            self.set_nav_order_from_groups();
+                        }
+                        break;
                     }
-                    self.clear_worktree_action_if_token(&path, token);
-                    if self.mode == "dashboard" {
-                        self.finish_worktree_removal_success(&path, &name);
-                    } else {
+                    if self.mode != "dashboard" && self.wait_ms > 0 && polls >= 2 {
                         self.worktree_removal_jobs.remove(&path);
                         self.set_current_worktree_removal_job();
-                        self.set_nav_order_from_groups();
-                    }
-                    break;
-                }
-                if self.refresh_steps.is_empty() || self.wait_ms <= 0 {
-                    if self.mode != "dashboard" {
                         self.call(
                             "dashboardPendingActionsGetWorktreeAction",
                             vec![json!(path)],
                         );
+                        break;
                     }
-                    break;
+                    if self.refresh_steps.is_empty() || self.wait_ms <= 0 {
+                        if self.mode != "dashboard" {
+                            self.call(
+                                "dashboardPendingActionsGetWorktreeAction",
+                                vec![json!(path)],
+                            );
+                        }
+                        break;
+                    }
                 }
-            },
+            }
             AsyncStatus::PostFailed(message) => {
                 self.clear_worktree_action_if_token(&path, token);
                 if let Some(job) = self.worktree_removal_jobs.get_mut(&path)
@@ -531,19 +598,20 @@ impl SettlementHost {
         }
     }
 
-    fn refresh_dashboard_model(&mut self) {
+    fn refresh_dashboard_model(&mut self) -> bool {
         self.call(
             "refreshDashboardModelFromService",
             vec![json!(true), json!({ "allowInactive": true })],
         );
         let Some(step) = self.refresh_steps.first().cloned() else {
-            return;
+            return true;
         };
         self.refresh_steps.remove(0);
         if let Some(worktrees) = array_field(&step, "worktrees") {
             self.dashboard_raw_worktree_groups_cache = worktrees;
             self.recompute_worktrees();
         }
+        step.get("result").and_then(Value::as_bool).unwrap_or(true)
     }
 
     fn set_worktree_action(&mut self, path: &str, kind: &str, opts: Value) -> i64 {
@@ -596,8 +664,8 @@ impl SettlementHost {
         for item in &self.dashboard_raw_worktree_groups_cache {
             let mut item = item.clone();
             let path = item.get("path").and_then(Value::as_str).unwrap_or_default();
-            seen.push(format!("worktree:{path}"));
-            if let Some(entry) = self.pending.get(&format!("worktree:{path}"))
+            seen.push(pending_key(path));
+            if let Some(entry) = self.pending_for_path(path)
                 && let Some(kind) = &entry.value
                 && let Value::Object(object) = &mut item
             {
@@ -643,14 +711,15 @@ impl SettlementHost {
 
     fn has_create_failure(&self, path: &str) -> bool {
         self.dashboard_worktree_groups_cache.iter().any(|group| {
-            str_field(group, "path") == path && group.get("operationFailure").is_some()
+            same_worktree_path(&str_field(group, "path"), path)
+                && group.get("operationFailure").is_some()
         }) || self
             .dashboard_operation_failures_cache
             .iter()
             .any(|failure| {
                 str_field(failure, "targetKind") == "worktree"
                     && str_field(failure, "operation") == "create"
-                    && str_field(failure, "worktreePath") == path
+                    && same_worktree_path(&str_field(failure, "worktreePath"), path)
             })
     }
 
@@ -658,12 +727,22 @@ impl SettlementHost {
         self.dashboard_raw_worktree_groups_cache
             .iter()
             .any(|group| {
-                str_field(group, "path") == path
+                same_worktree_path(&str_field(group, "path"), path)
                     && !group
                         .get("pending")
                         .and_then(Value::as_bool)
                         .unwrap_or_default()
             })
+    }
+
+    fn pending_for_path(&self, path: &str) -> Option<&PendingEntry> {
+        self.pending
+            .iter()
+            .find(|(key, _entry)| {
+                key.strip_prefix("worktree:")
+                    .is_some_and(|pending_path| same_worktree_path(pending_path, path))
+            })
+            .map(|(_key, entry)| entry)
     }
 
     fn raw_has_worktree(&self, path: &str) -> bool {
@@ -792,4 +871,18 @@ fn str_field_default(value: &Value, field: &str, default: &str) -> String {
 
 fn int_field(value: &Value, field: &str) -> i64 {
     value.get(field).and_then(Value::as_i64).unwrap_or_default()
+}
+
+fn pending_key(path: &str) -> String {
+    format!("worktree:{}", canonical_fixture_worktree_path(path))
+}
+
+fn same_worktree_path(left: &str, right: &str) -> bool {
+    canonical_fixture_worktree_path(left) == canonical_fixture_worktree_path(right)
+}
+
+fn canonical_fixture_worktree_path(path: &str) -> String {
+    path.strip_prefix("/canonical-worktrees/")
+        .map(|suffix| format!("/repo/.aimux/worktrees/{suffix}"))
+        .unwrap_or_else(|| path.to_owned())
 }
