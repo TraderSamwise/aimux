@@ -1066,6 +1066,9 @@ Priority fixture groups:
 - `multiplexer/persistence-statusline-snapshot.json`: statusline session,
   teammate, metadata, task-count, and dashboard-order projection behavior
   captured by running TypeScript `persistenceMethods.buildStatuslineSnapshot`.
+- `multiplexer/persistence-worktree-lists.json`: raw git worktree inventory
+  and pending-removal projection separation captured by running TypeScript
+  `persistenceMethods.listDesktopWorktrees` against a disposable git worktree.
 - `multiplexer/project-refresh.json`: project observability refresh return
   values, host-state transitions, payload validation, coalescing, and
   project-service call logs captured by running TypeScript

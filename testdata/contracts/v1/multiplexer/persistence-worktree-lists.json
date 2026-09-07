@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/persistence-methods.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-persistence-worktree-lists-contract.mjs",
+  "description": "Persistence raw and projected worktree-list behavior captured by running TypeScript against a disposable git worktree.",
+  "cases": [
+    {
+      "id": "multiplexer-persistence-worktree-lists-001",
+      "name": "keeps raw worktree lists free of pending removal state",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "listDesktopWorktrees",
+      "input": {
+        "name": "keeps raw worktree lists free of pending removal state",
+        "api": "listDesktopWorktrees",
+        "host": {
+          "pendingActions": [{ "target": "worktree", "path": "/repo/.aimux/worktrees/demo", "kind": "removing" }]
+        }
+      },
+      "output": {
+        "returned": [
+          { "name": "repo", "path": "/repo", "branch": "master", "isBare": false, "createdAt": "<createdAt:main>" },
+          {
+            "name": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "branch": "demo",
+            "isBare": false,
+            "createdAt": "<createdAt:demo>"
+          }
+        ]
+      },
+      "inputSha256": "d3c3de4b96afe652a149356b0f8413c5fbed409a005a369c01f2bcce576a9001"
+    },
+    {
+      "id": "multiplexer-persistence-worktree-lists-002",
+      "name": "projects raw worktree removal state only through projected worktree lists",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "listProjectedDesktopWorktrees",
+      "input": {
+        "name": "projects raw worktree removal state only through projected worktree lists",
+        "api": "listProjectedDesktopWorktrees",
+        "host": {
+          "pendingActions": [{ "target": "worktree", "path": "/repo/.aimux/worktrees/demo", "kind": "removing" }]
+        }
+      },
+      "output": {
+        "returned": [
+          { "name": "repo", "path": "/repo", "branch": "master", "isBare": false, "createdAt": "<createdAt:main>" },
+          {
+            "name": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "branch": "demo",
+            "isBare": false,
+            "createdAt": "<createdAt:demo>",
+            "pending": true,
+            "removing": true,
+            "pendingAction": "removing",
+            "pendingStartedAt": "2026-06-01T00:00:00.000Z",
+            "optimistic": true
+          }
+        ]
+      },
+      "inputSha256": "4af92b1b2f7e2d42f0e7aa3e68b9cd57cf55e2b04b0aa125baddaacd2320ca96"
+    }
+  ]
+}
