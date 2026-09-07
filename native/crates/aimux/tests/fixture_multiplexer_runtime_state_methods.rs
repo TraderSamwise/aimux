@@ -1,6 +1,6 @@
 use aimux::multiplexer_runtime_state_methods_contract::run_multiplexer_runtime_state_methods_contract_case;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXTURE: &str =
     include_str!("../../../../testdata/contracts/v1/multiplexer/runtime-state-methods.json");
@@ -26,7 +26,7 @@ fn multiplexer_runtime_state_methods_contract_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("multiplexer runtime-state methods fixture parses");
     assert_eq!(contract.source, "src/multiplexer/runtime-state.test.ts");
-    assert_eq!(contract.cases.len(), 34);
+    assert_eq!(contract.cases.len(), 38);
 
     let mut failures = Vec::new();
     for case in contract.cases {

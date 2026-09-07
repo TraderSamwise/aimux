@@ -32,6 +32,8 @@ globalThis.Date = class FixedDate extends RealDate {
 
 const runtimeState = await import(new URL("dist/multiplexer/runtime-state.js", ROOT));
 const paths = await import(new URL("dist/paths.js", ROOT));
+const metadataStore = await import(new URL("dist/metadata-store.js", ROOT));
+const { SessionBootstrapService } = await import(new URL("dist/session-bootstrap.js", ROOT));
 const topologySessions = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
 const topologyServices = await import(new URL("dist/runtime-core/topology-services.js", ROOT));
 
@@ -198,6 +200,75 @@ function recordBackendHost(input, calls) {
     saveState: callRecorder(calls, "saveState"),
     invalidateDesktopStateSnapshot: callRecorder(calls, "invalidateDesktopStateSnapshot"),
     writeStatuslineFile: callRecorder(calls, "writeStatuslineFile"),
+  };
+}
+
+function realArgComposition() {
+  const bootstrap = SessionBootstrapService.prototype;
+  return {
+    composeToolArgs: bootstrap.composeToolArgs.bind(bootstrap),
+    composeToolLaunch: bootstrap.composeToolLaunch.bind(bootstrap),
+    stripToolActionArgs: bootstrap.stripToolActionArgs.bind(bootstrap),
+    toolActionArgPatterns: bootstrap.toolActionArgPatterns.bind(bootstrap),
+  };
+}
+
+function resumeOfflineHost(input, calls) {
+  const labels = new Map(input.host?.sessionLabels ?? []);
+  const restored = [];
+  return {
+    projectRoot: input.projectRoot,
+    sessions: clone(input.host?.sessions ?? []),
+    offlineSessions: clone(input.host?.offlineSessions ?? []),
+    sessionLabels: labels,
+    sessionBootstrap: {
+      ...realArgComposition(),
+      canResumeWithBackendSessionId: callRecorder(
+        calls,
+        "sessionBootstrap.canResumeWithBackendSessionId",
+        (_tool, backendSessionId) => Boolean(backendSessionId),
+      ),
+    },
+    sessionTmuxTargets: new Map(input.host?.sessionTmuxTargets ?? []),
+    stoppingSessionIds: new Set(input.host?.stoppingSessionIds ?? []),
+    tmuxRuntimeManager: {
+      getTargetByWindowId: callRecorder(calls, "tmuxRuntimeManager.getTargetByWindowId", () => null),
+    },
+    getSessionLabel: callRecorder(calls, "getSessionLabel", (sessionId) => input.host?.labels?.[sessionId]),
+    invalidateDesktopStateSnapshot: callRecorder(calls, "invalidateDesktopStateSnapshot"),
+    saveState: callRecorder(calls, "saveState"),
+    writeStatuslineFile: callRecorder(calls, "writeStatuslineFile"),
+    updateContextWatcherSessions: callRecorder(calls, "updateContextWatcherSessions"),
+    debug: callRecorder(calls, "debug"),
+    createSession: callRecorder(calls, "createSession", (...args) => {
+      const session = { id: args[8], command: args[0] };
+      restored.push({ args: clone(args), session });
+      return session;
+    }),
+    restored,
+  };
+}
+
+function runResumeOfflineSession(input) {
+  const calls = [];
+  const host = resumeOfflineHost(input, calls);
+  let thrown = null;
+  try {
+    runtimeState.resumeOfflineSession(host, input.session);
+  } catch (error) {
+    thrown = error instanceof Error ? error.message : String(error);
+  }
+  return {
+    thrown,
+    host: {
+      sessions: clone(host.sessions),
+      offlineSessions: clone(host.offlineSessions),
+      sessionLabels: mapEntries(host.sessionLabels),
+      restored: host.restored,
+    },
+    topology: snapshotTopology(),
+    metadata: metadataStore.loadMetadataState(input.projectRoot),
+    calls,
   };
 }
 
@@ -1376,6 +1447,152 @@ await record(
     const services = runtimeState.buildLiveServiceStates(host);
     return { services, calls };
   },
+);
+
+await record(
+  cases,
+  "resumeOfflineSession suppresses startup preamble for native backend resume",
+  "resumeOfflineSession",
+  "resume-backend-native",
+  ({ projectRoot }) => {
+    const team = { teamId: "team-1", parentSessionId: "parent-1", role: "reviewer" };
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "native-session",
+          team,
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      session: {
+        id: "codex-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        backendSessionId: "native-session",
+        args: [],
+        team,
+        worktreePath: projectRoot,
+      },
+      host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "resumeOfflineSession prunes stale offline cache rows without topology authority",
+  "resumeOfflineSession",
+  "resume-stale-cache",
+  ({ projectRoot }) => ({
+    projectRoot,
+    session: { id: "codex-stale", command: "codex", toolConfigKey: "codex", args: [], worktreePath: projectRoot },
+    host: {
+      sessions: [],
+      offlineSessions: [{ id: "codex-stale", command: "codex", toolConfigKey: "codex" }],
+    },
+    initialTopology: snapshotSessionServiceTopology(),
+    initialMetadata: metadataStore.loadMetadataState(projectRoot),
+  }),
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "resumeOfflineSession settles stale running derived activity to idle",
+  "resumeOfflineSession",
+  "resume-derived-running",
+  ({ projectRoot }) => {
+    metadataStore.updateSessionMetadata("codex-1", (current) => ({
+      ...current,
+      derived: { ...(current.derived ?? {}), activity: "running", attention: "normal" },
+    }));
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "native-session",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      session: {
+        id: "codex-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        backendSessionId: "native-session",
+        args: [],
+        worktreePath: projectRoot,
+      },
+      host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "resumeOfflineSession preserves waiting needs-input derived state",
+  "resumeOfflineSession",
+  "resume-derived-waiting",
+  ({ projectRoot }) => {
+    metadataStore.updateSessionMetadata("codex-1", (current) => ({
+      ...current,
+      derived: { ...(current.derived ?? {}), activity: "waiting", attention: "needs_input" },
+    }));
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "native-session",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      session: {
+        id: "codex-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        backendSessionId: "native-session",
+        args: [],
+        worktreePath: projectRoot,
+      },
+      host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
 );
 
 await writeContractJson(FIXTURE_PATH, {

@@ -2011,6 +2011,483 @@
         ]
       },
       "inputSha256": "a703c86e24458cff0c45caee6f97d1a7d4421a266ddd3b5e7431be23234876b5"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-035",
+      "name": "resumeOfflineSession suppresses startup preamble for native backend resume",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "session": {
+          "id": "codex-1",
+          "command": "codex",
+          "toolConfigKey": "codex",
+          "backendSessionId": "native-session",
+          "args": [],
+          "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+          "worktreePath": "<repo>"
+        },
+        "host": { "sessions": [], "offlineSessions": [{ "id": "codex-1" }] },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "native-session",
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        },
+        "initialMetadata": { "version": 1, "sessions": {} }
+      },
+      "output": {
+        "thrown": null,
+        "host": {
+          "sessions": [],
+          "offlineSessions": [],
+          "sessionLabels": [],
+          "restored": [
+            {
+              "args": [
+                "codex",
+                ["--dangerously-bypass-approvals-and-sandbox", "resume", "native-session"],
+                null,
+                "codex",
+                null,
+                null,
+                "<repo>",
+                "native-session",
+                "codex-1",
+                true,
+                true,
+                { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+                null,
+                ["--dangerously-bypass-approvals-and-sandbox"]
+              ],
+              "session": { "id": "codex-1", "command": "codex", "restoreStartedAt": 1780272000000 }
+            }
+          ]
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "native-session",
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            }
+          ]
+        },
+        "metadata": { "version": 1, "sessions": {} },
+        "calls": [
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              "native-session"
+            ]
+          },
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "debug", "args": ["resuming offline session codex-1 (backend=native-session)", "session"] },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--dangerously-bypass-approvals-and-sandbox", "resume", "native-session"],
+              null,
+              "codex",
+              null,
+              null,
+              "<repo>",
+              "native-session",
+              "codex-1",
+              true,
+              true,
+              { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+              null,
+              ["--dangerously-bypass-approvals-and-sandbox"]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "dcd26abda15165e0aacc4ee295e4e639ddcc1b312e4b0fb2c2a60aa266c8802c"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-036",
+      "name": "resumeOfflineSession prunes stale offline cache rows without topology authority",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "session": {
+          "id": "codex-stale",
+          "command": "codex",
+          "toolConfigKey": "codex",
+          "args": [],
+          "worktreePath": "<repo>"
+        },
+        "host": {
+          "sessions": [],
+          "offlineSessions": [{ "id": "codex-stale", "command": "codex", "toolConfigKey": "codex" }]
+        },
+        "initialTopology": { "sessions": [], "services": [] },
+        "initialMetadata": { "version": 1, "sessions": {} }
+      },
+      "output": {
+        "thrown": null,
+        "host": { "sessions": [], "offlineSessions": [], "sessionLabels": [], "restored": [] },
+        "topology": { "sessions": [] },
+        "metadata": { "version": 1, "sessions": {} },
+        "calls": [
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          {
+            "method": "debug",
+            "args": ["ignored stale offline resume for codex-stale: no offline topology row", "session"]
+          }
+        ]
+      },
+      "inputSha256": "8086172bfafcf1d3e2bf90089da23fda4a1860a58105e84ab0d485370c040fd7"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-037",
+      "name": "resumeOfflineSession settles stale running derived activity to idle",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "session": {
+          "id": "codex-1",
+          "command": "codex",
+          "toolConfigKey": "codex",
+          "backendSessionId": "native-session",
+          "args": [],
+          "worktreePath": "<repo>"
+        },
+        "host": { "sessions": [], "offlineSessions": [{ "id": "codex-1" }] },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "native-session",
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        },
+        "initialMetadata": {
+          "version": 1,
+          "sessions": {
+            "codex-1": {
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "derived": { "activity": "running", "attention": "normal" }
+            }
+          }
+        }
+      },
+      "output": {
+        "thrown": null,
+        "host": {
+          "sessions": [],
+          "offlineSessions": [],
+          "sessionLabels": [],
+          "restored": [
+            {
+              "args": [
+                "codex",
+                ["--dangerously-bypass-approvals-and-sandbox", "resume", "native-session"],
+                null,
+                "codex",
+                null,
+                null,
+                "<repo>",
+                "native-session",
+                "codex-1",
+                true,
+                true,
+                null,
+                null,
+                ["--dangerously-bypass-approvals-and-sandbox"]
+              ],
+              "session": { "id": "codex-1", "command": "codex", "restoreStartedAt": 1780272000000 }
+            }
+          ]
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "native-session",
+              "worktreePath": "<repo>"
+            }
+          ]
+        },
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "codex-1": {
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "derived": { "activity": "idle", "attention": "normal" }
+            }
+          }
+        },
+        "calls": [
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              "native-session"
+            ]
+          },
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "debug", "args": ["resuming offline session codex-1 (backend=native-session)", "session"] },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--dangerously-bypass-approvals-and-sandbox", "resume", "native-session"],
+              null,
+              "codex",
+              null,
+              null,
+              "<repo>",
+              "native-session",
+              "codex-1",
+              true,
+              true,
+              null,
+              null,
+              ["--dangerously-bypass-approvals-and-sandbox"]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "cf5234f8f9a9d45d6608351cf41be0878658bc63fd83284a6947d8f4ea8d2051"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-038",
+      "name": "resumeOfflineSession preserves waiting needs-input derived state",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "session": {
+          "id": "codex-1",
+          "command": "codex",
+          "toolConfigKey": "codex",
+          "backendSessionId": "native-session",
+          "args": [],
+          "worktreePath": "<repo>"
+        },
+        "host": { "sessions": [], "offlineSessions": [{ "id": "codex-1" }] },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "native-session",
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        },
+        "initialMetadata": {
+          "version": 1,
+          "sessions": {
+            "codex-1": {
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "derived": { "activity": "waiting", "attention": "needs_input" }
+            }
+          }
+        }
+      },
+      "output": {
+        "thrown": null,
+        "host": {
+          "sessions": [],
+          "offlineSessions": [],
+          "sessionLabels": [],
+          "restored": [
+            {
+              "args": [
+                "codex",
+                ["--dangerously-bypass-approvals-and-sandbox", "resume", "native-session"],
+                null,
+                "codex",
+                null,
+                null,
+                "<repo>",
+                "native-session",
+                "codex-1",
+                true,
+                true,
+                null,
+                null,
+                ["--dangerously-bypass-approvals-and-sandbox"]
+              ],
+              "session": { "id": "codex-1", "command": "codex", "restoreStartedAt": 1780272000000 }
+            }
+          ]
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "native-session",
+              "worktreePath": "<repo>"
+            }
+          ]
+        },
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "codex-1": {
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "derived": { "activity": "waiting", "attention": "needs_input" }
+            }
+          }
+        },
+        "calls": [
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              "native-session"
+            ]
+          },
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "debug", "args": ["resuming offline session codex-1 (backend=native-session)", "session"] },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--dangerously-bypass-approvals-and-sandbox", "resume", "native-session"],
+              null,
+              "codex",
+              null,
+              null,
+              "<repo>",
+              "native-session",
+              "codex-1",
+              true,
+              true,
+              null,
+              null,
+              ["--dangerously-bypass-approvals-and-sandbox"]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "f3a6484948907901796aed4b2a91289b8e84171cd2d2dceed68122cddf6fb1a5"
     }
   ]
 }

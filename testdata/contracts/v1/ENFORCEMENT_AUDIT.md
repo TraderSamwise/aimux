@@ -10,7 +10,7 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 234 suites, 281 suite/corpus bindings, 3564 cases.
+Summary: 234 suites, 281 suite/corpus bindings, 3568 cases.
 Binding statuses: PROVEN-FAILS 281, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
@@ -171,7 +171,7 @@ Binding statuses: PROVEN-FAILS 281, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_multiplexer_resource_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/project-refresh.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_resource_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/topology-refresh.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_runtime_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-helpers.json` | 10 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_runtime_state_methods` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-state-methods.json` | 34 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_runtime_state_methods` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-state-methods.json` | 38 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_runtime_state_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-state-refresh.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_services` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/services.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_services_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/services-runtime.json` | 14 | mutated fixture output failed owning Rust suite |

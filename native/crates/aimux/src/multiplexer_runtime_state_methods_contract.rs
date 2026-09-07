@@ -15,6 +15,7 @@ pub fn run_multiplexer_runtime_state_methods_contract_case(api: &str, input: &Va
         "loadOfflineServices" => load_offline_services(input),
         "reconcileOrphanedTopologyServices" => reconcile_orphaned_topology_services(input),
         "buildLiveServiceStates" => build_live_service_states(input),
+        "resumeOfflineSession" => resume_offline_session(input),
         api => panic!("unknown multiplexer runtime-state method api: {api}"),
     }
 }
@@ -727,8 +728,146 @@ fn build_live_service_states(input: &Value) -> Value {
     json!({ "services": services, "calls": calls })
 }
 
+fn resume_offline_session(input: &Value) -> Value {
+    let session = value_field(input, "session");
+    let session_id = string_field(session, "id");
+    let mut offline_sessions = array_at(input, &["host", "offlineSessions"]);
+    let mut calls = Vec::new();
+    let mut metadata = value_field(input, "initialMetadata").clone();
+    let topology_sessions = array_at(input, &["initialTopology", "sessions"]);
+
+    let Some(topology_session) = topology_sessions
+        .iter()
+        .find(|candidate| string_field(candidate, "id") == session_id)
+    else {
+        offline_sessions.retain(|candidate| string_field(candidate, "id") != session_id);
+        calls.push(call("invalidateDesktopStateSnapshot", vec![]));
+        calls.push(call("writeStatuslineFile", vec![]));
+        calls.push(call(
+            "debug",
+            vec![
+                json!(format!(
+                    "ignored stale offline resume for {session_id}: no offline topology row"
+                )),
+                json!("session"),
+            ],
+        ));
+        return json!({
+            "thrown": null,
+            "host": {
+                "sessions": array_at(input, &["host", "sessions"]),
+                "offlineSessions": offline_sessions,
+                "sessionLabels": [],
+                "restored": [],
+            },
+            "topology": { "sessions": topology_sessions },
+            "metadata": metadata,
+            "calls": calls,
+        });
+    };
+
+    let backend_session_id = string_field(topology_session, "backendSessionId");
+    calls.push(call(
+        "sessionBootstrap.canResumeWithBackendSessionId",
+        vec![codex_tool_config(), json!(backend_session_id)],
+    ));
+    if derived_activity(&metadata, &session_id).as_deref() == Some("running") {
+        set_at(
+            &mut metadata,
+            &["sessions", &session_id, "derived", "activity"],
+            json!("idle"),
+        );
+    }
+    calls.push(call("getSessionLabel", vec![json!(session_id)]));
+    offline_sessions.retain(|candidate| string_field(candidate, "id") != session_id);
+    calls.push(call("invalidateDesktopStateSnapshot", vec![]));
+    calls.push(call("writeStatuslineFile", vec![]));
+    calls.push(call(
+        "debug",
+        vec![
+            json!(format!(
+                "resuming offline session {session_id} (backend={backend_session_id})"
+            )),
+            json!("session"),
+        ],
+    ));
+
+    let team = topology_session.get("team").cloned().unwrap_or(Value::Null);
+    let create_args = vec![
+        json!(string_field(topology_session, "command")),
+        json!([
+            "--dangerously-bypass-approvals-and-sandbox",
+            "resume",
+            backend_session_id
+        ]),
+        Value::Null,
+        json!(string_field(topology_session, "toolConfigKey")),
+        Value::Null,
+        Value::Null,
+        json!(project_root_for(input)),
+        json!(backend_session_id),
+        json!(session_id),
+        json!(true),
+        json!(true),
+        team,
+        Value::Null,
+        json!(["--dangerously-bypass-approvals-and-sandbox"]),
+    ];
+    calls.push(call("createSession", create_args.clone()));
+
+    json!({
+        "thrown": null,
+        "host": {
+            "sessions": array_at(input, &["host", "sessions"]),
+            "offlineSessions": offline_sessions,
+            "sessionLabels": [],
+            "restored": [{
+                "args": create_args,
+                "session": {
+                    "id": session_id,
+                    "command": string_field(topology_session, "command"),
+                    "restoreStartedAt": 1780272000000_i64,
+                },
+            }],
+        },
+        "topology": { "sessions": topology_sessions },
+        "metadata": metadata,
+        "calls": calls,
+    })
+}
+
 fn call(method: &str, args: Vec<Value>) -> Value {
     json!({ "method": method, "args": args })
+}
+
+fn codex_tool_config() -> Value {
+    json!({
+        "command": "codex",
+        "args": ["--dangerously-bypass-approvals-and-sandbox"],
+        "enabled": true,
+        "resumeArgs": ["resume", "{sessionId}"],
+        "forkArgs": ["fork", "{sessionId}"],
+        "resumeByBackendSessionId": true,
+        "resumeFallback": ["resume", "--last"],
+        "developerInstructionsConfigKey": "developer_instructions",
+        "promptPatterns": ["^> $"],
+        "turnPatterns": ["^[>❯]\\s*(.+)"],
+        "startupInterstitials": [{
+            "id": "codex-update-available",
+            "when": ["Update available!", "Press enter to continue"],
+            "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$",
+        }],
+    })
+}
+
+fn derived_activity(metadata: &Value, session_id: &str) -> Option<String> {
+    metadata
+        .get("sessions")
+        .and_then(|sessions| sessions.get(session_id))
+        .and_then(|session| session.get("derived"))
+        .and_then(|derived| derived.get("activity"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn value_field<'a>(value: &'a Value, field: &str) -> &'a Value {
