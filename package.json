@@ -19,11 +19,11 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc",
-    "build:release": "rm -rf dist && tsc -p tsconfig.release.json",
+    "build": "yarn native:build",
+    "build:release": "cargo build --manifest-path native/Cargo.toml -p aimux --release",
     "check:local-build-boundary": "./scripts/check-local-build-boundary.mjs",
     "build:ui:local": "bash scripts/build-local-ui.sh",
-    "dev": "tsc --watch",
+    "dev": "cargo run --manifest-path native/Cargo.toml -p aimux --",
     "dev:gui": "yarn dev:gui:web",
     "dev:gui:web": "aimux daemon ensure && yarn --cwd app dev:web:local",
     "dev:gui:web:relay": "aimux daemon ensure && yarn --cwd app dev:web:relay",
@@ -38,13 +38,13 @@
     "start": "./bin/aimux",
     "test": "./scripts/captest.mjs vitest run",
     "test:watch": "./scripts/captest.mjs vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && yarn --cwd relay install --ignore-scripts --frozen-lockfile && yarn --cwd relay typecheck",
     "lint": "eslint src/ --max-warnings=0",
-    "audit:parser": "yarn build && ./scripts/audit-agent-output-parser.mjs",
-    "audit:parser:strict": "yarn build && ./scripts/audit-agent-output-parser.mjs --fail-on-findings",
-    "format": "prettier --write src/",
-    "format:check": "prettier --check src/",
-    "verify": "yarn typecheck && yarn lint && yarn test && yarn verify:app",
+    "audit:parser": "cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_agent_output_parser",
+    "audit:parser:strict": "cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_agent_output_parser && ./scripts/audit-fixture-enforcement.mjs --suite=fixture_agent_output_parser --corpus=testdata/contracts/v1/agent-output/parser-adversarial.json",
+    "format": "prettier --write src/ relay/src/",
+    "format:check": "prettier --check src/ relay/src/",
+    "verify": "yarn typecheck && yarn lint && yarn native:test && yarn test && yarn verify:app",
     "verify:push": "yarn typecheck && yarn --cwd app typecheck",
     "verify:app": "yarn --cwd app typecheck && yarn --cwd app lint --max-warnings=0 && yarn --cwd app test",
     "verify:codex-instructions": "bash scripts/verify-codex-developer-instructions.sh",
@@ -59,8 +59,7 @@
     "native:test": "cargo test --manifest-path native/Cargo.toml",
     "prepack": "yarn build:release && yarn build:ui:local",
     "prepare": "husky",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
-    "check:hosted": "yarn build && ./scripts/hosted-check.mjs"
+    "check:hosted": "yarn native:build && ./scripts/hosted-check.mjs"
   },
   "lint-staged": {
     "src/**/*.ts": [
@@ -93,28 +92,14 @@
     "url": "https://github.com/TraderSamwise/aimux/issues"
   },
   "type": "module",
-  "engines": {
-    "node": ">=24"
-  },
   "volta": {
     "node": "24.16.0",
     "yarn": "1.22.21"
-  },
-  "dependencies": {
-    "commander": "^14.0.0",
-    "node-notifier": "^10.0.1",
-    "node-pty": "^1.0.0",
-    "proper-lockfile": "^4.1.2",
-    "simple-git": "^3.33.0",
-    "strip-ansi": "^7.1.0",
-    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@humanfs/core": "^0.19.1",
     "@types/node": "^24.0.0",
-    "@types/node-notifier": "^8.0.5",
-    "@types/proper-lockfile": "^4.1.4",
     "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",

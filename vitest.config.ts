@@ -4,8 +4,7 @@ export default defineConfig({
   test: {
     fileParallelism: false,
     globals: true,
-    include: ["src/**/*.test.ts", "relay/src/**/*.test.ts"],
-    setupFiles: ["src/vitest.setup.ts"],
+    include: ["relay/src/**/*.test.ts"],
     testTimeout: 10_000,
   },
 });

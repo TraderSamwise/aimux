@@ -155,8 +155,6 @@ jobs:
             mv "$EXTRACT_DIR/aimux/native/darwin/aimux-notifier.app" "native/darwin-${arch}/"
           done
 
-      - run: yarn build:release
-
       - name: Verify npm package has no source maps
         run: |
           set -euo pipefail

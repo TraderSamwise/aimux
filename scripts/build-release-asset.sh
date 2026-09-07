@@ -47,7 +47,6 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 if [ "$BUILD_PROFILE" = "full" ]; then
-  yarn build:release
   yarn build:ui:local
 fi
 cargo build --manifest-path native/Cargo.toml -p aimux --release
