@@ -34,6 +34,7 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
                 env: std::env::vars().collect(),
                 current_argv_entry: std::env::args().next(),
                 current_entry_path: None,
+                process_exec_path: None,
                 home_dir: None,
             },
         );

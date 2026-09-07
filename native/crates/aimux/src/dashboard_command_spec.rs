@@ -3,6 +3,7 @@ use crate::cli_launcher::{
 };
 use crate::launcher_env::{DEFAULT_DAEMON_PORT, DEFAULT_ENV, DEFAULT_WEB_APP_URL};
 use crate::tmux::TmuxCommandSpec;
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -10,6 +11,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
 const DASHBOARD_ENV_KEYS: &[&str] = &[
@@ -22,6 +25,10 @@ const DASHBOARD_ENV_KEYS: &[&str] = &[
     "AIMUX_INSTALL_ROOT",
 ];
 const STABLE_SHIM_ENV_KEYS: &[&str] = &["AIMUX_CLI_BIN", "AIMUX_INSTALL_ROOT"];
+const CONTRACT_NODE_EXEC_PATH: &str = "/opt/homebrew/Cellar/node/25.8.1_1/bin/node";
+const CONTRACT_HOME_DIR: &str = "/Users/sam";
+
+static CONTRACT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardCommandSpec {
@@ -35,6 +42,7 @@ pub struct DashboardCommandSpecOptions {
     pub env: BTreeMap<String, String>,
     pub script_path: PathBuf,
     pub implementation_path: PathBuf,
+    pub process_exec_path: String,
     pub home_dir: PathBuf,
     pub platform: String,
     pub arch: String,
@@ -46,6 +54,7 @@ impl Default for DashboardCommandSpecOptions {
         Self {
             env: env::vars().collect(),
             implementation_path: script_path.clone(),
+            process_exec_path: script_path.to_string_lossy().into_owned(),
             script_path,
             home_dir: env::var_os("HOME")
                 .map(PathBuf::from)
@@ -69,16 +78,16 @@ pub fn get_dashboard_command_spec_with_options(
         env: options.env.clone(),
         current_argv_entry: Some(script_path.clone()),
         current_entry_path: Some(script_path.clone()),
+        process_exec_path: Some(options.process_exec_path.clone()),
         home_dir: Some(options.home_dir.clone()),
     });
     let artifact_paths = match launch.source {
         AimuxCliLaunchSource::NativeBinary => vec![PathBuf::from(&launch.command)],
-        AimuxCliLaunchSource::StableShim => resolve_stable_shim_native_artifact_path(
+        AimuxCliLaunchSource::StableShim => resolve_stable_shim_artifact_paths(
             Path::new(&launch.stable_shim_path),
             &options.platform,
             &options.arch,
         )
-        .map(|path| vec![path])
         .unwrap_or_else(|| {
             vec![
                 options.script_path.clone(),
@@ -125,26 +134,226 @@ pub fn get_dashboard_command_spec_with_options(
     })
 }
 
-fn resolve_stable_shim_native_artifact_path(
+pub fn run_dashboard_command_spec_contract_case(name: &str, input: &Value) -> Value {
+    let mut envs = if let Some(values) = input.get("envs").and_then(Value::as_array) {
+        values.to_vec()
+    } else if input.get("envPreparedBy").and_then(Value::as_str) == Some("prepareStableCliEnv") {
+        vec![
+            json!({}),
+            json!({
+                "AIMUX_HOME": "/Users/sam/.aimux",
+                "AIMUX_DAEMON_PORT": DEFAULT_DAEMON_PORT,
+                "AIMUX_ENV": DEFAULT_ENV,
+                "AIMUX_WEB_APP_URL": DEFAULT_WEB_APP_URL,
+            }),
+        ]
+    } else {
+        vec![input.get("env").cloned().unwrap_or_else(|| json!({}))]
+    };
+    if matches!(
+        name,
+        "stable shim launch stamp follows install root"
+            | "stable shim launch stamp follows native binary bytes"
+    ) && envs.len() == 1
+    {
+        envs.push(envs[0].clone());
+    }
+    let temp = ContractTempDir::new();
+    let repo_root = temp.0.join("repo");
+    let script_path = repo_root.join("dist/launcher-bin.js");
+    let implementation_path = repo_root.join("dist/main.js");
+    fs::create_dir_all(script_path.parent().expect("contract dist parent"))
+        .expect("create contract dist");
+    fs::write(&script_path, "launcher-one").expect("write contract launcher");
+    fs::write(&implementation_path, "main-one").expect("write contract implementation");
+
+    if name == "stable shim launch stamp follows install root"
+        || name == "stable shim launch stamp follows native binary bytes"
+    {
+        seed_contract_stable_shim(&temp.0);
+    }
+
+    let project_root = input
+        .get("projectRoot")
+        .and_then(Value::as_str)
+        .unwrap_or("/tmp/repo");
+    let mut outputs = envs
+        .iter()
+        .map(|env| {
+            let spec = get_dashboard_command_spec_with_options(
+                project_root,
+                DashboardCommandSpecOptions {
+                    env: contract_env(env, &repo_root, &temp.0),
+                    script_path: script_path.clone(),
+                    implementation_path: implementation_path.clone(),
+                    process_exec_path: CONTRACT_NODE_EXEC_PATH.to_owned(),
+                    home_dir: PathBuf::from(CONTRACT_HOME_DIR),
+                    platform: native_platform(env::consts::OS).to_owned(),
+                    arch: native_arch(env::consts::ARCH).to_owned(),
+                },
+            )
+            .expect("build dashboard command spec contract output");
+            summarize_dashboard_spec(&spec, &repo_root, &temp.0)
+        })
+        .collect::<Vec<_>>();
+
+    match name {
+        "environment change alters build stamp" => paired_output("first", "second", outputs),
+        "explicit production defaults do not alter build stamp" => {
+            paired_output("implicit", "explicit", outputs)
+        }
+        "prepared stable CLI defaults do not alter build stamp" => {
+            paired_output("implicit", "prepared", outputs)
+        }
+        "non-default web app env changes build stamp" => {
+            paired_output("production", "development", outputs)
+        }
+        "stable shim launch stamp follows install root"
+        | "stable shim launch stamp follows native binary bytes" => {
+            paired_output("first", "second", outputs)
+        }
+        _ => outputs.remove(0),
+    }
+}
+
+fn resolve_stable_shim_artifact_paths(
     stable_shim_path: &Path,
     platform: &str,
     arch: &str,
-) -> Option<PathBuf> {
+) -> Option<Vec<PathBuf>> {
     let real_shim_path = stable_shim_path.canonicalize().ok()?;
     if real_shim_path.file_name()?.to_str()? != "aimux"
         || real_shim_path.parent()?.file_name()?.to_str()? != "bin"
     {
         return None;
     }
-    let native_artifact_path = real_shim_path
-        .parent()?
-        .parent()?
+    let install_root = real_shim_path.parent()?.parent()?;
+    let artifact_paths = [
+        install_root.join("dist/launcher-bin.js"),
+        install_root.join("dist/main.js"),
+    ];
+    if !artifact_paths.iter().all(|path| path.exists()) {
+        return None;
+    }
+    let native_artifact_path = install_root
         .join("native")
         .join(format!("{platform}-{arch}"))
         .join("aimux");
-    native_artifact_path
-        .exists()
-        .then_some(native_artifact_path)
+    let mut paths = artifact_paths.to_vec();
+    if native_artifact_path.exists() {
+        paths.push(native_artifact_path);
+    }
+    Some(paths)
+}
+
+fn paired_output(first_key: &str, second_key: &str, mut outputs: Vec<Value>) -> Value {
+    let first = outputs.remove(0);
+    let second = outputs.remove(0);
+    let same_stamp = first.get("dashboardBuildStamp") == second.get("dashboardBuildStamp");
+    json!({
+        first_key: first,
+        second_key: second,
+        "sameStamp": same_stamp,
+    })
+}
+
+fn summarize_dashboard_spec(
+    spec: &DashboardCommandSpec,
+    repo_root: &Path,
+    temp_root: &Path,
+) -> Value {
+    let command = spec
+        .dashboard_command
+        .args
+        .get(1)
+        .map(String::as_str)
+        .unwrap_or_default();
+    json!({
+        "scriptPath": normalize_contract_path(&spec.script_path, repo_root, temp_root),
+        "dashboardBuildStamp": spec.dashboard_build_stamp,
+        "dashboardCommand": {
+            "cwd": spec.dashboard_command.cwd,
+            "command": spec.dashboard_command.command,
+            "args": spec.dashboard_command.args.iter().map(|arg| normalize_contract_path(arg, repo_root, temp_root)).collect::<Vec<_>>(),
+        },
+        "derived": {
+            "shellSyntaxOk": bash_syntax_ok(command),
+            "usesBashWrapper": spec.dashboard_command.command == "bash"
+                && spec.dashboard_command.args.first().map(String::as_str) == Some("-lc"),
+            "includesLegacyNodeDashboardEntrypoint": command.contains("--tmux-dashboard-internal"),
+            "includesNativeDashboardEntrypoint": command.contains("__dashboard-internal-native"),
+            "quotesPrintfNewline": command.contains("printf '%s\\n'"),
+            "hasExitCleanupTrap": command.contains("trap 'rm -f \"$output_file\"' EXIT"),
+            "hasSignalCleanupTrap": command.contains("trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP"),
+            "appendsSharedDebugLog": command.contains("/tmp/aimux-debug.log") || command.contains("tee -a"),
+            "printsStartupFrameBeforeEntrypoint": command.find("Starting Aimux dashboard...")
+                .zip(command.find("--tmux-dashboard-internal"))
+                .is_some_and(|(startup, entrypoint)| entrypoint > startup),
+            "entersAlternateScreenBeforeStartup": command.contains("\u{1b}[?1049h"),
+        },
+    })
+}
+
+fn bash_syntax_ok(command: &str) -> bool {
+    Command::new("bash")
+        .args(["-n", "-c", command])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn contract_env(env: &Value, repo_root: &Path, temp_root: &Path) -> BTreeMap<String, String> {
+    env.as_object()
+        .unwrap_or(&Map::new())
+        .iter()
+        .filter_map(|(key, value)| {
+            value.as_str().map(|value| {
+                (
+                    key.clone(),
+                    denormalize_contract_path(value, repo_root, temp_root),
+                )
+            })
+        })
+        .collect()
+}
+
+fn denormalize_contract_path(value: &str, repo_root: &Path, temp_root: &Path) -> String {
+    value
+        .replace("<REPO>", &path_text(repo_root))
+        .replace("<TMP>", &path_text(temp_root))
+}
+
+fn normalize_contract_path(value: &str, repo_root: &Path, temp_root: &Path) -> String {
+    value
+        .replace(&path_text(repo_root), "<REPO>")
+        .replace(&path_text(temp_root), "<TMP>")
+}
+
+fn seed_contract_stable_shim(temp_root: &Path) {
+    let shim = temp_root.join("bin/aimux");
+    fs::create_dir_all(shim.parent().expect("contract shim parent")).expect("create shim parent");
+    fs::write(&shim, "#!/usr/bin/env sh\n").expect("write shim");
+}
+
+struct ContractTempDir(PathBuf);
+
+impl ContractTempDir {
+    fn new() -> Self {
+        let sequence = CONTRACT_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = env::temp_dir().join(format!(
+            "aimux-dashboard-command-contract-{}-{sequence}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("create dashboard command contract temp");
+        Self(path)
+    }
+}
+
+impl Drop for ContractTempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 fn build_dashboard_env_command_prefix(

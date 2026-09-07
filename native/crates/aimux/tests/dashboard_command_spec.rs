@@ -47,6 +47,7 @@ fn source_options(
         env,
         script_path,
         implementation_path,
+        process_exec_path: test_dir.0.join("node").to_string_lossy().into_owned(),
         home_dir: test_dir.0.join("home"),
         platform: "test-platform".into(),
         arch: "test-arch".into(),
@@ -69,8 +70,8 @@ fn command_uses_dashboard_entrypoint_and_shell_wrapper() {
     assert_eq!(spec.dashboard_command.command, "bash");
     assert_eq!(spec.dashboard_command.cwd, "/tmp/repo");
     assert_eq!(spec.dashboard_command.args[0], "-lc");
-    assert!(command.contains("__dashboard-internal-native"));
-    assert!(!command.contains("--tmux-dashboard-internal"));
+    assert!(command.contains("--tmux-dashboard-internal"));
+    assert!(!command.contains("__dashboard-internal-native"));
     assert!(command.contains(&spec.script_path));
     assert!(command.contains("Starting Aimux dashboard..."));
     assert!(command.contains("trap 'rm -f \"$output_file\"' EXIT"));
@@ -87,10 +88,10 @@ fn command_uses_dashboard_entrypoint_and_shell_wrapper() {
 }
 
 #[test]
-fn dashboard_selector_ignores_legacy_node_opt_out() {
+fn dashboard_selector_uses_native_only_when_requested() {
     let test_dir = TestDir::new();
     let base_options = source_options(&test_dir, BTreeMap::new());
-    let native = get_dashboard_command_spec_with_options("/tmp/repo", base_options.clone())
+    let default = get_dashboard_command_spec_with_options("/tmp/repo", base_options.clone())
         .expect("native spec");
     let mut node_options = base_options;
     node_options
@@ -98,15 +99,24 @@ fn dashboard_selector_ignores_legacy_node_opt_out() {
         .insert("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into());
     let node =
         get_dashboard_command_spec_with_options("/tmp/repo", node_options).expect("node spec");
+    let mut native_options = source_options(
+        &test_dir,
+        BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into())]),
+    );
+    native_options.process_exec_path = test_dir.0.join("node").to_string_lossy().into_owned();
+    let native =
+        get_dashboard_command_spec_with_options("/tmp/repo", native_options).expect("native spec");
     let node_command = command_text(&node);
-    let native_command = command_text(&native);
+    let default_command = command_text(&default);
 
-    assert!(node_command.contains("__dashboard-internal-native"));
-    assert!(!node_command.contains("--tmux-dashboard-internal"));
+    assert!(default_command.contains("--tmux-dashboard-internal"));
+    assert!(!default_command.contains("__dashboard-internal-native"));
+    assert!(node_command.contains("--tmux-dashboard-internal"));
+    assert!(!node_command.contains("__dashboard-internal-native"));
     assert!(!node_command.contains("AIMUX_DASHBOARD_IMPLEMENTATION='node'"));
-    assert!(native_command.contains("__dashboard-internal-native"));
-    assert!(!native_command.contains("AIMUX_DASHBOARD_IMPLEMENTATION='native'"));
-    assert_eq!(node.dashboard_build_stamp, native.dashboard_build_stamp);
+    assert!(command_text(&native).contains("__dashboard-internal-native"));
+    assert!(!command_text(&native).contains("--tmux-dashboard-internal"));
+    assert_ne!(node.dashboard_build_stamp, native.dashboard_build_stamp);
 }
 
 #[test]
@@ -222,8 +232,8 @@ fn stable_shim_uses_install_artifacts_and_keeps_stable_environment() {
         .expect("first stable spec");
     assert!(command_text(&first).contains(&format!("AIMUX_CLI_BIN='{}'", shim.to_string_lossy())));
     assert!(!command_text(&first).contains("-u 'AIMUX_CLI_BIN'"));
-    assert!(command_text(&first).contains("__dashboard-internal-native"));
-    assert!(!command_text(&first).contains("--tmux-dashboard-internal"));
+    assert!(command_text(&first).contains("--tmux-dashboard-internal"));
+    assert!(!command_text(&first).contains("__dashboard-internal-native"));
 
     fs::write(install_root.join("dist/launcher-bin.js"), "launcher-two")
         .expect("change installed launcher");
@@ -231,14 +241,14 @@ fn stable_shim_uses_install_artifacts_and_keeps_stable_environment() {
         get_dashboard_command_spec_with_options("/tmp/repo", options.clone())
             .expect("changed launcher spec")
             .dashboard_build_stamp;
-    assert_eq!(installed_launcher_changed, first.dashboard_build_stamp);
+    assert_ne!(installed_launcher_changed, first.dashboard_build_stamp);
 
     fs::write(install_root.join("dist/main.js"), "main-two").expect("change installed main");
     let installed_js_changed =
         get_dashboard_command_spec_with_options("/tmp/repo", options.clone())
             .expect("changed JS spec")
             .dashboard_build_stamp;
-    assert_eq!(installed_js_changed, installed_launcher_changed);
+    assert_ne!(installed_js_changed, installed_launcher_changed);
 
     fs::write(
         install_root.join("native/test-platform-test-arch/aimux"),
@@ -282,8 +292,8 @@ fn stable_native_dashboard_stamp_does_not_require_installed_js_artifacts() {
 
     let first = get_dashboard_command_spec_with_options("/tmp/repo", options.clone())
         .expect("native-only stable spec");
-    assert!(command_text(&first).contains("__dashboard-internal-native"));
-    assert!(!command_text(&first).contains("--tmux-dashboard-internal"));
+    assert!(command_text(&first).contains("--tmux-dashboard-internal"));
+    assert!(!command_text(&first).contains("__dashboard-internal-native"));
 
     fs::write(
         install_root.join("native/test-platform-test-arch/aimux"),
@@ -293,13 +303,13 @@ fn stable_native_dashboard_stamp_does_not_require_installed_js_artifacts() {
     let native_changed = get_dashboard_command_spec_with_options("/tmp/repo", options.clone())
         .expect("changed native spec")
         .dashboard_build_stamp;
-    assert_ne!(native_changed, first.dashboard_build_stamp);
+    assert_eq!(native_changed, first.dashboard_build_stamp);
 
     fs::write(&options.implementation_path, "source-main-two").expect("change source main");
     let source_changed = get_dashboard_command_spec_with_options("/tmp/repo", options)
         .expect("source-changed native stable spec")
         .dashboard_build_stamp;
-    assert_eq!(source_changed, native_changed);
+    assert_ne!(source_changed, native_changed);
 }
 
 fn create_install(root: &Path, label: &str, native_contents: &str) -> PathBuf {

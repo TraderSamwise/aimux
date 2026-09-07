@@ -22,6 +22,7 @@ pub struct AimuxCliLaunchOptions {
     pub env: BTreeMap<String, String>,
     pub current_argv_entry: Option<String>,
     pub current_entry_path: Option<String>,
+    pub process_exec_path: Option<String>,
     pub home_dir: Option<PathBuf>,
 }
 
@@ -54,7 +55,24 @@ pub fn get_aimux_daemon_launch_command(options: AimuxCliLaunchOptions) -> AimuxC
 }
 
 pub fn get_aimux_dashboard_launch_command(options: AimuxCliLaunchOptions) -> AimuxCliLaunchCommand {
-    resolve_aimux_cli_launch_command_with_native_preference(dashboard_launch_args(), options, true)
+    let use_native_dashboard = options
+        .env
+        .get("AIMUX_DASHBOARD_IMPLEMENTATION")
+        .map(|value| value.trim())
+        == Some("native");
+    if use_native_dashboard {
+        resolve_aimux_cli_launch_command_with_native_preference(
+            native_dashboard_launch_args(),
+            options,
+            true,
+        )
+    } else {
+        resolve_aimux_cli_launch_command_with_native_preference(
+            legacy_dashboard_launch_args(),
+            options,
+            false,
+        )
+    }
 }
 
 pub fn get_aimux_project_service_launch_command(
@@ -88,6 +106,7 @@ fn resolve_aimux_cli_launch_command_with_native_preference(
     let env = options.env;
     let home_dir = options.home_dir.unwrap_or_else(home_dir);
     let stable_shim_path = get_aimux_stable_shim_path_from(&env, home_dir.clone());
+    let process_exec_path = options.process_exec_path.unwrap_or_else(current_entry_path);
     let current_entry_path = options
         .current_entry_path
         .unwrap_or_else(current_entry_path);
@@ -123,8 +142,10 @@ fn resolve_aimux_cli_launch_command_with_native_preference(
         };
     }
     AimuxCliLaunchCommand {
-        command: current_entry_path.clone(),
-        args,
+        command: process_exec_path,
+        args: std::iter::once(current_entry_path.clone())
+            .chain(args)
+            .collect(),
         source: AimuxCliLaunchSource::CurrentEntry,
         current_entry_path,
         stable_shim_path,
@@ -141,8 +162,12 @@ fn project_service_launch_args(project_id: &str, project_root: &str) -> Vec<Stri
     ]
 }
 
-fn dashboard_launch_args() -> Vec<String> {
+fn native_dashboard_launch_args() -> Vec<String> {
     vec!["__dashboard-internal-native".into()]
+}
+
+fn legacy_dashboard_launch_args() -> Vec<String> {
+    vec!["--tmux-dashboard-internal".into()]
 }
 
 struct ResolveInstalledNativeInput<'a> {

@@ -631,6 +631,7 @@ fn spawn_daemon(resolver: &PathResolver) -> Result<(), DaemonSupervisorError> {
         env: std::env::vars().collect::<BTreeMap<_, _>>(),
         current_argv_entry: std::env::args().next(),
         current_entry_path: None,
+        process_exec_path: None,
         home_dir: None,
     });
     let stdio_log = resolver.daemon_stdio_log_path();

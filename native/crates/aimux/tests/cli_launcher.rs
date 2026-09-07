@@ -51,6 +51,7 @@ fn options(
                 .to_string_lossy()
                 .into_owned(),
         ),
+        process_exec_path: Some(test_dir.0.join("node").to_string_lossy().into_owned()),
         home_dir: Some(test_dir.0.join("home")),
     }
 }
@@ -85,8 +86,15 @@ fn launch_command_uses_current_entry_when_stable_shim_is_absent() {
     ));
 
     assert_eq!(command.source, AimuxCliLaunchSource::CurrentEntry);
-    assert_eq!(command.command, command.current_entry_path);
-    assert_eq!(command.args, vec!["daemon", "run"]);
+    assert_eq!(command.command, test_dir.0.join("node").to_string_lossy());
+    assert_eq!(
+        command.args,
+        vec![
+            test_dir.0.join("current/aimux").to_string_lossy(),
+            "daemon".into(),
+            "run".into()
+        ]
+    );
 }
 
 #[test]
@@ -134,7 +142,7 @@ fn launch_command_uses_stable_shim_for_native_install_root_entry() {
 
     assert_eq!(command.source, AimuxCliLaunchSource::StableShim);
     assert_eq!(command.command, stable.to_string_lossy());
-    assert_eq!(command.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(command.args, vec!["--tmux-dashboard-internal"]);
 }
 
 #[test]
@@ -164,28 +172,46 @@ fn daemon_launch_uses_explicit_native_binary_when_available() {
 }
 
 #[test]
-fn dashboard_launch_ignores_legacy_node_opt_out() {
+fn dashboard_launch_uses_legacy_default_unless_native_is_requested() {
     let test_dir = TestDir::new();
     let default_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
         BTreeMap::new(),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
     ));
-    assert_eq!(default_command.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(
+        default_command.args,
+        vec![
+            test_dir.0.join("current/aimux").to_string_lossy(),
+            "--tmux-dashboard-internal".into()
+        ]
+    );
 
     let node_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
         BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into())]),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
     ));
-    assert_eq!(node_command.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(
+        node_command.args,
+        vec![
+            test_dir.0.join("current/aimux").to_string_lossy(),
+            "--tmux-dashboard-internal".into()
+        ]
+    );
 
     let native_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
         BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), " native ".into())]),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
     ));
-    assert_eq!(native_command.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(
+        native_command.args,
+        vec![
+            test_dir.0.join("current/aimux").to_string_lossy(),
+            "__dashboard-internal-native".into()
+        ]
+    );
 }
 
 #[test]
@@ -199,16 +225,20 @@ fn project_service_and_identity_args_match_typescript_helpers() {
     assert_eq!(
         project.args,
         vec![
-            "__project-service-internal",
-            "--project-id",
-            "project-1",
-            "--project-root",
-            "/repo"
+            test_dir.0.join("current/aimux").to_string_lossy(),
+            "__project-service-internal".into(),
+            "--project-id".into(),
+            "project-1".into(),
+            "--project-root".into(),
+            "/repo".into()
         ]
     );
 
     let identity = get_aimux_current_cli_identity(options(&test_dir, BTreeMap::new(), None));
-    assert_eq!(identity.args, Vec::<String>::new());
+    assert_eq!(
+        identity.args,
+        vec![test_dir.0.join("current/aimux").to_string_lossy()]
+    );
     assert_eq!(identity.source, AimuxCliLaunchSource::CurrentEntry);
 }
 
@@ -314,7 +344,7 @@ fn daemon_and_identity_launch_use_native_binary_from_stable_shim_symlink() {
 }
 
 #[test]
-fn default_dashboard_prefers_native_binary_even_with_legacy_node_selector() {
+fn dashboard_native_selector_prefers_native_binary_but_default_uses_legacy_entrypoint() {
     let test_dir = TestDir::new();
     let stable = test_dir.0.join("bin/aimux");
     let install_root = test_dir.0.join("native/old-build");
@@ -343,16 +373,17 @@ fn default_dashboard_prefers_native_binary_even_with_legacy_node_selector() {
         env.clone(),
         Some(native_entry.to_string_lossy().into_owned()),
     ));
-    assert_eq!(default_dashboard.source, AimuxCliLaunchSource::NativeBinary);
-    assert_eq!(
-        default_dashboard.command,
-        native_binary.canonicalize().unwrap().to_string_lossy()
-    );
-    assert_eq!(default_dashboard.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(default_dashboard.source, AimuxCliLaunchSource::StableShim);
+    assert_eq!(default_dashboard.command, stable.to_string_lossy());
+    assert_eq!(default_dashboard.args, vec!["--tmux-dashboard-internal"]);
 
     let native_dashboard = get_aimux_dashboard_launch_command(options(
         &test_dir,
-        env.clone(),
+        {
+            let mut native_env = env.clone();
+            native_env.insert("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into());
+            native_env
+        },
         Some(native_entry.to_string_lossy().into_owned()),
     ));
     assert_eq!(native_dashboard.source, AimuxCliLaunchSource::NativeBinary);
@@ -369,12 +400,9 @@ fn default_dashboard_prefers_native_binary_even_with_legacy_node_selector() {
         node_env,
         Some(native_entry.to_string_lossy().into_owned()),
     ));
-    assert_eq!(node_dashboard.source, AimuxCliLaunchSource::NativeBinary);
-    assert_eq!(
-        node_dashboard.command,
-        native_binary.canonicalize().unwrap().to_string_lossy()
-    );
-    assert_eq!(node_dashboard.args, vec!["__dashboard-internal-native"]);
+    assert_eq!(node_dashboard.source, AimuxCliLaunchSource::StableShim);
+    assert_eq!(node_dashboard.command, stable.to_string_lossy());
+    assert_eq!(node_dashboard.args, vec!["--tmux-dashboard-internal"]);
 }
 
 fn platform_native_binary_path(install_root: &std::path::Path) -> PathBuf {

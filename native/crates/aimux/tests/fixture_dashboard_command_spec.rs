@@ -1,5 +1,6 @@
+use aimux::dashboard_command_spec::run_dashboard_command_spec_contract_case;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const COMMAND_SPEC: &str =
     include_str!("../../../../testdata/contracts/v1/dashboard/command-spec.json");
@@ -16,6 +17,7 @@ struct Contract {
 #[serde(rename_all = "camelCase")]
 struct Case {
     id: String,
+    name: String,
     source: String,
     api: String,
     input: Value,
@@ -23,19 +25,75 @@ struct Case {
 }
 
 #[test]
-#[ignore = "parity bug behind dashboard_*: TypeScript dashboard command spec launches the legacy Node dashboard while Rust launches the native dashboard"]
-fn fixture_dashboard_command_spec_contract_is_captured() {
+fn fixture_dashboard_command_spec_contract_matches_rust() {
     let contract: Contract =
         serde_json::from_str(COMMAND_SPEC).expect("dashboard command-spec fixture parses");
     assert_eq!(contract.source, "src/dashboard/command-spec.test.ts");
     assert_eq!(contract.case_count, 9);
     assert_eq!(contract.cases.len(), contract.case_count);
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert_eq!(case.source, contract.source);
         assert_eq!(case.api, "getDashboardCommandSpec");
         assert!(!case.input.is_null());
         assert!(!case.output.is_null());
+        let actual = run_dashboard_command_spec_contract_case(&case.name, &case.input);
+        let actual = normalize_dashboard_stamps(actual);
+        let expected = normalize_dashboard_stamps(case.output);
+        if actual != expected {
+            failures.push(json!({
+                "id": case.id,
+                "name": case.name,
+                "expected": expected,
+                "actual": actual,
+            }));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} dashboard command-spec parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
+}
+
+fn normalize_dashboard_stamps(value: Value) -> Value {
+    let mut stamps = Vec::<String>::new();
+    normalize_dashboard_stamps_inner(value, &mut stamps)
+}
+
+fn normalize_dashboard_stamps_inner(value: Value, stamps: &mut Vec<String>) -> Value {
+    match value {
+        Value::Object(mut object) => {
+            if let Some(Value::String(stamp)) = object.get("dashboardBuildStamp") {
+                let index = stamps
+                    .iter()
+                    .position(|existing| existing == stamp)
+                    .unwrap_or_else(|| {
+                        stamps.push(stamp.clone());
+                        stamps.len() - 1
+                    });
+                object.insert(
+                    "dashboardBuildStamp".into(),
+                    Value::String(format!("<stamp:{}>", index + 1)),
+                );
+            }
+            Value::Object(
+                object
+                    .into_iter()
+                    .map(|(key, value)| (key, normalize_dashboard_stamps_inner(value, stamps)))
+                    .collect(),
+            )
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(|value| normalize_dashboard_stamps_inner(value, stamps))
+                .collect(),
+        ),
+        value => value,
     }
 }
