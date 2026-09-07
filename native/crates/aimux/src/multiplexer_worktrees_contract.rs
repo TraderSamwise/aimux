@@ -53,6 +53,20 @@ pub fn run_multiplexer_worktrees_contract_case(input: &Value) -> Value {
             host.handle_worktree_list_key(data);
             host.snapshot()
         }
+        "showWorktreeCacheCleanupPreview" => {
+            let mut host = WorktreeHost::from_input(input);
+            host.show_worktree_cache_cleanup_preview(input);
+            host.snapshot()
+        }
+        "handleWorktreeCacheCleanupConfirmKey" => {
+            let mut host = WorktreeHost::from_input(input);
+            let data = input
+                .get("data")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            host.handle_worktree_cache_cleanup_confirm_key(input, data);
+            host.snapshot()
+        }
         api => panic!("unknown multiplexer worktrees api: {api}"),
     }
 }
@@ -88,6 +102,9 @@ struct WorktreeHost {
     worktree_remove_confirm: Value,
     worktree_removal_job: Value,
     worktree_removal_jobs: Vec<Value>,
+    worktree_cache_cleanup_confirm: Value,
+    dashboard_busy_state: Option<Value>,
+    dashboard_input_epoch: i64,
     dashboard_state: Value,
     dashboard_worktree_groups_cache: Value,
     footer_flash: Option<String>,
@@ -130,6 +147,12 @@ impl WorktreeHost {
                 .unwrap_or(Value::Null),
             worktree_removal_job,
             worktree_removal_jobs,
+            worktree_cache_cleanup_confirm: host
+                .get("worktreeCacheCleanupConfirm")
+                .cloned()
+                .unwrap_or(Value::Null),
+            dashboard_busy_state: host.get("dashboardBusyState").cloned(),
+            dashboard_input_epoch: number_field(host, "dashboardInputEpoch"),
             dashboard_state: host
                 .get("dashboardState")
                 .cloned()
@@ -161,6 +184,20 @@ impl WorktreeHost {
         output.insert(
             "worktreeRemovalJobs".to_owned(),
             Value::Array(self.worktree_removal_jobs.clone()),
+        );
+        output.insert(
+            "worktreeCacheCleanupConfirm".to_owned(),
+            self.worktree_cache_cleanup_confirm.clone(),
+        );
+        if let Some(dashboard_busy_state) = &self.dashboard_busy_state {
+            output.insert(
+                "dashboardBusyState".to_owned(),
+                dashboard_busy_state.clone(),
+            );
+        }
+        output.insert(
+            "dashboardInputEpoch".to_owned(),
+            json!(self.dashboard_input_epoch),
         );
         output.insert("dashboardState".to_owned(), self.dashboard_state.clone());
         output.insert(
@@ -410,6 +447,150 @@ impl WorktreeHost {
         }
     }
 
+    fn show_worktree_cache_cleanup_preview(&mut self, input: &Value) {
+        if self.mode != "dashboard" {
+            self.call(
+                "showDashboardError",
+                vec![
+                    json!("Failed to inspect worktree caches"),
+                    json!(["Worktree cache cleanup requires the project service."]),
+                ],
+            );
+            return;
+        }
+        if !self
+            .dashboard_busy_state
+            .clone()
+            .unwrap_or(Value::Null)
+            .is_null()
+        {
+            return;
+        }
+        self.worktree_cache_cleanup_confirm = Value::Null;
+        self.call("clearDashboardOverlay", vec![]);
+        self.start_dashboard_busy(
+            "Worktree Cache Cleanup",
+            vec!["  Scanning inactive generated worktree caches".to_owned()],
+        );
+        let lifecycle_epoch = self.dashboard_input_epoch;
+        self.call(
+            "postToProjectService",
+            vec![
+                json!("/worktrees/cache-cleanup"),
+                json!({ "dryRun": true, "includeActive": false }),
+                json!({ "timeoutMs": 180000 }),
+            ],
+        );
+        self.dashboard_input_epoch += number_field(input, "afterStartInputEpochDelta");
+        self.clear_dashboard_busy();
+        if self.dashboard_input_epoch != lifecycle_epoch {
+            return;
+        }
+        self.worktree_cache_cleanup_confirm = value_at(input, &["postResponse", "result"]).clone();
+        self.call(
+            "openDashboardOverlay",
+            vec![json!("worktree-cache-cleanup-confirm")],
+        );
+        self.call("redrawDashboardWithOverlay", vec![]);
+    }
+
+    fn handle_worktree_cache_cleanup_confirm_key(&mut self, input: &Value, data: &str) {
+        let Some(event) = parse_contract_keys(data).into_iter().next() else {
+            return;
+        };
+        let preview = self.worktree_cache_cleanup_confirm.clone();
+        if preview.is_null() {
+            self.call("clearDashboardOverlay", vec![]);
+            self.call("restoreDashboardAfterOverlayDismiss", vec![]);
+            return;
+        }
+        let targets = value_at(&preview, &["plan", "targets"])
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default();
+        match event {
+            ContractKey::Enter if targets == 0 => {
+                self.worktree_cache_cleanup_confirm = Value::Null;
+                self.call("clearDashboardOverlay", vec![]);
+                self.call("restoreDashboardAfterOverlayDismiss", vec![]);
+            }
+            ContractKey::Enter => self.apply_worktree_cache_cleanup(input, &preview),
+            ContractKey::Escape | ContractKey::Text(_) => {
+                self.worktree_cache_cleanup_confirm = Value::Null;
+                self.call("clearDashboardOverlay", vec![]);
+                self.call("restoreDashboardAfterOverlayDismiss", vec![]);
+            }
+            ContractKey::Backspace => {}
+        }
+    }
+
+    fn apply_worktree_cache_cleanup(&mut self, input: &Value, _preview: &Value) {
+        self.worktree_cache_cleanup_confirm = Value::Null;
+        self.call("clearDashboardOverlay", vec![]);
+        self.start_dashboard_busy(
+            "Worktree Cache Cleanup",
+            vec!["  Removing inactive generated worktree caches".to_owned()],
+        );
+        let lifecycle_epoch = self.dashboard_input_epoch;
+        self.call(
+            "postToProjectService",
+            vec![
+                json!("/worktrees/cache-cleanup"),
+                json!({ "dryRun": false, "includeActive": false }),
+                json!({ "timeoutMs": 180000 }),
+            ],
+        );
+        self.clear_dashboard_busy();
+        if self.dashboard_input_epoch != lifecycle_epoch {
+            return;
+        }
+        let result = value_at(input, &["postResponse", "result"]);
+        let failed = value_at(result, &["results"])
+            .as_array()
+            .map(|results| {
+                results
+                    .iter()
+                    .filter(|entry| string_field(entry, "status") == "failed")
+                    .count()
+            })
+            .unwrap_or_default();
+        let reclaimed = number_field(result, "reclaimedBytes");
+        let targets = value_at(result, &["plan", "targets"])
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default();
+        self.footer_flash = Some(format!(
+            "Removed {} from {} cache item(s)",
+            format_worktree_cache_bytes(reclaimed),
+            targets
+        ));
+        self.footer_flash_ticks = Some(if failed > 0 { 6 } else { 4 });
+        if failed > 0 {
+            self.call(
+                "showDashboardError",
+                vec![
+                    json!("Worktree cache cleanup finished with failures"),
+                    json!([
+                        format!("Removed: {}", format_worktree_cache_bytes(reclaimed)),
+                        format!("Failed: {failed}")
+                    ]),
+                ],
+            );
+            return;
+        }
+        self.call("renderDashboard", vec![]);
+    }
+
+    fn start_dashboard_busy(&mut self, title: &str, lines: Vec<String>) {
+        self.call("startDashboardBusy", vec![json!(title), json!(lines)]);
+        self.dashboard_busy_state = Some(json!({ "title": title, "lines": lines }));
+    }
+
+    fn clear_dashboard_busy(&mut self) {
+        self.call("clearDashboardBusy", vec![]);
+        self.dashboard_busy_state = Some(Value::Null);
+    }
+
     fn render_worktree_input(&mut self) {
         if self.mode == "dashboard" {
             self.call("redrawDashboardWithOverlay", vec![]);
@@ -484,6 +665,9 @@ fn empty_calls() -> Map<String, Value> {
         "restoreDashboardAfterOverlayDismiss",
         "showDashboardError",
         "renderDashboard",
+        "startDashboardBusy",
+        "clearDashboardBusy",
+        "postToProjectService",
         "dashboardUiStateStore.markSelectionDirty",
     ]
     .into_iter()
@@ -497,6 +681,19 @@ fn string_field(value: &Value, field: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned()
+}
+
+fn value_at<'a>(value: &'a Value, path: &[&str]) -> &'a Value {
+    path.iter().fold(value, |current, field| {
+        current.get(*field).unwrap_or(&Value::Null)
+    })
+}
+
+fn format_worktree_cache_bytes(bytes: i64) -> String {
+    if bytes.abs() < 1024 {
+        return format!("{bytes}B");
+    }
+    format!("{:.1}KB", bytes as f64 / 1024.0)
 }
 
 fn same_path(value: &Value, path: &str) -> bool {

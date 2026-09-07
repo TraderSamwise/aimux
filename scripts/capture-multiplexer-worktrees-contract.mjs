@@ -8,10 +8,12 @@ const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/worktrees.json",
 const {
   beginWorktreeRemoval,
   finishWorktreeRemoval,
+  handleWorktreeCacheCleanupConfirmKey,
   handleWorktreeInputKey,
   handleWorktreeListKey,
   handleWorktreeRemoveConfirmKey,
   showWorktreeCreatePrompt,
+  showWorktreeCacheCleanupPreview,
   worktreeSettlePollDelay,
 } = await import(new URL("dist/multiplexer/worktrees.js", ROOT));
 
@@ -122,16 +124,86 @@ const inputs = [
     data: "\u001b",
     host: { mode: "dashboard" },
   },
+  {
+    name: "previews worktree cache cleanup through a safe dry-run",
+    api: "showWorktreeCacheCleanupPreview",
+    postResponse: {
+      ok: true,
+      result: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: {
+          reclaimableBytes: 1024,
+          targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 1024 }],
+          skipped: [],
+        },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "dry-run", sizeBytes: 1024 }],
+      },
+    },
+    host: { mode: "dashboard", dashboardInputEpoch: 0, dashboardBusyState: null, worktreeCacheCleanupConfirm: null },
+  },
+  {
+    name: "clears cache cleanup busy state when preview completion is stale",
+    api: "showWorktreeCacheCleanupPreview",
+    afterStartInputEpochDelta: 1,
+    postResponse: {
+      ok: true,
+      result: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: { reclaimableBytes: 0, targets: [], skipped: [] },
+        results: [],
+      },
+    },
+    host: { mode: "dashboard", dashboardInputEpoch: 0, dashboardBusyState: null, worktreeCacheCleanupConfirm: null },
+  },
+  {
+    name: "applies confirmed worktree cache cleanup without active worktrees",
+    api: "handleWorktreeCacheCleanupConfirmKey",
+    data: "\r",
+    postResponse: {
+      ok: true,
+      result: {
+        dryRun: false,
+        reclaimedBytes: 2048,
+        plan: {
+          reclaimableBytes: 2048,
+          targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 2048 }],
+          skipped: [],
+        },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "removed", sizeBytes: 2048 }],
+      },
+    },
+    host: {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeCacheCleanupConfirm: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: {
+          reclaimableBytes: 2048,
+          targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 2048 }],
+          skipped: [],
+        },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "dry-run", sizeBytes: 2048 }],
+      },
+    },
+  },
 ];
 
-function run(input) {
+async function flushAsyncWork() {
+  await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function run(input) {
   if (input.api === "worktreeSettlePollDelay") {
     return input.calls.map((call) => ({
       ...call,
       delayMs: worktreeSettlePollDelay(call.attempt, call.baseMs, call.maxMs),
     }));
   }
-  const { host, calls } = hostFor(structuredClone(input.host ?? {}));
+  const { host, calls } = hostFor(structuredClone({ ...(input.host ?? {}), postResponse: input.postResponse }));
   switch (input.api) {
     case "showWorktreeCreatePrompt":
       showWorktreeCreatePrompt(host);
@@ -147,6 +219,17 @@ function run(input) {
       break;
     case "handleWorktreeListKey":
       handleWorktreeListKey(host, Buffer.from(input.data));
+      break;
+    case "showWorktreeCacheCleanupPreview":
+      showWorktreeCacheCleanupPreview(host);
+      if (input.afterStartInputEpochDelta) {
+        host.dashboardInputEpoch += input.afterStartInputEpochDelta;
+      }
+      await flushAsyncWork();
+      break;
+    case "handleWorktreeCacheCleanupConfirmKey":
+      handleWorktreeCacheCleanupConfirmKey(host, Buffer.from(input.data));
+      await flushAsyncWork();
       break;
     default:
       throw new Error(`unknown api ${input.api}`);
@@ -169,6 +252,9 @@ function hostFor(initial) {
     worktreeRemoveConfirm: initial.worktreeRemoveConfirm ?? null,
     worktreeRemovalJob: null,
     worktreeRemovalJobs: new Map((initial.worktreeRemovalJobs ?? []).map((job) => [job.path, { startedAt: 0, ...job }])),
+    worktreeCacheCleanupConfirm: initial.worktreeCacheCleanupConfirm ?? null,
+    dashboardBusyState: initial.dashboardBusyState,
+    dashboardInputEpoch: initial.dashboardInputEpoch ?? 0,
     dashboardState: initial.dashboardState ?? { worktreeNavOrder: [], focusedWorktreePath: undefined },
     dashboardWorktreeGroupsCache: initial.dashboardWorktreeGroupsCache ?? [],
     openDashboardOverlay: fn("openDashboardOverlay"),
@@ -177,6 +263,13 @@ function hostFor(initial) {
     restoreDashboardAfterOverlayDismiss: fn("restoreDashboardAfterOverlayDismiss"),
     showDashboardError: fn("showDashboardError"),
     renderDashboard: fn("renderDashboard"),
+    startDashboardBusy: fn("startDashboardBusy", (title, lines) => {
+      host.dashboardBusyState = { title, lines };
+    }),
+    clearDashboardBusy: fn("clearDashboardBusy", () => {
+      host.dashboardBusyState = null;
+    }),
+    postToProjectService: fn("postToProjectService", async () => initial.postResponse),
     dashboardUiStateStore: { markSelectionDirty: fn("dashboardUiStateStore.markSelectionDirty") },
   };
   host.worktreeRemovalJob = [...host.worktreeRemovalJobs.values()].at(-1) ?? null;
@@ -190,6 +283,9 @@ function snapshotHost(host, calls) {
     worktreeRemoveConfirm: host.worktreeRemoveConfirm,
     worktreeRemovalJob: host.worktreeRemovalJob,
     worktreeRemovalJobs: [...(host.worktreeRemovalJobs?.values?.() ?? [])],
+    worktreeCacheCleanupConfirm: host.worktreeCacheCleanupConfirm,
+    dashboardBusyState: host.dashboardBusyState,
+    dashboardInputEpoch: host.dashboardInputEpoch,
     dashboardState: host.dashboardState,
     dashboardWorktreeGroupsCache: host.dashboardWorktreeGroupsCache,
     footerFlash: host.footerFlash,
@@ -198,15 +294,19 @@ function snapshotHost(host, calls) {
   };
 }
 
-const cases = inputs.map((input, index) => ({
+const cases = [];
+for (let index = 0; index < inputs.length; index += 1) {
+  const input = inputs[index];
+  cases.push({
   id: `multiplexer-worktrees-${String(index + 1).padStart(3, "0")}`,
   name: input.name,
   source: "src/multiplexer/worktrees.test.ts",
   api: input.api,
   input,
-  output: run(input),
+    output: await run(input),
   inputSha256: hash(input),
-}));
+  });
+}
 
 await writeContractJson(FIXTURE_PATH, {
   version: 1,

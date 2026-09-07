@@ -826,8 +826,9 @@ Priority fixture groups:
   deterministic fake tmux hosts and temp state files.
 - `multiplexer/worktrees.json`: dashboard worktree settle-poll backoff,
   worktree create input, removal confirmation, removal completion, and list
-  dismissal contracts captured by running TypeScript `multiplexer/worktrees`
-  helpers against deterministic fake dashboard hosts.
+  dismissal plus worktree cache cleanup preview/apply contracts captured by
+  running TypeScript `multiplexer/worktrees` helpers against deterministic fake
+  dashboard hosts.
 - `multiplexer/persistence-worktrees.json`: persistence worktree create,
   remove, graveyard, resurrection, deletion, host side effects, operation
   failure records, pending dashboard actions, and topology transitions captured
