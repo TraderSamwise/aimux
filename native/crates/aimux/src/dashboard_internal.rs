@@ -24,9 +24,10 @@ use crate::dashboard_renderer::{
     DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
     render_dashboard_subscreen_frame,
 };
+use crate::dashboard_service_input::DashboardThreadReplyState;
 use crate::dashboard_service_input::{
     render_orchestration_input_overlay, render_orchestration_route_picker_overlay,
-    render_service_input_overlay, render_teammate_picker_overlay,
+    render_service_input_overlay, render_teammate_picker_overlay, render_thread_reply_overlay,
     render_worktree_cache_cleanup_confirm_overlay, render_worktree_input_overlay,
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
@@ -601,6 +602,18 @@ fn render_dashboard_snapshot(
             scroll_offset: frame.scroll_offset,
         };
     }
+    if let Some(reply) = controller.thread_reply.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_thread_reply_overlay(
+            reply,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
     frame
 }
 
@@ -624,7 +637,7 @@ fn render_dashboard_subscreen_snapshot(
         controller.screen,
         resource.as_ref(),
     ));
-    render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+    let frame = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
         screen: controller.screen,
         resource: resource.as_ref(),
         error: error.as_deref(),
@@ -634,7 +647,20 @@ fn render_dashboard_subscreen_snapshot(
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
-    })
+    });
+    if let Some(reply) = controller.thread_reply.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_thread_reply_overlay(
+            reply,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    frame
 }
 
 fn dashboard_screen_actions(
@@ -760,45 +786,84 @@ fn open_relevant_thread_for_session(
         DashboardScreen::Coordination,
         Some(&resource),
     ));
-    let Some(index) = preferred_thread_worklist_index(&resource, session_id) else {
+    let Some(selection) = preferred_thread_selection(&resource, session_id) else {
         controller.footer_message = Some(format!("No thread for {session_id}"));
         return Ok(());
     };
     controller.screen = DashboardScreen::Coordination;
-    controller.subscreen_index = index;
+    controller.subscreen_index = selection.worklist_index;
+    if selection.waiting_on_session {
+        controller.thread_reply = Some(DashboardThreadReplyState {
+            thread_id: selection.thread_id,
+            title: selection.title,
+            targets: selection.targets,
+            buffer: String::new(),
+        });
+    }
     Ok(())
 }
 
-fn preferred_thread_worklist_index(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreferredThreadSelection {
+    worklist_index: usize,
+    thread_id: String,
+    title: String,
+    targets: Vec<String>,
+    waiting_on_session: bool,
+}
+
+fn preferred_thread_selection(
     resource: &serde_json::Value,
     session_id: &str,
-) -> Option<usize> {
+) -> Option<PreferredThreadSelection> {
     let mut candidates = Vec::new();
     for (index, entry) in json_array(resource, &["threads"]).iter().enumerate() {
         let thread = entry.get("thread").unwrap_or(&serde_json::Value::Null);
-        if !json_array(thread, &["participants"])
+        let participants = json_array(thread, &["participants"]);
+        if !participants
             .iter()
             .any(|participant| participant.as_str() == Some(session_id))
         {
             continue;
         }
-        let waiting_on_session = json_array(thread, &["waitingOn"])
+        let waiting_on = json_array(thread, &["waitingOn"]);
+        let waiting_on_session = waiting_on
             .iter()
             .any(|participant| participant.as_str() == Some(session_id));
         let unread_by_session = json_array(thread, &["unreadBy"])
             .iter()
             .any(|participant| participant.as_str() == Some(session_id));
         let owns_waiting = json_string(thread, &["owner"]).as_deref() == Some(session_id)
-            && !json_array(thread, &["waitingOn"]).is_empty();
+            && !waiting_on.is_empty();
         let score = i64::from(waiting_on_session) * 3
             + i64::from(unread_by_session) * 2
             + i64::from(owns_waiting);
         let thread_id = json_string(thread, &["id"])?;
+        let title = json_string(thread, &["displayTitle"])
+            .or_else(|| json_string(thread, &["title"]))
+            .unwrap_or_else(|| thread_id.clone());
+        let targets = if waiting_on.is_empty() {
+            participants
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .filter(|participant| *participant != "user")
+                .map(str::to_owned)
+                .collect()
+        } else {
+            waiting_on
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        };
         candidates.push((
             score,
             json_string(thread, &["updatedAt"]).unwrap_or_default(),
             index,
             thread_id,
+            title,
+            targets,
+            waiting_on_session,
         ));
     }
     candidates.sort_by(|left, right| {
@@ -808,10 +873,17 @@ fn preferred_thread_worklist_index(
             .then_with(|| right.1.cmp(&left.1))
             .then_with(|| left.2.cmp(&right.2))
     });
-    let thread_id = candidates.first()?.3.as_str();
-    json_array(resource, &["worklist"]).iter().position(|row| {
+    let (_, _, _, thread_id, title, targets, waiting_on_session) = candidates.first()?.clone();
+    let worklist_index = json_array(resource, &["worklist"]).iter().position(|row| {
         json_string(row, &["kind"]).as_deref() == Some("thread")
-            && json_string(row, &["thread", "thread", "id"]).as_deref() == Some(thread_id)
+            && json_string(row, &["thread", "thread", "id"]).as_deref() == Some(thread_id.as_str())
+    })?;
+    Some(PreferredThreadSelection {
+        worklist_index,
+        thread_id,
+        title,
+        targets,
+        waiting_on_session,
     })
 }
 
@@ -898,6 +970,7 @@ mod tests {
                 {
                     "thread": {
                         "id": "waiting",
+                        "displayTitle": "Blocked deploy thread",
                         "participants": ["codex-1", "user"],
                         "unreadBy": [],
                         "waitingOn": ["codex-1"],
@@ -922,9 +995,15 @@ mod tests {
         });
 
         assert_eq!(
-            preferred_thread_worklist_index(&resource, "codex-1"),
-            Some(1)
+            preferred_thread_selection(&resource, "codex-1"),
+            Some(PreferredThreadSelection {
+                worklist_index: 1,
+                thread_id: "waiting".into(),
+                title: "Blocked deploy thread".into(),
+                targets: vec!["codex-1".into()],
+                waiting_on_session: true,
+            })
         );
-        assert_eq!(preferred_thread_worklist_index(&resource, "missing"), None);
+        assert_eq!(preferred_thread_selection(&resource, "missing"), None);
     }
 }

@@ -7,6 +7,7 @@ use aimux::dashboard_model::{
     DesktopStateGoldenFixture, DesktopStateSnapshot, SessionSemanticState, SessionTeamMetadata,
 };
 use aimux::dashboard_renderer::DashboardNavLevel;
+use aimux::dashboard_service_input::DashboardThreadReplyState;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
 use aimux::project_api_contract::routes;
 use serde_json::json;
@@ -267,6 +268,83 @@ fn plain_o_requests_relevant_thread_for_selected_session() {
             session_id: "claude-0".into()
         }
     );
+}
+
+#[test]
+fn thread_reply_collects_text_and_dispatches_reply_request() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.thread_reply = Some(DashboardThreadReplyState {
+        thread_id: "thread-1".into(),
+        title: "Blocked deploy thread".into(),
+        targets: vec!["codex-1".into()],
+        buffer: String::new(),
+    });
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('o')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('k')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Backspace),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('!')),
+        DashboardControllerEffect::Render
+    );
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected thread reply request");
+    };
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::threads::SEND);
+    assert_eq!(
+        request.body,
+        json!({
+            "threadId": "thread-1",
+            "from": "user",
+            "kind": "reply",
+            "body": "o!",
+        })
+    );
+    assert!(controller.thread_reply.is_none());
+}
+
+#[test]
+fn thread_reply_empty_submit_and_escape_close_without_request() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.thread_reply = Some(DashboardThreadReplyState {
+        thread_id: "thread-1".into(),
+        title: "Blocked deploy thread".into(),
+        targets: vec!["codex-1".into()],
+        buffer: "   ".into(),
+    });
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.thread_reply.is_none());
+
+    controller.thread_reply = Some(DashboardThreadReplyState {
+        thread_id: "thread-1".into(),
+        title: "Blocked deploy thread".into(),
+        targets: vec!["codex-1".into()],
+        buffer: "draft".into(),
+    });
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Back),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.thread_reply.is_none());
 }
 
 #[test]

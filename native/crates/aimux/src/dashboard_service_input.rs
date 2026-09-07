@@ -13,6 +13,14 @@ pub struct DashboardServiceInputState {
     pub buffer: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DashboardThreadReplyState {
+    pub thread_id: String,
+    pub title: String,
+    pub targets: Vec<String>,
+    pub buffer: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardServiceInputEffect {
     Render,
@@ -302,6 +310,38 @@ pub fn render_orchestration_input_overlay(
     )));
     render_overlay_box(&OverlayBoxSpec {
         title: state.mode.title(),
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
+        icon: None,
+    })
+}
+
+pub fn render_thread_reply_overlay(
+    state: &DashboardThreadReplyState,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let targets = if state.targets.is_empty() {
+        "participants".into()
+    } else {
+        state.targets.join(", ")
+    };
+    let body = vec![
+        format!(
+            "  {} {}",
+            style("Thread:", Tone::Muted),
+            style(&state.title, Tone::Strong)
+        ),
+        format!("  {} {targets}", style("To:", Tone::Muted)),
+        String::new(),
+        format!("  {} {}_", style("Message:", Tone::Muted), state.buffer),
+        String::new(),
+        footer_hints("[Enter] send  [Esc] cancel"),
+    ];
+    render_overlay_box(&OverlayBoxSpec {
+        title: "Reply in thread",
         body: &body,
         cols,
         rows,

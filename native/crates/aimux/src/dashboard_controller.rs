@@ -8,7 +8,9 @@ use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationOutcome, DashboardNavigationState,
 };
 use crate::dashboard_renderer::DashboardNavLevel;
-use crate::dashboard_service_input::{DashboardServiceInputEffect, DashboardServiceInputState};
+use crate::dashboard_service_input::{
+    DashboardServiceInputEffect, DashboardServiceInputState, DashboardThreadReplyState,
+};
 use crate::dashboard_tool_picker::{
     DashboardToolEntry, DashboardToolPickerEffect, DashboardToolPickerMode,
     DashboardToolPickerState,
@@ -38,6 +40,7 @@ pub struct DashboardController {
     pub teammate_picker: Option<DashboardTeammatePickerState>,
     pub orchestration_route_picker: Option<DashboardOrchestrationRoutePickerState>,
     pub orchestration_input: Option<DashboardOrchestrationInputState>,
+    pub thread_reply: Option<DashboardThreadReplyState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,6 +193,7 @@ impl DashboardController {
             teammate_picker: None,
             orchestration_route_picker: None,
             orchestration_input: None,
+            thread_reply: None,
         }
     }
 
@@ -231,6 +235,9 @@ impl DashboardController {
         }
         if self.orchestration_input.is_some() {
             return self.handle_orchestration_input_key(key);
+        }
+        if self.thread_reply.is_some() {
+            return self.handle_thread_reply_key(key);
         }
         if self.service_input.is_some() {
             return self.handle_service_input_key(snapshot, key);
@@ -477,6 +484,7 @@ impl DashboardController {
         self.teammate_picker = None;
         self.orchestration_route_picker = None;
         self.orchestration_input = None;
+        self.thread_reply = None;
         self.navigation.clear_quick_jump();
         DashboardControllerEffect::Render
     }
@@ -1241,6 +1249,47 @@ impl DashboardController {
             DashboardKey::Printable(character) => {
                 if let Some(input) = self.orchestration_input.as_mut() {
                     input.buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn handle_thread_reply_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.thread_reply = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => {
+                let Some(reply) = self.thread_reply.take() else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                let body = reply.buffer.trim().to_owned();
+                if body.is_empty() {
+                    return DashboardControllerEffect::Render;
+                }
+                DashboardControllerEffect::Request(DashboardActionRequest {
+                    method: "POST",
+                    path: routes::threads::SEND,
+                    body: json!({
+                        "threadId": reply.thread_id,
+                        "from": "user",
+                        "kind": "reply",
+                        "body": body,
+                    }),
+                })
+            }
+            DashboardKey::Backspace | DashboardKey::Delete => {
+                if let Some(reply) = self.thread_reply.as_mut() {
+                    reply.buffer.pop();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(character) => {
+                if let Some(reply) = self.thread_reply.as_mut() {
+                    reply.buffer.push(character);
                 }
                 DashboardControllerEffect::Render
             }
