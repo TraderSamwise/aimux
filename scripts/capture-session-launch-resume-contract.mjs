@@ -10,7 +10,7 @@ import prettier from "prettier";
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/session-launch-resume.json", ROOT);
 
-const { initPaths } = await import(new URL("dist/paths.js", ROOT));
+const { getContextDir, getHistoryDir, initPaths } = await import(new URL("dist/paths.js", ROOT));
 const { saveRuntimeTopologySessions } = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
 const { SessionBootstrapService } = await import(new URL("dist/session-bootstrap.js", ROOT));
 const { resumeSessions, restoreSessions } = await import(new URL("dist/multiplexer/session-launch.js", ROOT));
@@ -114,6 +114,16 @@ async function withProject(input, run) {
       sessions: materializeValue(input.topologySessions ?? [], repoRoot),
       projectRoot: repoRoot,
     });
+    const histories = materializeValue(input.history ?? {}, repoRoot);
+    for (const [sessionId, turns] of Object.entries(histories)) {
+      mkdirSync(getHistoryDir(), { recursive: true });
+      await writeFile(join(getHistoryDir(), `${sessionId}.jsonl`), `${turns.map((turn) => JSON.stringify(turn)).join("\n")}\n`);
+    }
+    const contexts = materializeValue(input.context ?? {}, repoRoot);
+    for (const [sessionId, content] of Object.entries(contexts)) {
+      mkdirSync(join(getContextDir(), sessionId), { recursive: true });
+      await writeFile(join(getContextDir(), sessionId, "live.md"), content);
+    }
     return await run(repoRoot);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
@@ -289,6 +299,43 @@ const casesInput = [
           worktreePath: "<REPO>",
         },
       ],
+    },
+  },
+  {
+    api: "restoreSessions",
+    name: "injects recent history and other restored session context into restore preamble",
+    input: {
+      topologySessions: [
+        {
+          id: "codex-alpha",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["resume", "old-alpha", "--profile", "dev"],
+          lifecycle: "offline",
+          worktreePath: "<REPO>",
+        },
+        {
+          id: "claude-beta",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: ["--resume", "old-beta", "--fork-session", "--dangerously-skip-permissions"],
+          lifecycle: "offline",
+          team: { teamId: "team-alpha", parentSessionId: "codex-alpha", role: "reviewer" },
+          worktreePath: "<REPO>/wt",
+        },
+      ],
+      history: {
+        "codex-alpha": [
+          { ts: "2026-09-01T10:00:00.000Z", type: "prompt", content: "start alpha" },
+          { ts: "2026-09-01T10:01:00.000Z", type: "response", content: "alpha response" },
+          { ts: "2026-09-01T10:02:00.000Z", type: "git", content: "2 files changed", files: ["a.ts", "b.rs"] },
+        ],
+      },
+      context: {
+        "claude-beta": "# claude-beta (claude) — Live Context\n\nBeta is reviewing the API surface.\n",
+      },
     },
   },
 ];

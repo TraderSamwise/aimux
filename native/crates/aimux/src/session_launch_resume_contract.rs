@@ -106,37 +106,121 @@ fn restore_sessions(state: &mut ResumeState, input: &Value) -> i32 {
         return 0;
     }
 
-    for saved in sessions_to_restore {
-        let tool_config_key = string_field(&saved, "toolConfigKey");
+    for saved in &sessions_to_restore {
+        let tool_config_key = string_field(saved, "toolConfigKey");
         let Some(tool_cfg) = tool_config(&tool_config_key) else {
             continue;
         };
-        let configured_args = strip_tool_action_args(&tool_cfg, array_field(&saved, "args"));
+        let configured_args = strip_tool_action_args(&tool_cfg, array_field(saved, "args"));
+        let extra_preamble = restore_extra_preamble(input, &sessions_to_restore, saved);
         state.call(
             "sessionBootstrap.stripToolActionArgs",
-            vec![tool_cfg.clone(), Value::Array(array_field(&saved, "args"))],
+            vec![tool_cfg.clone(), Value::Array(array_field(saved, "args"))],
         );
         state.call(
             "createSession",
             vec![
-                string_value(&saved, "command"),
+                string_value(saved, "command"),
                 Value::Array(configured_args),
                 null_if_missing(&tool_cfg, "preambleFlag"),
                 Value::String(tool_config_key),
+                extra_preamble,
                 Value::Null,
+                null_if_missing(saved, "worktreePath"),
                 Value::Null,
-                null_if_missing(&saved, "worktreePath"),
-                Value::Null,
-                string_value(&saved, "id"),
+                string_value(saved, "id"),
                 Value::Bool(false),
                 Value::Bool(false),
-                null_if_missing(&saved, "team"),
+                null_if_missing(saved, "team"),
             ],
         );
     }
 
     state.call("openTmuxDashboardTarget", vec![]);
     0
+}
+
+fn restore_extra_preamble(input: &Value, sessions_to_restore: &[Value], saved: &Value) -> Value {
+    let session_id = string_field(saved, "id");
+    let turns = value_field(value_field(input, "history"), &session_id)
+        .as_array()
+        .map(|turns| {
+            let start = turns.len().saturating_sub(20);
+            &turns[start..]
+        })
+        .unwrap_or(&[]);
+    let history_context = if turns.is_empty() {
+        String::new()
+    } else {
+        let formatted = turns
+            .iter()
+            .map(format_history_turn)
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "\n\n=== Your previous session context ===\nYou were previously working in this codebase. Here's what happened:\n{formatted}\n=== End previous context ===\n"
+        )
+    };
+
+    let live_context = build_context_preamble(input, sessions_to_restore, &session_id);
+    let mut preamble = history_context;
+    if !live_context.is_empty() {
+        preamble.push('\n');
+        preamble.push_str(&live_context);
+    }
+    let trimmed = preamble.trim();
+    if trimmed.is_empty() {
+        Value::Null
+    } else {
+        Value::String(trimmed.to_owned())
+    }
+}
+
+fn format_history_turn(turn: &Value) -> String {
+    let time = string_field(turn, "ts")
+        .chars()
+        .take(16)
+        .collect::<String>();
+    let content = string_field(turn, "content");
+    match string_field(turn, "type").as_str() {
+        "prompt" => format!("[{time}] User: {content}"),
+        "response" => format!("[{time}] Agent: {content}"),
+        "git" => {
+            let files = string_array(turn, "files");
+            if files.is_empty() {
+                format!("[{time}] Git: {content}")
+            } else {
+                format!("[{time}] Git: {content} ({})", files.join(", "))
+            }
+        }
+        _ => format!("[{time}] {content}"),
+    }
+}
+
+fn build_context_preamble(
+    input: &Value,
+    sessions_to_restore: &[Value],
+    current_session_id: &str,
+) -> String {
+    let sections = sessions_to_restore
+        .iter()
+        .filter(|session| string_field(session, "id") != current_session_id)
+        .filter_map(|session| {
+            let id = string_field(session, "id");
+            value_field(value_field(input, "context"), &id)
+                .as_str()
+                .filter(|content| !content.trim().is_empty())
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    if sections.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "=== Context from other aimux sessions ===\n\n{}\n\n=== End context ===\n",
+            sections.join("\n\n")
+        )
+    }
 }
 
 fn topology_after_reconcile(input: &Value) -> Vec<Value> {

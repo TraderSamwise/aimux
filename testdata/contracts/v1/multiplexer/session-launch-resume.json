@@ -475,6 +475,133 @@
         "stderr": []
       },
       "inputSha256": "7470b7892c311bb4620ae0779ea40110fd9f13cb0980d65cb5cb65d1a84b98e7"
+    },
+    {
+      "id": "session-launch-resume-007",
+      "name": "injects recent history and other restored session context into restore preamble",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "restoreSessions",
+      "input": {
+        "topologySessions": [
+          {
+            "id": "codex-alpha",
+            "command": "codex",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "args": ["resume", "old-alpha", "--profile", "dev"],
+            "lifecycle": "offline",
+            "worktreePath": "<REPO>"
+          },
+          {
+            "id": "claude-beta",
+            "command": "claude",
+            "tool": "claude",
+            "toolConfigKey": "claude",
+            "args": ["--resume", "old-beta", "--fork-session", "--dangerously-skip-permissions"],
+            "lifecycle": "offline",
+            "team": { "teamId": "team-alpha", "parentSessionId": "codex-alpha", "role": "reviewer" },
+            "worktreePath": "<REPO>/wt"
+          }
+        ],
+        "history": {
+          "codex-alpha": [
+            { "ts": "2026-09-01T10:00:00.000Z", "type": "prompt", "content": "start alpha" },
+            { "ts": "2026-09-01T10:01:00.000Z", "type": "response", "content": "alpha response" },
+            { "ts": "2026-09-01T10:02:00.000Z", "type": "git", "content": "2 files changed", "files": ["a.ts", "b.rs"] }
+          ]
+        },
+        "context": { "claude-beta": "# claude-beta (claude) — Live Context\n\nBeta is reviewing the API surface.\n" }
+      },
+      "output": {
+        "result": 0,
+        "calls": [
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "saveState", "args": [] },
+          {
+            "method": "sessionBootstrap.stripToolActionArgs",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              ["resume", "old-alpha", "--profile", "dev"]
+            ]
+          },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--profile", "dev"],
+              null,
+              "codex",
+              "=== Your previous session context ===\nYou were previously working in this codebase. Here's what happened:\n[2026-09-01T10:00] User: start alpha\n[2026-09-01T10:01] Agent: alpha response\n[2026-09-01T10:02] Git: 2 files changed (a.ts, b.rs)\n=== End previous context ===\n\n=== Context from other aimux sessions ===\n\n# claude-beta (claude) — Live Context\n\nBeta is reviewing the API surface.\n\n\n=== End context ===",
+              null,
+              "<REPO>",
+              null,
+              "codex-alpha",
+              false,
+              false,
+              null
+            ]
+          },
+          {
+            "method": "sessionBootstrap.stripToolActionArgs",
+            "args": [
+              {
+                "command": "claude",
+                "args": ["--dangerously-skip-permissions"],
+                "enabled": true,
+                "wrapperEnabled": true,
+                "preambleFlag": ["--append-system-prompt"],
+                "sessionIdFlag": ["--session-id", "{sessionId}"],
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["--continue"],
+                "promptPatterns": ["^> $", "\\$ $"],
+                "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+                "compactCommand": "claude --print --output-format text"
+              },
+              ["--resume", "old-beta", "--fork-session", "--dangerously-skip-permissions"]
+            ]
+          },
+          {
+            "method": "createSession",
+            "args": [
+              "claude",
+              ["--dangerously-skip-permissions"],
+              ["--append-system-prompt"],
+              "claude",
+              null,
+              null,
+              "<REPO>/wt",
+              null,
+              "claude-beta",
+              false,
+              false,
+              { "teamId": "team-alpha", "parentSessionId": "codex-alpha", "role": "reviewer" }
+            ]
+          },
+          { "method": "openTmuxDashboardTarget", "args": [] }
+        ],
+        "stderr": []
+      },
+      "inputSha256": "c3595fd2cfc2f61b5e7fd58bb1551b8ca1c1976f63fbf06671daaefff986f984"
     }
   ]
 }
