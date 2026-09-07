@@ -27,7 +27,7 @@ fn fixture_session_launch_default_scribe_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("session launch default scribe fixture parses");
     assert_eq!(contract.source, "src/multiplexer/session-launch.ts");
-    assert_eq!(contract.cases.len(), 5);
+    assert_eq!(contract.cases.len(), 7);
 
     let mut failures = Vec::new();
     for case in contract.cases {

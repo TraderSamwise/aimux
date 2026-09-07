@@ -20,6 +20,34 @@
     },
     {
       "id": "session-launch-default-scribe-002",
+      "name": "returns unknown-tool when configured default scribe tool is missing",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "ensureDefaultScribeAgent",
+      "input": { "config": { "scribe": { "defaultAgent": "ghost" } } },
+      "output": {
+        "result": { "created": false, "reason": "unknown-tool" },
+        "calls": [],
+        "sessions": [],
+        "metadata": { "version": 1, "sessions": {} }
+      },
+      "inputSha256": "1ee263635649b74f76be46932a74bc0091eb837ebfb15d11aed3b7f7cb4b23d9"
+    },
+    {
+      "id": "session-launch-default-scribe-003",
+      "name": "returns disabled-tool when configured default scribe tool is disabled",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "ensureDefaultScribeAgent",
+      "input": { "config": { "scribe": { "defaultAgent": "aider" }, "tools": { "aider": { "enabled": false } } } },
+      "output": {
+        "result": { "created": false, "reason": "disabled-tool" },
+        "calls": [],
+        "sessions": [],
+        "metadata": { "version": 1, "sessions": {} }
+      },
+      "inputSha256": "0d8fc650df52240c3f60478305496f24ee3be3e8f62ac1d149ca3a8441421629"
+    },
+    {
+      "id": "session-launch-default-scribe-004",
       "name": "uses metadata scribe id when a matching runtime is live",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",
@@ -40,7 +68,7 @@
       "inputSha256": "8e0656e63a4b192182ca1f5ddd25ec26fa97cc39c2706ae8310f92971d7b8ac6"
     },
     {
-      "id": "session-launch-default-scribe-003",
+      "id": "session-launch-default-scribe-005",
       "name": "marks a live runtime scribe team in metadata",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",
@@ -70,7 +98,7 @@
       "inputSha256": "97d9173d8d170829fef0d4e6ddfbb6701ab239237441c2369265f79fc7ce0228"
     },
     {
-      "id": "session-launch-default-scribe-004",
+      "id": "session-launch-default-scribe-006",
       "name": "creates default scribe when metadata scribe exists only in topology",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",
@@ -186,7 +214,7 @@
       "inputSha256": "f3feaf26ff3a5c582ae1d786490bad1e1597c8a2a90d6c880f930b6af86981af"
     },
     {
-      "id": "session-launch-default-scribe-005",
+      "id": "session-launch-default-scribe-007",
       "name": "creates default scribe when topology scribe team has no host session",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",

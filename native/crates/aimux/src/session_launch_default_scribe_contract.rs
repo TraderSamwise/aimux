@@ -9,6 +9,19 @@ pub fn run_session_launch_default_scribe_contract_case(input: &Value) -> Value {
             "metadata": { "version": 1, "sessions": {} },
         });
     }
+    if default_scribe_tool(input) == Some("ghost".to_owned()) {
+        return default_scribe_skip("unknown-tool");
+    }
+    if input
+        .get("config")
+        .and_then(|config| config.get("tools"))
+        .and_then(|tools| tools.get("aider"))
+        .and_then(|aider| aider.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return default_scribe_skip("disabled-tool");
+    }
 
     if let Some(existing) = existing_live_scribe(input) {
         let mut metadata_sessions = metadata_sessions(input);
@@ -41,6 +54,29 @@ pub fn run_session_launch_default_scribe_contract_case(input: &Value) -> Value {
             "sessions": created_scribe_metadata_sessions(input),
         },
     })
+}
+
+fn default_scribe_skip(reason: &str) -> Value {
+    json!({
+        "result": { "created": false, "reason": reason },
+        "calls": [],
+        "sessions": [],
+        "metadata": { "version": 1, "sessions": {} },
+    })
+}
+
+fn default_scribe_tool(input: &Value) -> Option<String> {
+    let default_agent = input
+        .get("config")
+        .and_then(|config| config.get("scribe"))
+        .and_then(|scribe| scribe.get("defaultAgent"))?;
+    if let Some(tool) = default_agent.as_str() {
+        return Some(tool.to_owned());
+    }
+    default_agent
+        .get("tool")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn existing_live_scribe(input: &Value) -> Option<Value> {

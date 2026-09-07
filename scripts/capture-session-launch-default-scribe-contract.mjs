@@ -213,6 +213,14 @@ const cases = [
     input: {},
   },
   {
+    name: "returns unknown-tool when configured default scribe tool is missing",
+    input: { config: { scribe: { defaultAgent: "ghost" } } },
+  },
+  {
+    name: "returns disabled-tool when configured default scribe tool is disabled",
+    input: { config: { scribe: { defaultAgent: "aider" }, tools: { aider: { enabled: false } } } },
+  },
+  {
     name: "uses metadata scribe id when a matching runtime is live",
     input: {
       config: scribeEnabledConfig,
