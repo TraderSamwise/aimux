@@ -47,6 +47,7 @@ pub mod dashboard_client;
 pub mod dashboard_command_spec;
 pub mod dashboard_control_activation_contract;
 pub mod dashboard_control_overlays_contract;
+pub mod dashboard_control_worktree_sessions_contract;
 pub mod dashboard_controller;
 pub mod dashboard_create;
 pub mod dashboard_event_stream;
