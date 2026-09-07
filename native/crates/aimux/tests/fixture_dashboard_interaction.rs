@@ -1,11 +1,11 @@
 use aimux::dashboard_actions::DashboardActionRequest;
 use aimux::dashboard_controller::{
-    parse_dashboard_keys, DashboardController, DashboardControllerEffect,
+    DashboardController, DashboardControllerEffect, parse_dashboard_keys,
 };
 use aimux::dashboard_model::{DesktopStateSnapshot, WorktreeGroup};
 use aimux::dashboard_renderer::DashboardNavLevel;
 use aimux::project_api_contract::routes;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const CONTRACT: &str =
     include_str!("../../../../testdata/contracts/v1/multiplexer/dashboard-interaction.json");
@@ -73,6 +73,7 @@ fn run_case(case: &Value) -> Value {
                 | DashboardControllerEffect::WorktreeCacheCleanupPreview(_)
                 | DashboardControllerEffect::WorktreeCacheCleanupApply(_)
                 | DashboardControllerEffect::LoadOrchestrationRoutes { .. }
+                | DashboardControllerEffect::OpenRelevantThread { .. }
                 | DashboardControllerEffect::Ignored => {}
             }
         }
@@ -121,12 +122,11 @@ fn worktree_index(snapshot: &DesktopStateSnapshot, path: Option<&str>) -> usize 
 }
 
 fn summarize_request(snapshot: &DesktopStateSnapshot, request: &DashboardActionRequest) -> Value {
-    if request.path == routes::controls::FOCUS_WINDOW {
-        if let Some(window_id) = request.body.get("windowId").and_then(Value::as_str) {
-            if let Some((kind, id)) = find_entry_by_window_id(snapshot, window_id) {
-                return json!({ "kind": kind, "id": id });
-            }
-        }
+    if request.path == routes::controls::FOCUS_WINDOW
+        && let Some(window_id) = request.body.get("windowId").and_then(Value::as_str)
+        && let Some((kind, id)) = find_entry_by_window_id(snapshot, window_id)
+    {
+        return json!({ "kind": kind, "id": id });
     }
     if request.path == routes::agents::RESUME || request.path == routes::agents::STOP {
         return json!({
