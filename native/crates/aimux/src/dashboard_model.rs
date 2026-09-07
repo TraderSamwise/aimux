@@ -501,17 +501,17 @@ pub fn run_dashboard_model_process_info_contract_case(input: &Value) -> Value {
     if !command.is_empty() {
         result.insert("command".to_owned(), json!(command));
     }
-    if !pid_raw.is_empty() && pid_raw.chars().all(|ch| ch.is_ascii_digit()) {
-        if let Ok(pid) = pid_raw.parse::<u64>() {
-            result.insert("pid".to_owned(), json!(pid));
-        }
+    if !pid_raw.is_empty()
+        && pid_raw.chars().all(|ch| ch.is_ascii_digit())
+        && let Ok(pid) = pid_raw.parse::<u64>()
+    {
+        result.insert("pid".to_owned(), json!(pid));
     }
     if input.get("captureThrows").is_none()
         && let Some(preview) = string_field_value(input, "captureOutput")
             .lines()
             .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .next_back()
+            .rfind(|line| !line.is_empty())
     {
         result.insert("previewLine".to_owned(), json!(preview));
     }
