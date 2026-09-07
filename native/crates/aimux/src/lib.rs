@@ -161,6 +161,7 @@ pub mod session_launch;
 pub mod session_launch_actions_contract;
 pub mod session_launch_create_contract;
 pub mod session_launch_dashboard_contract;
+pub mod session_launch_default_scribe_contract;
 pub mod session_launch_migrate_switch_contract;
 pub mod session_launch_resume_contract;
 pub mod session_launch_startup_contract;
