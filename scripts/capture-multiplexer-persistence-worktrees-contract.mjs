@@ -73,7 +73,9 @@ function normalize(value, ctx) {
 function normalizeWorktreeCreatedAt(value) {
   if (Array.isArray(value)) return value.map(normalizeWorktreeCreatedAt);
   if (!value || typeof value !== "object") return value;
-  const out = Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, normalizeWorktreeCreatedAt(nested)]));
+  const out = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, normalizeWorktreeCreatedAt(nested)]),
+  );
   if (out.path === "<repo>" && typeof out.createdAt === "string") out.createdAt = "<createdAt:main>";
   return out;
 }
@@ -169,9 +171,19 @@ function hostFor(input) {
     offlineSessions: clone(input.offlineSessions ?? []),
     offlineServices: clone(input.offlineServices ?? []),
     sessionWorktreePaths: new Map(input.sessionWorktreePaths ?? []),
-    listDesktopWorktrees: callRecorder(calls, "listDesktopWorktrees", () => clone(input.worktrees ?? [])),
-    deleteGraveyardWorktree: callRecorder(calls, "deleteGraveyardWorktree", async (path) => ({ path, status: "removed" })),
-    isSessionRuntimeLive: callRecorder(calls, "isSessionRuntimeLive", (session) => input.liveSessionIds?.includes(session.id) ?? false),
+    listDesktopWorktrees: callRecorder(calls, "listDesktopWorktrees", () => {
+      if (input.listDesktopWorktreesError) throw new Error(input.listDesktopWorktreesError);
+      return clone(input.worktrees ?? []);
+    }),
+    deleteGraveyardWorktree: callRecorder(calls, "deleteGraveyardWorktree", async (path) => ({
+      path,
+      status: "removed",
+    })),
+    isSessionRuntimeLive: callRecorder(
+      calls,
+      "isSessionRuntimeLive",
+      (session) => input.liveSessionIds?.includes(session.id) ?? false,
+    ),
     saveState: callRecorder(calls, "saveState"),
     syncSessionsFromTopology: callRecorder(calls, "syncSessionsFromTopology"),
     loadOfflineTopologySessions: callRecorder(calls, "loadOfflineTopologySessions"),
@@ -186,7 +198,9 @@ function hostFor(input) {
     showDashboardError: callRecorder(calls, "showDashboardError"),
     dashboardPendingActions,
     pendingWorktreeCreates: new Map(input.pendingWorktreeCreates ?? []),
-    pendingWorktreeRemovals: new Map(input.pendingWorktreeRemovals ?? []),
+    pendingWorktreeRemovals: new Map(
+      (input.pendingWorktreeRemovals ?? []).map(([path, value]) => [path, Promise.resolve(clone(value))]),
+    ),
     dashboardWorktreeGroupsCache: clone(input.dashboardWorktreeGroupsCache ?? []),
     metadataServer: { notifyChange: callRecorder(calls, "metadataServer.notifyChange") },
     tmuxRuntimeManager: {
@@ -265,9 +279,9 @@ async function invoke(api, ctx, input) {
           ? actualInput.cleanupInput
           : api === "cleanupWorktreeCaches"
             ? actualInput.cleanupInput
-        : api === "resurrectGraveyardSession"
-          ? actualInput.sessionId
-          : actualInput.path;
+            : api === "resurrectGraveyardSession"
+              ? actualInput.sessionId
+              : actualInput.path;
     const returned = await persistenceMethods[api].call(host, arg);
     let immediate;
     let completion = null;
@@ -356,19 +370,28 @@ await record(
   },
 );
 
-await record(cases, "graveyards a worktree into topology", "graveyardDesktopWorktree", "graveyard", ({ projectRoot, worktreeRoot }) => {
-  const worktreePath = join(worktreeRoot, "demo");
-  topologySessions.upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
-  topologyServices.upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
-  return {
-    projectRoot,
-    path: worktreePath,
-    worktrees: [{ name: "demo", branch: "demo", path: worktreePath, createdAt: "2026-05-01T00:00:00.000Z" }],
-    sessions: [],
-    sessionWorktreePaths: [],
-    managedWindows: [],
-  };
-});
+await record(
+  cases,
+  "graveyards a worktree into topology",
+  "graveyardDesktopWorktree",
+  "graveyard",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    topologySessions.upsertTopologySession(
+      { id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath },
+      "offline",
+    );
+    topologyServices.upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
+    return {
+      projectRoot,
+      path: worktreePath,
+      worktrees: [{ name: "demo", branch: "demo", path: worktreePath, createdAt: "2026-05-01T00:00:00.000Z" }],
+      sessions: [],
+      sessionWorktreePaths: [],
+      managedWindows: [],
+    };
+  },
+);
 
 await record(
   cases,
@@ -424,19 +447,25 @@ await record(
   },
 );
 
-await record(cases, "creates a desktop worktree and settles topology active", "createDesktopWorktree", "create", ({ projectRoot, worktreeRoot }) => {
-  const worktreePath = join(worktreeRoot, "demo");
-  mkdirSync(worktreeRoot, { recursive: true });
-  return {
-    projectRoot,
-    name: "demo",
-    path: worktreePath,
-    worktrees: [],
-    sessions: [],
-    sessionWorktreePaths: [],
-    managedWindows: [],
-  };
-});
+await record(
+  cases,
+  "creates a desktop worktree and settles topology active",
+  "createDesktopWorktree",
+  "create",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    mkdirSync(worktreeRoot, { recursive: true });
+    return {
+      projectRoot,
+      name: "demo",
+      path: worktreePath,
+      worktrees: [],
+      sessions: [],
+      sessionWorktreePaths: [],
+      managedWindows: [],
+    };
+  },
+);
 
 await record(
   cases,
@@ -499,7 +528,10 @@ await record(
       { path: worktreePath, name: "demo", branch: "demo", createdAt: "2026-05-01T00:00:00.000Z" },
       "active",
     );
-    topologySessions.upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    topologySessions.upsertTopologySession(
+      { id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath },
+      "offline",
+    );
     topologyServices.upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
     return {
       projectRoot,
@@ -525,7 +557,10 @@ await record(
       { path: worktreePath, name: "orphan", branch: "orphan", createdAt: "2026-05-01T00:00:00.000Z" },
       "active",
     );
-    topologySessions.upsertTopologySession({ id: "codex-orphan", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    topologySessions.upsertTopologySession(
+      { id: "codex-orphan", tool: "codex", command: "codex", args: [], worktreePath },
+      "offline",
+    );
     topologyServices.upsertTopologyService({ id: "service-orphan", command: "zsh", worktreePath }, "stopped");
     return {
       projectRoot,
@@ -578,6 +613,27 @@ await record(
 
 await record(
   cases,
+  "keeps existing worktree removal pending when fallback worktree listing fails",
+  "removeDesktopWorktree",
+  "remove-existing-pending-list-fails",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    return {
+      projectRoot,
+      path: worktreePath,
+      listDesktopWorktreesError: "worktree list unavailable",
+      pendingWorktreeRemovals: [[worktreePath, { path: worktreePath, status: "removed" }]],
+      worktrees: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      sessionWorktreePaths: [],
+      managedWindows: [],
+    };
+  },
+);
+
+await record(
+  cases,
   "refuses to graveyard the main checkout",
   "graveyardDesktopWorktree",
   "graveyard-main-checkout",
@@ -589,6 +645,38 @@ await record(
     sessionWorktreePaths: [],
     managedWindows: [],
   }),
+);
+
+await record(
+  cases,
+  "does not detach worktree services when graveyarding is blocked by a live agent",
+  "graveyardDesktopWorktree",
+  "graveyard-live-agent-keeps-service",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    const service = {
+      id: "service-1",
+      command: "shell",
+      label: "shell",
+      worktreePath,
+    };
+    const serviceTarget = { sessionName: "aimux", windowId: "@service", windowIndex: 1, windowName: "service" };
+    return {
+      projectRoot,
+      path: worktreePath,
+      worktrees: [{ name: "demo", branch: "demo", path: worktreePath, isBare: false }],
+      sessions: [{ id: "claude-1", command: "claude", label: "claude" }],
+      liveSessionIds: ["claude-1"],
+      sessionWorktreePaths: [["claude-1", worktreePath]],
+      offlineServices: [service],
+      managedWindows: [
+        {
+          target: serviceTarget,
+          metadata: { kind: "service", sessionId: service.id, worktreePath },
+        },
+      ],
+    };
+  },
 );
 
 await record(
@@ -639,7 +727,10 @@ await record(
   ({ projectRoot, worktreeRoot }) => {
     const worktreePath = join(worktreeRoot, "gone");
     topologyWorktrees.upsertTopologyWorktree({ path: worktreePath, name: "gone", branch: "gone" }, "active");
-    topologySessions.upsertTopologySession({ id: "codex-gone", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    topologySessions.upsertTopologySession(
+      { id: "codex-gone", tool: "codex", command: "codex", args: [], worktreePath },
+      "offline",
+    );
     topologyServices.upsertTopologyService({ id: "service-gone", command: "zsh", worktreePath }, "stopped");
     topologyWorktrees.moveTopologyWorktreeToGraveyard(worktreePath);
     return {
@@ -662,7 +753,10 @@ await record(
     const worktreePath = join(externalRoot, "demo");
     execFileSync("git", ["worktree", "add", "-q", "-b", "external-demo", worktreePath], { cwd: projectRoot });
     topologyWorktrees.upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "external-demo" }, "active");
-    topologySessions.upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    topologySessions.upsertTopologySession(
+      { id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath },
+      "offline",
+    );
     topologyServices.upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
     topologyWorktrees.moveTopologyWorktreeToGraveyard(worktreePath);
     return {
@@ -671,6 +765,43 @@ await record(
       worktrees: [],
       offlineSessions: [{ id: "codex-demo", worktreePath }],
       offlineServices: [{ id: "service-demo", worktreePath }],
+    };
+  },
+);
+
+await record(
+  cases,
+  "keeps graveyard entries visible when delete physical removal fails",
+  "deleteGraveyardWorktree",
+  "delete-physical-removal-fails",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "physical-fails");
+    mkdirSync(worktreePath, { recursive: true });
+    topologyWorktrees.upsertTopologyWorktree(
+      { path: worktreePath, name: "physical-fails", branch: "physical-fails" },
+      "active",
+    );
+    topologySessions.upsertTopologySession(
+      { id: "codex-physical-fails", tool: "codex", command: "codex", args: [], worktreePath },
+      "offline",
+    );
+    topologyWorktrees.moveTopologyWorktreeToGraveyard(worktreePath);
+    const contextDir = join(paths.getContextDir(), "codex-physical-fails");
+    mkdirSync(contextDir, { recursive: true });
+    mkdirSync(paths.getRecordingsDir(), { recursive: true });
+    const recording = join(paths.getRecordingsDir(), "codex-physical-fails.log");
+    writeFileSync(join(contextDir, "live.md"), "live\n");
+    writeFileSync(recording, "raw\n");
+    return {
+      projectRoot,
+      path: worktreePath,
+      pathExistsButNotGitWorktree: true,
+      offlineSessions: [{ id: "codex-physical-fails", worktreePath }],
+      offlineServices: [],
+      checkPaths: [
+        { label: "context", path: contextDir },
+        { label: "recording", path: recording },
+      ],
     };
   },
 );

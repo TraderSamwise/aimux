@@ -174,6 +174,10 @@ impl<'a> PersistenceWorktreeState<'a> {
     fn remove_desktop_worktree(&mut self) -> Value {
         let project_root = string_field(self.input, "projectRoot");
         let path = string_field(self.input, "path");
+        if let Some(returned) = self.existing_pending_removal(&path) {
+            self.set_remove_pending(&path);
+            return self.ok(returned);
+        }
         self.set_remove_pending(&path);
         self.call("syncSessionsFromTopology", vec![]);
 
@@ -356,6 +360,9 @@ impl<'a> PersistenceWorktreeState<'a> {
             .any(|entry| string_field(entry, "path") == path)
         {
             return self.error(format!("Graveyard worktree \"{path}\" not found"));
+        }
+        if bool_field(self.input, "pathExistsButNotGitWorktree") {
+            return self.error(format!("fatal: '{path}' is not a working tree"));
         }
         self.offline_sessions
             .retain(|session| string_field(session, "worktreePath") != path);
@@ -681,6 +688,19 @@ impl<'a> PersistenceWorktreeState<'a> {
             }
         }
         None
+    }
+
+    fn existing_pending_removal(&self, path: &str) -> Option<Value> {
+        array_field(self.input, "pendingWorktreeRemovals")
+            .into_iter()
+            .find_map(|entry| {
+                let pair = entry.as_array()?;
+                if pair.first().and_then(Value::as_str) == Some(path) {
+                    pair.get(1).cloned()
+                } else {
+                    None
+                }
+            })
     }
 
     fn ok(&self, returned: Value) -> Value {
