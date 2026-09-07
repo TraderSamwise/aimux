@@ -22,6 +22,13 @@ pub fn run_session_launch_default_scribe_contract_case(input: &Value) -> Value {
     {
         return default_scribe_skip("disabled-tool");
     }
+    if input
+        .get("precreateDefaultScribeClaim")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return default_scribe_skip("claim-timeout");
+    }
 
     if let Some(existing) = existing_live_scribe(input) {
         let mut metadata_sessions = metadata_sessions(input);

@@ -48,6 +48,24 @@
     },
     {
       "id": "session-launch-default-scribe-004",
+      "name": "returns claim-timeout when another live owner holds the default scribe claim",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "ensureDefaultScribeAgent",
+      "input": {
+        "config": { "scribe": { "defaultAgent": "aider" } },
+        "precreateDefaultScribeClaim": true,
+        "advanceClockMs": 31000
+      },
+      "output": {
+        "result": { "created": false, "reason": "claim-timeout" },
+        "calls": [],
+        "sessions": [],
+        "metadata": { "version": 1, "sessions": {} }
+      },
+      "inputSha256": "ae24ead2bc537a914a7cf74eb55bdfa369359e4804370ceb126945f978f4326e"
+    },
+    {
+      "id": "session-launch-default-scribe-005",
       "name": "uses metadata scribe id when a matching runtime is live",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",
@@ -68,7 +86,7 @@
       "inputSha256": "8e0656e63a4b192182ca1f5ddd25ec26fa97cc39c2706ae8310f92971d7b8ac6"
     },
     {
-      "id": "session-launch-default-scribe-005",
+      "id": "session-launch-default-scribe-006",
       "name": "marks a live runtime scribe team in metadata",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",
@@ -98,7 +116,7 @@
       "inputSha256": "97d9173d8d170829fef0d4e6ddfbb6701ab239237441c2369265f79fc7ce0228"
     },
     {
-      "id": "session-launch-default-scribe-006",
+      "id": "session-launch-default-scribe-007",
       "name": "creates default scribe when metadata scribe exists only in topology",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",
@@ -214,7 +232,7 @@
       "inputSha256": "f3feaf26ff3a5c582ae1d786490bad1e1597c8a2a90d6c880f930b6af86981af"
     },
     {
-      "id": "session-launch-default-scribe-007",
+      "id": "session-launch-default-scribe-008",
       "name": "creates default scribe when topology scribe team has no host session",
       "source": "src/multiplexer/session-launch.ts",
       "api": "ensureDefaultScribeAgent",

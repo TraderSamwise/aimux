@@ -11,7 +11,7 @@ const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/session-launch-default-scribe.json", ROOT);
 const FIXED_NOW = "2026-06-01T00:00:00.000Z";
 
-const { initPaths } = await import(new URL("dist/paths.js", ROOT));
+const { getProjectStateDirFor, initPaths } = await import(new URL("dist/paths.js", ROOT));
 const { loadMetadataState, saveMetadataState } = await import(new URL("dist/metadata-store.js", ROOT));
 const { ensureDefaultScribeAgent } = await import(new URL("dist/multiplexer/session-launch.js", ROOT));
 const { saveRuntimeTopologySessions } = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
@@ -103,12 +103,17 @@ async function withProject(input, runCase) {
   try {
     process.env.AIMUX_HOME = aimuxHome;
     process.chdir(repoRoot);
+    let nowCalls = 0;
     globalThis.Date = class FixedDate extends realDate {
       constructor(...args) {
         super(...(args.length ? args : [FIXED_NOW]));
       }
       static now() {
-        return realDate.parse(FIXED_NOW);
+        const base = realDate.parse(FIXED_NOW);
+        if (!input.advanceClockMs) return base;
+        const value = base + nowCalls * input.advanceClockMs;
+        nowCalls += 1;
+        return value;
       }
       static parse(value) {
         return realDate.parse(value);
@@ -118,6 +123,11 @@ async function withProject(input, runCase) {
       }
     };
     await initPaths(repoRoot);
+    if (input.precreateDefaultScribeClaim) {
+      const lockPath = join(getProjectStateDirFor(repoRoot), "default-scribe-create.lock");
+      mkdirSync(lockPath, { recursive: true });
+      writeFileSync(join(lockPath, "owner"), `${process.pid}.fixture\n`);
+    }
     saveMetadataState(materialize(input.metadata ?? { version: 1, sessions: {} }, repoRoot));
     if (input.topologySessions) {
       saveRuntimeTopologySessions({
@@ -219,6 +229,10 @@ const cases = [
   {
     name: "returns disabled-tool when configured default scribe tool is disabled",
     input: { config: { scribe: { defaultAgent: "aider" }, tools: { aider: { enabled: false } } } },
+  },
+  {
+    name: "returns claim-timeout when another live owner holds the default scribe claim",
+    input: { config: scribeEnabledConfig, precreateDefaultScribeClaim: true, advanceClockMs: 31000 },
   },
   {
     name: "uses metadata scribe id when a matching runtime is live",
