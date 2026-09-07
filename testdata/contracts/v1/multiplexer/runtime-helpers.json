@@ -9,7 +9,7 @@
   ],
   "subject": "multiplexer dashboard/runtime helper functions",
   "generatedBy": "scripts/capture-multiplexer-runtime-helper-contracts.mjs",
-  "caseCount": 14,
+  "caseCount": 15,
   "cases": [
     {
       "id": "multiplexer-runtime-helpers-001",
@@ -31,6 +31,174 @@
     },
     {
       "id": "multiplexer-runtime-helpers-003",
+      "name": "starts runtime guard repair only for eligible states and blocks safely before restart",
+      "source": "src/multiplexer/dashboard-control.test.ts",
+      "api": "startRuntimeGuardRepair",
+      "input": {
+        "scenarios": [
+          {
+            "name": "disconnected state is not auto-repaired",
+            "projectRoot": "/repo/app",
+            "state": { "kind": "disconnected" }
+          },
+          {
+            "name": "existing in-flight repair suppresses a duplicate start",
+            "projectRoot": "/repo/app",
+            "runtimeGuardRepairing": true,
+            "state": { "kind": "stale", "reason": "service-mismatch" }
+          },
+          {
+            "name": "timed-out repair marker suppresses a duplicate start",
+            "projectRoot": "/repo/app",
+            "runtimeGuardRepairTimedOutPending": true,
+            "state": { "kind": "runtime-rebuild-required" }
+          },
+          {
+            "name": "retry cooldown suppresses the same repair key",
+            "projectRoot": "/repo/app",
+            "runtimeGuardRepairFailedKey": "stale:service-mismatch",
+            "runtimeGuardRepairRetryAt": 1700000060000,
+            "state": { "kind": "stale", "reason": "service-mismatch" }
+          },
+          {
+            "name": "flapping repair budget shows a hard failure instead of restarting",
+            "projectRoot": "/repo/app",
+            "seedAttempts": [1699999999996, 1699999999997, 1699999999998, 1699999999999, 1700000000000],
+            "state": { "kind": "stale", "reason": "service-mismatch" }
+          },
+          {
+            "name": "global restart lock blocks dashboard repair and records a notice",
+            "projectRoot": "/repo/app",
+            "runtimeRestartLock": true,
+            "state": { "kind": "stale", "reason": "service-mismatch" }
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "disconnected state is not auto-repaired",
+          "host": {
+            "runtimeGuardRepairing": false,
+            "runtimeGuardRepairBusy": false,
+            "runtimeGuardRepairFailedKey": null,
+            "runtimeGuardRepairRetryAt": null,
+            "runtimeGuardRepairBlockedNoticeAt": null,
+            "dashboardBusyState": null,
+            "dashboardErrorState": null,
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [],
+            "runtimeGuardRepairAttempts": []
+          },
+          "calls": []
+        },
+        {
+          "name": "existing in-flight repair suppresses a duplicate start",
+          "host": {
+            "runtimeGuardRepairing": true,
+            "runtimeGuardRepairBusy": false,
+            "runtimeGuardRepairFailedKey": null,
+            "runtimeGuardRepairRetryAt": null,
+            "runtimeGuardRepairBlockedNoticeAt": null,
+            "dashboardBusyState": null,
+            "dashboardErrorState": null,
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [],
+            "runtimeGuardRepairAttempts": []
+          },
+          "calls": []
+        },
+        {
+          "name": "timed-out repair marker suppresses a duplicate start",
+          "host": {
+            "runtimeGuardRepairing": false,
+            "runtimeGuardRepairBusy": false,
+            "runtimeGuardRepairFailedKey": null,
+            "runtimeGuardRepairRetryAt": null,
+            "runtimeGuardRepairBlockedNoticeAt": null,
+            "dashboardBusyState": null,
+            "dashboardErrorState": null,
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [],
+            "runtimeGuardRepairAttempts": []
+          },
+          "calls": []
+        },
+        {
+          "name": "retry cooldown suppresses the same repair key",
+          "host": {
+            "runtimeGuardRepairing": false,
+            "runtimeGuardRepairBusy": false,
+            "runtimeGuardRepairFailedKey": "stale:service-mismatch",
+            "runtimeGuardRepairRetryAt": 1700000060000,
+            "runtimeGuardRepairBlockedNoticeAt": null,
+            "dashboardBusyState": null,
+            "dashboardErrorState": null,
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [],
+            "runtimeGuardRepairAttempts": []
+          },
+          "calls": []
+        },
+        {
+          "name": "flapping repair budget shows a hard failure instead of restarting",
+          "host": {
+            "runtimeGuardRepairing": false,
+            "runtimeGuardRepairBusy": false,
+            "runtimeGuardRepairFailedKey": null,
+            "runtimeGuardRepairRetryAt": null,
+            "runtimeGuardRepairBlockedNoticeAt": null,
+            "dashboardBusyState": null,
+            "dashboardErrorState": null,
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [],
+            "runtimeGuardRepairAttempts": [1699999999996, 1699999999997, 1699999999998, 1699999999999, 1700000000000]
+          },
+          "calls": [
+            {
+              "method": "showDashboardError",
+              "args": [
+                "Aimux repair is looping",
+                [
+                  "Repaired 5 times in 120s without settling — stopping. This dashboard is likely running an older build than the daemon; reload it."
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "name": "global restart lock blocks dashboard repair and records a notice",
+          "host": {
+            "runtimeGuardRepairing": false,
+            "runtimeGuardRepairBusy": true,
+            "runtimeGuardRepairFailedKey": null,
+            "runtimeGuardRepairRetryAt": null,
+            "runtimeGuardRepairBlockedNoticeAt": 1700000000000,
+            "dashboardBusyState": null,
+            "dashboardErrorState": null,
+            "footerFlash": "Aimux repair already running",
+            "footerFlashTicks": 3,
+            "dashboardRepairNotices": [
+              {
+                "kind": "runtime-guard-repair",
+                "phase": "blocked",
+                "message": "Aimux repair already running",
+                "at": 1700000000000
+              }
+            ],
+            "runtimeGuardRepairAttempts": []
+          },
+          "calls": [{ "method": "renderCurrentDashboardView", "args": [] }]
+        }
+      ],
+      "inputSha256": "9e1dc53efc7d4780af0c429edfe1daa516b4656d7528a5f4a96c5655ed0058b9"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-004",
       "name": "routes dashboard subscreen navigation keys and records side effects",
       "source": "src/multiplexer/dashboard-control.test.ts",
       "api": "handleDashboardSubscreenNavigationKey",
@@ -104,7 +272,7 @@
       "inputSha256": "8ace518c7b97cf96098f752aec944a84214fb8b8a8f6d41d6d5cb746ac3995e7"
     },
     {
-      "id": "multiplexer-runtime-helpers-004",
+      "id": "multiplexer-runtime-helpers-005",
       "name": "renders session details and terminal-safe text helpers",
       "source": "src/multiplexer/dashboard-ops.test.ts",
       "api": "renderSessionDetails+textHelpers",
@@ -173,7 +341,7 @@
       "inputSha256": "592816644161f24c95ae59a21a9d3108d80b47cfd7f618f2677165aebb6f0c68"
     },
     {
-      "id": "multiplexer-runtime-helpers-005",
+      "id": "multiplexer-runtime-helpers-006",
       "name": "resolves default scribe launch from config variants",
       "source": "src/multiplexer/session-launch.test.ts",
       "api": "resolveDefaultScribeLaunch",
@@ -219,7 +387,7 @@
       "inputSha256": "39fbf6d20382aa49470d4a368043e0b01f75c3b9d4c0d9fd6b226895a68bf854"
     },
     {
-      "id": "multiplexer-runtime-helpers-006",
+      "id": "multiplexer-runtime-helpers-007",
       "name": "derives backend session IDs, redacts launch args, and injects Codex instructions before positional prompts",
       "source": "src/multiplexer/session-launch.test.ts",
       "api": "deriveAimuxSessionIdFromBackendSessionId+summarizeLaunchArgs+injectCodexDeveloperInstructions",
@@ -271,7 +439,7 @@
       "inputSha256": "2f3503bd47a6ebba0ebe7a35b271fe5547dae85271346485c59bc924ab233d67"
     },
     {
-      "id": "multiplexer-runtime-helpers-007",
+      "id": "multiplexer-runtime-helpers-008",
       "name": "groups launch sessions by worktree and filters project-control sessions",
       "source": "src/multiplexer/session-launch.test.ts",
       "api": "getSessionsByWorktree+getScopedSessionEntries+getSessionWorktreePath",
@@ -303,7 +471,7 @@
       "inputSha256": "37106eba0dcc2dae206bd4bf8ce7c49a8f2bf5181163b9d00a647c396a8fd360"
     },
     {
-      "id": "multiplexer-runtime-helpers-008",
+      "id": "multiplexer-runtime-helpers-009",
       "name": "applies and resolves session labels across live and offline caches",
       "source": "src/multiplexer/session-runtime-core.test.ts",
       "api": "getSessionLabel+applySessionLabel+applyDashboardSessionLabel",
@@ -329,7 +497,7 @@
       "inputSha256": "7476cda514567f8096748687c1cea46326e28e4c32d1740d33bfe368ff5cfb23"
     },
     {
-      "id": "multiplexer-runtime-helpers-009",
+      "id": "multiplexer-runtime-helpers-010",
       "name": "strips SGR, reconciles activity, and rejects missing or exited sessions",
       "source": "src/multiplexer/session-runtime-core.test.ts",
       "api": "stripSgr+reconcileAgentActivity+resolveRunningSession",
@@ -358,7 +526,7 @@
       "inputSha256": "6999d0e46f46930104ab0148e6b46c9d936a4602e33d64f2741e733337d786f1"
     },
     {
-      "id": "multiplexer-runtime-helpers-010",
+      "id": "multiplexer-runtime-helpers-011",
       "name": "resolves live tmux targets from cache, startup grace, and scanned windows",
       "source": "src/multiplexer/session-runtime-core.test.ts",
       "api": "resolveLiveSessionTmuxTarget",
@@ -491,7 +659,7 @@
       "inputSha256": "4e719de2fd6a5e7dc409ac83583390a64a4bd1f4fd978395fab84c0f3a1b62ab"
     },
     {
-      "id": "multiplexer-runtime-helpers-011",
+      "id": "multiplexer-runtime-helpers-012",
       "name": "projects context watcher sessions with resolved tmux targets and turn patterns",
       "source": "src/multiplexer/session-runtime-core.test.ts",
       "api": "updateContextWatcherSessions",
@@ -551,7 +719,7 @@
       "inputSha256": "e0769185c1cbf4be7f1157900816603b485ee3d36549750a7082a0b05202a536"
     },
     {
-      "id": "multiplexer-runtime-helpers-012",
+      "id": "multiplexer-runtime-helpers-013",
       "name": "registers managed sessions, restores labels, and keeps teammate roles out of role maps",
       "source": "src/multiplexer/session-runtime-core.test.ts",
       "api": "registerManagedSession",
@@ -621,7 +789,7 @@
       "inputSha256": "32e7f56ae4132377a3c6c5c58bb30e27b259bdcf639ca3c8d2ff45df15626265"
     },
     {
-      "id": "multiplexer-runtime-helpers-013",
+      "id": "multiplexer-runtime-helpers-014",
       "name": "handles runtime output and exit events without dropping restorable sessions",
       "source": "src/multiplexer/session-runtime-core.test.ts",
       "api": "handleSessionRuntimeEvent",
@@ -948,7 +1116,7 @@
       "inputSha256": "58859da3a41ba6a2c4411db4e5844a187eb817495c5b76c93ffc58388fab57d4"
     },
     {
-      "id": "multiplexer-runtime-helpers-014",
+      "id": "multiplexer-runtime-helpers-015",
       "name": "scores attention, chooses preferred thread, and describes handoff state",
       "source": "src/multiplexer/subscreens.test.ts",
       "api": "attentionScore+getPreferredThreadIndexForParticipant+describeHandoffState",

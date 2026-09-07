@@ -16,6 +16,7 @@ pub fn run_multiplexer_runtime_helpers_contract_case(api: &str, input: &Value) -
     match api {
         "dashboardProjectRoot" => dashboard_project_root_case(input),
         "pruneRuntimeGuardRepairAttempts" => prune_runtime_guard_repair_attempts_case(input),
+        "startRuntimeGuardRepair" => start_runtime_guard_repair_case(input),
         "handleDashboardSubscreenNavigationKey" => {
             handle_dashboard_subscreen_navigation_key_case(input)
         }
@@ -72,6 +73,88 @@ fn prune_runtime_guard_repair_attempts_case(input: &Value) -> Value {
             .filter_map(Value::as_i64)
             .filter(|attempt| now - *attempt < RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS)
             .map(Value::from)
+            .collect(),
+    )
+}
+
+fn start_runtime_guard_repair_case(input: &Value) -> Value {
+    Value::Array(
+        array_field(input, "scenarios")
+            .iter()
+            .map(|scenario| {
+                let name = scenario.get("name").cloned().unwrap_or(Value::Null);
+                let runtime_guard_repairing = bool_field(scenario, "runtimeGuardRepairing");
+                let mut host = json!({
+                    "runtimeGuardRepairing": runtime_guard_repairing,
+                    "runtimeGuardRepairBusy": bool_field(scenario, "runtimeGuardRepairBusy"),
+                    "runtimeGuardRepairFailedKey": scenario.get("runtimeGuardRepairFailedKey").cloned().unwrap_or(Value::Null),
+                    "runtimeGuardRepairRetryAt": scenario.get("runtimeGuardRepairRetryAt").cloned().unwrap_or(Value::Null),
+                    "runtimeGuardRepairBlockedNoticeAt": Value::Null,
+                    "dashboardBusyState": scenario.get("dashboardBusyState").cloned().unwrap_or(Value::Null),
+                    "dashboardErrorState": scenario.get("dashboardErrorState").cloned().unwrap_or(Value::Null),
+                    "footerFlash": Value::Null,
+                    "footerFlashTicks": Value::Null,
+                    "dashboardRepairNotices": [],
+                    "runtimeGuardRepairAttempts": [],
+                });
+                let mut calls = Vec::new();
+                let state = value_field(scenario, "state");
+                let state_kind = string_field(state, "kind");
+                let repair_key = if state_kind == "stale" {
+                    format!("stale:{}", string_field(state, "reason"))
+                } else {
+                    state_kind.clone()
+                };
+                let eligible = state_kind == "stale" || state_kind == "runtime-rebuild-required";
+                let retry_blocked = scenario
+                    .get("runtimeGuardRepairFailedKey")
+                    .and_then(Value::as_str)
+                    == Some(repair_key.as_str())
+                    && scenario
+                        .get("runtimeGuardRepairRetryAt")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|retry_at| FIXED_NOW_MS < retry_at);
+
+                if eligible
+                    && !runtime_guard_repairing
+                    && !bool_field(scenario, "runtimeGuardRepairTimedOutPending")
+                    && !retry_blocked
+                {
+                    let seed_attempts = array_field(scenario, "seedAttempts");
+                    if seed_attempts.len() >= 5 {
+                        host["runtimeGuardRepairAttempts"] = Value::Array(seed_attempts);
+                        calls.push(call(
+                            "showDashboardError",
+                            vec![
+                                json!("Aimux repair is looping"),
+                                json!([
+                                    "Repaired 5 times in 120s without settling \u{2014} stopping. This dashboard is likely running an older build than the daemon; reload it."
+                                ]),
+                            ],
+                        ));
+                    } else if bool_field(scenario, "runtimeRestartLock") {
+                        host["runtimeGuardRepairBusy"] = json!(true);
+                        host["runtimeGuardRepairBlockedNoticeAt"] = json!(FIXED_NOW_MS);
+                        host["footerFlash"] = json!("Aimux repair already running");
+                        host["footerFlashTicks"] = json!(3);
+                        host["dashboardRepairNotices"] = json!([
+                            {
+                                "kind": "runtime-guard-repair",
+                                "phase": "blocked",
+                                "message": "Aimux repair already running",
+                                "at": FIXED_NOW_MS,
+                            }
+                        ]);
+                        calls.push(call("renderCurrentDashboardView", vec![]));
+                    }
+                }
+
+                json!({
+                    "name": name,
+                    "host": host,
+                    "calls": calls,
+                })
+            })
             .collect(),
     )
 }
@@ -1550,6 +1633,10 @@ fn array_field(value: &Value, key: &str) -> Vec<Value> {
 
 fn value_field<'a>(value: &'a Value, key: &str) -> &'a Value {
     value.get(key).unwrap_or(&Value::Null)
+}
+
+fn bool_field(value: &Value, key: &str) -> bool {
+    value.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn string_field(value: &Value, key: &str) -> String {

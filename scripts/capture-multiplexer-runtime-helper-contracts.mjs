@@ -9,9 +9,12 @@ import prettier from "prettier";
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/runtime-helpers.json", ROOT);
 
-const { dashboardProjectRoot, handleDashboardSubscreenNavigationKey, pruneRuntimeGuardRepairAttempts } = await import(
-  new URL("dist/multiplexer/dashboard-control.js", ROOT)
-);
+const {
+  dashboardProjectRoot,
+  handleDashboardSubscreenNavigationKey,
+  pruneRuntimeGuardRepairAttempts,
+  startRuntimeGuardRepair,
+} = await import(new URL("dist/multiplexer/dashboard-control.js", ROOT));
 const {
   basenameForHost,
   renderSessionDetails,
@@ -43,6 +46,7 @@ const {
 } = await import(new URL("dist/multiplexer/session-runtime-core.js", ROOT));
 const { initPaths } = await import(new URL("dist/paths.js", ROOT));
 const { listTopologySessionStates } = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
+const { recordRuntimeGuardRepairAttempt } = await import(new URL("dist/runtime-guard-repair-history.js", ROOT));
 const { attentionScore, describeHandoffState, getPreferredThreadIndexForParticipant } = await import(
   new URL("dist/multiplexer/subscreens.js", ROOT)
 );
@@ -118,6 +122,19 @@ function normalizeValue(value) {
   return JSON.parse(JSON.stringify(value).split(cwd).join("<REPO>"));
 }
 
+function withTempAimuxHome(fn) {
+  const previousHome = process.env.AIMUX_HOME;
+  const home = mkdtempSync(join(tmpdir(), "aimux-dashboard-control-contract-"));
+  process.env.AIMUX_HOME = home;
+  try {
+    return fn(home);
+  } finally {
+    if (previousHome === undefined) delete process.env.AIMUX_HOME;
+    else process.env.AIMUX_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 function createRuntimeCoreTargetHost(input) {
   const calls = [];
   const sessionTmuxTargets = mapFromPairs(input.sessionTmuxTargets);
@@ -162,6 +179,57 @@ function resolveLiveSessionTmuxTargetFixture(input) {
       calls,
     };
   });
+}
+
+function startRuntimeGuardRepairFixture(input) {
+  return input.scenarios.map((scenario) =>
+    withTempAimuxHome((home) => {
+      const calls = [];
+      if (scenario.seedAttempts) {
+        for (const at of scenario.seedAttempts) {
+          recordRuntimeGuardRepairAttempt(scenario.projectRoot, scenario.windowMs ?? 120_000, at);
+        }
+      }
+      if (scenario.runtimeRestartLock) {
+        const lockPath = join(home, "locks", "restart");
+        mkdirSync(lockPath, { recursive: true });
+        writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: process.pid }));
+      }
+      const host = {
+        mode: scenario.mode ?? "dashboard",
+        projectRoot: scenario.projectRoot,
+        dashboardInputEpoch: scenario.dashboardInputEpoch ?? 0,
+        runtimeGuardRepairing: scenario.runtimeGuardRepairing ?? false,
+        runtimeGuardRepairTimedOutPending: scenario.runtimeGuardRepairTimedOutPending ?? false,
+        runtimeGuardRepairFailedKey: scenario.runtimeGuardRepairFailedKey,
+        runtimeGuardRepairRetryAt: scenario.runtimeGuardRepairRetryAt,
+        runtimeGuardRepairBusy: scenario.runtimeGuardRepairBusy ?? false,
+        dashboardBusyState: clone(scenario.dashboardBusyState ?? null),
+        dashboardErrorState: clone(scenario.dashboardErrorState ?? null),
+        runtimeGuardState: scenario.runtimeGuardState === undefined ? undefined : clone(scenario.runtimeGuardState),
+        renderCurrentDashboardView: () => calls.push({ method: "renderCurrentDashboardView", args: [] }),
+        showDashboardError: (...args) => calls.push({ method: "showDashboardError", args: clone(args) }),
+      };
+      startRuntimeGuardRepair(host, clone(scenario.state));
+      return {
+        name: scenario.name,
+        host: {
+          runtimeGuardRepairing: host.runtimeGuardRepairing ?? null,
+          runtimeGuardRepairBusy: host.runtimeGuardRepairBusy ?? null,
+          runtimeGuardRepairFailedKey: host.runtimeGuardRepairFailedKey ?? null,
+          runtimeGuardRepairRetryAt: host.runtimeGuardRepairRetryAt ?? null,
+          runtimeGuardRepairBlockedNoticeAt: host.runtimeGuardRepairBlockedNoticeAt ?? null,
+          dashboardBusyState: clone(host.dashboardBusyState ?? null),
+          dashboardErrorState: clone(host.dashboardErrorState ?? null),
+          footerFlash: host.footerFlash ?? null,
+          footerFlashTicks: host.footerFlashTicks ?? null,
+          dashboardRepairNotices: clone(host.dashboardRepairNotices ?? []),
+          runtimeGuardRepairAttempts: clone(host.runtimeGuardRepairAttempts ?? []),
+        },
+        calls,
+      };
+    }),
+  );
 }
 
 function updateContextWatcherFixture(input) {
@@ -382,6 +450,54 @@ record(
   "pruneRuntimeGuardRepairAttempts",
   { attempts: [1_000, 40_000, 119_999, 120_000, 120_001, 160_000], now: 160_000 },
   (input) => pruneRuntimeGuardRepairAttempts(input.attempts, input.now),
+);
+
+record(
+  cases,
+  "starts runtime guard repair only for eligible states and blocks safely before restart",
+  "src/multiplexer/dashboard-control.test.ts",
+  "startRuntimeGuardRepair",
+  {
+    scenarios: [
+      {
+        name: "disconnected state is not auto-repaired",
+        projectRoot: "/repo/app",
+        state: { kind: "disconnected" },
+      },
+      {
+        name: "existing in-flight repair suppresses a duplicate start",
+        projectRoot: "/repo/app",
+        runtimeGuardRepairing: true,
+        state: { kind: "stale", reason: "service-mismatch" },
+      },
+      {
+        name: "timed-out repair marker suppresses a duplicate start",
+        projectRoot: "/repo/app",
+        runtimeGuardRepairTimedOutPending: true,
+        state: { kind: "runtime-rebuild-required" },
+      },
+      {
+        name: "retry cooldown suppresses the same repair key",
+        projectRoot: "/repo/app",
+        runtimeGuardRepairFailedKey: "stale:service-mismatch",
+        runtimeGuardRepairRetryAt: FIXED_NOW + 60_000,
+        state: { kind: "stale", reason: "service-mismatch" },
+      },
+      {
+        name: "flapping repair budget shows a hard failure instead of restarting",
+        projectRoot: "/repo/app",
+        seedAttempts: [FIXED_NOW - 4, FIXED_NOW - 3, FIXED_NOW - 2, FIXED_NOW - 1, FIXED_NOW],
+        state: { kind: "stale", reason: "service-mismatch" },
+      },
+      {
+        name: "global restart lock blocks dashboard repair and records a notice",
+        projectRoot: "/repo/app",
+        runtimeRestartLock: true,
+        state: { kind: "stale", reason: "service-mismatch" },
+      },
+    ],
+  },
+  startRuntimeGuardRepairFixture,
 );
 
 record(
