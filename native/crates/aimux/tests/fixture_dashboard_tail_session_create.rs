@@ -27,7 +27,7 @@ fn fixture_dashboard_tail_session_create_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("dashboard tail session create fixture parses");
     assert_eq!(contract.source, "src/multiplexer/dashboard-tail-methods.ts");
-    assert_eq!(contract.cases.len(), 4);
+    assert_eq!(contract.cases.len(), 8);
 
     let mut failures = Vec::new();
     for case in contract.cases {

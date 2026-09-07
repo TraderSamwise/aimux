@@ -313,6 +313,271 @@
         "topologyYaml": ""
       },
       "inputSha256": "4d4954088c3477f2dba633661eee4b258e62719832c1fd5e8a76ab13b11a46a7"
+    },
+    {
+      "id": "dashboard-tail-session-create-005",
+      "name": "spawnAgent records overseer team metadata and launch override command args",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "spawnAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": {},
+        "options": {
+          "toolConfigKey": "codex",
+          "targetSessionId": "codex-overseer",
+          "launchOverride": { "command": "codex-beta", "args": ["--model", "gpt-6"], "env": { "EXTRA": "1" } },
+          "overseer": true,
+          "open": false
+        }
+      },
+      "output": {
+        "result": { "sessionId": "codex-overseer" },
+        "error": null,
+        "calls": [
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "updateContextWatcherSessions", "args": [] },
+          { "method": "metadataServer.notifyChange", "args": [] },
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-overseer",
+              "starting",
+              {
+                "timeoutMs": 210000,
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-overseer",
+                  "command": "codex-beta",
+                  "toolConfigKey": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "team": { "teamId": "overseer", "parentSessionId": "", "role": "overseer" },
+                  "overseer": true,
+                  "pendingAction": "starting",
+                  "optimistic": true
+                }
+              }
+            ]
+          }
+        ],
+        "timers": [{ "ms": 50, "unref": true }],
+        "topologySessions": [
+          {
+            "id": "codex-overseer",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex-beta",
+            "args": ["--model", "gpt-6"],
+            "status": "starting",
+            "lifecycle": "live",
+            "createdAt": "<NOW>",
+            "updatedAt": "<NOW>",
+            "team": { "teamId": "overseer", "parentSessionId": "", "role": "overseer" }
+          }
+        ],
+        "topologyYaml": "version: 1\ngeneratedAt: <NOW>\nrigs:\n  - id: repo-<id>\n    name: repo\n    projectRoot: <REPO>\n    createdAt: <NOW>\n    updatedAt: <NOW>\nnodes:\n  - id: agent:codex-overseer\n    rigId: repo-<id>\n    logicalId: codex-overseer\n    role: overseer\n    runtime: codex\n    toolConfigKey: codex\n    createdAt: <NOW>\nedges: []\nbindings: []\nsessions:\n  - id: codex-overseer\n    nodeId: agent:codex-overseer\n    status: starting\n    tool: codex\n    command: codex-beta\n    args:\n      - --model\n      - gpt-6\n    team:\n      teamId: overseer\n      parentSessionId: \"\"\n      role: overseer\n    createdAt: <NOW>\n    updatedAt: <NOW>\n    lastSeenAt: <NOW>\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations: []\nexchangeRefs: []\n"
+      },
+      "inputSha256": "25bd611cece644f24666c99f7d5943e1575b47a52e856a8718cb723406b8e169"
+    },
+    {
+      "id": "dashboard-tail-session-create-006",
+      "name": "spawnAgent rejects unknown tool config before queuing",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "spawnAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": {},
+        "options": { "toolConfigKey": "missing-tool", "targetSessionId": "missing-new" }
+      },
+      "output": {
+        "result": null,
+        "error": "Unknown tool config: missing-tool",
+        "calls": [],
+        "timers": [],
+        "topologySessions": [],
+        "topologyYaml": ""
+      },
+      "inputSha256": "49982a08208671e2b9bbc27a3b626cd8883a4ff30c92c46105285bb7cef0ef19"
+    },
+    {
+      "id": "dashboard-tail-session-create-007",
+      "name": "createTeammateAgent generates ids with default tool and omits absent role label order",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "createTeammateAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": {},
+        "options": { "parentSessionId": "codex-parent" }
+      },
+      "output": {
+        "result": { "sessionId": "codex-generated", "parentSessionId": "codex-parent", "teamId": "team-codex-parent" },
+        "error": null,
+        "calls": [
+          { "method": "generateDashboardSessionId", "args": ["codex"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "updateContextWatcherSessions", "args": [] },
+          { "method": "metadataServer.notifyChange", "args": [] },
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-generated",
+              "starting",
+              {
+                "timeoutMs": 210000,
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-generated",
+                  "command": "codex",
+                  "toolConfigKey": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent" },
+                  "pendingAction": "starting",
+                  "optimistic": true
+                }
+              }
+            ]
+          }
+        ],
+        "timers": [{ "ms": 50, "unref": true }],
+        "topologySessions": [
+          {
+            "id": "codex-generated",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": ["--model", "gpt-5"],
+            "status": "starting",
+            "lifecycle": "live",
+            "createdAt": "<NOW>",
+            "updatedAt": "<NOW>",
+            "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent" }
+          }
+        ],
+        "topologyYaml": "version: 1\ngeneratedAt: <NOW>\nrigs:\n  - id: repo-<id>\n    name: repo\n    projectRoot: <REPO>\n    createdAt: <NOW>\n    updatedAt: <NOW>\nnodes:\n  - id: agent:codex-generated\n    rigId: repo-<id>\n    logicalId: codex-generated\n    runtime: codex\n    toolConfigKey: codex\n    createdAt: <NOW>\nedges: []\nbindings: []\nsessions:\n  - id: codex-generated\n    nodeId: agent:codex-generated\n    status: starting\n    tool: codex\n    command: codex\n    args:\n      - --model\n      - gpt-5\n    team:\n      teamId: team-codex-parent\n      parentSessionId: codex-parent\n    createdAt: <NOW>\n    updatedAt: <NOW>\n    lastSeenAt: <NOW>\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations: []\nexchangeRefs: []\n"
+      },
+      "inputSha256": "e5b6dcd92a7d8c9ce1eb653b81734e9b5fa15382c8a15c680efa053aaa383898"
+    },
+    {
+      "id": "dashboard-tail-session-create-008",
+      "name": "spawnAgent rejects an id already present in live topology",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "spawnAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": {},
+        "setupTopologySessions": [
+          {
+            "id": "codex-topology-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "status": "idle",
+            "worktreePath": "<REPO>/.aimux/worktrees/live"
+          }
+        ],
+        "options": { "toolConfigKey": "codex", "targetSessionId": "codex-topology-live" }
+      },
+      "output": {
+        "result": null,
+        "error": "Session \"codex-topology-live\" already exists",
+        "calls": [],
+        "timers": [],
+        "topologySessions": [
+          {
+            "id": "codex-topology-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "idle",
+            "lifecycle": "live",
+            "createdAt": "<NOW>",
+            "updatedAt": "<NOW>",
+            "worktreePath": "<REPO>/.aimux/worktrees/live"
+          }
+        ],
+        "topologyYaml": "version: 1\ngeneratedAt: <NOW>\nrigs:\n  - id: repo-<id>\n    name: repo\n    projectRoot: <REPO>\n    createdAt: <NOW>\n    updatedAt: <NOW>\nnodes:\n  - id: agent:codex-topology-live\n    rigId: repo-<id>\n    logicalId: codex-topology-live\n    runtime: codex\n    toolConfigKey: codex\n    cwd: <REPO>/.aimux/worktrees/live\n    createdAt: <NOW>\nedges: []\nbindings: []\nsessions:\n  - id: codex-topology-live\n    nodeId: agent:codex-topology-live\n    status: idle\n    tool: codex\n    command: codex\n    args: []\n    worktreePath: <REPO>/.aimux/worktrees/live\n    createdAt: <NOW>\n    updatedAt: <NOW>\n    lastSeenAt: <NOW>\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations: []\nexchangeRefs: []\n"
+      },
+      "inputSha256": "d784c46132b294d6344646e6db33ede0d2a10206d236ce4d3c03b139122aa1c4"
     }
   ]
 }

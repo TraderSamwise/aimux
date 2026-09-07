@@ -9,29 +9,40 @@ const SESSION_CREATE_QUEUE_DELAY_MS: i64 = 50;
 pub fn run_dashboard_tail_session_create_contract_case(input: &Value) -> Value {
     let mut calls = Vec::new();
     let mut timers = Vec::new();
+    let setup_topology_sessions = setup_topology_sessions(input);
     let result = match input.get("method").and_then(Value::as_str) {
-        Some("spawnAgent") => spawn_agent(input, &mut calls, &mut timers),
-        Some("createTeammateAgent") => create_teammate_agent(input, &mut calls, &mut timers),
+        Some("spawnAgent") => spawn_agent(input, &setup_topology_sessions, &mut calls, &mut timers),
+        Some("createTeammateAgent") => {
+            create_teammate_agent(input, &setup_topology_sessions, &mut calls, &mut timers)
+        }
         Some(method) => Err(format!("unknown dashboard tail method {method}")),
         None => Err("missing dashboard tail method".to_owned()),
     };
 
     match result {
-        Ok(created) => json!({
-            "result": created.result,
-            "error": Value::Null,
-            "calls": calls,
-            "timers": timers,
-            "topologySessions": [created.topology_session.clone()],
-            "topologyYaml": topology_yaml(&created.topology_session),
-        }),
+        Ok(created) => {
+            let mut topology_sessions = setup_topology_sessions;
+            topology_sessions.retain(|session| {
+                string_field(session, "id").as_deref()
+                    != string_field(&created.topology_session, "id").as_deref()
+            });
+            topology_sessions.push(created.topology_session.clone());
+            json!({
+                "result": created.result,
+                "error": Value::Null,
+                "calls": calls,
+                "timers": timers,
+                "topologySessions": topology_sessions,
+                "topologyYaml": topology_yaml(&created.topology_session),
+            })
+        }
         Err(error) => json!({
             "result": Value::Null,
             "error": error,
             "calls": calls,
             "timers": timers,
-            "topologySessions": [],
-            "topologyYaml": "",
+            "topologySessions": setup_topology_sessions,
+            "topologyYaml": setup_topology_sessions.first().map(topology_yaml).unwrap_or_default(),
         }),
     }
 }
@@ -55,6 +66,7 @@ struct CreateInput {
 
 fn spawn_agent(
     input: &Value,
+    setup_topology_sessions: &[Value],
     calls: &mut Vec<Value>,
     timers: &mut Vec<Value>,
 ) -> Result<CreatedSession, String> {
@@ -73,7 +85,7 @@ fn spawn_agent(
             format!("{command}-generated")
         }
     };
-    assert_session_id_can_be_queued(input, &session_id)?;
+    assert_session_id_can_be_queued(input, setup_topology_sessions, &session_id)?;
     let overseer = bool_field(options, "overseer");
     let scribe = bool_field(options, "scribe");
     let team = if overseer {
@@ -104,6 +116,7 @@ fn spawn_agent(
 
 fn create_teammate_agent(
     input: &Value,
+    setup_topology_sessions: &[Value],
     calls: &mut Vec<Value>,
     timers: &mut Vec<Value>,
 ) -> Result<CreatedSession, String> {
@@ -124,9 +137,9 @@ fn create_teammate_agent(
             format!("{command}-generated")
         }
     };
-    assert_session_id_can_be_queued(input, &session_id)?;
+    assert_session_id_can_be_queued(input, setup_topology_sessions, &session_id)?;
     let parent_session_id = string_field(options, "parentSessionId").unwrap_or_default();
-    let role = string_field(options, "role").unwrap_or_default();
+    let role = string_field(options, "role");
     let label = string_field(options, "label");
     let mut team = Map::new();
     team.insert(
@@ -137,7 +150,7 @@ fn create_teammate_agent(
         "parentSessionId".into(),
         Value::String(parent_session_id.clone()),
     );
-    team.insert("role".into(), Value::String(role.clone()));
+    insert_optional_string(&mut team, "role", role.clone());
     insert_optional_string(&mut team, "label", label.clone());
     insert_optional_value(&mut team, "order", options.get("order").cloned());
     let mut args = string_array_field(tool, "args");
@@ -164,7 +177,7 @@ fn create_teammate_agent(
             string_field(options, "parentSessionId").unwrap_or_default()
         )),
     );
-    result.insert("role".into(), Value::String(role));
+    insert_optional_string(&mut result, "role", role);
     insert_optional_string(&mut result, "label", label);
     Ok(CreatedSession {
         result: Value::Object(result),
@@ -257,6 +270,7 @@ fn topology_yaml(session: &Value) -> String {
     let args = string_array_field(session, "args");
     let worktree_path = string_field(session, "worktreePath");
     let label = string_field(session, "label");
+    let status = string_field(session, "status").unwrap_or_else(|| "starting".into());
     let team = session.get("team").cloned();
     let role = team.as_ref().and_then(|team| string_field(team, "role"));
     let node_id = format!("agent:{session_id}");
@@ -274,7 +288,7 @@ fn topology_yaml(session: &Value) -> String {
         yaml.push_str(&format!("    label: {label}\n"));
     }
     yaml.push_str(&format!(
-        "    createdAt: {NOW}\nedges: []\nbindings: []\nsessions:\n  - id: {session_id}\n    nodeId: {node_id}\n    status: starting\n    tool: {tool}\n    command: {command}\n"
+        "    createdAt: {NOW}\nedges: []\nbindings: []\nsessions:\n  - id: {session_id}\n    nodeId: {node_id}\n    status: {status}\n    tool: {tool}\n    command: {command}\n"
     ));
     if args.is_empty() {
         yaml.push_str("    args: []\n");
@@ -322,15 +336,45 @@ fn push_team_yaml(yaml: &mut String, team: &Value) {
     }
 }
 
-fn assert_session_id_can_be_queued(input: &Value, session_id: &str) -> Result<(), String> {
+fn assert_session_id_can_be_queued(
+    input: &Value,
+    setup_topology_sessions: &[Value],
+    session_id: &str,
+) -> Result<(), String> {
     if array_field(value_field(input, "host"), "sessions")
         .into_iter()
         .any(|session| string_field(session, "id").as_deref() == Some(session_id))
+        || setup_topology_sessions.iter().any(|session| {
+            string_field(session, "id").as_deref() == Some(session_id)
+                && is_live_topology_status(string_field(session, "status").as_deref())
+        })
     {
         Err(format!("Session \"{session_id}\" already exists"))
     } else {
         Ok(())
     }
+}
+
+fn setup_topology_sessions(input: &Value) -> Vec<Value> {
+    array_field(input, "setupTopologySessions")
+        .into_iter()
+        .map(normalize_setup_topology_session)
+        .collect()
+}
+
+fn normalize_setup_topology_session(session: &Value) -> Value {
+    let mut normalized = session.as_object().cloned().unwrap_or_default();
+    normalized
+        .entry("createdAt")
+        .or_insert_with(|| Value::String(NOW.into()));
+    normalized
+        .entry("updatedAt")
+        .or_insert_with(|| Value::String(NOW.into()));
+    Value::Object(normalized)
+}
+
+fn is_live_topology_status(status: Option<&str>) -> bool {
+    matches!(status, Some("running" | "idle" | "starting" | "planned"))
 }
 
 fn tool_config<'a>(input: &'a Value, key: &str) -> Option<&'a Value> {

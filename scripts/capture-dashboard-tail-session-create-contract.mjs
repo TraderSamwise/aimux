@@ -25,6 +25,10 @@ function normalize(value, repoRoot) {
   );
 }
 
+function denormalize(value, repoRoot) {
+  return JSON.parse(JSON.stringify(value).split("<REPO>").join(repoRoot));
+}
+
 function mapFromObject(value = {}) {
   return new Map(Object.entries(value));
 }
@@ -67,12 +71,18 @@ async function runCase(input, index) {
   const { dashboardTailMethods } = await import(
     new URL(`dist/multiplexer/dashboard-tail-methods.js?case=${index}`, ROOT)
   );
-  const { listTopologySessionStates } = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
+  const { listTopologySessionStates, upsertTopologySession } = await import(
+    new URL("dist/runtime-core/topology-sessions.js", ROOT)
+  );
 
   await writeFile(join(repoRoot, ".aimux", "config.json"), `${JSON.stringify(input.config, null, 2)}\n`);
   await initPaths(repoRoot);
   process.chdir(repoRoot);
   const projectStateDir = getProjectStateDir();
+  for (const setup of input.setupTopologySessions ?? []) {
+    const session = denormalize(setup, repoRoot);
+    upsertTopologySession(session, session.status, { projectRoot: repoRoot });
+  }
 
   const calls = [];
   const timers = [];
@@ -215,6 +225,68 @@ const inputs = [
       options: {
         toolConfigKey: "codex",
         targetSessionId: "codex-new",
+      },
+    },
+  },
+  {
+    name: "spawnAgent records overseer team metadata and launch override command args",
+    input: {
+      method: "spawnAgent",
+      config,
+      host: {},
+      options: {
+        toolConfigKey: "codex",
+        targetSessionId: "codex-overseer",
+        launchOverride: { command: "codex-beta", args: ["--model", "gpt-6"], env: { EXTRA: "1" } },
+        overseer: true,
+        open: false,
+      },
+    },
+  },
+  {
+    name: "spawnAgent rejects unknown tool config before queuing",
+    input: {
+      method: "spawnAgent",
+      config,
+      host: {},
+      options: {
+        toolConfigKey: "missing-tool",
+        targetSessionId: "missing-new",
+      },
+    },
+  },
+  {
+    name: "createTeammateAgent generates ids with default tool and omits absent role label order",
+    input: {
+      method: "createTeammateAgent",
+      config,
+      host: {},
+      options: {
+        parentSessionId: "codex-parent",
+      },
+    },
+  },
+  {
+    name: "spawnAgent rejects an id already present in live topology",
+    input: {
+      method: "spawnAgent",
+      config,
+      host: {},
+      setupTopologySessions: [
+        {
+          id: "codex-topology-live",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          lifecycle: "live",
+          status: "idle",
+          worktreePath: "<REPO>/.aimux/worktrees/live",
+        },
+      ],
+      options: {
+        toolConfigKey: "codex",
+        targetSessionId: "codex-topology-live",
       },
     },
   },
