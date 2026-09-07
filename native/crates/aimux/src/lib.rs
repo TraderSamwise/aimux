@@ -85,6 +85,7 @@ pub mod logs;
 pub mod managed_launch_env;
 pub mod monitor_capture_contract;
 pub mod monitor_targets_contract;
+pub mod multiplexer_resource_refresh;
 pub mod notification_policy_contract;
 pub mod paths;
 pub mod plugin_runtime_contract;

@@ -1,5 +1,6 @@
+use aimux::multiplexer_resource_refresh::run_multiplexer_resource_refresh_contract_case;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const LIBRARY_REFRESH: &str =
     include_str!("../../../../testdata/contracts/v1/multiplexer/library-refresh.json");
@@ -28,8 +29,7 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: TypeScript library refresh runtime state machine is behind the dashboard_* ownership fence"]
-fn fixture_multiplexer_library_refresh_contract_is_captured() {
+fn fixture_multiplexer_library_refresh_contract_matches_rust() {
     assert_refresh_contract(
         LIBRARY_REFRESH,
         "src/multiplexer/library.test.ts",
@@ -39,8 +39,7 @@ fn fixture_multiplexer_library_refresh_contract_is_captured() {
 }
 
 #[test]
-#[ignore = "checklist: TypeScript project observability refresh runtime state machine is behind the dashboard_* ownership fence"]
-fn fixture_multiplexer_project_refresh_contract_is_captured() {
+fn fixture_multiplexer_project_refresh_contract_matches_rust() {
     assert_refresh_contract(
         PROJECT_REFRESH,
         "src/multiplexer/project.test.ts",
@@ -50,8 +49,7 @@ fn fixture_multiplexer_project_refresh_contract_is_captured() {
 }
 
 #[test]
-#[ignore = "checklist: TypeScript topology refresh runtime state machine is behind the dashboard_* ownership fence"]
-fn fixture_multiplexer_topology_refresh_contract_is_captured() {
+fn fixture_multiplexer_topology_refresh_contract_matches_rust() {
     assert_refresh_contract(
         TOPOLOGY_REFRESH,
         "src/multiplexer/topology.test.ts",
@@ -68,13 +66,27 @@ fn assert_refresh_contract(fixture: &str, source: &str, subject: &str, count: us
     assert_eq!(contract.case_count, count);
     assert_eq!(contract.cases.len(), contract.case_count);
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert_eq!(case.source, contract.source);
         assert_eq!(case.api, contract.subject);
         assert!(!case.input.is_null());
-        assert!(case.output.get("returned").is_some());
-        assert!(case.output.get("host").and_then(Value::as_object).is_some());
-        assert!(case.output.get("calls").and_then(Value::as_array).is_some());
+        let actual = run_multiplexer_resource_refresh_contract_case(&case.api, &case.input);
+        if actual != case.output {
+            failures.push(json!({
+                "id": case.id,
+                "api": case.api,
+                "expected": case.output,
+                "actual": actual,
+            }));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} {subject} parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
 }
