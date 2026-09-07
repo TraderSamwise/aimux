@@ -1,0 +1,864 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/worktrees.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-worktrees-settlement-contract.mjs",
+  "description": "Async worktree create and graveyard settlement/action paths captured by running TypeScript worktrees helpers with scripted project-service responses.",
+  "cases": [
+    {
+      "id": "multiplexer-worktrees-settlement-001",
+      "name": "creates a worktree through the project service after the rendered model settles",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "creates a worktree through the project service after the rendered model settles",
+        "api": "handleWorktreeInputKey",
+        "data": "\r",
+        "host": {
+          "worktreeInputBuffer": "demo",
+          "refreshSteps": [
+            {
+              "result": true,
+              "worktrees": [
+                {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": []
+                }
+              ]
+            },
+            {
+              "result": true,
+              "worktrees": [
+                {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": []
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "worktreeInputBuffer": "demo",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": null,
+        "footerFlashTicks": null,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/demo", "value": null }],
+        "calls": {
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[], []],
+          "redrawDashboardWithOverlay": [],
+          "showDashboardError": [],
+          "refreshDashboardModelFromService": [
+            [true, { "allowInactive": true }],
+            [true, { "allowInactive": true }]
+          ],
+          "postToProjectService": [["/worktrees/create", { "name": "demo" }, { "timeoutMs": 180000 }]],
+          "reapplyDashboardPendingActions": [[], []],
+          "dashboardUiStateStoreMarkSelectionDirty": [[], []],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/demo",
+              "creating",
+              {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [["/repo/.aimux/worktrees/demo", 1]],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "5955e652a03c42a1f936857403de16476e423dda720d5bdb0a48a7ef343b32f2"
+    },
+    {
+      "id": "multiplexer-worktrees-settlement-002",
+      "name": "accepts pasted worktree names before submit in the same input chunk",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "accepts pasted worktree names before submit in the same input chunk",
+        "api": "handleWorktreeInputKey",
+        "data": "demo\r",
+        "host": {
+          "worktreeInputBuffer": "",
+          "refreshSteps": [
+            {
+              "result": true,
+              "worktrees": [
+                {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": []
+                }
+              ]
+            },
+            {
+              "result": true,
+              "worktrees": [
+                {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": []
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "worktreeInputBuffer": "demo",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": null,
+        "footerFlashTicks": null,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/demo", "value": null }],
+        "calls": {
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[], []],
+          "redrawDashboardWithOverlay": [[]],
+          "showDashboardError": [],
+          "refreshDashboardModelFromService": [
+            [true, { "allowInactive": true }],
+            [true, { "allowInactive": true }]
+          ],
+          "postToProjectService": [["/worktrees/create", { "name": "demo" }, { "timeoutMs": 180000 }]],
+          "reapplyDashboardPendingActions": [[], []],
+          "dashboardUiStateStoreMarkSelectionDirty": [[], []],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/demo",
+              "creating",
+              {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [["/repo/.aimux/worktrees/demo", 1]],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "267a9c910b87f38eea35e5accce19ea786b71c5a0276f63b2d70844594aef4a5"
+    },
+    {
+      "id": "multiplexer-worktrees-settlement-003",
+      "name": "keeps service-projected failed worktree creates visible",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "keeps service-projected failed worktree creates visible",
+        "api": "handleWorktreeInputKey",
+        "data": "\r",
+        "host": {
+          "worktreeInputBuffer": "demo",
+          "postSteps": [
+            {
+              "type": "reject",
+              "message": "branch already exists",
+              "props": { "status": 422, "tuiApiRecoverable": false }
+            }
+          ],
+          "refreshSteps": [
+            {
+              "result": true,
+              "worktrees": [
+                {
+                  "name": "demo",
+                  "branch": "(failed)",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": [],
+                  "operationFailure": {
+                    "targetKind": "worktree",
+                    "operation": "create",
+                    "message": "branch already exists",
+                    "worktreePath": "/repo/.aimux/worktrees/demo"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "worktreeInputBuffer": "demo",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          {
+            "name": "demo",
+            "branch": "(failed)",
+            "path": "/repo/.aimux/worktrees/demo",
+            "sessions": [],
+            "services": [],
+            "operationFailure": {
+              "targetKind": "worktree",
+              "operation": "create",
+              "message": "branch already exists",
+              "worktreePath": "/repo/.aimux/worktrees/demo"
+            }
+          }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          {
+            "name": "demo",
+            "branch": "(failed)",
+            "path": "/repo/.aimux/worktrees/demo",
+            "sessions": [],
+            "services": [],
+            "operationFailure": {
+              "targetKind": "worktree",
+              "operation": "create",
+              "message": "branch already exists",
+              "worktreePath": "/repo/.aimux/worktrees/demo"
+            }
+          }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": null,
+        "footerFlashTicks": null,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/demo", "value": null }],
+        "calls": {
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[]],
+          "redrawDashboardWithOverlay": [],
+          "showDashboardError": [
+            ["Failed to create \"demo\"", ["Path: /repo/.aimux/worktrees/demo", "Error: branch already exists"]]
+          ],
+          "refreshDashboardModelFromService": [[true, { "allowInactive": true }]],
+          "postToProjectService": [["/worktrees/create", { "name": "demo" }, { "timeoutMs": 180000 }]],
+          "reapplyDashboardPendingActions": [[], []],
+          "dashboardUiStateStoreMarkSelectionDirty": [[], []],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/demo",
+              "creating",
+              {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [["/repo/.aimux/worktrees/demo", 1]],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "17acde25ecd480d63e814a2fe078c2bc830db29f9fc39c525b65e6d746a503dc"
+    },
+    {
+      "id": "multiplexer-worktrees-settlement-004",
+      "name": "does not show stale worktree create failure after later dashboard input",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "does not show stale worktree create failure after later dashboard input",
+        "api": "handleWorktreeInputKey",
+        "data": "\r",
+        "afterInvoke": { "dashboardInputEpoch": 1 },
+        "host": {
+          "worktreeInputBuffer": "demo",
+          "postSteps": [
+            {
+              "type": "reject",
+              "message": "branch already exists",
+              "props": { "status": 422, "tuiApiRecoverable": false }
+            }
+          ],
+          "refreshSteps": [
+            {
+              "result": true,
+              "worktrees": [
+                {
+                  "name": "demo",
+                  "branch": "(failed)",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": [],
+                  "operationFailure": {
+                    "targetKind": "worktree",
+                    "operation": "create",
+                    "message": "branch already exists",
+                    "worktreePath": "/repo/.aimux/worktrees/demo"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 1,
+        "worktreeInputBuffer": "demo",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          {
+            "name": "demo",
+            "branch": "(failed)",
+            "path": "/repo/.aimux/worktrees/demo",
+            "sessions": [],
+            "services": [],
+            "operationFailure": {
+              "targetKind": "worktree",
+              "operation": "create",
+              "message": "branch already exists",
+              "worktreePath": "/repo/.aimux/worktrees/demo"
+            }
+          }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          {
+            "name": "demo",
+            "branch": "(failed)",
+            "path": "/repo/.aimux/worktrees/demo",
+            "sessions": [],
+            "services": [],
+            "operationFailure": {
+              "targetKind": "worktree",
+              "operation": "create",
+              "message": "branch already exists",
+              "worktreePath": "/repo/.aimux/worktrees/demo"
+            }
+          }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": null,
+        "footerFlashTicks": null,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/demo", "value": null }],
+        "calls": {
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[]],
+          "redrawDashboardWithOverlay": [],
+          "showDashboardError": [],
+          "refreshDashboardModelFromService": [[true, { "allowInactive": true }]],
+          "postToProjectService": [["/worktrees/create", { "name": "demo" }, { "timeoutMs": 180000 }]],
+          "reapplyDashboardPendingActions": [[], []],
+          "dashboardUiStateStoreMarkSelectionDirty": [[]],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/demo",
+              "creating",
+              {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [["/repo/.aimux/worktrees/demo", 1]],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "75b3b15e8f24440402a1192499a8fdd4d16a457ceef212d1a2f9c0fda0fe653d"
+    },
+    {
+      "id": "multiplexer-worktrees-settlement-005",
+      "name": "preserves an existing worktree row after duplicate create errors",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "preserves an existing worktree row after duplicate create errors",
+        "api": "handleWorktreeInputKey",
+        "data": "\r",
+        "host": {
+          "worktreeInputBuffer": "demo",
+          "dashboardRawWorktreeGroupsCache": [
+            { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+          ],
+          "dashboardWorktreeGroupsCache": [
+            { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+          ],
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          },
+          "postSteps": [
+            {
+              "type": "reject",
+              "message": "Worktree \"demo\" already exists",
+              "props": { "status": 422, "tuiApiRecoverable": false }
+            }
+          ],
+          "refreshSteps": [
+            {
+              "result": true,
+              "worktrees": [
+                {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": []
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "worktreeInputBuffer": "demo",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": null,
+        "footerFlashTicks": null,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/demo", "value": null }],
+        "calls": {
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[]],
+          "redrawDashboardWithOverlay": [],
+          "showDashboardError": [],
+          "refreshDashboardModelFromService": [[true, { "allowInactive": true }]],
+          "postToProjectService": [["/worktrees/create", { "name": "demo" }, { "timeoutMs": 180000 }]],
+          "reapplyDashboardPendingActions": [[], []],
+          "dashboardUiStateStoreMarkSelectionDirty": [[]],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/demo",
+              "creating",
+              {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [["/repo/.aimux/worktrees/demo", 1]],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "ca21ad2b9749642d014ab82694fc0e8ac5b71ff97e4e41aa2aab2047f2c2693e"
+    },
+    {
+      "id": "multiplexer-worktrees-settlement-006",
+      "name": "places an optimistic worktree using dashboard created-at ordering",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "places an optimistic worktree using dashboard created-at ordering",
+        "api": "handleWorktreeInputKey",
+        "data": "\r",
+        "flushTurns": 1,
+        "host": {
+          "worktreeInputBuffer": "newer",
+          "dashboardRawWorktreeGroupsCache": [
+            { "name": "Main Checkout", "branch": "master", "sessions": [], "services": [] },
+            {
+              "name": "older",
+              "branch": "older",
+              "path": "/repo/.aimux/worktrees/older",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "sessions": [],
+              "services": []
+            }
+          ],
+          "dashboardWorktreeGroupsCache": [
+            { "name": "Main Checkout", "branch": "master", "sessions": [], "services": [] },
+            {
+              "name": "older",
+              "branch": "older",
+              "path": "/repo/.aimux/worktrees/older",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "sessions": [],
+              "services": []
+            }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "worktreeInputBuffer": "newer",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "dashboardState": {
+          "worktreeNavOrder": [null, "/repo/.aimux/worktrees/newer", "/repo/.aimux/worktrees/older"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/newer"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          { "name": "Main Checkout", "branch": "master", "sessions": [], "services": [] },
+          {
+            "name": "older",
+            "branch": "older",
+            "path": "/repo/.aimux/worktrees/older",
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "sessions": [],
+            "services": []
+          }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          { "name": "Main Checkout", "branch": "master", "sessions": [], "services": [] },
+          {
+            "name": "newer",
+            "branch": "newer",
+            "path": "/repo/.aimux/worktrees/newer",
+            "createdAt": "2026-06-01T00:00:00.000Z",
+            "status": "offline",
+            "isBare": false,
+            "sessions": [],
+            "services": [],
+            "pending": true,
+            "pendingAction": "creating",
+            "optimistic": true
+          },
+          {
+            "name": "older",
+            "branch": "older",
+            "path": "/repo/.aimux/worktrees/older",
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "sessions": [],
+            "services": []
+          }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": null,
+        "footerFlashTicks": null,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/newer", "value": "creating" }],
+        "calls": {
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[], []],
+          "redrawDashboardWithOverlay": [],
+          "showDashboardError": [],
+          "refreshDashboardModelFromService": [[true, { "allowInactive": true }]],
+          "postToProjectService": [["/worktrees/create", { "name": "newer" }, { "timeoutMs": 180000 }]],
+          "reapplyDashboardPendingActions": [[], []],
+          "dashboardUiStateStoreMarkSelectionDirty": [[]],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/newer",
+              "creating",
+              {
+                "worktreeSeed": {
+                  "name": "newer",
+                  "branch": "newer",
+                  "path": "/repo/.aimux/worktrees/newer",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "9614fc471679672a099a02a3c35b70fec846a187e828b3d242e3d0d14e1f6213"
+    },
+    {
+      "id": "multiplexer-worktrees-settlement-007",
+      "name": "demo",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "beginWorktreeRemoval",
+      "input": {
+        "name": "demo",
+        "api": "beginWorktreeRemoval",
+        "path": "/repo/.aimux/worktrees/demo",
+        "oldIdx": 0,
+        "host": {
+          "dashboardRawWorktreeGroupsCache": [
+            { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+          ],
+          "dashboardWorktreeGroupsCache": [
+            { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+          ],
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          },
+          "postSteps": [
+            {
+              "type": "reject",
+              "message": "Cannot graveyard \"demo\" while agent \"codex-1\" is attached",
+              "props": { "status": 500, "tuiApiRecoverable": false }
+            }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "worktreeInputBuffer": "",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": "Failed: Cannot graveyard \"demo\" while agent \"codex-1\" is attached",
+        "footerFlashTicks": 5,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/demo", "value": null }],
+        "calls": {
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[], []],
+          "redrawDashboardWithOverlay": [],
+          "showDashboardError": [
+            [
+              "Failed to graveyard \"demo\"",
+              [
+                "Path: /repo/.aimux/worktrees/demo",
+                "Error: Cannot graveyard \"demo\" while agent \"codex-1\" is attached",
+                "Cannot graveyard \"demo\" while agent \"codex-1\" is attached"
+              ]
+            ]
+          ],
+          "refreshDashboardModelFromService": [],
+          "postToProjectService": [
+            ["/worktrees/graveyard", { "path": "/repo/.aimux/worktrees/demo" }, { "timeoutMs": 180000 }]
+          ],
+          "reapplyDashboardPendingActions": [[], []],
+          "dashboardUiStateStoreMarkSelectionDirty": [],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/demo",
+              "graveyarding",
+              {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [["/repo/.aimux/worktrees/demo", 1]],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "16373e136577a3d8ad25cfbd5896aa16234b33cadb95855d95431ad4ae78f5cc"
+    },
+    {
+      "id": "multiplexer-worktrees-settlement-008",
+      "name": "treats Enter as confirmation for worktree removal",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeRemoveConfirmKey",
+      "input": {
+        "name": "treats Enter as confirmation for worktree removal",
+        "api": "handleWorktreeRemoveConfirmKey",
+        "data": "\r",
+        "flushTurns": 1,
+        "host": {
+          "worktreeRemoveConfirm": { "path": "/repo/.aimux/worktrees/demo", "name": "demo" },
+          "dashboardRawWorktreeGroupsCache": [
+            { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+          ],
+          "dashboardWorktreeGroupsCache": [
+            { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+          ],
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "worktreeInputBuffer": "",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": {
+          "path": "/repo/.aimux/worktrees/demo",
+          "name": "demo",
+          "startedAt": 1780272000000,
+          "oldIdx": 0,
+          "stderr": ""
+        },
+        "worktreeRemovalJobs": [
+          {
+            "path": "/repo/.aimux/worktrees/demo",
+            "name": "demo",
+            "startedAt": 1780272000000,
+            "oldIdx": 0,
+            "stderr": ""
+          }
+        ],
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardRawWorktreeGroupsCache": [
+          { "name": "demo", "branch": "demo", "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "sessions": [],
+            "services": [],
+            "pending": true,
+            "pendingAction": "graveyarding",
+            "optimistic": true
+          }
+        ],
+        "dashboardOperationFailuresCache": [],
+        "footerFlash": null,
+        "footerFlashTicks": null,
+        "pendingActions": [{ "key": "worktree:/repo/.aimux/worktrees/demo", "value": "graveyarding" }],
+        "calls": {
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "renderDashboard": [[]],
+          "redrawDashboardWithOverlay": [],
+          "showDashboardError": [],
+          "refreshDashboardModelFromService": [[true, { "allowInactive": true }]],
+          "postToProjectService": [
+            ["/worktrees/graveyard", { "path": "/repo/.aimux/worktrees/demo" }, { "timeoutMs": 180000 }]
+          ],
+          "reapplyDashboardPendingActions": [[]],
+          "dashboardUiStateStoreMarkSelectionDirty": [],
+          "dashboardPendingActionsSetWorktreeAction": [
+            [
+              "/repo/.aimux/worktrees/demo",
+              "graveyarding",
+              {
+                "worktreeSeed": {
+                  "name": "demo",
+                  "branch": "demo",
+                  "path": "/repo/.aimux/worktrees/demo",
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ]
+          ],
+          "dashboardPendingActionsClearWorktreeAction": [],
+          "dashboardPendingActionsClearWorktreeActionIfToken": [],
+          "dashboardPendingActionsGetWorktreeAction": []
+        }
+      },
+      "inputSha256": "02d5e4a7ca74d3b801bd00ed09b84585db88cfa4d82d4fb2d466b2fc1310c23b"
+    }
+  ]
+}
