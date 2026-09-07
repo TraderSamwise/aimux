@@ -182,9 +182,10 @@ function snapshotHost(host) {
 }
 
 async function capture(input, dashboardControl) {
-  return Promise.all(
-    input.scenarios.map((scenario) =>
-      withTempAimuxHome(async (home) => {
+  const outputs = [];
+  for (const scenario of input.scenarios) {
+    outputs.push(
+      await withTempAimuxHome(async (home) => {
         const calls = [];
         mocks.restartCalls = [];
         mocks.restartBehavior = scenario.restartBehavior ?? { kind: "pending" };
@@ -200,8 +201,9 @@ async function capture(input, dashboardControl) {
           lockExists: existsSync(lockPath),
         };
       }),
-    ),
-  );
+    );
+  }
+  return outputs;
 }
 
 const scenarios = [
