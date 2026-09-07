@@ -27,6 +27,7 @@ mod agent_topology;
 mod default_scribe;
 mod ids;
 mod json_helpers;
+mod response_helpers;
 mod restore_offer;
 mod runtime_adapter;
 mod services;
@@ -41,6 +42,7 @@ use agent_topology::*;
 pub use default_scribe::ensure_default_scribe_agent;
 use ids::*;
 use json_helpers::*;
+use response_helpers::*;
 use restore_offer::*;
 pub use runtime_adapter::{ProjectLifecycleRuntime, SystemProjectLifecycleRuntime};
 use services::*;
@@ -1051,46 +1053,4 @@ fn route_graveyard_agent_resurrect(
         "agent",
         Some(&session_id),
     )
-}
-
-fn lifecycle_response(
-    mut result: Value,
-    operation: &str,
-    target_kind: &str,
-    target_id: Option<&str>,
-) -> ProjectServiceDispatchResponse {
-    object_insert_mut(&mut result, "ok", Value::Bool(true));
-    object_insert_mut(
-        &mut result,
-        "transition",
-        lifecycle_transition(operation, target_kind, target_id),
-    );
-    ProjectServiceDispatchResponse::json(200, result)
-}
-
-fn lifecycle_transition(operation: &str, target_kind: &str, target_id: Option<&str>) -> Value {
-    lifecycle_transition_with_phase(operation, target_kind, target_id, "succeeded")
-}
-
-fn lifecycle_transition_with_phase(
-    operation: &str,
-    target_kind: &str,
-    target_id: Option<&str>,
-    phase: &str,
-) -> Value {
-    let now = now_iso();
-    let target_key = target_id.unwrap_or("unknown");
-    json!({
-        "operationId": format!("{operation}:{target_key}:{}", base36_sequence()),
-        "operation": operation,
-        "targetKind": target_kind,
-        "phase": phase,
-        "startedAt": now,
-        "updatedAt": now,
-        "targetId": target_id,
-    })
-}
-
-fn json_error(status: u16, error: impl Into<String>) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse::json(status, json!({ "ok": false, "error": error.into() }))
 }
