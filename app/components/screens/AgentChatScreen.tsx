@@ -15,16 +15,18 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Text as RNText,
   TextInput,
   useWindowDimensions,
   View,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useColorScheme } from "nativewind";
 import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import Reanimated, {
@@ -42,9 +44,12 @@ import {
   ChevronDown,
   ChevronLeft,
   CircleAlert,
+  Columns2,
+  MessageSquareText,
   Plus,
   SlidersHorizontal,
   Square,
+  Terminal,
   UserPlus,
   X,
 } from "lucide-react-native";
@@ -121,12 +126,15 @@ import {
   type ChatVisibleTranscript,
 } from "@/lib/chat-visible-transcript";
 import { chatFrozenNewMessageCount } from "@/lib/chat-new-message-badge";
+import { canUseChatSplitView, chatOutputPaneVisibility } from "@/lib/chat-output-mode";
 import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import {
+  agentOutputModeForVisiblePane,
   chatTranscriptPlaceholderState,
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
+import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import type { AgentOutputFeedPurpose } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
@@ -156,6 +164,9 @@ import {
   activityTextFamily,
   clearLocalInterruptHoldAtom,
   lastErrorFamily,
+  outputAnsiFamily,
+  outputAvailableFamily,
+  outputBufferFamily,
   markOutputInterruptedAtom,
   transcriptFamily,
 } from "@/stores/chat";
@@ -165,6 +176,8 @@ import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
+  agentOutputViewModeAtom,
+  type AgentOutputViewMode,
   type ActiveSharedSession,
 } from "@/stores/settings";
 import { chatChromeVisibleAtom } from "@/stores/ui";
@@ -507,6 +520,7 @@ export default function ChatScreen() {
   const transcriptLastError = useAtomValue(lastErrorFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
   const activityText = useAtomValue(activityTextFamily(sessionKey));
+  const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const activeShare = useRouteShare();
@@ -677,6 +691,17 @@ export default function ChatScreen() {
     session !== null &&
     session.status !== "offline" &&
     session.status !== "exited";
+  const canUseSplitView = canUseChatSplitView(width);
+  const {
+    chatViewVisible,
+    effectiveMode: effectiveAgentOutputViewMode,
+    terminalViewVisible,
+  } = chatOutputPaneVisibility({
+    mode: agentOutputViewMode,
+    rawOutputAllowed: canUseOwnerControls,
+    width,
+  });
+  const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
   const composerDraftKey = useMemo(() => {
     if (!sessionId) return null;
     if (activeShareForRoute) {
@@ -902,7 +927,7 @@ export default function ChatScreen() {
     appVisible,
     enabled: heartbeatReady && !routeSessionMissing,
     endpoint: serviceEndpoint ?? null,
-    mode: "chat",
+    mode: agentOutputFeedMode,
     sessionId,
     startLine: CHAT_OUTPUT_CAPTURE_START_LINE,
     token,
@@ -1884,6 +1909,25 @@ export default function ChatScreen() {
       </KeyboardStickyView>
     );
   }, [chatBottomContentReserve, composerFooterContent, effectiveChatChromeVisible]);
+  const modeControls = useMemo(
+    () =>
+      session && canUseOwnerControls ? (
+        <AgentOutputModeControl
+          canUseSplitView={canUseSplitView}
+          mode={agentOutputViewMode}
+          selectedMode={effectiveAgentOutputViewMode}
+          onChange={setAgentOutputViewMode}
+        />
+      ) : null,
+    [
+      agentOutputViewMode,
+      canUseSplitView,
+      canUseOwnerControls,
+      effectiveAgentOutputViewMode,
+      session,
+      setAgentOutputViewMode,
+    ],
+  );
 
   return (
     <View style={{ flex: 1 }}>
@@ -1954,6 +1998,7 @@ export default function ChatScreen() {
                           {sessionSubtitle}
                         </Text>
                       </View>
+                      {modeControls ? <View className="mr-2">{modeControls}</View> : null}
                       {session && canUseOwnerControls ? (
                         <>
                           <View className="mr-2">
@@ -2047,6 +2092,9 @@ export default function ChatScreen() {
                         {sessionSubtitle}
                       </Text>
                     </View>
+                    {modeControls ? (
+                      <View className="mx-2 flex-shrink-0">{modeControls}</View>
+                    ) : null}
                     {session ? (
                       <ScrollView
                         horizontal
@@ -2380,21 +2428,47 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-              <View className="flex-1 bg-background">
-                <AgentChatSessionViewport
-                  key={chatViewportKey}
-                  allMessages={allMessages}
-                  bottomContentInset={chatBottomContentReserve}
-                  dividerWidth={chatDividerWidth}
-                  newMessageBadgeBottomOffset={newMessageBadgeBottomOffset}
-                  placeholderState={chatPlaceholderState}
-                  ref={chatViewportRef}
-                  onChromeVisibleChange={handleChatChromeVisibleChange}
-                  onRetryTranscriptLoad={handleRetryTranscriptLoad}
-                  serviceEndpoint={displayServiceEndpoint}
-                  sessionKey={sessionKey}
-                  topContentInset={chatTopContentReserve}
-                />
+              <View
+                className="flex-1 bg-background"
+                style={
+                  effectiveAgentOutputViewMode === "split" ? { flexDirection: "row" } : undefined
+                }
+              >
+                {chatViewVisible ? (
+                  <View
+                    className="flex-1 bg-background"
+                    style={
+                      effectiveAgentOutputViewMode === "split"
+                        ? { borderRightWidth: 1, borderRightColor: "#27272a", minWidth: 0 }
+                        : undefined
+                    }
+                  >
+                    <AgentChatSessionViewport
+                      key={chatViewportKey}
+                      allMessages={allMessages}
+                      bottomContentInset={chatBottomContentReserve}
+                      dividerWidth={chatDividerWidth}
+                      newMessageBadgeBottomOffset={newMessageBadgeBottomOffset}
+                      placeholderState={chatPlaceholderState}
+                      ref={chatViewportRef}
+                      onChromeVisibleChange={handleChatChromeVisibleChange}
+                      onRetryTranscriptLoad={handleRetryTranscriptLoad}
+                      serviceEndpoint={displayServiceEndpoint}
+                      sessionKey={sessionKey}
+                      topContentInset={chatTopContentReserve}
+                    />
+                  </View>
+                ) : null}
+                {terminalViewVisible ? (
+                  <View className="flex-1 bg-background" style={{ minWidth: 0 }}>
+                    <AgentTerminalOutputPane
+                      bottomContentInset={chatBottomContentReserve}
+                      dividerWidth={chatDividerWidth}
+                      sessionKey={sessionKey}
+                      topContentInset={chatTopContentReserve}
+                    />
+                  </View>
+                ) : null}
               </View>
             )}
             {showComposerFooter ? composerFooter : null}
@@ -2402,6 +2476,164 @@ export default function ChatScreen() {
         </View>
       </View>
     </View>
+  );
+}
+
+type AgentOutputModeOption = Exclude<AgentOutputViewMode, "split"> | "split";
+
+function AgentOutputModeControl({
+  canUseSplitView,
+  mode,
+  onChange,
+  selectedMode,
+}: {
+  canUseSplitView: boolean;
+  mode: AgentOutputViewMode;
+  onChange: (mode: AgentOutputViewMode) => void;
+  selectedMode: AgentOutputViewMode;
+}) {
+  const options: AgentOutputModeOption[] = canUseSplitView
+    ? ["chat", "split", "terminal"]
+    : ["chat", "terminal"];
+
+  return (
+    <View className="h-8 flex-row overflow-hidden rounded-md border border-border bg-background">
+      {options.map((option) => {
+        const selected = selectedMode === option;
+        const ink = selected ? CONTROL_ON_BRAND : "#a1a1aa";
+        return (
+          <Pressable
+            key={option}
+            accessibilityLabel={agentOutputModeLabel(option)}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            onPress={() => {
+              if (mode !== option) onChange(option);
+            }}
+            className={cn(
+              "h-8 w-9 items-center justify-center border-r border-border last:border-r-0",
+              selected ? "bg-primary" : "bg-background active:bg-accent",
+            )}
+          >
+            {agentOutputModeIcon(option, ink)}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function agentOutputModeLabel(mode: AgentOutputModeOption): string {
+  if (mode === "chat") return "Show chat";
+  if (mode === "split") return "Show chat and output";
+  return "Show output";
+}
+
+function agentOutputModeIcon(mode: AgentOutputModeOption, color: string) {
+  if (mode === "chat") return <MessageSquareText size={15} color={color} />;
+  if (mode === "split") return <Columns2 size={15} color={color} />;
+  return <Terminal size={15} color={color} />;
+}
+
+const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
+  color: "#e4e4e7",
+  fontFamily: Platform.select({
+    android: "monospace",
+    default: "Menlo",
+    ios: "Menlo",
+    web: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  }),
+  fontSize: 12,
+  lineHeight: 17,
+};
+const TERMINAL_OUTPUT_MAX_LINES = 500;
+
+function AgentTerminalOutputPane({
+  bottomContentInset,
+  dividerWidth,
+  sessionKey,
+  topContentInset,
+}: {
+  bottomContentInset: number;
+  dividerWidth: number;
+  sessionKey: string;
+  topContentInset: number;
+}) {
+  const outputPlain = useAtomValue(outputBufferFamily(sessionKey));
+  const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
+  const outputAvailable = useAtomValue(outputAvailableFamily(sessionKey));
+  const scrollRef = useRef<ScrollView | null>(null);
+  const output = outputAnsi || outputPlain;
+  const outputTail = useMemo(
+    () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
+    [output],
+  );
+  const lines = useMemo(
+    () =>
+      formatTerminalOutputForDisplay(outputTail, {
+        dividerWidth: Math.max(48, dividerWidth * 2),
+      }),
+    [dividerWidth, outputTail],
+  );
+  const hasOutput = output.trim().length > 0 || outputAvailable;
+  const scrollToTerminalEnd = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: false });
+    });
+  }, []);
+
+  useEffect(() => {
+    scrollToTerminalEnd();
+  }, [lines.length, outputTail.length, scrollToTerminalEnd]);
+
+  return (
+    <ScrollView
+      ref={scrollRef}
+      className="flex-1 bg-background"
+      contentContainerStyle={{
+        flexGrow: 1,
+        justifyContent: "flex-end",
+        paddingBottom: bottomContentInset + 18,
+        paddingHorizontal: 12,
+        paddingTop: topContentInset + 16,
+      }}
+      keyboardDismissMode={Platform.OS === "web" ? "on-drag" : "interactive"}
+      keyboardShouldPersistTaps="handled"
+      onContentSizeChange={scrollToTerminalEnd}
+      onLayout={scrollToTerminalEnd}
+      showsVerticalScrollIndicator
+    >
+      {hasOutput ? (
+        <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
+          {lines.map((line, lineIndex) => (
+            <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
+              {line.length === 0
+                ? "\u00a0"
+                : line.map((span, spanIndex) => (
+                    <RNText key={spanIndex} style={span.style}>
+                      {span.text}
+                    </RNText>
+                  ))}
+            </RNText>
+          ))}
+        </View>
+      ) : (
+        <View className="items-center justify-center px-4 py-10">
+          <View
+            className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
+            style={{ minWidth: 220 }}
+          >
+            <ActivityIndicator size="small" color="#a1a1aa" />
+            <View className="min-w-0 shrink">
+              <Text className="text-sm text-muted-foreground">Loading output</Text>
+              <Text className="mt-1 text-xs text-muted-foreground">
+                Waiting for terminal output from the project service.
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
