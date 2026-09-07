@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ const { buildLiveServiceStates, DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS } = aw
   new URL("dist/multiplexer/runtime-state.js", ROOT)
 );
 const { initPaths } = await import(new URL("dist/paths.js", ROOT));
+const { getWorktreeGitCallCount, resetWorktreeGitCallCount } = await import(new URL("dist/worktree.js", ROOT));
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -43,6 +45,36 @@ function snapshot(host, fields) {
   const out = {};
   for (const field of fields) out[field] = clone(host[field] ?? null);
   return out;
+}
+
+function runGit(args, cwd) {
+  execFileSync("git", args, {
+    cwd,
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
+    stdio: "pipe",
+  });
+}
+
+function createGitFixtureRepo() {
+  const repoRoot = join(tempRoot, "repo");
+  const worktreeA = join(tempRoot, "wt-alpha");
+  const worktreeB = join(tempRoot, "wt-beta");
+  mkdirSync(repoRoot, { recursive: true });
+  runGit(["init", "-b", "master"], repoRoot);
+  runGit(["-c", "user.email=aimux@example.test", "-c", "user.name=Aimux Fixture", "commit", "--allow-empty", "-m", "init"], repoRoot);
+  runGit(["worktree", "add", "-b", "alpha", worktreeA], repoRoot);
+  runGit(["worktree", "add", "-b", "beta", worktreeB], repoRoot);
+  return { repoRoot, worktreeA, worktreeB };
+}
+
+function summarizeWorktrees(worktrees) {
+  return worktrees.map((worktree) => ({
+    name: worktree.name,
+    path: worktree.path,
+    branch: worktree.branch,
+    isBare: worktree.isBare,
+    hasCreatedAt: typeof worktree.createdAt === "string" && worktree.createdAt.length > 0,
+  }));
 }
 
 async function record(cases, name, source, api, input, run) {
@@ -195,6 +227,112 @@ await record(
       services: dashboardTailMethods.getDashboardServices.call(host),
       calls,
     };
+  },
+);
+
+const gitFixture = createGitFixtureRepo();
+
+await record(
+  cases,
+  "orders non-dashboard sessions by discovered main checkout and worktree paths",
+  "src/multiplexer/dashboard-tail-methods.test.ts",
+  "dashboardTailMethods.getDashboardSessionsInVisualOrder",
+  {
+    cwd: gitFixture.repoRoot,
+    host: {
+      mode: "project-service",
+      computedSessions: [
+        { id: "beta", status: "running", worktreePath: gitFixture.worktreeB },
+        { id: "main-explicit", status: "running", worktreePath: gitFixture.repoRoot },
+        { id: "unknown", status: "running", worktreePath: join(tempRoot, "outside") },
+        { id: "alpha", status: "idle", worktreePath: gitFixture.worktreeA },
+        { id: "main-implicit", status: "running" },
+      ],
+    },
+  },
+  (input) => {
+    const originalCwd = process.cwd();
+    const calls = [];
+    const host = {
+      mode: input.host.mode,
+      getDashboardSessions: dashboardTailMethods.getDashboardSessions,
+      computeDashboardSessions: () => {
+        calls.push({ method: "computeDashboardSessions", args: [] });
+        return clone(input.host.computedSessions);
+      },
+    };
+    process.chdir(input.cwd);
+    resetWorktreeGitCallCount();
+    try {
+      return {
+        visualOrder: dashboardTailMethods.getDashboardSessionsInVisualOrder.call(host).map((session) => session.id),
+        gitCallCount: getWorktreeGitCallCount(),
+        calls,
+      };
+    } finally {
+      process.chdir(originalCwd);
+    }
+  },
+);
+
+await record(
+  cases,
+  "keeps non-dashboard visual order when git worktree discovery is unavailable",
+  "src/multiplexer/dashboard-tail-methods.test.ts",
+  "dashboardTailMethods.getDashboardSessionsInVisualOrder",
+  {
+    cwd: tempRoot,
+    host: {
+      mode: "project-service",
+      computedSessions: [
+        { id: "first", status: "running", worktreePath: "/missing/a" },
+        { id: "second", status: "offline" },
+      ],
+    },
+  },
+  (input) => {
+    const originalCwd = process.cwd();
+    const calls = [];
+    const host = {
+      mode: input.host.mode,
+      getDashboardSessions: dashboardTailMethods.getDashboardSessions,
+      computeDashboardSessions: () => {
+        calls.push({ method: "computeDashboardSessions", args: [] });
+        return clone(input.host.computedSessions);
+      },
+    };
+    process.chdir(input.cwd);
+    resetWorktreeGitCallCount();
+    try {
+      return {
+        visualOrder: dashboardTailMethods.getDashboardSessionsInVisualOrder.call(host).map((session) => session.id),
+        gitCallCount: getWorktreeGitCallCount(),
+        calls,
+      };
+    } finally {
+      process.chdir(originalCwd);
+    }
+  },
+);
+
+await record(
+  cases,
+  "lists git worktrees through the dashboard tail delegate",
+  "src/multiplexer/dashboard-tail-methods.test.ts",
+  "dashboardTailMethods.listAllWorktrees",
+  { cwd: gitFixture.repoRoot },
+  (input) => {
+    const originalCwd = process.cwd();
+    process.chdir(input.cwd);
+    resetWorktreeGitCallCount();
+    try {
+      return {
+        worktrees: summarizeWorktrees(dashboardTailMethods.listAllWorktrees.call({})),
+        gitCallCount: getWorktreeGitCallCount(),
+      };
+    } finally {
+      process.chdir(originalCwd);
+    }
   },
 );
 

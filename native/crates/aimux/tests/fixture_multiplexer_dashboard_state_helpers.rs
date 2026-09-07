@@ -29,7 +29,7 @@ fn fixture_multiplexer_dashboard_state_helpers_contract_matches_rust() {
     let contract: Contract = serde_json::from_str(DASHBOARD_STATE_HELPERS)
         .expect("multiplexer dashboard-state helpers fixture parses");
     assert_eq!(contract.subject, "multiplexer dashboard state helpers");
-    assert_eq!(contract.case_count, 7);
+    assert_eq!(contract.case_count, 10);
     assert_eq!(contract.cases.len(), contract.case_count);
     for source in [
         "src/multiplexer/archives.test.ts",

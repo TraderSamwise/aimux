@@ -9,7 +9,7 @@
   ],
   "subject": "multiplexer dashboard state helpers",
   "generatedBy": "scripts/capture-multiplexer-dashboard-state-contracts.mjs",
-  "caseCount": 7,
+  "caseCount": 10,
   "cases": [
     {
       "id": "multiplexer-dashboard-state-001",
@@ -240,6 +240,81 @@
     },
     {
       "id": "multiplexer-dashboard-state-005",
+      "name": "orders non-dashboard sessions by discovered main checkout and worktree paths",
+      "source": "src/multiplexer/dashboard-tail-methods.test.ts",
+      "api": "dashboardTailMethods.getDashboardSessionsInVisualOrder",
+      "input": {
+        "cwd": "<TMP>/repo",
+        "host": {
+          "mode": "project-service",
+          "computedSessions": [
+            { "id": "beta", "status": "running", "worktreePath": "<TMP>/wt-beta" },
+            { "id": "main-explicit", "status": "running", "worktreePath": "<TMP>/repo" },
+            { "id": "unknown", "status": "running", "worktreePath": "<TMP>/outside" },
+            { "id": "alpha", "status": "idle", "worktreePath": "<TMP>/wt-alpha" },
+            { "id": "main-implicit", "status": "running" }
+          ]
+        }
+      },
+      "output": {
+        "visualOrder": ["main-implicit", "beta", "main-explicit", "unknown", "alpha"],
+        "gitCallCount": 2,
+        "calls": [{ "method": "computeDashboardSessions", "args": [] }]
+      },
+      "inputSha256": "2f3f99ff5bf197ba2606d8beb506f29de6b9a115e2cf7339c202ee97b148df8b"
+    },
+    {
+      "id": "multiplexer-dashboard-state-006",
+      "name": "keeps non-dashboard visual order when git worktree discovery is unavailable",
+      "source": "src/multiplexer/dashboard-tail-methods.test.ts",
+      "api": "dashboardTailMethods.getDashboardSessionsInVisualOrder",
+      "input": {
+        "cwd": "<TMP>",
+        "host": {
+          "mode": "project-service",
+          "computedSessions": [
+            { "id": "first", "status": "running", "worktreePath": "/missing/a" },
+            { "id": "second", "status": "offline" }
+          ]
+        }
+      },
+      "output": {
+        "visualOrder": ["first", "second"],
+        "gitCallCount": 2,
+        "calls": [{ "method": "computeDashboardSessions", "args": [] }]
+      },
+      "inputSha256": "38319a40fc489372b7420a77af4b9ad528ab472b7ceeaf74f1a12f4c158e1dab"
+    },
+    {
+      "id": "multiplexer-dashboard-state-007",
+      "name": "lists git worktrees through the dashboard tail delegate",
+      "source": "src/multiplexer/dashboard-tail-methods.test.ts",
+      "api": "dashboardTailMethods.listAllWorktrees",
+      "input": { "cwd": "<TMP>/repo" },
+      "output": {
+        "worktrees": [
+          { "name": "repo", "path": "/private<TMP>/repo", "branch": "master", "isBare": false, "hasCreatedAt": true },
+          {
+            "name": "wt-alpha",
+            "path": "/private<TMP>/wt-alpha",
+            "branch": "alpha",
+            "isBare": false,
+            "hasCreatedAt": true
+          },
+          {
+            "name": "wt-beta",
+            "path": "/private<TMP>/wt-beta",
+            "branch": "beta",
+            "isBare": false,
+            "hasCreatedAt": true
+          }
+        ],
+        "gitCallCount": 1
+      },
+      "inputSha256": "1499eddd10a02f9b5475fd89233e96a7d19d28380d7709abf45329727fe49974"
+    },
+    {
+      "id": "multiplexer-dashboard-state-008",
       "name": "derives dashboard view service labels and pending-settlement options",
       "source": "src/multiplexer/dashboard-view-methods.test.ts",
       "api": "dashboardViewMethods.serviceLabelForCommand+settleDashboardCreatePending+preferDashboardEntrySelection",
@@ -267,7 +342,7 @@
       "inputSha256": "919e9dbc20198192d629b212d8a88e9cec8d196d8ecb1ef902cf7ac8eba8ccdd"
     },
     {
-      "id": "multiplexer-dashboard-state-006",
+      "id": "multiplexer-dashboard-state-009",
       "name": "centers ANSI text and applies pending worktree projection without mutating source rows",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "persistenceMethods.centerInWidth+stripAnsi+listProjectedDesktopWorktrees",
@@ -301,7 +376,7 @@
       "inputSha256": "03eb4884188d36dcee22d3ba952b9ecaa5a24fd27fdcc1b8f382b12d800c0dad"
     },
     {
-      "id": "multiplexer-dashboard-state-007",
+      "id": "multiplexer-dashboard-state-010",
       "name": "builds live service states from managed tmux service windows",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "buildLiveServiceStates+DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS",

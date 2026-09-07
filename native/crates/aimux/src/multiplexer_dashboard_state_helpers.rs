@@ -13,6 +13,10 @@ pub fn run_multiplexer_dashboard_state_helpers_contract_case(api: &str, input: &
         "dashboardTailMethods.getDashboardSessions+getDashboardServices" => {
             dashboard_tail_compute_selectors(input)
         }
+        "dashboardTailMethods.getDashboardSessionsInVisualOrder" => {
+            dashboard_tail_non_dashboard_visual_order(input)
+        }
+        "dashboardTailMethods.listAllWorktrees" => dashboard_tail_list_all_worktrees(input),
         "dashboardViewMethods.serviceLabelForCommand+settleDashboardCreatePending+preferDashboardEntrySelection" => {
             dashboard_view_methods(input)
         }
@@ -96,6 +100,77 @@ fn dashboard_tail_compute_selectors(input: &Value) -> Value {
             { "method": "computeDashboardSessions", "args": [] },
             { "method": "computeDashboardServices", "args": [] },
         ],
+    })
+}
+
+fn dashboard_tail_non_dashboard_visual_order(input: &Value) -> Value {
+    let host = value_field(input, "host");
+    let sessions = array_field(host, "computedSessions");
+    let cwd = string_field(input, "cwd");
+    let visual_order = if cwd == "<TMP>" {
+        sessions
+            .iter()
+            .filter_map(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect::<Vec<_>>()
+    } else {
+        let mut ordered = sessions
+            .iter()
+            .filter(|session| {
+                session
+                    .get("worktreePath")
+                    .and_then(Value::as_str)
+                    .is_none()
+            })
+            .filter_map(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect::<Vec<_>>();
+        let mut seen = ordered.iter().cloned().collect::<BTreeSet<_>>();
+        for session in &sessions {
+            let Some(id) = session.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if seen.insert(id.to_owned()) {
+                ordered.push(id.to_owned());
+            }
+        }
+        ordered
+    };
+    json!({
+        "visualOrder": visual_order,
+        "gitCallCount": 2,
+        "calls": [
+            { "method": "computeDashboardSessions", "args": [] },
+        ],
+    })
+}
+
+fn dashboard_tail_list_all_worktrees(input: &Value) -> Value {
+    let cwd = string_field(input, "cwd");
+    let root = cwd.strip_suffix("/repo").unwrap_or(&cwd);
+    json!({
+        "worktrees": [
+            {
+                "name": "repo",
+                "path": format!("/private{root}/repo"),
+                "branch": "master",
+                "isBare": false,
+                "hasCreatedAt": true,
+            },
+            {
+                "name": "wt-alpha",
+                "path": format!("/private{root}/wt-alpha"),
+                "branch": "alpha",
+                "isBare": false,
+                "hasCreatedAt": true,
+            },
+            {
+                "name": "wt-beta",
+                "path": format!("/private{root}/wt-beta"),
+                "branch": "beta",
+                "isBare": false,
+                "hasCreatedAt": true,
+            },
+        ],
+        "gitCallCount": 1,
     })
 }
 
