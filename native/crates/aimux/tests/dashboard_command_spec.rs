@@ -1,5 +1,6 @@
 use aimux::dashboard_command_spec::{
-    DashboardCommandSpecOptions, get_dashboard_command_spec_with_options,
+    DashboardCommandSpecOptions, get_dashboard_command_spec,
+    get_dashboard_command_spec_with_options,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -56,6 +57,15 @@ fn source_options(
 
 fn command_text(spec: &aimux::dashboard_command_spec::DashboardCommandSpec) -> &str {
     spec.dashboard_command.args.get(1).expect("wrapped command")
+}
+
+#[test]
+fn production_dashboard_command_defaults_to_native_runtime() {
+    let spec = get_dashboard_command_spec("/tmp/repo").expect("build default production spec");
+    let command = command_text(&spec);
+
+    assert!(command.contains("__dashboard-internal-native"));
+    assert!(!command.contains("--tmux-dashboard-internal"));
 }
 
 #[test]

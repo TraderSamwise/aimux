@@ -66,7 +66,12 @@ impl Default for DashboardCommandSpecOptions {
 }
 
 pub fn get_dashboard_command_spec(project_root: &str) -> io::Result<DashboardCommandSpec> {
-    get_dashboard_command_spec_with_options(project_root, DashboardCommandSpecOptions::default())
+    let mut options = DashboardCommandSpecOptions::default();
+    options
+        .env
+        .entry("AIMUX_DASHBOARD_IMPLEMENTATION".to_owned())
+        .or_insert_with(|| "native".to_owned());
+    get_dashboard_command_spec_with_options(project_root, options)
 }
 
 pub fn get_dashboard_command_spec_with_options(

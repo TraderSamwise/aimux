@@ -244,7 +244,11 @@ pub fn system_tmux_repair_result(
         .filter(|prefix| !prefix.trim().is_empty())
         .unwrap_or("aimux")
         .to_owned();
-    let dashboard_launch = get_aimux_dashboard_launch_command(AimuxCliLaunchOptions::default());
+    let mut launch_options = AimuxCliLaunchOptions::default();
+    launch_options
+        .env
+        .insert("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into());
+    let dashboard_launch = get_aimux_dashboard_launch_command(launch_options);
     let input = TmuxRepairInput {
         project_root: PathBuf::from(project_root),
         aimux_home: resolver.global_aimux_dir(),
