@@ -20,6 +20,20 @@ pub fn run_multiplexer_worktrees_settlement_contract_case(input: &Value) -> Valu
                 int_field(input, "oldIdx"),
             );
         }
+        "beginWorktreeRemovals" => {
+            for removal in array_field(input, "removals").unwrap_or_default() {
+                let name = if removal.get("worktreeName").is_some() {
+                    str_field(&removal, "worktreeName")
+                } else {
+                    str_field(&removal, "name")
+                };
+                host.begin_worktree_removal(
+                    &str_field(&removal, "path"),
+                    &name,
+                    int_field(&removal, "oldIdx"),
+                );
+            }
+        }
         "handleWorktreeRemoveConfirmKey" => {
             host.handle_worktree_remove_confirm_key(&str_field(input, "data"))
         }
@@ -62,6 +76,7 @@ struct SettlementHost {
     refresh_steps: Vec<Value>,
     calls: Map<String, Value>,
     pending_async: Vec<PendingAsync>,
+    wait_ms: i64,
 }
 
 #[derive(Debug)]
@@ -123,6 +138,7 @@ impl SettlementHost {
             refresh_steps: array_field(host, "refreshSteps").unwrap_or_default(),
             calls: empty_calls(),
             pending_async: Vec::new(),
+            wait_ms: int_field(input, "waitMs"),
         };
         if let Some(jobs) = array_field(host, "worktreeRemovalJobs") {
             for job in jobs {
@@ -270,9 +286,10 @@ impl SettlementHost {
             requested_turns
         };
         for _ in 0..turns {
-            let Some(task) = self.pending_async.pop() else {
+            if self.pending_async.is_empty() {
                 return;
             };
+            let task = self.pending_async.remove(0);
             match task {
                 PendingAsync::Create {
                     name,
@@ -384,13 +401,35 @@ impl SettlementHost {
         _turns: i64,
     ) {
         match status {
-            AsyncStatus::Posted => {
+            AsyncStatus::Posted => loop {
                 self.refresh_dashboard_model();
                 if !self.raw_has_worktree(&path) {
+                    if self.mode != "dashboard" && self.wait_ms > 0 {
+                        self.call(
+                            "dashboardPendingActionsGetWorktreeAction",
+                            vec![json!(path)],
+                        );
+                    }
                     self.clear_worktree_action_if_token(&path, token);
-                    self.finish_worktree_removal_success(&path, &name);
+                    if self.mode == "dashboard" {
+                        self.finish_worktree_removal_success(&path, &name);
+                    } else {
+                        self.worktree_removal_jobs.remove(&path);
+                        self.set_current_worktree_removal_job();
+                        self.set_nav_order_from_groups();
+                    }
+                    break;
                 }
-            }
+                if self.refresh_steps.is_empty() || self.wait_ms <= 0 {
+                    if self.mode != "dashboard" {
+                        self.call(
+                            "dashboardPendingActionsGetWorktreeAction",
+                            vec![json!(path)],
+                        );
+                    }
+                    break;
+                }
+            },
             AsyncStatus::PostFailed(message) => {
                 self.clear_worktree_action_if_token(&path, token);
                 if let Some(job) = self.worktree_removal_jobs.get_mut(&path)
@@ -404,6 +443,12 @@ impl SettlementHost {
     }
 
     fn finish_worktree_removal_success(&mut self, path: &str, name: &str) {
+        let old_idx = self
+            .worktree_removal_jobs
+            .get(path)
+            .and_then(|job| job.get("oldIdx"))
+            .and_then(Value::as_i64)
+            .unwrap_or(-1);
         self.worktree_removal_jobs.remove(path);
         self.set_current_worktree_removal_job();
         self.footer_flash = json!(format!("Graveyarded: {name}"));
@@ -414,9 +459,18 @@ impl SettlementHost {
                 .get("focusedWorktreePath")
                 .and_then(Value::as_str)
                 .is_none_or(|focused| focused == path)
-            && self.dashboard_worktree_groups_cache.is_empty()
         {
-            object.remove("focusedWorktreePath");
+            let next_focus = self
+                .dashboard_worktree_groups_cache
+                .get(old_idx.max(0) as usize)
+                .or_else(|| self.dashboard_worktree_groups_cache.last())
+                .and_then(|group| group.get("path"))
+                .cloned();
+            if let Some(next_focus) = next_focus {
+                object.insert("focusedWorktreePath".to_owned(), next_focus);
+            } else {
+                object.remove("focusedWorktreePath");
+            }
         }
         self.call("renderDashboard", vec![]);
     }

@@ -264,6 +264,11 @@ async function run(input) {
     case "beginWorktreeRemoval":
       beginWorktreeRemoval(host, actualInput.path, actualInput.worktreeName ?? actualInput.name, actualInput.oldIdx);
       break;
+    case "beginWorktreeRemovals":
+      for (const removal of actualInput.removals ?? []) {
+        beginWorktreeRemoval(host, removal.path, removal.worktreeName ?? removal.name, removal.oldIdx);
+      }
+      break;
     case "handleWorktreeRemoveConfirmKey":
       handleWorktreeRemoveConfirmKey(host, Buffer.from(actualInput.data));
       break;
@@ -543,6 +548,110 @@ const casesInput = [
       dashboardWorktreeGroupsCache: [realWorktree],
       dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
       refreshSteps: [{ result: true, worktrees: [] }],
+    },
+  },
+  {
+    name: "keeps waiting for worktree removal when an API refresh reports an unchanged snapshot",
+    api: "beginWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/demo",
+    worktreeName: "demo",
+    oldIdx: 0,
+    host: {
+      dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeStableSettleMs: 0,
+      dashboardRawWorktreeGroupsCache: [realWorktree],
+      dashboardWorktreeGroupsCache: [realWorktree],
+      dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+      refreshSteps: [
+        { result: false, worktrees: [realWorktree] },
+        { result: true, worktrees: [] },
+      ],
+    },
+  },
+  {
+    name: "continues worktree removal settlement after later dashboard input",
+    api: "beginWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/demo",
+    worktreeName: "demo",
+    oldIdx: 0,
+    afterInvoke: { dashboardInputEpoch: 1 },
+    host: {
+      dashboardWorktreeStableSettleMs: 0,
+      dashboardRawWorktreeGroupsCache: [realWorktree],
+      dashboardWorktreeGroupsCache: [realWorktree],
+      dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+      refreshSteps: [{ result: true, worktrees: [] }],
+    },
+  },
+  {
+    name: "starts independent worktree removals without serializing through one dashboard job",
+    api: "beginWorktreeRemovals",
+    removals: [
+      { path: "/repo/.aimux/worktrees/first", worktreeName: "first", oldIdx: 0 },
+      { path: "/repo/.aimux/worktrees/second", worktreeName: "second", oldIdx: 1 },
+    ],
+    host: {
+      dashboardWorktreeStableSettleMs: 0,
+      dashboardRawWorktreeGroupsCache: [
+        { name: "first", branch: "first", path: "/repo/.aimux/worktrees/first", sessions: [], services: [] },
+        { name: "second", branch: "second", path: "/repo/.aimux/worktrees/second", sessions: [], services: [] },
+      ],
+      dashboardWorktreeGroupsCache: [
+        { name: "first", branch: "first", path: "/repo/.aimux/worktrees/first", sessions: [], services: [] },
+        { name: "second", branch: "second", path: "/repo/.aimux/worktrees/second", sessions: [], services: [] },
+      ],
+      dashboardState: {
+        worktreeNavOrder: ["/repo/.aimux/worktrees/first", "/repo/.aimux/worktrees/second"],
+        focusedWorktreePath: "/repo/.aimux/worktrees/first",
+      },
+      refreshSteps: [
+        { result: true, worktrees: [] },
+        { result: true, worktrees: [] },
+      ],
+    },
+  },
+  {
+    name: "ignores stale background worktree removal settlement after a newer same-path pending action",
+    api: "beginWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/demo",
+    worktreeName: "demo",
+    oldIdx: 0,
+    waitMs: 700,
+    afterInvokeActions: [{ type: "setPendingWorktreeAction", path: "/repo/.aimux/worktrees/demo", value: "graveyarding" }],
+    host: {
+      dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeStableSettleMs: 0,
+      dashboardWorktreeMutationReconcileMaxMs: 5000,
+      dashboardRawWorktreeGroupsCache: [realWorktree],
+      dashboardWorktreeGroupsCache: [realWorktree],
+      dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+      refreshSteps: [
+        { result: true, worktrees: [realWorktree] },
+        { result: true, worktrees: [realWorktree] },
+        { result: true, worktrees: [] },
+      ],
+    },
+  },
+  {
+    name: "clears stale background worktree removal jobs without rendering stale success",
+    api: "beginWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/demo",
+    worktreeName: "demo",
+    oldIdx: 0,
+    waitMs: 700,
+    afterInvoke: { mode: "session" },
+    host: {
+      dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeStableSettleMs: 0,
+      dashboardWorktreeMutationReconcileMaxMs: 5000,
+      dashboardRawWorktreeGroupsCache: [realWorktree],
+      dashboardWorktreeGroupsCache: [realWorktree],
+      dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+      refreshSteps: [
+        { result: true, worktrees: [realWorktree] },
+        { result: true, worktrees: [realWorktree] },
+        { result: true, worktrees: [] },
+      ],
     },
   },
 ];
