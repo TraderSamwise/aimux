@@ -21,7 +21,6 @@ struct Case {
 }
 
 #[test]
-#[ignore = "parity bug behind core_cli*: Rust core_cli_routing claims dashboard-reload/restart-runtime commands that TypeScript leaves on the full CLI path"]
 fn core_command_ownership_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("core command ownership fixture parses");
@@ -101,9 +100,9 @@ fn installed_shim_fast_paths(input: &Value) -> Value {
 
 fn node_core_fallback_backlog(input: &Value) -> Value {
     json!({
-        "backlog": input["commands"].as_array().into_iter().flatten().filter_map(|entry| {
-            (entry["disposition"].as_str() == Some("node-core-fallback")).then(|| entry["command"].clone())
-        }).collect::<Vec<_>>()
+        "backlog": input["commands"].as_array().into_iter().flatten().filter(|entry| {
+            entry["disposition"].as_str() == Some("node-core-fallback")
+        }).map(|entry| entry["command"].clone()).collect::<Vec<_>>()
     })
 }
 
