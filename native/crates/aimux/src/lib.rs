@@ -106,6 +106,7 @@ pub mod project_takeover_contract;
 pub mod proxy_project_binding;
 pub mod push_registration_url_contract;
 pub mod recording_cleanup;
+pub mod release_contracts;
 pub mod release_version_contract;
 pub mod remote_access;
 pub mod remote_credentials;

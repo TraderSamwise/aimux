@@ -1,5 +1,7 @@
+use aimux::release_contracts::run_release_asset_contract_case;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
 
 const RELEASE_ASSET: &str = include_str!("../../../../testdata/contracts/v1/release/asset.json");
 
@@ -19,12 +21,12 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: release asset shell packaging parity has no Rust public API; corpus protects phase-8 packaging expectations"]
 fn fixture_release_asset_contract_is_captured() {
     let contract: Contract =
         serde_json::from_str(RELEASE_ASSET).expect("release asset fixture parses");
     assert_eq!(contract.cases.len(), 3);
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert_eq!(case.source, "src/release-asset-contract.test.ts");
@@ -32,15 +34,29 @@ fn fixture_release_asset_contract_is_captured() {
             case.input.get("sourcePath").and_then(Value::as_str),
             Some("scripts/build-release-asset.sh")
         );
-        assert!(case
-            .output
-            .get("contains")
-            .and_then(Value::as_array)
-            .is_some());
-        assert!(case
-            .output
-            .get("notContains")
-            .and_then(Value::as_array)
-            .is_some());
+        let actual = run_release_asset_contract_case(&repo_root(), &case.input);
+        if actual != case.output {
+            failures.push(json!({
+                "id": case.id,
+                "expected": case.output,
+                "actual": actual,
+            }));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} release asset parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .expect("repo root")
+        .to_path_buf()
 }
