@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/runtime-state.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-runtime-state-methods-contract.mjs",
+  "description": "Multiplexer runtime-state state transition contracts for dashboard removal adjustment, stop-to-offline topology persistence, graveyard session mutation, and live tmux metadata checks captured by running TypeScript runtime-state helpers.",
+  "cases": [
+    {
+      "id": "multiplexer-runtime-state-methods-001",
+      "name": "adjustAfterRemove moves empty worktree session level back to worktrees",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "adjustAfterRemove",
+      "input": {
+        "host": {
+          "dashboardState": { "level": "sessions", "sessionIndex": 4, "worktreeEntries": [] },
+          "activeIndex": 0,
+          "dashboardSessions": [{ "id": "a" }]
+        },
+        "hasWorktrees": true
+      },
+      "output": {
+        "host": {
+          "dashboardState": { "level": "worktrees", "sessionIndex": 4, "worktreeEntries": [] },
+          "activeIndex": 0,
+          "dashboardSessions": [{ "id": "a" }]
+        },
+        "calls": [{ "method": "updateWorktreeSessions", "args": [] }]
+      },
+      "inputSha256": "0aceb194e72d788a6cdc9c35781c7c3d4f11633c125f24b17a7a205d82728054"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-002",
+      "name": "adjustAfterRemove clamps dashboard active index when there are no worktrees",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "adjustAfterRemove",
+      "input": {
+        "host": {
+          "dashboardState": { "level": "flat" },
+          "activeIndex": 5,
+          "dashboardSessions": [{ "id": "a" }, { "id": "b" }]
+        },
+        "hasWorktrees": false
+      },
+      "output": {
+        "host": {
+          "dashboardState": { "level": "flat" },
+          "activeIndex": 1,
+          "dashboardSessions": [{ "id": "a" }, { "id": "b" }]
+        },
+        "calls": [{ "method": "getDashboardSessions", "args": [] }]
+      },
+      "inputSha256": "ac6665219e9ef5a7764f6be541b8f0e8bbbbd1a0c7c4f51ab6ccfd5d875719d7"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-003",
+      "name": "stopSessionToOffline persists offline topology and kills the runtime",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "stopSessionToOffline",
+      "input": {
+        "projectRoot": "<repo>",
+        "session": {
+          "id": "codex-1",
+          "command": "codex",
+          "backendSessionId": "backend-1",
+          "startTime": 1777593600000,
+          "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "worker" }
+        },
+        "host": {
+          "offlineSessions": [{ "id": "codex-1", "stale": true }],
+          "sessionToolKeys": [["codex-1", "codex"]],
+          "sessionOriginalArgs": [["codex-1", ["--model", "gpt-5"]]],
+          "sessionWorktreePaths": [["codex-1", "<repo>/.aimux/worktrees/demo"]],
+          "sessionLabels": [["codex-1", "Codex One"]],
+          "headlines": [["codex-1", "Working on fixtures"]]
+        }
+      },
+      "output": {
+        "host": { "offlineSessions": [], "stoppingSessionIds": ["codex-1"], "startedInDashboard": true },
+        "topology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-1",
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "worker" },
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "label": "Codex One",
+              "headline": "Working on fixtures",
+              "freshRelaunchAllowed": false
+            }
+          ]
+        },
+        "calls": [
+          { "method": "noteLastUsedItem", "args": ["codex-1"] },
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          { "method": "deriveHeadline", "args": ["codex-1"] },
+          { "method": "saveState", "args": [] },
+          { "method": "session.kill", "args": [] },
+          { "method": "debug", "args": ["stopped session codex-1 → offline", "session"] }
+        ]
+      },
+      "inputSha256": "e590b10fc5e5981d5a3f999f96311ae0c62407b9359ff7c37c2fcd270470940d"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-004",
+      "name": "graveyardSession moves a topology session and prunes offline cache",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "graveyardSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "sessionId": "codex-1",
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/demo"
+            }
+          ]
+        },
+        "host": { "offlineSessions": [{ "id": "codex-1", "worktreePath": "<repo>/.aimux/worktrees/demo" }] }
+      },
+      "output": {
+        "host": { "offlineSessions": [] },
+        "topology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "calls": [
+          { "method": "noteLastUsedItem", "args": ["codex-1"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "debug", "args": ["graveyarded session codex-1", "session"] }
+        ]
+      },
+      "inputSha256": "75d10e22a0624679406f556dcddb8c8ed4e0b2a064feec339cc2e030abbbe8a2"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-005",
+      "name": "isSessionRuntimeLive requires matching live tmux metadata",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "isSessionRuntimeLive",
+      "input": {
+        "runtime": { "id": "codex-1", "exited": false },
+        "sessionTmuxTargets": [
+          ["codex-1", { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+        ],
+        "resolvedTarget": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+        "metadata": { "kind": "agent", "sessionId": "codex-1" }
+      },
+      "output": {
+        "live": true,
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-repo", "@1"] },
+          {
+            "method": "tmuxRuntimeManager.getWindowMetadata",
+            "args": [{ "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+          }
+        ]
+      },
+      "inputSha256": "737a325fc8711bd91938857fd4ae2a93628559115605f61151dacd5f08231b33"
+    }
+  ]
+}
