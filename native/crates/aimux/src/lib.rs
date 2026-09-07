@@ -157,6 +157,7 @@ pub mod tmux_statusline_script;
 pub mod tmux_window_open;
 pub mod tool_hooks;
 pub mod tool_hooks_contract;
+pub mod transcript_reconciler_contract;
 pub mod transcript_turn_state;
 pub mod translation_plan;
 pub mod tui_render;
