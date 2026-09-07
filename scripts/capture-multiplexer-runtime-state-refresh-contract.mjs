@@ -78,6 +78,7 @@ function hostFor(input) {
   };
   const visibilitySequence = [...(input.visibilitySequence ?? [])];
   const refreshSteps = [...(input.refreshSteps ?? [])];
+  const deferredRefreshes = new Map();
   const host = {
     projectRoot: "/repo",
     statusInterval: null,
@@ -107,6 +108,11 @@ function hostFor(input) {
     refreshDashboardModelFromService: callLog(calls, "refreshDashboardModelFromService", () => {
       const step = refreshSteps.length > 0 ? refreshSteps.shift() : { type: "resolve", value: true };
       if (step.type === "pending") return new Promise(() => undefined);
+      if (step.type === "defer") {
+        return new Promise((resolve) => {
+          deferredRefreshes.set(step.key ?? "default", resolve);
+        });
+      }
       if (step.type === "reject") return Promise.reject(new Error(step.message));
       return Promise.resolve(step.value);
     }),
@@ -114,7 +120,7 @@ function hostFor(input) {
     renderCurrentDashboardView: callLog(calls, "renderCurrentDashboardView"),
     invalidateDashboardFrame: callLog(calls, "invalidateDashboardFrame"),
   };
-  return { host, calls };
+  return { host, calls, deferredRefreshes };
 }
 
 async function tick(ms) {
@@ -143,7 +149,7 @@ function snapshot(host, calls) {
 async function run(input) {
   nowMs = FIXED_NOW_MS;
   intervals.clear();
-  const { host, calls } = hostFor(input.host ?? {});
+  const { host, calls, deferredRefreshes } = hostFor(input.host ?? {});
   startStatusRefresh(host);
   for (const step of input.steps ?? []) {
     if (step.type === "tick") await tick(step.ms);
@@ -153,6 +159,13 @@ async function run(input) {
     }
     if (step.type === "setMode") host.mode = step.mode;
     if (step.type === "setInputEpoch") host.dashboardInputEpoch = step.value;
+    if (step.type === "resolveRefresh") {
+      const resolve = deferredRefreshes.get(step.key ?? "default");
+      if (!resolve) throw new Error(`missing deferred refresh ${step.key ?? "default"}`);
+      deferredRefreshes.delete(step.key ?? "default");
+      resolve(step.value);
+      await flushAsyncWork();
+    }
   }
   if (input.stop !== false) stopStatusRefresh(host);
   return snapshot(host, calls);
@@ -190,6 +203,33 @@ const casesInput = [
       { type: "tick", ms: 1000 },
       { type: "setSessionStatus", sessionId: "codex-1", status: "idle" },
       { type: "tick", ms: 5000 },
+    ],
+  },
+  {
+    name: "does not render an in-flight background dashboard refresh after leaving dashboard mode",
+    host: {
+      mode: "dashboard",
+      dashboardNextBackgroundRefreshAt: 0,
+      refreshSteps: [{ type: "defer", key: "refresh" }],
+    },
+    steps: [
+      { type: "tick", ms: 1000 },
+      { type: "setMode", mode: "session" },
+      { type: "resolveRefresh", key: "refresh", value: true },
+    ],
+  },
+  {
+    name: "does not render an in-flight background dashboard refresh after input changes",
+    host: {
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      dashboardNextBackgroundRefreshAt: 0,
+      refreshSteps: [{ type: "defer", key: "refresh" }],
+    },
+    steps: [
+      { type: "tick", ms: 1000 },
+      { type: "setInputEpoch", value: 2 },
+      { type: "resolveRefresh", key: "refresh", value: true },
     ],
   },
   {

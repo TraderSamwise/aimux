@@ -129,6 +129,91 @@
     },
     {
       "id": "multiplexer-runtime-state-refresh-004",
+      "name": "does not render an in-flight background dashboard refresh after leaving dashboard mode",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "does not render an in-flight background dashboard refresh after leaving dashboard mode",
+        "host": {
+          "mode": "dashboard",
+          "dashboardNextBackgroundRefreshAt": 0,
+          "refreshSteps": [{ "type": "defer", "key": "refresh" }]
+        },
+        "steps": [
+          { "type": "tick", "ms": 1000 },
+          { "type": "setMode", "mode": "session" },
+          { "type": "resolveRefresh", "key": "refresh", "value": true }
+        ]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [],
+        "prevStatuses": [],
+        "mode": "session",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 1780272003000,
+        "dashboardHiddenVisibilitySkipTicks": 0,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": false,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [[false, { "lifecycle": { "mode": "dashboard" } }]],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "11684880b6237c6b0e79122ca7d95fd366ca3be60562111b5a7a1a689a9259c6"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-005",
+      "name": "does not render an in-flight background dashboard refresh after input changes",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "does not render an in-flight background dashboard refresh after input changes",
+        "host": {
+          "mode": "dashboard",
+          "dashboardInputEpoch": 1,
+          "dashboardNextBackgroundRefreshAt": 0,
+          "refreshSteps": [{ "type": "defer", "key": "refresh" }]
+        },
+        "steps": [
+          { "type": "tick", "ms": 1000 },
+          { "type": "setInputEpoch", "value": 2 },
+          { "type": "resolveRefresh", "key": "refresh", "value": true }
+        ]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [],
+        "prevStatuses": [],
+        "mode": "dashboard",
+        "dashboardInputEpoch": 2,
+        "dashboardNextBackgroundRefreshAt": 1780272003000,
+        "dashboardHiddenVisibilitySkipTicks": 0,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": false,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [[false, { "lifecycle": { "mode": "dashboard" } }]],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "36fc92365d2e99e802bcebb35294cc0966f94291382f08ddb8c70dd201a2ce14"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-006",
       "name": "renders heartbeat-only dashboard feedback without waiting for background refresh",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "startStatusRefresh",
@@ -167,7 +252,7 @@
       "inputSha256": "5a9cc78cc7aeb82166b33340291f0151b68b4dd4425a24ba47e3d54d39187149"
     },
     {
-      "id": "multiplexer-runtime-state-refresh-005",
+      "id": "multiplexer-runtime-state-refresh-007",
       "name": "does not run dashboard background API refresh while startup is priming",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "startStatusRefresh",
@@ -206,7 +291,7 @@
       "inputSha256": "811d7d8690ca983e94c10984c998b212bc1cd882ca4f5337a6ffbe5d89d14657"
     },
     {
-      "id": "multiplexer-runtime-state-refresh-006",
+      "id": "multiplexer-runtime-state-refresh-008",
       "name": "does not refresh or render hidden tmux dashboards",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "startStatusRefresh",
@@ -245,7 +330,7 @@
       "inputSha256": "5c7f356e5ba9c57b06c3e531c6b7a08224acd67ae322db82b13d814b5979a848"
     },
     {
-      "id": "multiplexer-runtime-state-refresh-007",
+      "id": "multiplexer-runtime-state-refresh-009",
       "name": "backs off visibility checks for hidden tmux dashboards",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "startStatusRefresh",
@@ -288,7 +373,7 @@
       "inputSha256": "9f198aeac8c83f6f28826694956c3c385ef04b5921c3df8f6032304e0e625111"
     },
     {
-      "id": "multiplexer-runtime-state-refresh-008",
+      "id": "multiplexer-runtime-state-refresh-010",
       "name": "forces one dashboard model refresh when a hidden dashboard becomes visible",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "startStatusRefresh",

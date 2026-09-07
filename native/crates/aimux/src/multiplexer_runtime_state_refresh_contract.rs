@@ -27,12 +27,20 @@ struct RefreshRunner {
     dashboard_tui_visibility: Option<Value>,
     dashboard_hidden_visibility_skip_ticks: i64,
     dashboard_tui_visibility_wake_pending: bool,
+    dashboard_fields_initialized: bool,
     started_in_dashboard: bool,
     feedback_changed: bool,
     visibility_sequence: Vec<bool>,
     refresh_steps: Vec<Value>,
+    pending_refresh: Option<PendingRefresh>,
     screen: String,
     calls: Map<String, Value>,
+}
+
+#[derive(Debug)]
+struct PendingRefresh {
+    mode: String,
+    input_epoch: i64,
 }
 
 impl RefreshRunner {
@@ -76,6 +84,7 @@ impl RefreshRunner {
                 host,
                 "dashboardTuiVisibilityWakePending",
             ),
+            dashboard_fields_initialized: false,
             started_in_dashboard: bool_field(host, "startedInDashboard"),
             feedback_changed: bool_field(host, "feedbackChanged"),
             visibility_sequence: array_field(host, "visibilitySequence")
@@ -83,6 +92,7 @@ impl RefreshRunner {
                 .map(|value| value.as_bool().unwrap_or(true))
                 .collect(),
             refresh_steps: array_field(host, "refreshSteps"),
+            pending_refresh: None,
             screen: string_field_default(host, "screen", "coordination"),
             calls,
         }
@@ -103,6 +113,9 @@ impl RefreshRunner {
                 }
                 "setMode" => self.mode = string_field(&step, "mode"),
                 "setInputEpoch" => self.dashboard_input_epoch = number_field(&step, "value"),
+                "resolveRefresh" => self.resolve_pending_refresh(
+                    step.get("value").and_then(Value::as_bool).unwrap_or(true),
+                ),
                 other => panic!("unknown runtime-state refresh step: {other}"),
             }
         }
@@ -151,6 +164,7 @@ impl RefreshRunner {
     }
 
     fn refresh_dashboard(&mut self) {
+        self.dashboard_fields_initialized = true;
         let mut force_refresh = false;
         if self.started_in_dashboard {
             if self.dashboard_hidden_visibility_skip_ticks > 0 {
@@ -201,32 +215,66 @@ impl RefreshRunner {
                 "refreshDashboardModelFromService",
                 json!([force_refresh, lifecycle]),
             );
-            let refresh_resolves = self.consume_refresh_step_resolves();
-            if refresh_resolves && self.is_dashboard_screen("coordination") {
-                self.record(
-                    "refreshCoordinationFromService",
-                    json!([{ "lifecycle": {
-                        "mode": self.mode,
-                        "inputEpoch": self.dashboard_input_epoch,
-                        "requiresInputEpoch": true,
-                        "screen": "coordination",
-                    }}]),
-                );
-                self.is_dashboard_screen("coordination");
-            }
-            if force_refresh {
-                self.is_dashboard_screen("coordination");
-                self.record("renderCurrentDashboardView", json!([]));
+            match self.consume_refresh_step() {
+                RefreshStep::Pending => (),
+                RefreshStep::Deferred => {
+                    self.pending_refresh = Some(PendingRefresh {
+                        mode: self.mode.clone(),
+                        input_epoch: self.dashboard_input_epoch,
+                    });
+                }
+                RefreshStep::Resolved(refreshed) => {
+                    if refreshed {
+                        self.finish_resolved_refresh(force_refresh);
+                    }
+                }
             }
         }
     }
 
-    fn consume_refresh_step_resolves(&mut self) -> bool {
+    fn finish_resolved_refresh(&mut self, force_refresh: bool) {
+        if self.is_dashboard_screen("coordination") {
+            self.record(
+                "refreshCoordinationFromService",
+                json!([{ "lifecycle": {
+                    "mode": self.mode,
+                    "inputEpoch": self.dashboard_input_epoch,
+                    "requiresInputEpoch": true,
+                    "screen": "coordination",
+                }}]),
+            );
+            self.is_dashboard_screen("coordination");
+        }
+        if force_refresh {
+            self.is_dashboard_screen("coordination");
+            self.record("renderCurrentDashboardView", json!([]));
+        }
+    }
+
+    fn resolve_pending_refresh(&mut self, refreshed: bool) {
+        let Some(pending) = self.pending_refresh.take() else {
+            return;
+        };
+        if refreshed
+            && self.mode == pending.mode
+            && self.dashboard_input_epoch == pending.input_epoch
+        {
+            self.finish_resolved_refresh(false);
+            self.record("renderCurrentDashboardView", json!([]));
+        }
+    }
+
+    fn consume_refresh_step(&mut self) -> RefreshStep {
         if self.refresh_steps.is_empty() {
-            return true;
+            return RefreshStep::Resolved(true);
         }
         let step = self.refresh_steps.remove(0);
-        string_field(&step, "type") != "pending" && string_field(&step, "type") != "reject"
+        match string_field(&step, "type").as_str() {
+            "pending" => RefreshStep::Pending,
+            "defer" => RefreshStep::Deferred,
+            "reject" => RefreshStep::Resolved(false),
+            _ => RefreshStep::Resolved(step.get("value").and_then(Value::as_bool).unwrap_or(true)),
+        }
     }
 
     fn is_dashboard_screen(&mut self, screen: &str) -> bool {
@@ -270,13 +318,13 @@ impl RefreshRunner {
             "mode": self.mode,
             "dashboardInputEpoch": self.dashboard_input_epoch,
             "dashboardNextBackgroundRefreshAt": self.dashboard_next_background_refresh_at,
-            "dashboardHiddenVisibilitySkipTicks": if self.dashboard_hidden_visibility_skip_ticks == 0 && self.mode != "dashboard" {
+            "dashboardHiddenVisibilitySkipTicks": if self.dashboard_hidden_visibility_skip_ticks == 0 && self.mode != "dashboard" && !self.dashboard_fields_initialized {
                 Value::Null
             } else {
                 json!(self.dashboard_hidden_visibility_skip_ticks)
             },
             "dashboardTuiVisibility": self.dashboard_tui_visibility.unwrap_or(Value::Null),
-            "dashboardTuiVisibilityWakePending": if self.mode == "dashboard" {
+            "dashboardTuiVisibilityWakePending": if self.mode == "dashboard" || self.dashboard_fields_initialized {
                 json!(self.dashboard_tui_visibility_wake_pending)
             } else {
                 Value::Null
@@ -284,6 +332,12 @@ impl RefreshRunner {
             "calls": self.calls,
         })
     }
+}
+
+enum RefreshStep {
+    Resolved(bool),
+    Pending,
+    Deferred,
 }
 
 fn value_field<'a>(value: &'a Value, field: &str) -> &'a Value {
