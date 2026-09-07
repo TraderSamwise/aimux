@@ -490,6 +490,46 @@ pub fn run_dashboard_model_apply_contract_case(input: &Value) -> Value {
     json!({ "steps": steps })
 }
 
+pub fn run_dashboard_model_process_info_contract_case(input: &Value) -> Value {
+    let target = value_field_value(input, "target");
+    let window_id = string_field_value(&target, "windowId");
+    let raw = string_field_value(input, "displayMessage");
+    let mut parts = raw.split('\t');
+    let command = parts.next().unwrap_or_default().trim();
+    let pid_raw = parts.next().unwrap_or_default().trim();
+    let mut result = Map::new();
+    if !command.is_empty() {
+        result.insert("command".to_owned(), json!(command));
+    }
+    if !pid_raw.is_empty() && pid_raw.chars().all(|ch| ch.is_ascii_digit()) {
+        if let Ok(pid) = pid_raw.parse::<u64>() {
+            result.insert("pid".to_owned(), json!(pid));
+        }
+    }
+    if input.get("captureThrows").is_none()
+        && let Some(preview) = string_field_value(input, "captureOutput")
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .next_back()
+    {
+        result.insert("previewLine".to_owned(), json!(preview));
+    }
+    json!({
+        "result": Value::Object(result),
+        "calls": [
+            {
+                "method": "displayMessage",
+                "args": ["#{pane_current_command}\t#{pane_pid}", window_id],
+            },
+            {
+                "method": "captureTarget",
+                "args": [target, { "startLine": -8 }],
+            },
+        ],
+    })
+}
+
 #[derive(Debug, Clone)]
 struct DashboardModelApplyContractHost {
     calls: Vec<Value>,
