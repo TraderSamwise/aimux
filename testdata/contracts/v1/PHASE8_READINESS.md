@@ -4,15 +4,15 @@ Audit point: `9bd65d2429bd04d1a4856d566b9c43a0d9ce6c44`
 
 Question: what actually breaks if the TypeScript hot path is deleted today?
 
-Answer: the checklist gate is clear for captured behavior: all 321 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. Sam has now chosen the plugin strategy: suspend the public/user JS plugin API for phase 8 and port the two built-in plugins to native Rust as real internal plugins. The built-ins now pass the recorded TypeScript corpora through an internal serializable plugin API; project-service startup/diagnostics wiring is prepared as `scripts/project-service-native-plugin-wiring.patch` and must be applied by the shared-file owner before claiming production startup runs the registry. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
+Answer: the checklist gate is clear for captured behavior: all 322 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. Sam has now chosen the plugin strategy: suspend the public/user JS plugin API for phase 8 and port the two built-in plugins to native Rust as real internal plugins. The built-ins now pass the recorded TypeScript corpora through an internal serializable plugin API, and project-service startup/diagnostics wiring landed in `cc99cba7` so production startup reports native plugin statuses through diagnostics. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
 
 ## Evidence Baseline
 
-- Enforcement inventory: 321 suite/corpus bindings under `testdata/contracts/v1`.
+- Enforcement inventory: 322 suite/corpus bindings under `testdata/contracts/v1`.
 - Enforcement audit: `testdata/contracts/v1/ENFORCEMENT_AUDIT.md`.
 - Live residual suite: `scripts/phase8-live-residuals.py`, reported in `testdata/contracts/v1/PHASE8_LIVE_RESIDUALS.md`.
-- Current binding status: 321 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
-- Current binding case count: 3,904 suite/corpus cases, all mutation-proven.
+- Current binding status: 322 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
+- Current binding case count: 3,922 suite/corpus cases, all mutation-proven.
 - Current backlog: `testdata/contracts/v1/UNIMPLEMENTED.md` lists 0 ignored/checklist corpus entries.
 - Coverage definition from `UNIMPLEMENTED.md`: 245 `src/**/*.test.ts` modules, 245 covered by behavior-level corpora, 0 uncovered. This is test-module coverage, not proof that every production TS source file is safe to delete independently.
 
@@ -36,7 +36,7 @@ Results:
 | Dashboard launch | Pass | `__dashboard-internal-native --once` rendered from a temp desktop-state snapshot |
 | Tmux statusline | Pass | `__tmux-statusline-internal --line top` read temp statusline state and printed `top-smoke` |
 | Tmux control | Pass with limited scope | `__tmux-control-internal active` exited 0 against temp state; this proves the installed native entrypoint, not live window switching |
-| Native built-in plugin registry | Pass by scoped fixture; production wiring pending | The Rust built-ins reproduce the TS corpora through the plugin API. `scripts/project-service-native-plugin-wiring.patch` is the routed shared-file diff that starts the registry from project-service and reports statuses in diagnostics. |
+| Native built-in plugin registry | Pass | The Rust built-ins reproduce the TS corpora through the plugin API. Project-service startup and diagnostics wiring landed in `cc99cba7`, so diagnostics reports native plugin statuses instead of `plugins: []`. |
 
 ## Node Dependency Sweep
 
@@ -50,7 +50,7 @@ Results:
 | Dashboard launch | `runtime/cli-launcher.json`; `dashboard/command-spec.json`; no-Node smoke | Yes: native entrypoint `__dashboard-internal-native`; production command spec defaults `AIMUX_DASHBOARD_IMPLEMENTATION=native` | Native for production dashboard spec; explicit legacy/source-helper paths still exist | Installed production dashboard works without JS. Explicit legacy `--tmux-dashboard-internal` or source-checkout helper paths break if `dist` is removed; retire or keep as dev-only. |
 | Tmux control/statusline/open-hyperlink scripts | `tmux/control-script.json`; `tmux/statusline-script.json`; no-Node smoke for control/statusline | Mostly yes: native internal commands exist for control/statusline/open-hyperlink; scripts are packaged shell helpers | Shell scripts plus native CLI; no Node requirement in statusline/control | `tmux-control.sh` and `tmux-statusline.sh` do not require Node. `tmux-open-hyperlink.sh` uses `python3` for JSON/text extraction, so it survives TypeScript deletion but still has a non-Rust runtime dependency. |
 | Tmux runtime manager | `tmux/*.json` corpora; `tmux/doctor.json`; fixture suites are `PROVEN-FAILS` | Strong for captured behavior | Native tmux command execution | Captured behavior survives TypeScript deletion. Live PTY/tmux timing remains residual risk. |
-| Plugin runtime | `plugin/runtime.json`, `default-plugins/*.json`, and `fixture_plugin_api` are `PROVEN-FAILS`; startup wiring patch is `scripts/project-service-native-plugin-wiring.patch` | Yes for the two built-ins: native registry and project-service host adapter run them through the internal serializable API | Pending shared-file wiring patch; public/user JS plugin API suspended | Built-in default plugins no longer require Node or JS wrappers once the routed startup/diagnostics patch lands. User `~/.aimux/plugins/*.js` execution is intentionally not supported unless Sam reopens the public plugin model. |
+| Plugin runtime | `plugin/runtime.json`, `default-plugins/*.json`, `fixture_plugin_api`, and `project_service_reads` are proven | Yes for the two built-ins: native registry and project-service host adapter run them through the internal serializable API | Native built-ins wired into project-service; public/user JS plugin API suspended | Built-in default plugins no longer require Node or JS wrappers. User `~/.aimux/plugins/*.js` execution is intentionally not supported unless Sam reopens the public plugin model. |
 | Claude/Codex hooks | `hooks/tool-hooks.json`; `shell/hooks.json`; no-Node hook POST smoke | Yes for captured hook payload parsing/settings emission and project-service hook routes | Native | Captured hook payload behavior survives. Live external-tool invocation ordering is still a residual integration risk. |
 | Release/build scripts | `scripts/build-release-asset.sh`; `release/asset.json`; `release/package-manifest.json` | Yes for packaging native binary and excluding Node runtime payload | Native release artifact | Full local release build still runs `yarn build:release` and `yarn build:ui:local` before packaging. That is build-time Node, not installed runtime Node. |
 | Local UI / app | `service/local-ui-server.json`; app-state corpora | Rust has local static server contracts, app remains TypeScript by scope | Not part of phase-8 hot path deletion | Deleting `app/` TypeScript would break the Expo client and is out of scope. |
@@ -65,7 +65,7 @@ Results:
 | Project service HTTP/SSE/stores | Mostly implemented | `project-api/*.json`, `metadata-server/*.json`, `metadata-store/store.json`, `runtime-state/project-event-stream.json`, `runtime-exchange/*.json`, `runtime-topology/*.json` are `PROVEN-FAILS`; no-Node project-service smoke | End-to-end HTTP/SSE ordering under load remains live-only residual risk. |
 | Agent output/parser/transcript/state | Implemented | Parser adversarial/fuzz/audit/activity corpora, bounds/stream/read-metrics, transcript, transcript-reconciler, liveness/status/restore/tracker, ANSI/rich-text are `PROVEN-FAILS` | No checklist rows remain in this subsystem. |
 | Agent coordination/orchestration | Implemented for captured semantics | `coordination/*.json`, `orchestration/*.json`, `agent-prompt-delivery/delivery.json`, `coordination/scribe-watcher.json` are `PROVEN-FAILS` | Cross-process delivery timing remains residual risk. |
-| Hooks and default plugins | Implemented for captured contracts; public plugin API suspended | `hooks/tool-hooks.json`, `shell/hooks.json`, `default-plugins/gh-pr-context.json`, `default-plugins/transcript-length.json`, `plugin/runtime.json`, and `fixture_plugin_api` are `PROVEN-FAILS`; hook route smoke | The native built-ins run through the internal serializable plugin API. Project-service startup/diagnostics wiring is prepared but not applied in this branch slice. Runtime execution of arbitrary user JS plugins is intentionally unavailable for phase 8. |
+| Hooks and default plugins | Implemented for captured contracts; public plugin API suspended | `hooks/tool-hooks.json`, `shell/hooks.json`, `default-plugins/gh-pr-context.json`, `default-plugins/transcript-length.json`, `plugin/runtime.json`, `fixture_plugin_api`, and `project_service_reads` are proven; hook route smoke | The native built-ins run through the internal serializable plugin API and are wired into project-service diagnostics. Runtime execution of arbitrary user JS plugins is intentionally unavailable for phase 8. |
 | Dashboard model/TUI/client helpers | Implemented for captured surfaces | Dashboard/TUI corpora, including golden desktop state, navigation, repair notices, notifications, rich text, command spec, order, targets, interaction, lifecycle, and render helpers are `PROVEN-FAILS`; dashboard `--once` smoke | Live keyboard/terminal rendering and focus behavior still need manual/live coverage. |
 | Tmux runtime/control/render | Strong for captured surfaces | `tmux/*.json`, `terminal/*.json`, statusline/control/open/doctor/expose corpora are `PROVEN-FAILS`; limited no-Node control/statusline smoke | Live attach/detach/PTY timing cannot be fully reduced to corpus data. |
 | Hosted/remote/mobile notification surfaces | Implemented for captured contracts | `hosted/*.json`, `remote-access/access.json`, `relay/client.json`, `notifications/mobile-push.json`, `desktop-notifier/notifier.json` are `PROVEN-FAILS` | Network, platform notification delivery, and auth callback races remain live-only residual risk. |
@@ -115,7 +115,7 @@ Chosen option: suspend the user plugin model for phase 8 and keep built-ins nati
 - Cost: document the suspension, ignore or remove user `~/.aimux/plugins/*.js` wrappers intentionally, keep the internal Rust plugin API unstable until a transport is chosen, and land the routed shared-file patch so diagnostics reports real built-in statuses instead of `plugins: []`.
 - Deletion impact: default plugin TypeScript payloads and wrapper seeding are deletable once the native plugin suites stay proven and the routed diagnostics/startup patch lands. User plugin TypeScript/JS execution is deletable only as an explicit feature suspension.
 
-Current state: the two built-ins are native `NativePlugin` consumers. They interact with host state only by serialized `NativePluginApiRequest` calls. The production host adapter exists in Rust; the one shared-file wiring diff needed to call it from project-service startup and diagnostics is prepared at `scripts/project-service-native-plugin-wiring.patch` and pending owner application.
+Current state: the two built-ins are native `NativePlugin` consumers. They interact with host state only by serialized `NativePluginApiRequest` calls. The production host adapter exists in Rust and is wired into project-service startup and diagnostics by `cc99cba7`.
 
 Internal native plugin API surface:
 
@@ -148,10 +148,9 @@ Current evidence: `scripts/phase8-live-residuals.py --prove-fails --skip-build` 
 
 ## Gate Decision
 
-Phase 8 is ready for the normal installed CLI, daemon, project-service, tmux runtime, and dashboard hot path if the public/user JS plugin API suspension is part of the deletion decision. Built-in default plugin behavior is mutation-proven through the native API and becomes production-ready once `scripts/project-service-native-plugin-wiring.patch` lands. Plugin runtime deletion is not safe as a blanket claim if Sam wants existing user JS plugins to keep executing.
+Phase 8 is ready for the normal installed CLI, daemon, project-service, tmux runtime, and dashboard hot path if the public/user JS plugin API suspension is part of the deletion decision. Built-in default plugin behavior is mutation-proven through the native API and wired into project-service startup/diagnostics. Plugin runtime deletion is not safe as a blanket claim if Sam wants existing user JS plugins to keep executing.
 
 Minimum remaining work:
 
-1. Apply `scripts/project-service-native-plugin-wiring.patch` in the shared project-service files, then rerun the plugin diagnostics test.
-2. Keep `app/` TypeScript and build/capture scripts out of the deletion set.
-3. Keep the live smoke/stress coverage above for PTY/SSE/process-race residuals, because corpus mutation tests cannot prove those timing properties.
+1. Keep `app/` TypeScript and build/capture scripts out of the deletion set.
+2. Keep the live smoke/stress coverage above for PTY/SSE/process-race residuals, because corpus mutation tests cannot prove those timing properties.

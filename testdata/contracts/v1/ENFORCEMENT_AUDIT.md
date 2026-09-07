@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 274 suites, 321 suite/corpus bindings, 3921 cases.
-Binding statuses: PROVEN-FAILS 321, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 275 suites, 322 suite/corpus bindings, 3922 cases.
+Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -245,6 +245,7 @@ Binding statuses: PROVEN-FAILS 321, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_runtime_exchange_store` | PROVEN-FAILS | `testdata/contracts/v1/runtime-exchange/store.json` | 19 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_guard_repair` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/guard-repair-history.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_guard_repair` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/drift.json` | 4 | mutated fixture output failed owning Rust suite |
+| `fixture_runtime_guard_repair_start` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-guard-repair-start.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_guard_sync` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/runtime-guard.json` | 17 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_guard_sync` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/runtime-sync.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_lifecycle_methods` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-lifecycle-methods.json` | 8 | mutated fixture output failed owning Rust suite |
