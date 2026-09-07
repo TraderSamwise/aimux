@@ -1018,6 +1018,10 @@ Priority fixture groups:
 - `multiplexer/dashboard-interaction.json`: dashboard keyboard navigation,
   blocking, quick-jump, and screen-switch behavior captured by running
   TypeScript `dashboardInteractionMethods.handleDashboardKey`.
+- `multiplexer/dashboard-state-helpers.json`: graveyard refresh state,
+  dashboard-tail cache selectors, dashboard-view pending settlement hooks,
+  persistence projection/text helpers, and live service state projection
+  captured by running TypeScript multiplexer helpers.
 - `multiplexer/library-refresh.json`: library resource refresh return values,
   host-state transitions, payload validation, coalescing, and project-service
   call logs captured by running TypeScript `refreshLibrary`.
