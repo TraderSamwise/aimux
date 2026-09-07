@@ -109,6 +109,7 @@ pub mod multiplexer_runtime_helpers;
 pub mod multiplexer_runtime_state_methods_contract;
 pub mod notification_policy_contract;
 pub mod paths;
+pub mod plugin_api;
 pub mod plugin_runtime_contract;
 pub mod process_args;
 pub mod process_inspector;
