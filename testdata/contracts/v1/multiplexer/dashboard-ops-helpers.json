@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-ops.ts",
+  "generatedBy": "scripts/capture-dashboard-ops-helpers-contract.mjs",
+  "description": "Dashboard operation wrapper, subscreen reset, and wait-for-session-start host adapter behavior captured by running TypeScript dashboard-ops helpers.",
+  "cases": [
+    {
+      "id": "dashboard-ops-helpers-001",
+      "name": "runDashboardOperation delegates title lines work and error title to feedback controller",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "runDashboardOperation",
+      "input": {
+        "api": "runDashboardOperation",
+        "title": "Starting",
+        "lines": ["one", "two"],
+        "errorTitle": "Failed start",
+        "workResult": { "ok": true }
+      },
+      "output": {
+        "result": { "ok": true },
+        "error": null,
+        "calls": [
+          { "method": "dashboardFeedback.runOperation", "args": ["Starting", ["one", "two"], null, "Failed start"] },
+          { "method": "work", "args": [] }
+        ]
+      },
+      "inputSha256": "45b764fb8aa5aaa0fe2cb57410d5dba9d351f313268df65d22f90e38b9b17f12"
+    },
+    {
+      "id": "dashboard-ops-helpers-002",
+      "name": "runDashboardOperation uses title as default error title",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "runDashboardOperation",
+      "input": { "api": "runDashboardOperation", "title": "Stopping", "lines": [], "workResult": "done" },
+      "output": {
+        "result": "done",
+        "error": null,
+        "calls": [
+          { "method": "dashboardFeedback.runOperation", "args": ["Stopping", [], null, "Stopping"] },
+          { "method": "work", "args": [] }
+        ]
+      },
+      "inputSha256": "39a9c0d29b7a2df0d98827d3659e58503d11dd4ffccfbd29f4be613ace9ada00"
+    },
+    {
+      "id": "dashboard-ops-helpers-003",
+      "name": "clearDashboardSubscreens resets dashboard state",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "clearDashboardSubscreens",
+      "input": { "api": "clearDashboardSubscreens" },
+      "output": { "calls": [{ "method": "dashboardState.resetSubscreen", "args": [] }] },
+      "inputSha256": "314a517d5784c0855401533c9de06d96449dac54745e488af3bd3c8accc5b213"
+    },
+    {
+      "id": "dashboard-ops-helpers-004",
+      "name": "waitForSessionStartForHost returns true when runtime is live",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "waitForSessionStartForHost",
+      "input": {
+        "api": "waitForSessionStartForHost",
+        "sessionId": "codex-1",
+        "runtimePresent": true,
+        "runtimeLive": true,
+        "timeoutMs": 300
+      },
+      "output": {
+        "result": true,
+        "calls": [{ "method": "isSessionRuntimeLive", "args": [{ "id": "codex-1", "command": "codex" }] }]
+      },
+      "inputSha256": "deee2d71039bb145a40efa1f5b6806cc53106d6d7b430c65553e2f885b54e344"
+    },
+    {
+      "id": "dashboard-ops-helpers-005",
+      "name": "waitForSessionStartForHost returns false when runtime never appears",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "waitForSessionStartForHost",
+      "input": {
+        "api": "waitForSessionStartForHost",
+        "sessionId": "codex-1",
+        "runtimePresent": false,
+        "runtimeLive": false,
+        "timeoutMs": 300
+      },
+      "output": { "result": false, "calls": [] },
+      "inputSha256": "a184f662cf4f345e07fc9d6df4ae3b46be8023164e0af61c9375785fb072f224"
+    }
+  ]
+}
