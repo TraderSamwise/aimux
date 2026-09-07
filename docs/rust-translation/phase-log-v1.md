@@ -110,3 +110,28 @@ Open gaps:
   online-count network caching remain for later daemon/runtime slices.
 - Exact `localeCompare` ordering and config-file-backed session prefix loading
   remain open for the full scanner port.
+
+## 2026-09-08 Multiplexer Sufficiency Audit
+
+Status: complete for this lane
+Scope: nine multiplexer modules owned by this stream before TypeScript deletion.
+
+Verification:
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_dashboard_interaction_helpers`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_dashboard_interaction_overlays`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_session_launch_default_scribe`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_multiplexer_runtime_helpers`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_session_runtime_agent_controls`
+- `scripts/audit-fixture-enforcement.mjs` for each touched suite above
+- `cargo test --manifest-path native/Cargo.toml -p aimux --lib`
+
+Parity evidence:
+- `docs/rust-translation/multiplexer-sufficiency-audit-v1.md`
+- Added TypeScript-captured fixtures for direct dashboard interaction helpers,
+  async overlay gaps, default-scribe skip/claim-timeout paths, launch helper
+  edge cases, and tmux-backed session controls.
+
+Open gaps:
+- `dashboard-control.ts` `startRuntimeGuardRepair` live restart branch remains
+  intentionally uncaptured because the current gate forbids installed fleet
+  manipulation from this worktree.
