@@ -256,8 +256,24 @@ fn session_launch_helpers_case(input: &Value) -> Value {
             )))
             .collect::<Vec<_>>(),
         "summarized": summarize_launch_args(&array_field(input, "launchArgs")),
+        "summarizedEdge": summarize_launch_args(&array_field(input, "launchArgsEdge")),
         "injected": inject_codex_developer_instructions(
             &array_field(input, "codexArgs"),
+            &string_field(input, "developerKey"),
+            &string_field(input, "instructions"),
+        ),
+        "injectedBeforeDash": inject_codex_developer_instructions(
+            &array_field(input, "codexArgsDash"),
+            &string_field(input, "developerKey"),
+            &string_field(input, "instructions"),
+        ),
+        "injectedAfterShortOptions": inject_codex_developer_instructions(
+            &array_field(input, "codexArgsShort"),
+            &string_field(input, "developerKey"),
+            &string_field(input, "instructions"),
+        ),
+        "injectedWithoutPositional": inject_codex_developer_instructions(
+            &array_field(input, "codexArgsNoPositional"),
             &string_field(input, "developerKey"),
             &string_field(input, "instructions"),
         ),
@@ -265,6 +281,11 @@ fn session_launch_helpers_case(input: &Value) -> Value {
             &array_field(input, "codexArgs"),
             "",
             &string_field(input, "instructions"),
+        ),
+        "blankInstructionsInjection": inject_codex_developer_instructions(
+            &array_field(input, "codexArgs"),
+            &string_field(input, "developerKey"),
+            "  ",
         ),
     })
 }

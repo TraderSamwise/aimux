@@ -410,7 +410,19 @@
           "--password=hunter2",
           "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         ],
+        "launchArgsEdge": [
+          "--remote-auth-token-env",
+          "REMOTE_AUTH_TOKEN",
+          "SERVICE_AUTH=abc123",
+          "--safe-mode",
+          "-p",
+          "prod",
+          "--credential-file=/tmp/secret.json"
+        ],
         "codexArgs": ["--model", "gpt-5", "--sandbox", "workspace-write", "Implement the parser"],
+        "codexArgsDash": ["--model", "gpt-5", "--", "literal prompt"],
+        "codexArgsShort": ["-m", "gpt-5", "-s", "workspace-write", "Implement the parser"],
+        "codexArgsNoPositional": ["--model=gpt-5", "--config", "foo=bar"],
         "developerKey": "developer_instructions",
         "instructions": "Follow AGENTS.md"
       },
@@ -425,6 +437,15 @@
           "--password=<redacted>",
           "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."
         ],
+        "summarizedEdge": [
+          "--remote-auth-token-env",
+          "<redacted>",
+          "SERVICE_AUTH=<redacted>",
+          "--safe-mode",
+          "-p",
+          "prod",
+          "--credential-file=<redacted>"
+        ],
         "injected": [
           "--model",
           "gpt-5",
@@ -434,9 +455,34 @@
           "developer_instructions=\"Follow AGENTS.md\"",
           "Implement the parser"
         ],
-        "blankInjection": ["--model", "gpt-5", "--sandbox", "workspace-write", "Implement the parser"]
+        "injectedBeforeDash": [
+          "--model",
+          "gpt-5",
+          "-c",
+          "developer_instructions=\"Follow AGENTS.md\"",
+          "--",
+          "literal prompt"
+        ],
+        "injectedAfterShortOptions": [
+          "-m",
+          "gpt-5",
+          "-s",
+          "workspace-write",
+          "-c",
+          "developer_instructions=\"Follow AGENTS.md\"",
+          "Implement the parser"
+        ],
+        "injectedWithoutPositional": [
+          "--model=gpt-5",
+          "--config",
+          "foo=bar",
+          "-c",
+          "developer_instructions=\"Follow AGENTS.md\""
+        ],
+        "blankInjection": ["--model", "gpt-5", "--sandbox", "workspace-write", "Implement the parser"],
+        "blankInstructionsInjection": ["--model", "gpt-5", "--sandbox", "workspace-write", "Implement the parser"]
       },
-      "inputSha256": "2f3503bd47a6ebba0ebe7a35b271fe5547dae85271346485c59bc924ab233d67"
+      "inputSha256": "ea3662b2372bfbf73415b14d415e7a7e630e2df5f717858ab12a66ec342c1dd4"
     },
     {
       "id": "multiplexer-runtime-helpers-008",
