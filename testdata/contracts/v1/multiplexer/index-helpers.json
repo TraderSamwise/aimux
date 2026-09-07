@@ -6,6 +6,93 @@
   "cases": [
     {
       "id": "multiplexer-index-helpers-001",
+      "name": "constructor initializes inert dashboard state for an explicit project root",
+      "source": "src/multiplexer/index.ts",
+      "api": "Multiplexer",
+      "input": { "api": "Multiplexer" },
+      "output": {
+        "result": {
+          "projectRoot": "<REPO>",
+          "mode": "dashboard",
+          "sessionCount": 0,
+          "activeIndex": 0,
+          "activeSession": null,
+          "startedInDashboard": false,
+          "overlayKind": "none",
+          "pickerMode": "create",
+          "toolPickerIndex": 0,
+          "worktreeInputBuffer": "",
+          "serviceInputBuffer": "",
+          "labelInputBuffer": "",
+          "orchestrationInputBuffer": "",
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "" },
+          "runtimeGuardState": { "kind": "ok" },
+          "runtimeGuardActiveMs": 0,
+          "footerFlash": null,
+          "footerFlashTicks": 0,
+          "methodTypes": {
+            "run": "function",
+            "runDashboard": "function",
+            "startProjectServiceHost": "function",
+            "runProjectService": "function",
+            "createSession": "function",
+            "resumeSessions": "function",
+            "restoreSessions": "function"
+          }
+        },
+        "calls": []
+      },
+      "inputSha256": "8aef167e2ac589145f7b6ad207fc9ea1d557118316df3999779485d1ff58f5b3"
+    },
+    {
+      "id": "multiplexer-index-helpers-002",
+      "name": "session getters reflect post construction session state",
+      "source": "src/multiplexer/index.ts",
+      "api": "Multiplexer",
+      "input": {
+        "api": "Multiplexer",
+        "postConstructSessions": [
+          { "id": "claude-1", "command": "claude" },
+          { "id": "codex-2", "command": "codex" }
+        ],
+        "postConstructActiveIndex": 1
+      },
+      "output": {
+        "result": {
+          "projectRoot": "<REPO>",
+          "mode": "dashboard",
+          "sessionCount": 2,
+          "activeIndex": 1,
+          "activeSession": { "id": "codex-2", "command": "codex" },
+          "startedInDashboard": false,
+          "overlayKind": "none",
+          "pickerMode": "create",
+          "toolPickerIndex": 0,
+          "worktreeInputBuffer": "",
+          "serviceInputBuffer": "",
+          "labelInputBuffer": "",
+          "orchestrationInputBuffer": "",
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "" },
+          "runtimeGuardState": { "kind": "ok" },
+          "runtimeGuardActiveMs": 0,
+          "footerFlash": null,
+          "footerFlashTicks": 0,
+          "methodTypes": {
+            "run": "function",
+            "runDashboard": "function",
+            "startProjectServiceHost": "function",
+            "runProjectService": "function",
+            "createSession": "function",
+            "resumeSessions": "function",
+            "restoreSessions": "function"
+          }
+        },
+        "calls": []
+      },
+      "inputSha256": "ca6040e92e61e6eb712c22e57c3d1951fcf6863232551b491089cab8a236c0d6"
+    },
+    {
+      "id": "multiplexer-index-helpers-003",
       "name": "native fork launch composes backend fork args when source tool and command match",
       "source": "src/multiplexer/index.ts",
       "api": "resolveNativeForkLaunch",
@@ -42,7 +129,7 @@
       "inputSha256": "5f752ea3e34f424fc0994255dfa3a71794710bf4041fffcd2f833ac429f8c6ee"
     },
     {
-      "id": "multiplexer-index-helpers-002",
+      "id": "multiplexer-index-helpers-004",
       "name": "native fork launch refuses missing backend session id",
       "source": "src/multiplexer/index.ts",
       "api": "resolveNativeForkLaunch",
@@ -58,7 +145,7 @@
       "inputSha256": "3ff749cb2cfda9a5e80c2eca38ef66bfd1ea5334b11f79545ceef5e266122b0f"
     },
     {
-      "id": "multiplexer-index-helpers-003",
+      "id": "multiplexer-index-helpers-005",
       "name": "native fork launch refuses cross-tool and command override forks",
       "source": "src/multiplexer/index.ts",
       "api": "resolveNativeForkLaunch",
@@ -75,7 +162,7 @@
       "inputSha256": "e16568b41b26a773ae4091419f0d3f3a4ad75d0d91f9b5dc69359720ed878877"
     },
     {
-      "id": "multiplexer-index-helpers-004",
+      "id": "multiplexer-index-helpers-006",
       "name": "alert display context merges metadata, live session, worktree, and label cache",
       "source": "src/multiplexer/index.ts",
       "api": "resolveSessionAlertDisplayContext",
@@ -116,7 +203,7 @@
       "inputSha256": "98313b87dfc270e7da81ca8e2d49747a162e452ad13b62de4ad3b3402d31766f"
     },
     {
-      "id": "multiplexer-index-helpers-005",
+      "id": "multiplexer-index-helpers-007",
       "name": "publish alert contextualizes service rows with live worktree context",
       "source": "src/multiplexer/index.ts",
       "api": "publishAlert",
@@ -162,7 +249,7 @@
       "inputSha256": "9cab48ec60188a825f79c3dcee8b7dc471ea67cbbffcfacd678bf65a35094226"
     },
     {
-      "id": "multiplexer-index-helpers-006",
+      "id": "multiplexer-index-helpers-008",
       "name": "fork session reports missing source before creating thread",
       "source": "src/multiplexer/index.ts",
       "api": "forkSessionFromSource",
@@ -184,7 +271,7 @@
       "inputSha256": "4946f4aabd81ad6b7df32cdfbc7cff781b6aa92169ec7ae99b042f07a21fe324"
     },
     {
-      "id": "multiplexer-index-helpers-007",
+      "id": "multiplexer-index-helpers-009",
       "name": "fork session uses handoff preamble when target tool differs",
       "source": "src/multiplexer/index.ts",
       "api": "forkSessionFromSource",
@@ -298,7 +385,7 @@
       "inputSha256": "54084736e067dd3ac23f1846031c66734f274db24ca5164aa596317144a6d17d"
     },
     {
-      "id": "multiplexer-index-helpers-008",
+      "id": "multiplexer-index-helpers-010",
       "name": "fork session uses native fork args when same tool backend id exists",
       "source": "src/multiplexer/index.ts",
       "api": "forkSessionFromSource",

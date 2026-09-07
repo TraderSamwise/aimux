@@ -132,6 +132,38 @@ function makeMux(input, repoRoot, aimuxHome, rec) {
   return mux;
 }
 
+function summarizeMultiplexer(mux) {
+  return {
+    projectRoot: mux.projectRoot,
+    mode: mux.mode,
+    sessionCount: mux.sessionCount,
+    activeIndex: mux.activeIndex,
+    activeSession: mux.activeSession ? { id: mux.activeSession.id, command: mux.activeSession.command } : null,
+    startedInDashboard: mux.startedInDashboard,
+    overlayKind: mux.dashboardOverlayState?.kind ?? null,
+    pickerMode: mux.pickerMode,
+    toolPickerIndex: mux.toolPickerIndex,
+    worktreeInputBuffer: mux.worktreeInputBuffer,
+    serviceInputBuffer: mux.serviceInputBuffer,
+    labelInputBuffer: mux.labelInputBuffer,
+    orchestrationInputBuffer: mux.orchestrationInputBuffer,
+    dashboardMainCheckoutInfoCache: mux.dashboardMainCheckoutInfoCache,
+    runtimeGuardState: mux.runtimeGuardState,
+    runtimeGuardActiveMs: mux.runtimeGuardActiveMs,
+    footerFlash: mux.footerFlash,
+    footerFlashTicks: mux.footerFlashTicks,
+    methodTypes: {
+      run: typeof mux.run,
+      runDashboard: typeof mux.runDashboard,
+      startProjectServiceHost: typeof mux.startProjectServiceHost,
+      runProjectService: typeof mux.runProjectService,
+      createSession: typeof mux.createSession,
+      resumeSessions: typeof mux.resumeSessions,
+      restoreSessions: typeof mux.restoreSessions,
+    },
+  };
+}
+
 async function withProject(input, runCase) {
   const repoRoot = join(tmpdir(), `aimux-index-helpers-${process.pid}-${Math.random().toString(36).slice(2)}`);
   const aimuxHome = join(repoRoot, "home");
@@ -171,9 +203,26 @@ async function withProject(input, runCase) {
 
 async function runCase(input) {
   return withProject(input, async (mux, rec) => {
+    if (input.api === "Multiplexer") {
+      if (Array.isArray(input.postConstructSessions)) {
+        mux.sessions = clone(input.postConstructSessions);
+      }
+      if (typeof input.postConstructActiveIndex === "number") {
+        mux.activeIndex = input.postConstructActiveIndex;
+      }
+      return {
+        result: summarizeMultiplexer(mux),
+        calls: rec.calls,
+      };
+    }
     if (input.api === "resolveNativeForkLaunch") {
       return {
-        result: mux.resolveNativeForkLaunch(input.sourceSessionId, input.targetToolConfigKey, input.toolCfg, input.launchOverride),
+        result: mux.resolveNativeForkLaunch(
+          input.sourceSessionId,
+          input.targetToolConfigKey,
+          input.toolCfg,
+          input.launchOverride,
+        ),
         calls: rec.calls,
       };
     }
@@ -212,6 +261,23 @@ async function runCase(input) {
 
 const cases = [
   {
+    name: "constructor initializes inert dashboard state for an explicit project root",
+    input: {
+      api: "Multiplexer",
+    },
+  },
+  {
+    name: "session getters reflect post construction session state",
+    input: {
+      api: "Multiplexer",
+      postConstructSessions: [
+        { id: "claude-1", command: "claude" },
+        { id: "codex-2", command: "codex" },
+      ],
+      postConstructActiveIndex: 1,
+    },
+  },
+  {
     name: "native fork launch composes backend fork args when source tool and command match",
     input: {
       api: "resolveNativeForkLaunch",
@@ -219,7 +285,11 @@ const cases = [
       targetToolConfigKey: "codex",
       sessionToolKeys: [["codex-1", "codex"]],
       topologySessions: [{ id: "codex-1", toolConfigKey: "codex", backendSessionId: "backend-abc" }],
-      toolCfg: { command: "codex", args: ["--dangerously-bypass-approvals-and-sandbox"], forkArgs: ["fork", "{sessionId}"] },
+      toolCfg: {
+        command: "codex",
+        args: ["--dangerously-bypass-approvals-and-sandbox"],
+        forkArgs: ["fork", "{sessionId}"],
+      },
       launchOverride: { args: ["--model", "gpt-5"] },
     },
   },
@@ -262,7 +332,9 @@ const cases = [
       },
       sessionLabels: { "codex-1": "Review Agent" },
       dashboardSessionsCache: [{ id: "codex-1", command: "codex", worktreePath: "<REPO>/.aimux/worktrees/review" }],
-      dashboardWorktreeGroupsCache: [{ path: "<REPO>/.aimux/worktrees/review", name: "review", branch: "feature/review" }],
+      dashboardWorktreeGroupsCache: [
+        { path: "<REPO>/.aimux/worktrees/review", name: "review", branch: "feature/review" },
+      ],
     },
   },
   {
@@ -276,7 +348,9 @@ const cases = [
         message: "exit 1",
         dedupeKey: "svc-1:error",
       },
-      dashboardServicesCache: [{ id: "svc-1", label: "web", launchCommandLine: "pnpm dev", worktreePath: "<REPO>/app" }],
+      dashboardServicesCache: [
+        { id: "svc-1", label: "web", launchCommandLine: "pnpm dev", worktreePath: "<REPO>/app" },
+      ],
       dashboardWorktreeGroupsCache: [{ path: "<REPO>/app", name: "app", branch: "app-branch" }],
     },
   },

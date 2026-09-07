@@ -26,7 +26,7 @@ fn fixture_multiplexer_index_helpers_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("multiplexer index helpers fixture parses");
     assert_eq!(contract.source, "src/multiplexer/index.ts");
-    assert_eq!(contract.cases.len(), 8);
+    assert_eq!(contract.cases.len(), 10);
 
     let mut failures = Vec::new();
     for case in contract.cases {

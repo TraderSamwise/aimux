@@ -2,12 +2,67 @@ use serde_json::{Map, Value, json};
 
 pub fn run_multiplexer_index_helpers_contract_case(api: &str, input: &Value) -> Value {
     match api {
+        "Multiplexer" => multiplexer_initial_state(input),
         "resolveNativeForkLaunch" => resolve_native_fork_launch(input),
         "resolveSessionAlertDisplayContext" => resolve_session_alert_display_context(input),
         "publishAlert" => publish_alert(input),
         "forkSessionFromSource" => fork_session_from_source(input),
         api => panic!("unknown multiplexer index helper api: {api}"),
     }
+}
+
+fn multiplexer_initial_state(input: &Value) -> Value {
+    let sessions = array_field(input, "postConstructSessions");
+    let active_index = input
+        .get("postConstructActiveIndex")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let active_session = sessions
+        .get(active_index)
+        .map(|session| {
+            json!({
+                "id": string_field(session, "id"),
+                "command": string_field(session, "command"),
+            })
+        })
+        .unwrap_or(Value::Null);
+    json!({
+        "result": {
+            "projectRoot": "<REPO>",
+            "mode": "dashboard",
+            "sessionCount": sessions.len(),
+            "activeIndex": active_index,
+            "activeSession": active_session,
+            "startedInDashboard": false,
+            "overlayKind": "none",
+            "pickerMode": "create",
+            "toolPickerIndex": 0,
+            "worktreeInputBuffer": "",
+            "serviceInputBuffer": "",
+            "labelInputBuffer": "",
+            "orchestrationInputBuffer": "",
+            "dashboardMainCheckoutInfoCache": {
+                "name": "Main Checkout",
+                "branch": "",
+            },
+            "runtimeGuardState": {
+                "kind": "ok",
+            },
+            "runtimeGuardActiveMs": 0,
+            "footerFlash": Value::Null,
+            "footerFlashTicks": 0,
+            "methodTypes": {
+                "run": "function",
+                "runDashboard": "function",
+                "startProjectServiceHost": "function",
+                "runProjectService": "function",
+                "createSession": "function",
+                "resumeSessions": "function",
+                "restoreSessions": "function",
+            },
+        },
+        "calls": [],
+    })
 }
 
 fn resolve_native_fork_launch(input: &Value) -> Value {
