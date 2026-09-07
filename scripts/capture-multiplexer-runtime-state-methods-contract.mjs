@@ -36,7 +36,7 @@ const topologySessions = await import(new URL("dist/runtime-core/topology-sessio
 const topologyServices = await import(new URL("dist/runtime-core/topology-services.js", ROOT));
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const clone = (value) => JSON.parse(JSON.stringify(value));
+const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 
 async function writeContractJson(url, contract) {
   await mkdir(new URL("./", url), { recursive: true });
@@ -129,6 +129,64 @@ function runtimeTopologyHost(input, calls) {
     tmuxRuntimeManager: tmuxRuntimeManager(input, calls),
     debug: callRecorder(calls, "debug"),
   };
+}
+
+function mapEntries(map) {
+  return [...map.entries()].map(([key, value]) => [key, clone(value)]);
+}
+
+function simplifyRuntime(session) {
+  return {
+    id: session.id,
+    command: session.command,
+    backendSessionId: session.backendSessionId,
+  };
+}
+
+function restoreTmuxHost(input, calls) {
+  const host = {
+    projectRoot: input.projectRoot,
+    sessions: clone(input.host?.sessions ?? []),
+    sessionTmuxTargets: new Map(input.host?.sessionTmuxTargets ?? []),
+    sessionLabels: new Map(input.host?.sessionLabels ?? []),
+    sessionToolKeys: new Map(input.host?.sessionToolKeys ?? []),
+    sessionOriginalArgs: new Map(input.host?.sessionOriginalArgs ?? []),
+    sessionWorktreePaths: new Map(input.host?.sessionWorktreePaths ?? []),
+    sessionRoles: new Map(input.host?.sessionRoles ?? []),
+    stoppingSessionIds: new Set(input.host?.stoppingSessionIds ?? []),
+    contextWatcher: { stop: callRecorder(calls, "contextWatcher.stop") },
+    tmuxRuntimeManager: {
+      listProjectManagedWindows: callRecorder(calls, "tmuxRuntimeManager.listProjectManagedWindows", () =>
+        clone(input.liveWindows ?? []),
+      ),
+      clearTargetHistory: callRecorder(calls, "tmuxRuntimeManager.clearTargetHistory"),
+      renameWindow: callRecorder(calls, "tmuxRuntimeManager.renameWindow"),
+    },
+    registerManagedSession(transport, args, toolConfigKey, worktreePath, role, startTime, team) {
+      calls.push({
+        method: "registerManagedSession",
+        args: [
+          { id: transport.id, command: transport.command, backendSessionId: transport.backendSessionId },
+          clone(args),
+          toolConfigKey,
+          worktreePath,
+          role,
+          startTime,
+          clone(team),
+        ],
+      });
+      host.sessions.push({
+        id: transport.id,
+        command: transport.command,
+        backendSessionId: transport.backendSessionId,
+        transport,
+      });
+    },
+    syncTmuxWindowMetadata: callRecorder(calls, "syncTmuxWindowMetadata"),
+    updateContextWatcherSessions: callRecorder(calls, "updateContextWatcherSessions"),
+    debug: callRecorder(calls, "debug"),
+  };
+  return host;
 }
 
 async function record(cases, name, api, label, input, run) {
@@ -314,6 +372,189 @@ await record(
       },
     };
     return { live: runtimeState.isSessionRuntimeLive(host, clone(input.runtime)), calls };
+  },
+);
+
+await record(
+  cases,
+  "restoreTmuxSessionsFromTopology restores team role from live tmux metadata",
+  "restoreTmuxSessionsFromTopology",
+  "restore-team-role",
+  ({ projectRoot }) => ({
+    projectRoot,
+    liveWindows: [
+      {
+        target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+        metadata: {
+          kind: "agent",
+          sessionId: "codex-1",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          worktreePath: projectRoot,
+          role: "reviewer",
+          team: { teamId: "team-1", parentSessionId: "parent-1", role: "reviewer" },
+          createdAt: "2026-04-21T00:00:00.000Z",
+        },
+      },
+    ],
+    host: { sessions: [], sessionTmuxTargets: [], sessionLabels: [] },
+    initialTopology: snapshotSessionServiceTopology(),
+  }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = restoreTmuxHost(input, calls);
+    const liveWindows = runtimeState.restoreTmuxSessionsFromTopology(host);
+    const output = {
+      liveWindows,
+      host: {
+        sessions: host.sessions.map(simplifyRuntime),
+        sessionTmuxTargets: mapEntries(host.sessionTmuxTargets),
+        sessionLabels: mapEntries(host.sessionLabels),
+      },
+      calls,
+    };
+    for (const session of host.sessions) session.transport?.destroy?.();
+    return output;
+  },
+);
+
+await record(
+  cases,
+  "restoreTmuxSessionsFromTopology preserves saved backend ids when adopting live windows",
+  "restoreTmuxSessionsFromTopology",
+  "restore-backend-id",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-live",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "backend-live",
+        worktreePath: projectRoot,
+      },
+      "running",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      liveWindows: [
+        {
+          target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "codex-live",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+            worktreePath: projectRoot,
+            createdAt: "2026-04-21T00:00:00.000Z",
+          },
+        },
+      ],
+      host: { sessions: [], sessionTmuxTargets: [], sessionLabels: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = restoreTmuxHost(input, calls);
+    const liveWindows = runtimeState.restoreTmuxSessionsFromTopology(host);
+    const output = {
+      liveWindows,
+      host: {
+        sessions: host.sessions.map(simplifyRuntime),
+        sessionTmuxTargets: mapEntries(host.sessionTmuxTargets),
+        sessionLabels: mapEntries(host.sessionLabels),
+      },
+      calls,
+    };
+    for (const session of host.sessions) session.transport?.destroy?.();
+    return output;
+  },
+);
+
+await record(
+  cases,
+  "restoreTmuxSessionsFromTopology evicts in-memory runtimes without live tmux metadata",
+  "restoreTmuxSessionsFromTopology",
+  "restore-evict-stale-runtime",
+  ({ projectRoot }) => ({
+    projectRoot,
+    liveWindows: [],
+    host: {
+      sessions: [{ id: "codex-stale", command: "codex" }],
+      sessionTmuxTargets: [
+        ["codex-stale", { sessionName: "aimux-test", windowId: "@8", windowIndex: 8, windowName: "codex" }],
+      ],
+      sessionToolKeys: [["codex-stale", "codex"]],
+      sessionOriginalArgs: [["codex-stale", []]],
+      sessionWorktreePaths: [["codex-stale", projectRoot]],
+      sessionRoles: [],
+    },
+    initialTopology: snapshotSessionServiceTopology(),
+  }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = restoreTmuxHost(input, calls);
+    const liveWindows = runtimeState.restoreTmuxSessionsFromTopology(host);
+    return {
+      liveWindows,
+      host: {
+        sessions: host.sessions.map(simplifyRuntime),
+        sessionTmuxTargets: mapEntries(host.sessionTmuxTargets),
+        sessionLabels: mapEntries(host.sessionLabels),
+      },
+      calls,
+    };
+  },
+);
+
+await record(
+  cases,
+  "restoreTmuxSessionsFromTopology clears pane history when rebinding an existing runtime target",
+  "restoreTmuxSessionsFromTopology",
+  "restore-rebind-target",
+  ({ projectRoot }) => ({
+    projectRoot,
+    liveWindows: [
+      {
+        target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "codex" },
+        metadata: {
+          kind: "agent",
+          sessionId: "codex-live",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          worktreePath: projectRoot,
+        },
+      },
+    ],
+    host: {
+      sessions: [{ id: "codex-live", command: "codex" }],
+      sessionTmuxTargets: [
+        ["codex-live", { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" }],
+      ],
+      sessionLabels: [],
+    },
+    initialTopology: snapshotSessionServiceTopology(),
+  }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = restoreTmuxHost(input, calls);
+    const liveWindows = runtimeState.restoreTmuxSessionsFromTopology(host);
+    return {
+      liveWindows,
+      host: {
+        sessions: host.sessions.map(simplifyRuntime),
+        sessionTmuxTargets: mapEntries(host.sessionTmuxTargets),
+        sessionLabels: mapEntries(host.sessionLabels),
+      },
+      calls,
+    };
   },
 );
 

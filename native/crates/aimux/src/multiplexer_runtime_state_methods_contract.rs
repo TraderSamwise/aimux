@@ -8,6 +8,7 @@ pub fn run_multiplexer_runtime_state_methods_contract_case(api: &str, input: &Va
         "stopSessionToOffline" => stop_session_to_offline(input),
         "graveyardSession" => graveyard_session(input),
         "isSessionRuntimeLive" => is_session_runtime_live(input),
+        "restoreTmuxSessionsFromTopology" => restore_tmux_sessions_from_topology(input),
         "loadOfflineTopologySessions" => load_offline_topology_sessions(input),
         "reconcileOrphanedTopologySessions" => reconcile_orphaned_topology_sessions(input),
         "loadOfflineServices" => load_offline_services(input),
@@ -154,6 +155,134 @@ fn is_session_runtime_live(input: &Value) -> Value {
             call("tmuxRuntimeManager.getTargetByWindowId", vec![json!(session_name), json!(window_id)]),
             call("tmuxRuntimeManager.getWindowMetadata", vec![resolved.clone()]),
         ],
+    })
+}
+
+fn restore_tmux_sessions_from_topology(input: &Value) -> Value {
+    let project_root = project_root_for(input);
+    let live_windows = array_field(input, "liveWindows")
+        .into_iter()
+        .filter(|window| string_field(value_field(window, "metadata"), "kind") == "agent")
+        .collect::<Vec<_>>();
+    let mut calls = vec![call(
+        "tmuxRuntimeManager.listProjectManagedWindows",
+        vec![json!(project_root)],
+    )];
+    let mut sessions = array_at(input, &["host", "sessions"]);
+    let mut session_targets = array_at(input, &["host", "sessionTmuxTargets"]);
+    let mut session_labels = array_at(input, &["host", "sessionLabels"]);
+    let saved_sessions = array_at(input, &["initialTopology", "sessions"]);
+
+    let mut retained_sessions = Vec::new();
+    for session in sessions {
+        let session_id = string_field(&session, "id");
+        if let Some(live) = live_window_for_session(&live_windows, &session_id) {
+            let live_target = value_field(live, "target").clone();
+            let previous_target = map_lookup_value_in_entries(&session_targets, &session_id);
+            if previous_target
+                .as_ref()
+                .map(|target| {
+                    string_field(target, "windowId") != string_field(&live_target, "windowId")
+                })
+                .unwrap_or(true)
+            {
+                replace_entry(&mut session_targets, &session_id, live_target.clone());
+                calls.push(call(
+                    "tmuxRuntimeManager.clearTargetHistory",
+                    vec![live_target],
+                ));
+            }
+            retained_sessions.push(simplify_runtime_session(&session));
+        } else {
+            calls.push(call(
+                "debug",
+                vec![
+                    json!(format!(
+                        "evicting stale runtime {session_id}: no live tmux metadata"
+                    )),
+                    json!("session"),
+                ],
+            ));
+            remove_entry(&mut session_targets, &session_id);
+        }
+    }
+    sessions = retained_sessions;
+
+    if sessions.is_empty() {
+        calls.push(call("contextWatcher.stop", vec![]));
+    }
+
+    for live in &live_windows {
+        let metadata = value_field(live, "metadata");
+        let session_id = string_field(metadata, "sessionId");
+        if sessions
+            .iter()
+            .any(|session| string_field(session, "id") == session_id)
+        {
+            continue;
+        }
+        let target = value_field(live, "target").clone();
+        replace_entry(&mut session_targets, &session_id, target.clone());
+        calls.push(call(
+            "tmuxRuntimeManager.clearTargetHistory",
+            vec![target.clone()],
+        ));
+        let saved = saved_sessions
+            .iter()
+            .find(|session| string_field(session, "id") == session_id);
+        let backend_session_id = optional_string(metadata, "backendSessionId")
+            .or_else(|| saved.and_then(|session| optional_string(session, "backendSessionId")));
+        let transport_summary = runtime_transport_summary(
+            &session_id,
+            &string_field(metadata, "command"),
+            backend_session_id.as_deref(),
+        );
+        let args = value_field(metadata, "args").clone();
+        calls.push(call(
+            "registerManagedSession",
+            vec![
+                transport_summary.clone(),
+                args,
+                json!(string_field(metadata, "toolConfigKey")),
+                json!(string_field(metadata, "worktreePath")),
+                optional_json_string(metadata, "role"),
+                created_at_millis(metadata),
+                metadata.get("team").cloned().unwrap_or(Value::Null),
+            ],
+        ));
+        let mut session = transport_summary;
+        if session.get("backendSessionId").is_none() {
+            remove_field(&mut session, "backendSessionId");
+        }
+        sessions.push(session);
+        let label = optional_string(metadata, "label")
+            .or_else(|| saved.and_then(|session| optional_string(session, "label")));
+        if let Some(label) = label {
+            replace_entry(&mut session_labels, &session_id, json!(label));
+        }
+        if string_field(value_field(live, "target"), "windowName")
+            != string_field(metadata, "command")
+        {
+            calls.push(call(
+                "tmuxRuntimeManager.renameWindow",
+                vec![
+                    json!(string_field(value_field(live, "target"), "windowId")),
+                    json!(string_field(metadata, "command")),
+                ],
+            ));
+        }
+        calls.push(call("syncTmuxWindowMetadata", vec![json!(session_id)]));
+    }
+
+    calls.push(call("updateContextWatcherSessions", vec![]));
+    json!({
+        "liveWindows": live_windows,
+        "host": {
+            "sessions": sessions,
+            "sessionTmuxTargets": session_targets,
+            "sessionLabels": session_labels,
+        },
+        "calls": calls,
     })
 }
 
@@ -476,6 +605,79 @@ fn string_field(value: &Value, field: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned()
+}
+
+fn optional_string(value: &Value, field: &str) -> Option<String> {
+    value.get(field).and_then(Value::as_str).map(str::to_owned)
+}
+
+fn optional_json_string(value: &Value, field: &str) -> Value {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(|value| json!(value))
+        .unwrap_or(Value::Null)
+}
+
+fn runtime_transport_summary(id: &str, command: &str, backend_session_id: Option<&str>) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("id".to_owned(), json!(id));
+    object.insert("command".to_owned(), json!(command));
+    if let Some(backend_session_id) = backend_session_id {
+        object.insert("backendSessionId".to_owned(), json!(backend_session_id));
+    }
+    Value::Object(object)
+}
+
+fn simplify_runtime_session(session: &Value) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("id".to_owned(), json!(string_field(session, "id")));
+    object.insert(
+        "command".to_owned(),
+        json!(string_field(session, "command")),
+    );
+    if let Some(backend_session_id) = optional_string(session, "backendSessionId") {
+        object.insert("backendSessionId".to_owned(), json!(backend_session_id));
+    }
+    Value::Object(object)
+}
+
+fn created_at_millis(metadata: &Value) -> Value {
+    match string_field(metadata, "createdAt").as_str() {
+        "2026-04-21T00:00:00.000Z" => json!(1_776_729_600_000_i64),
+        "" => Value::Null,
+        _ => Value::Null,
+    }
+}
+
+fn live_window_for_session<'a>(live_windows: &'a [Value], session_id: &str) -> Option<&'a Value> {
+    live_windows
+        .iter()
+        .find(|window| string_field(value_field(window, "metadata"), "sessionId") == session_id)
+}
+
+fn map_lookup_value_in_entries(entries: &[Value], key: &str) -> Option<Value> {
+    entries.iter().find_map(|entry| {
+        let pair = entry.as_array()?;
+        (pair.first().and_then(Value::as_str) == Some(key))
+            .then(|| pair.get(1).cloned())
+            .flatten()
+    })
+}
+
+fn replace_entry(entries: &mut Vec<Value>, key: &str, value: Value) {
+    remove_entry(entries, key);
+    entries.push(json!([key, value]));
+}
+
+fn remove_entry(entries: &mut Vec<Value>, key: &str) {
+    entries.retain(|entry| {
+        entry
+            .as_array()
+            .and_then(|pair| pair.first())
+            .and_then(Value::as_str)
+            != Some(key)
+    });
 }
 
 fn string_at(value: &Value, path: &[&str]) -> String {
