@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 262 suites, 309 suite/corpus bindings, 3801 cases.
-Binding statuses: PROVEN-FAILS 309, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 268 suites, 315 suite/corpus bindings, 3849 cases.
+Binding statuses: PROVEN-FAILS 315, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -261,7 +261,13 @@ Binding statuses: PROVEN-FAILS 309, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_service_state_snapshot` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/service-state-snapshot.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/action-args.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/preamble.json` | 14 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_actions` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-actions.json` | 11 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_create` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-create.json` | 9 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_dashboard` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-dashboard.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_session_launch_default_scribe` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-default-scribe.json` | 5 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_migrate_switch` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-migrate-switch.json` | 7 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_resume` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-resume.json` | 7 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_startup` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-startup.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime` | PROVEN-FAILS | `testdata/contracts/v1/session/runtime.json` | 2 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime_headline` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-headline.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-recency.json` | 13 | mutated fixture output failed owning Rust suite |
