@@ -1021,6 +1021,10 @@ Priority fixture groups:
 - `multiplexer/library-refresh.json`: library resource refresh return values,
   host-state transitions, payload validation, coalescing, and project-service
   call logs captured by running TypeScript `refreshLibrary`.
+- `multiplexer/notifications.json`: dashboard coordination notification host
+  projection, worklist filtering, target labels/states, and notification
+  mutation input shape captured by running TypeScript multiplexer notification
+  helpers.
 - `multiplexer/project-refresh.json`: project observability refresh return
   values, host-state transitions, payload validation, coalescing, and
   project-service call logs captured by running TypeScript
