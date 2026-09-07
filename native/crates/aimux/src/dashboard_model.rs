@@ -409,6 +409,277 @@ pub fn filter_dashboard_visible_model(
     }
 }
 
+pub fn run_dashboard_worktree_groups_contract_case(api: &str, input: &Value) -> Value {
+    match api {
+        "buildDashboardWorktreeGroups" => {
+            let sessions = array_field_value(input, "sessions");
+            let services = array_field_value(input, "services");
+            let worktrees = array_field_value(input, "worktrees");
+            Value::Array(build_dashboard_worktree_groups_value(
+                &sessions,
+                &services,
+                &worktrees,
+                input.get("mainRepoPath").and_then(Value::as_str),
+            ))
+        }
+        "composeDashboardWorktreeGroups" => {
+            let groups = array_field_value(input, "worktreeGroups");
+            let sessions = array_field_value(input, "sessions");
+            let services = array_field_value(input, "services");
+            Value::Array(compose_dashboard_worktree_groups_value(
+                &groups, &sessions, &services,
+            ))
+        }
+        api => panic!("unknown dashboard worktree groups api: {api}"),
+    }
+}
+
+fn build_dashboard_worktree_groups_value(
+    sessions: &[Value],
+    services: &[Value],
+    worktrees: &[Value],
+    main_repo_path: Option<&str>,
+) -> Vec<Value> {
+    let groupable = sessions
+        .iter()
+        .filter(|session| !is_project_control_session_value(session))
+        .cloned()
+        .collect::<Vec<_>>();
+    let main_sessions = sort_dashboard_entries_by_created_at_value(
+        groupable
+            .iter()
+            .filter(|session| !has_string_field(session, "worktreePath"))
+            .cloned()
+            .collect(),
+    );
+    let main_services = sort_dashboard_entries_by_created_at_value(
+        services
+            .iter()
+            .filter(|service| !has_string_field(service, "worktreePath"))
+            .cloned()
+            .collect(),
+    );
+    let main_worktree = main_repo_path.and_then(|path| {
+        worktrees.iter().find(|worktree| {
+            worktree.get("isBare").and_then(Value::as_bool) != Some(true)
+                && worktree.get("path").and_then(Value::as_str) == Some(path)
+        })
+    });
+
+    let mut main_group = Map::new();
+    main_group.insert("name".into(), json!("Main Checkout"));
+    main_group.insert(
+        "branch".into(),
+        main_worktree
+            .and_then(|worktree| worktree.get("branch").cloned())
+            .unwrap_or_else(|| json!("")),
+    );
+    if let Some(created_at) = main_worktree.and_then(|worktree| worktree.get("createdAt").cloned())
+    {
+        main_group.insert("createdAt".into(), created_at);
+    }
+    main_group.insert(
+        "status".into(),
+        if main_sessions.is_empty() && main_services.is_empty() {
+            json!("offline")
+        } else {
+            json!("active")
+        },
+    );
+    main_group.insert("sessions".into(), Value::Array(main_sessions));
+    main_group.insert("services".into(), Value::Array(main_services));
+
+    let mut secondary = worktrees
+        .iter()
+        .filter(|worktree| {
+            worktree.get("isBare").and_then(Value::as_bool) != Some(true)
+                && Some(string_field_value(worktree, "path").as_str()) != main_repo_path
+        })
+        .map(|worktree| {
+            let path = string_field_value(worktree, "path");
+            let wt_sessions = sort_dashboard_entries_by_created_at_value(
+                groupable
+                    .iter()
+                    .filter(|session| string_field_value(session, "worktreePath") == path)
+                    .cloned()
+                    .collect(),
+            );
+            let wt_services = sort_dashboard_entries_by_created_at_value(
+                services
+                    .iter()
+                    .filter(|service| string_field_value(service, "worktreePath") == path)
+                    .cloned()
+                    .collect(),
+            );
+            group_from_worktree(worktree, wt_sessions, wt_services)
+        })
+        .collect::<Vec<_>>();
+    secondary = sort_worktree_groups_value(secondary);
+
+    let mut groups = vec![Value::Object(main_group)];
+    groups.extend(secondary);
+    groups
+}
+
+fn compose_dashboard_worktree_groups_value(
+    groups: &[Value],
+    sessions: &[Value],
+    services: &[Value],
+) -> Vec<Value> {
+    sort_worktree_groups_value(
+        groups
+            .iter()
+            .map(|group| {
+                let path = group.get("path").and_then(Value::as_str);
+                let group_sessions = sort_dashboard_entries_by_created_at_value(
+                    sessions
+                        .iter()
+                        .filter(|session| {
+                            !is_project_control_session_value(session)
+                                && session.get("worktreePath").and_then(Value::as_str) == path
+                        })
+                        .cloned()
+                        .collect(),
+                );
+                let group_services = sort_dashboard_entries_by_created_at_value(
+                    services
+                        .iter()
+                        .filter(|service| {
+                            service.get("worktreePath").and_then(Value::as_str) == path
+                        })
+                        .cloned()
+                        .collect(),
+                );
+                let mut object = group.as_object().cloned().unwrap_or_default();
+                object.insert(
+                    "status".into(),
+                    if group_sessions.is_empty() && group_services.is_empty() {
+                        json!("offline")
+                    } else {
+                        json!("active")
+                    },
+                );
+                object.insert("sessions".into(), Value::Array(group_sessions));
+                object.insert("services".into(), Value::Array(group_services));
+                Value::Object(object)
+            })
+            .collect(),
+    )
+}
+
+fn group_from_worktree(worktree: &Value, sessions: Vec<Value>, services: Vec<Value>) -> Value {
+    let mut object = Map::new();
+    object.insert("name".into(), value_field_value(worktree, "name"));
+    object.insert("branch".into(), value_field_value(worktree, "branch"));
+    if let Some(path) = worktree.get("path").cloned() {
+        object.insert("path".into(), path);
+    }
+    for key in [
+        "createdAt",
+        "pending",
+        "removing",
+        "pendingAction",
+        "operationFailure",
+    ] {
+        if let Some(value) = worktree.get(key).cloned() {
+            object.insert(key.into(), value);
+        }
+    }
+    object.insert(
+        "status".into(),
+        if sessions.is_empty() && services.is_empty() {
+            json!("offline")
+        } else {
+            json!("active")
+        },
+    );
+    object.insert("sessions".into(), Value::Array(sessions));
+    object.insert("services".into(), Value::Array(services));
+    Value::Object(object)
+}
+
+fn sort_worktree_groups_value(groups: Vec<Value>) -> Vec<Value> {
+    sort_dashboard_entries_by_created_at_value(groups)
+}
+
+fn sort_dashboard_entries_by_created_at_value(mut entries: Vec<Value>) -> Vec<Value> {
+    entries.sort_by(|left, right| {
+        dashboard_created_sort_key_value(right).cmp(&dashboard_created_sort_key_value(left))
+    });
+    entries
+}
+
+fn dashboard_created_sort_key_value(entry: &Value) -> i64 {
+    if let Some(created_at) = entry.get("createdAt").and_then(Value::as_str)
+        && let Some(key) = iso_sort_key(created_at)
+    {
+        return key;
+    }
+    if let Some(index) = entry.get("tmuxWindowIndex").and_then(Value::as_i64) {
+        return index;
+    }
+    entry.get("index").and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn iso_sort_key(value: &str) -> Option<i64> {
+    let digits = value
+        .chars()
+        .filter(char::is_ascii_digit)
+        .take(14)
+        .collect::<String>();
+    digits.parse::<i64>().ok()
+}
+
+fn is_project_control_session_value(session: &Value) -> bool {
+    if session.get("projectControl").and_then(Value::as_bool) == Some(true) {
+        return true;
+    }
+    if session.get("overseer").and_then(Value::as_bool) == Some(true) {
+        return true;
+    }
+    if session
+        .get("team")
+        .and_then(|team| team.get("role"))
+        .and_then(Value::as_str)
+        == Some("overseer")
+    {
+        return true;
+    }
+    if session.get("scribe").and_then(Value::as_bool) == Some(false) {
+        return false;
+    }
+    session.get("scribe").and_then(Value::as_bool) == Some(true)
+        || session
+            .get("team")
+            .and_then(|team| team.get("role"))
+            .and_then(Value::as_str)
+            == Some("scribe")
+}
+
+fn has_string_field(value: &Value, key: &str) -> bool {
+    value.get(key).and_then(Value::as_str).is_some()
+}
+
+fn value_field_value(value: &Value, key: &str) -> Value {
+    value.get(key).cloned().unwrap_or(Value::Null)
+}
+
+fn string_field_value(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn array_field_value(value: &Value, key: &str) -> Vec<Value> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn worktree_key(path: Option<&str>) -> String {
     path.unwrap_or("__main__").to_owned()
 }
