@@ -12,6 +12,7 @@ pub fn run_multiplexer_persistence_worktrees_contract_case(api: &str, input: &Va
         "deleteGraveyardWorktree" => state.delete_graveyard_worktree(),
         "resurrectGraveyardSession" => state.resurrect_graveyard_session(),
         "cleanupGraveyard" => state.cleanup_graveyard(),
+        "cleanupWorktreeCaches" => state.cleanup_worktree_caches(),
         api => panic!("unknown multiplexer persistence worktrees api: {api}"),
     }
 }
@@ -29,6 +30,14 @@ struct PersistenceWorktreeState<'a> {
     footer_flash_ticks: Value,
     operation_failures: Vec<Value>,
     calls: Vec<Value>,
+    removed_paths: Vec<String>,
+}
+
+#[derive(Debug)]
+struct ProtectedWorktree {
+    worktree_path: String,
+    sessions: Vec<String>,
+    services: Vec<String>,
 }
 
 impl<'a> PersistenceWorktreeState<'a> {
@@ -49,6 +58,7 @@ impl<'a> PersistenceWorktreeState<'a> {
             footer_flash_ticks: Value::Null,
             operation_failures: Vec::new(),
             calls: Vec::new(),
+            removed_paths: Vec::new(),
         }
     }
 
@@ -142,6 +152,7 @@ impl<'a> PersistenceWorktreeState<'a> {
             "returned": { "path": path, "status": "creating" },
             "immediate": immediate,
             "completion": { "ok": true, "returned": { "path": path, "status": "created" } },
+            "checkedPaths": self.checked_paths(),
             "host": self.host_snapshot(),
             "topology": self.topology,
             "operationFailures": self.operation_failures,
@@ -434,6 +445,149 @@ impl<'a> PersistenceWorktreeState<'a> {
         }))
     }
 
+    fn cleanup_worktree_caches(&mut self) -> Value {
+        let project_root = string_field(self.input, "projectRoot");
+        let cleanup_input = value_field(self.input, "cleanupInput");
+        let dry_run = cleanup_input.get("dryRun").and_then(Value::as_bool) != Some(false);
+        let include_active =
+            cleanup_input.get("includeActive").and_then(Value::as_bool) == Some(true);
+        let cache_dir_names = vec!["node_modules".to_owned(), ".next".to_owned()];
+        let protected = self.protected_worktrees_from_host();
+        self.call("listDesktopWorktrees", vec![]);
+
+        let mut targets = Vec::new();
+        let mut skipped = Vec::new();
+        for worktree in array_field(self.input, "worktrees") {
+            let worktree_path = string_field(&worktree, "path");
+            if let Some(active) = protected
+                .iter()
+                .find(|active| active.worktree_path == worktree_path)
+                && !include_active
+            {
+                skipped.push(json!({
+                    "worktreePath": worktree_path,
+                    "reason": "active-runtime",
+                    "sessions": active.sessions,
+                    "services": active.services,
+                }));
+                continue;
+            }
+            for check_path in array_field(self.input, "checkPaths") {
+                let path = string_field(&check_path, "path");
+                if !path.starts_with(&format!("{worktree_path}/")) {
+                    continue;
+                }
+                let relative_path = path
+                    .strip_prefix(&format!("{worktree_path}/"))
+                    .unwrap_or(path.as_str())
+                    .to_owned();
+                if !cache_path_matches(&relative_path, &cache_dir_names) {
+                    continue;
+                }
+                targets.push(json!({
+                    "worktreePath": worktree_path,
+                    "relativePath": relative_path,
+                    "path": path,
+                    "sizeBytes": 6,
+                }));
+            }
+        }
+
+        let reclaimable_bytes = targets
+            .iter()
+            .filter_map(|target| target.get("sizeBytes").and_then(Value::as_u64))
+            .sum::<u64>();
+        let mut results = Vec::new();
+        if !dry_run {
+            for target in &targets {
+                let path = string_field(target, "path");
+                let size_bytes = target.get("sizeBytes").and_then(Value::as_u64).unwrap_or(0);
+                self.removed_paths.push(path.clone());
+                results.push(json!({
+                    "path": path,
+                    "status": "removed",
+                    "sizeBytes": size_bytes,
+                }));
+            }
+        } else {
+            for target in &targets {
+                results.push(json!({
+                    "path": string_field(target, "path"),
+                    "status": "dry-run",
+                    "sizeBytes": target.get("sizeBytes").and_then(Value::as_u64).unwrap_or(0),
+                }));
+            }
+        }
+
+        self.ok(json!({
+            "dryRun": dry_run,
+            "plan": {
+                "projectRoot": project_root,
+                "dryRun": dry_run,
+                "includeActive": include_active,
+                "cacheDirNames": cache_dir_names,
+                "targets": targets,
+                "skipped": skipped,
+                "reclaimableBytes": reclaimable_bytes,
+            },
+            "results": results,
+            "reclaimedBytes": if dry_run { 0 } else { reclaimable_bytes },
+        }))
+    }
+
+    fn protected_worktrees_from_host(&mut self) -> Vec<ProtectedWorktree> {
+        let mut protected = Vec::new();
+        for session in array_field(&self.topology, "sessions") {
+            if matches!(
+                string_field(&session, "status").as_str(),
+                "starting" | "running" | "idle"
+            ) {
+                add_protected_session(
+                    &mut protected,
+                    string_field(&session, "worktreePath"),
+                    string_field(&session, "id"),
+                );
+            }
+        }
+        for service in array_field(&self.topology, "services") {
+            if matches!(
+                string_field(&service, "status").as_str(),
+                "starting" | "running"
+            ) {
+                add_protected_service(
+                    &mut protected,
+                    string_field(&service, "worktreePath"),
+                    string_field(&service, "id"),
+                );
+            }
+        }
+
+        let pairs = array_field(self.input, "sessionWorktreePaths");
+        let live_ids = array_field(self.input, "liveSessionIds")
+            .into_iter()
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
+        for session in array_field(self.input, "sessions") {
+            let session_id = string_field(&session, "id");
+            let Some(worktree_path) = pairs.iter().find_map(|pair| {
+                pair.as_array().and_then(|pair| {
+                    if pair.first().and_then(Value::as_str) == Some(session_id.as_str()) {
+                        pair.get(1).and_then(Value::as_str).map(str::to_owned)
+                    } else {
+                        None
+                    }
+                })
+            }) else {
+                continue;
+            };
+            self.call("isSessionRuntimeLive", vec![session]);
+            if live_ids.contains(&session_id) {
+                add_protected_session(&mut protected, worktree_path, session_id);
+            }
+        }
+        protected
+    }
+
     fn stop_worktree_services_for_graveyard(&mut self, project_root: &str, path: &str) {
         self.call(
             "tmuxRuntimeManager.listProjectManagedWindows",
@@ -522,6 +676,7 @@ impl<'a> PersistenceWorktreeState<'a> {
             "ok": true,
             "returned": returned,
             "completion": Value::Null,
+            "checkedPaths": self.checked_paths(),
             "host": self.host_snapshot(),
             "topology": self.topology,
             "operationFailures": self.operation_failures,
@@ -532,6 +687,7 @@ impl<'a> PersistenceWorktreeState<'a> {
         json!({
             "ok": false,
             "error": error,
+            "checkedPaths": self.checked_paths(),
             "host": self.host_snapshot(),
             "topology": self.topology,
             "operationFailures": self.operation_failures,
@@ -553,6 +709,18 @@ impl<'a> PersistenceWorktreeState<'a> {
 
     fn call(&mut self, method: &str, args: Vec<Value>) {
         self.calls.push(json!({ "method": method, "args": args }));
+    }
+
+    fn checked_paths(&self) -> Value {
+        let mut checked = Map::new();
+        for entry in array_field(self.input, "checkPaths") {
+            let path = string_field(&entry, "path");
+            checked.insert(
+                string_field(&entry, "label"),
+                json!(!self.removed_paths.iter().any(|removed| removed == &path)),
+            );
+        }
+        Value::Object(checked)
     }
 
     fn set_worktree_action(&mut self, path: &str, kind: &str, worktree_seed: Value) {
@@ -773,6 +941,62 @@ fn mark_graveyard_deleted(array: &mut Value, path: &str) {
             }
         }
     }
+}
+
+fn add_protected_session(
+    protected: &mut Vec<ProtectedWorktree>,
+    worktree_path: String,
+    id: String,
+) {
+    if worktree_path.is_empty() || id.is_empty() {
+        return;
+    }
+    let entry = protected_entry(protected, worktree_path);
+    if !entry.sessions.contains(&id) {
+        entry.sessions.push(id);
+        entry.sessions.sort();
+    }
+}
+
+fn add_protected_service(
+    protected: &mut Vec<ProtectedWorktree>,
+    worktree_path: String,
+    id: String,
+) {
+    if worktree_path.is_empty() || id.is_empty() {
+        return;
+    }
+    let entry = protected_entry(protected, worktree_path);
+    if !entry.services.contains(&id) {
+        entry.services.push(id);
+        entry.services.sort();
+    }
+}
+
+fn protected_entry(
+    protected: &mut Vec<ProtectedWorktree>,
+    worktree_path: String,
+) -> &mut ProtectedWorktree {
+    if let Some(index) = protected
+        .iter()
+        .position(|entry| entry.worktree_path == worktree_path)
+    {
+        return &mut protected[index];
+    }
+    protected.push(ProtectedWorktree {
+        worktree_path,
+        sessions: Vec::new(),
+        services: Vec::new(),
+    });
+    protected
+        .last_mut()
+        .expect("just pushed protected worktree")
+}
+
+fn cache_path_matches(relative_path: &str, cache_dir_names: &[String]) -> bool {
+    relative_path
+        .split('/')
+        .any(|segment| cache_dir_names.iter().any(|cache_dir| cache_dir == segment))
 }
 
 fn is_available_checkout_path(path: &str) -> bool {

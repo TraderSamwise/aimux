@@ -238,6 +238,8 @@ async function invoke(api, ctx, input) {
         ? actualInput.name
         : api === "cleanupGraveyard"
           ? actualInput.cleanupInput
+          : api === "cleanupWorktreeCaches"
+            ? actualInput.cleanupInput
         : api === "resurrectGraveyardSession"
           ? actualInput.sessionId
           : actualInput.path;
@@ -262,6 +264,7 @@ async function invoke(api, ctx, input) {
         returned,
         immediate,
         completion,
+        checkedPaths: checkedPaths(actualInput),
         host: snapshotHost(host, calls),
         topology: snapshotTopology(),
         operationFailures: operationFailures.listDashboardOperationFailures(),
@@ -273,6 +276,7 @@ async function invoke(api, ctx, input) {
       {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
+        checkedPaths: checkedPaths(denormalize(input, ctx)),
         host: snapshotHost(host, calls),
         topology: snapshotTopology(),
         operationFailures: operationFailures.listDashboardOperationFailures(),
@@ -280,6 +284,11 @@ async function invoke(api, ctx, input) {
       ctx,
     );
   }
+}
+
+function checkedPaths(input) {
+  if (!Array.isArray(input.checkPaths)) return {};
+  return Object.fromEntries(input.checkPaths.map((entry) => [entry.label, existsSync(entry.path)]));
 }
 
 async function record(cases, name, api, label, prepare) {
@@ -721,6 +730,71 @@ await record(
       cleanupInput: { now: "2026-06-14T00:00:00.000Z" },
       offlineSessions: [{ id: "codex-old" }],
       mode: "project-service",
+    };
+  },
+);
+
+await record(
+  cases,
+  "cleans generated cache directories from inactive Aimux worktrees",
+  "cleanupWorktreeCaches",
+  "cleanup-cache-inactive",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "cache");
+    const cachePath = join(worktreePath, "apps", "web", ".next");
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(join(cachePath, "build.txt"), "cache\n");
+    return {
+      projectRoot,
+      cleanupInput: { dryRun: false },
+      worktrees: [{ name: "cache", branch: "cache", path: worktreePath, isBare: false }],
+      checkPaths: [{ label: "cache", path: cachePath }],
+    };
+  },
+);
+
+await record(
+  cases,
+  "skips cache cleanup for worktrees with active runtime",
+  "cleanupWorktreeCaches",
+  "cleanup-cache-topology-active",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "live");
+    const cachePath = join(worktreePath, "node_modules");
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(join(cachePath, "dep.txt"), "cache\n");
+    topologySessions.upsertTopologySession(
+      { id: "codex-live", tool: "codex", command: "codex", args: [], worktreePath },
+      "running",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      cleanupInput: { dryRun: false },
+      worktrees: [{ name: "live", branch: "live", path: worktreePath, isBare: false }],
+      checkPaths: [{ label: "cache", path: cachePath }],
+    };
+  },
+);
+
+await record(
+  cases,
+  "skips cache cleanup when host-local live sessions have not reached topology yet",
+  "cleanupWorktreeCaches",
+  "cleanup-cache-host-live",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "host-live");
+    const cachePath = join(worktreePath, ".next");
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(join(cachePath, "build.txt"), "cache\n");
+    return {
+      projectRoot,
+      cleanupInput: { dryRun: false },
+      worktrees: [{ name: "host-live", branch: "host-live", path: worktreePath, isBare: false }],
+      sessions: [{ id: "codex-host-live", command: "codex" }],
+      sessionWorktreePaths: [["codex-host-live", worktreePath]],
+      liveSessionIds: ["codex-host-live"],
+      checkPaths: [{ label: "cache", path: cachePath }],
     };
   },
 );

@@ -59,6 +59,7 @@
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "graveyarded" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -181,6 +182,7 @@
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "graveyarded" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [
@@ -292,6 +294,7 @@
       "output": {
         "ok": false,
         "error": "Cannot graveyard \"demo\" while agent \"Codex Live\" is attached",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -404,6 +407,7 @@
           }
         },
         "completion": { "ok": true, "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "created" } },
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -497,6 +501,7 @@
       "output": {
         "ok": false,
         "error": "Worktree \"demo\" already exists",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -606,6 +611,7 @@
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "removed" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -712,6 +718,7 @@
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/orphan", "status": "removed" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -768,6 +775,7 @@
       "output": {
         "ok": false,
         "error": "Cannot remove the main checkout",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -867,6 +875,7 @@
       "output": {
         "ok": false,
         "error": "Cannot remove \"demo\" while agent \"Codex Live\" is attached",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -962,6 +971,7 @@
       "output": {
         "ok": false,
         "error": "Cannot graveyard the main checkout",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1026,6 +1036,7 @@
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "active" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1108,6 +1119,7 @@
       "output": {
         "ok": false,
         "error": "Cannot resurrect worktree \"<repo>/.aimux/worktrees/missing\" because the checkout is missing",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1179,6 +1191,7 @@
       "output": {
         "ok": false,
         "error": "Graveyard worktree \"<repo>/.aimux/worktrees/missing\" not found",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1268,6 +1281,7 @@
         "ok": true,
         "returned": { "path": "<repo>/.aimux/worktrees/gone", "status": "removed" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1379,6 +1393,7 @@
         "ok": true,
         "returned": { "path": "<tmp>/external-worktrees/demo", "status": "removed" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1484,6 +1499,7 @@
         "ok": true,
         "returned": { "sessionId": "claude-parent", "status": "offline" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1591,6 +1607,7 @@
       "output": {
         "ok": false,
         "error": "Cannot resurrect agent \"codex-missing-worktree\" because its worktree \"<repo>/deleted-worktree\" is missing; restore the worktree first",
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1670,6 +1687,7 @@
         "ok": true,
         "returned": { "sessionId": "codex-reviewer", "status": "offline" },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1772,6 +1790,7 @@
           "results": [{ "kind": "agent", "id": "codex-old", "status": "removed", "removedAssets": [] }]
         },
         "completion": null,
+        "checkedPaths": {},
         "host": {
           "offlineSessions": [],
           "offlineServices": [],
@@ -1792,6 +1811,220 @@
         "operationFailures": []
       },
       "inputSha256": "6bc824c225ebaab008dbcd76eab258b9d86561f849181a9570d7f6c8acdad205"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-020",
+      "name": "cleans generated cache directories from inactive Aimux worktrees",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "cleanupWorktreeCaches",
+      "input": {
+        "projectRoot": "<repo>",
+        "cleanupInput": { "dryRun": false },
+        "worktrees": [{ "name": "cache", "branch": "cache", "path": "<repo>/.aimux/worktrees/cache", "isBare": false }],
+        "checkPaths": [{ "label": "cache", "path": "<repo>/.aimux/worktrees/cache/apps/web/.next" }],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "returned": {
+          "dryRun": false,
+          "plan": {
+            "projectRoot": "<repo>",
+            "dryRun": false,
+            "includeActive": false,
+            "cacheDirNames": ["node_modules", ".next"],
+            "targets": [
+              {
+                "worktreePath": "<repo>/.aimux/worktrees/cache",
+                "relativePath": "apps/web/.next",
+                "path": "<repo>/.aimux/worktrees/cache/apps/web/.next",
+                "sizeBytes": 6
+              }
+            ],
+            "skipped": [],
+            "reclaimableBytes": 6
+          },
+          "results": [{ "path": "<repo>/.aimux/worktrees/cache/apps/web/.next", "status": "removed", "sizeBytes": 6 }],
+          "reclaimedBytes": 6
+        },
+        "completion": null,
+        "checkedPaths": { "cache": false },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [{ "method": "listDesktopWorktrees", "args": [] }]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "85f28f9f010d308b3bca5f27e5948a9977544e18823137aa8e7f0fc6acddec75"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-021",
+      "name": "skips cache cleanup for worktrees with active runtime",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "cleanupWorktreeCaches",
+      "input": {
+        "projectRoot": "<repo>",
+        "cleanupInput": { "dryRun": false },
+        "worktrees": [{ "name": "live", "branch": "live", "path": "<repo>/.aimux/worktrees/live", "isBare": false }],
+        "checkPaths": [{ "label": "cache", "path": "<repo>/.aimux/worktrees/live/node_modules" }],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-live",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/live"
+            }
+          ],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "returned": {
+          "dryRun": false,
+          "plan": {
+            "projectRoot": "<repo>",
+            "dryRun": false,
+            "includeActive": false,
+            "cacheDirNames": ["node_modules", ".next"],
+            "targets": [],
+            "skipped": [
+              {
+                "worktreePath": "<repo>/.aimux/worktrees/live",
+                "reason": "active-runtime",
+                "sessions": ["codex-live"],
+                "services": []
+              }
+            ],
+            "reclaimableBytes": 0
+          },
+          "results": [],
+          "reclaimedBytes": 0
+        },
+        "completion": null,
+        "checkedPaths": { "cache": true },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [{ "method": "listDesktopWorktrees", "args": [] }]
+        },
+        "topology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-live",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/live"
+            }
+          ],
+          "services": []
+        },
+        "operationFailures": []
+      },
+      "inputSha256": "03ae21d604798eff9396df989b3ba6603716eb8eee912cfe5f385e09c4889a67"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-022",
+      "name": "skips cache cleanup when host-local live sessions have not reached topology yet",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "cleanupWorktreeCaches",
+      "input": {
+        "projectRoot": "<repo>",
+        "cleanupInput": { "dryRun": false },
+        "worktrees": [
+          { "name": "host-live", "branch": "host-live", "path": "<repo>/.aimux/worktrees/host-live", "isBare": false }
+        ],
+        "sessions": [{ "id": "codex-host-live", "command": "codex" }],
+        "sessionWorktreePaths": [["codex-host-live", "<repo>/.aimux/worktrees/host-live"]],
+        "liveSessionIds": ["codex-host-live"],
+        "checkPaths": [{ "label": "cache", "path": "<repo>/.aimux/worktrees/host-live/.next" }],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "returned": {
+          "dryRun": false,
+          "plan": {
+            "projectRoot": "<repo>",
+            "dryRun": false,
+            "includeActive": false,
+            "cacheDirNames": ["node_modules", ".next"],
+            "targets": [],
+            "skipped": [
+              {
+                "worktreePath": "<repo>/.aimux/worktrees/host-live",
+                "reason": "active-runtime",
+                "sessions": ["codex-host-live"],
+                "services": []
+              }
+            ],
+            "reclaimableBytes": 0
+          },
+          "results": [],
+          "reclaimedBytes": 0
+        },
+        "completion": null,
+        "checkedPaths": { "cache": true },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "isSessionRuntimeLive", "args": [{ "id": "codex-host-live", "command": "codex" }] },
+            { "method": "listDesktopWorktrees", "args": [] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "454b7e589dc1bb3f7a28cb9cfd21f6945023286cf9f5c021f9c450809a169332"
     }
   ]
 }

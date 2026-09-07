@@ -1,6 +1,6 @@
 use aimux::multiplexer_persistence_worktrees_contract::run_multiplexer_persistence_worktrees_contract_case;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXTURE: &str =
     include_str!("../../../../testdata/contracts/v1/multiplexer/persistence-worktrees.json");
@@ -29,7 +29,7 @@ fn multiplexer_persistence_worktrees_contract_matches_typescript() {
         contract.source,
         "src/multiplexer/persistence-methods.test.ts"
     );
-    assert_eq!(contract.cases.len(), 19);
+    assert_eq!(contract.cases.len(), 22);
 
     let mut failures = Vec::new();
     for case in contract.cases {
