@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 229 suites, 276 suite/corpus bindings, 3534 cases.
-Binding statuses: PROVEN-FAILS 276, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 230 suites, 277 suite/corpus bindings, 3538 cases.
+Binding statuses: PROVEN-FAILS 277, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -161,6 +161,7 @@ Binding statuses: PROVEN-FAILS 276, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_monitor_targets` | PROVEN-FAILS | `testdata/contracts/v1/monitor/targets.json` | 12 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_dashboard_state_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-state-helpers.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_notifications` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/notifications.json` | 5 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_persistence_statusline` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-statusline.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_worktrees` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-worktrees.json` | 19 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_resource_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/library-refresh.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_resource_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/project-refresh.json` | 6 | mutated fixture output failed owning Rust suite |
