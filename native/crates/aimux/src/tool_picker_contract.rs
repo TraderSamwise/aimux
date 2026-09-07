@@ -1,3 +1,6 @@
+use aimux::dashboard_launch_options::{
+    DashboardLaunchOptionsState, LaunchOptionsField, LineState, render_launch_options_overlay,
+};
 use aimux::dashboard_tool_picker::{
     DashboardToolPickerMode, DashboardToolPickerState, enabled_dashboard_tools,
     render_tool_picker_overlay,
@@ -11,8 +14,25 @@ pub fn run_tool_picker_contract_case(input: &Value) -> Value {
         "runSelectedTool" => run_selected_tool(input),
         "showToolPicker" => show_tool_picker(input),
         "buildToolPickerOverlayOutput" => build_tool_picker_overlay_output(input),
+        "buildToolOptionsOverlayOutput" => build_tool_options_overlay_output(input),
         api => panic!("unknown tool picker api: {api}"),
     }
+}
+
+fn build_tool_options_overlay_output(input: &Value) -> Value {
+    let tools = enabled_dashboard_tools(&json!({
+        "tools": input.get("configTools").cloned().unwrap_or_else(default_config_tools),
+    }));
+    let host = value_field(input, "host");
+    let state = launch_options_state(value_field(host, "launchOptionsState"))
+        .expect("tool options contract requires launchOptionsState");
+    let selected_tool = tools.iter().find(|tool| tool.key == state.tool_key);
+    Value::String(render_launch_options_overlay(
+        &state,
+        selected_tool,
+        int_field(input, "cols", 80),
+        int_field(input, "rows", 24),
+    ))
 }
 
 fn build_tool_picker_overlay_output(input: &Value) -> Value {
@@ -51,6 +71,34 @@ fn default_config_tools() -> Value {
         "codex": { "command": "codex", "args": ["--base"], "enabled": true },
         "aider": { "command": "aider", "args": [], "enabled": true },
     })
+}
+
+fn launch_options_state(value: &Value) -> Option<DashboardLaunchOptionsState> {
+    value.as_object()?;
+    Some(DashboardLaunchOptionsState {
+        tool_key: str_field(value, "toolKey").unwrap_or_default().to_owned(),
+        args: line_state(value_field(value, "args")),
+        env: line_state(value_field(value, "env")),
+        active_field: match str_field(value, "activeField").unwrap_or("args") {
+            "env" => LaunchOptionsField::Env,
+            _ => LaunchOptionsField::Args,
+        },
+        error: value
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
+}
+
+fn line_state(value: &Value) -> LineState {
+    LineState {
+        text: str_field(value, "text").unwrap_or_default().to_owned(),
+        cursor: value
+            .get("cursor")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| str_field(value, "text").unwrap_or_default().len() as u64)
+            as usize,
+    }
 }
 
 fn format_env_defaults(env: Option<&Value>) -> String {

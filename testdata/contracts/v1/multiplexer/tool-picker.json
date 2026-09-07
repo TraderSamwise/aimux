@@ -357,6 +357,54 @@
       },
       "output": "\u001b7\u001b[7;17H\u001b[34m╭────────────────────────────────────────────╮\u001b[0m\u001b[8;17H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m SWITCH CLAUDE-1                            \u001b[0m\u001b[34m│\u001b[0m\u001b[9;17H\u001b[34m├────────────────────────────────────────────┤\u001b[0m\u001b[10;17H\u001b[34m│\u001b[0m   \u001b[1;33m▸\u001b[0m \u001b[1;33m[1]\u001b[0m \u001b[1mclaude\u001b[0m                             \u001b[34m│\u001b[0m\u001b[11;17H\u001b[34m│\u001b[0m     \u001b[2m[2]\u001b[0m codex                              \u001b[34m│\u001b[0m\u001b[12;17H\u001b[34m│\u001b[0m     \u001b[2m[3]\u001b[0m aider                              \u001b[34m│\u001b[0m\u001b[13;17H\u001b[34m│\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[14;17H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m ⏎/1-9 \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m o \u001b[0m \u001b[2moptions\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m \u001b[34m│\u001b[0m\u001b[15;17H\u001b[34m╰────────────────────────────────────────────╯\u001b[0m\u001b8",
       "inputSha256": "99e86cd99024dfa7826d01bac78418082ba08cd3dd34538aee49d18f02dcab02"
+    },
+    {
+      "id": "tool-picker-016",
+      "name": "renders launch options with parsed args and env preview",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "buildToolOptionsOverlayOutput",
+      "input": {
+        "name": "renders launch options with parsed args and env preview",
+        "api": "buildToolOptionsOverlayOutput",
+        "host": {
+          "pickerMode": "launch",
+          "launchOptionsState": {
+            "toolKey": "claude",
+            "args": { "text": "--model opus", "cursor": 12 },
+            "env": { "text": "FOO=bar MSG='hello world'", "cursor": 25 },
+            "activeField": "env",
+            "error": null
+          }
+        },
+        "cols": 80,
+        "rows": 24
+      },
+      "output": "\u001b7\u001b[6;5H\u001b[34m╭────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[7;5H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m CLAUDE: LAUNCH OPTIONS                                             \u001b[0m\u001b[34m│\u001b[0m\u001b[8;5H\u001b[34m├────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[9;5H\u001b[34m│\u001b[0m   \u001b[2mDefaults:\u001b[0m claude --base                                          \u001b[34m│\u001b[0m\u001b[10;5H\u001b[34m│\u001b[0m                                                                    \u001b[34m│\u001b[0m\u001b[11;5H\u001b[34m│\u001b[0m   \u001b[2mExtra args:\u001b[0m --model opus                                         \u001b[34m│\u001b[0m\u001b[12;5H\u001b[34m│\u001b[0m \u001b[1;33m▸\u001b[0m \u001b[2mEnv vars:  \u001b[0m FOO=bar MSG='hello world'\u001b[7m \u001b[27m                           \u001b[34m│\u001b[0m\u001b[13;5H\u001b[34m│\u001b[0m                                                                    \u001b[34m│\u001b[0m\u001b[14;5H\u001b[34m│\u001b[0m   \u001b[2mLaunch:\u001b[0m env FOO=bar MSG='hello world' claude --base --model opus \u001b[34m│\u001b[0m\u001b[15;5H\u001b[34m│\u001b[0m                                                                    \u001b[34m│\u001b[0m\u001b[16;5H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Tab \u001b[0m \u001b[2mswitch field\u001b[0m  \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m                    \u001b[34m│\u001b[0m\u001b[17;5H\u001b[34m╰────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "f362d8932dffdcc477ac56777ef1246587ac9a2ca9d465280f25440f32a114a7"
+    },
+    {
+      "id": "tool-picker-017",
+      "name": "renders launch option parse errors with danger chrome",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "buildToolOptionsOverlayOutput",
+      "input": {
+        "name": "renders launch option parse errors with danger chrome",
+        "api": "buildToolOptionsOverlayOutput",
+        "host": {
+          "pickerMode": "launch",
+          "launchOptionsState": {
+            "toolKey": "claude",
+            "args": { "text": "'unterminated", "cursor": 13 },
+            "env": { "text": "", "cursor": 0 },
+            "activeField": "args",
+            "error": null
+          }
+        },
+        "cols": 80,
+        "rows": 24
+      },
+      "output": "\u001b7\u001b[5;14H\u001b[31m╭─────────────────────────────────────────────────╮\u001b[0m\u001b[6;14H\u001b[31m│\u001b[0m\u001b[1;48;5;52;38;5;224m ⚠  CLAUDE: LAUNCH OPTIONS                       \u001b[0m\u001b[31m│\u001b[0m\u001b[7;14H\u001b[31m├─────────────────────────────────────────────────┤\u001b[0m\u001b[8;14H\u001b[31m│\u001b[0m   \u001b[2mDefaults:\u001b[0m claude --base                       \u001b[31m│\u001b[0m\u001b[9;14H\u001b[31m│\u001b[0m                                                 \u001b[31m│\u001b[0m\u001b[10;14H\u001b[31m│\u001b[0m \u001b[1;33m▸\u001b[0m \u001b[2mExtra args:\u001b[0m 'unterminated\u001b[7m \u001b[27m                    \u001b[31m│\u001b[0m\u001b[11;14H\u001b[31m│\u001b[0m   \u001b[2mEnv vars:  \u001b[0m                                   \u001b[31m│\u001b[0m\u001b[12;14H\u001b[31m│\u001b[0m                                                 \u001b[31m│\u001b[0m\u001b[13;14H\u001b[31m│\u001b[0m   \u001b[2mLaunch:\u001b[0m claude --base                         \u001b[31m│\u001b[0m\u001b[14;14H\u001b[31m│\u001b[0m                                                 \u001b[31m│\u001b[0m\u001b[15;14H\u001b[31m│\u001b[0m   \u001b[31mError:\u001b[0m \u001b[31munterminated single quote\u001b[0m              \u001b[31m│\u001b[0m\u001b[16;14H\u001b[31m│\u001b[0m                                                 \u001b[31m│\u001b[0m\u001b[17;14H\u001b[31m│\u001b[0m   \u001b[48;5;240;38;5;255m Tab \u001b[0m \u001b[2mswitch field\u001b[0m  \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[31m│\u001b[0m\u001b[18;14H\u001b[31m╰─────────────────────────────────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "0002968812d1b12747c0e0cd420822df0ff8f4a0cda4f2bd3e439890101aa7de"
     }
   ]
 }

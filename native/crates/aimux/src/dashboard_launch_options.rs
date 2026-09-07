@@ -1,7 +1,7 @@
 use crate::dashboard_controller::DashboardKey;
 use crate::dashboard_tool_picker::DashboardToolEntry;
 use crate::tui_render::text::truncate_ansi;
-use crate::tui_render::theme::{Tone, footer_hints, style};
+use crate::tui_render::theme::{Tone, keycap_hint, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use serde_json::{Map, Value};
 
@@ -176,7 +176,7 @@ pub fn render_launch_options_overlay(
         let body = vec![
             format!("  {}", style("No enabled tools", Tone::Muted)),
             String::new(),
-            footer_hints("[Esc] back"),
+            overlay_hints(&[("Esc", "back")]),
         ];
         return render_overlay_box(&OverlayBoxSpec {
             title: "Launch options",
@@ -198,6 +198,23 @@ pub fn render_launch_options_overlay(
     } else {
         truncate_ansi(&state.env.text, width)
     };
+    let mut extra_args = Vec::new();
+    let mut env_map = Map::new();
+    let mut parse_error = state.error.clone();
+    match parse_shell_args(&state.args.text) {
+        Ok(args) => extra_args = args,
+        Err(error) => {
+            if parse_error.is_none() {
+                parse_error = Some(error);
+            }
+        }
+    }
+    if parse_error.is_none() {
+        match parse_env_assignments(&state.env.text) {
+            Ok(env) => env_map = env,
+            Err(error) => parse_error = Some(error),
+        }
+    }
     let mut body = vec![
         format!(
             "  {} {}",
@@ -208,17 +225,28 @@ pub fn render_launch_options_overlay(
         format!(
             "{} {} {}",
             field_marker(state.active_field == LaunchOptionsField::Args),
-            style("Extra args:", Tone::Muted),
+            style(&format!("{:<11}", "Extra args:"), Tone::Muted),
             args
         ),
         format!(
             "{} {} {}",
             field_marker(state.active_field == LaunchOptionsField::Env),
-            style("Env vars:", Tone::Muted),
+            style(&format!("{:<11}", "Env vars:"), Tone::Muted),
             env
         ),
+        String::new(),
+        format!(
+            "  {} {}{}",
+            style("Launch:", Tone::Muted),
+            if parse_error.is_some() {
+                String::new()
+            } else {
+                env_prefix(&env_map)
+            },
+            command_preview_with_args(tool, &extra_args)
+        ),
     ];
-    if let Some(error) = state.error.as_ref() {
+    if let Some(error) = parse_error.as_ref() {
         body.push(String::new());
         body.push(format!(
             "  {} {}",
@@ -227,19 +255,34 @@ pub fn render_launch_options_overlay(
         ));
     }
     body.push(String::new());
-    body.push(footer_hints("[Tab] field  [Enter] start  [Esc] back"));
+    body.push(overlay_hints(&[
+        ("Tab", "switch field"),
+        ("Enter", "start"),
+        ("Esc", "back"),
+    ]));
     render_overlay_box(&OverlayBoxSpec {
         title: &format!("{}: launch options", state.tool_key),
         body: &body,
         cols,
         rows,
-        variant: if state.error.is_some() {
+        variant: if parse_error.is_some() {
             OverlayVariant::Red
         } else {
             OverlayVariant::Blue
         },
         icon: None,
     })
+}
+
+fn overlay_hints(pairs: &[(&str, &str)]) -> String {
+    format!(
+        "  {}",
+        pairs
+            .iter()
+            .map(|(key, label)| keycap_hint(key, label, None))
+            .collect::<Vec<_>>()
+            .join("  ")
+    )
 }
 
 pub fn render_line_window(state: &LineState, max_width: usize) -> String {
@@ -368,11 +411,31 @@ pub fn quote_shell_arg(arg: &str) -> String {
 }
 
 fn command_preview(tool: &DashboardToolEntry) -> String {
+    command_preview_with_args(tool, &[])
+}
+
+fn command_preview_with_args(tool: &DashboardToolEntry, extra_args: &[String]) -> String {
     std::iter::once(tool.command.as_str())
         .chain(tool.args.iter().map(String::as_str))
+        .chain(extra_args.iter().map(String::as_str))
         .map(quote_shell_arg)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn env_prefix(env: &Map<String, Value>) -> String {
+    if env.is_empty() {
+        return String::new();
+    }
+    format!(
+        "env {} ",
+        env.iter()
+            .filter_map(|(key, value)| value
+                .as_str()
+                .map(|value| format!("{key}={}", quote_shell_arg(value))))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
 }
 
 fn field_marker(active: bool) -> String {

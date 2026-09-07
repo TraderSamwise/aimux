@@ -9,6 +9,7 @@ import prettier from "prettier";
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/tool-picker.json", ROOT);
 const {
+  buildToolOptionsOverlayOutput,
   buildToolPickerOverlayOutput,
   defaultsLaunchOverride,
   formatEnvDefaults,
@@ -37,6 +38,8 @@ function run(input) {
       return withTempPaths(input, () => showToolPickerCase(input));
     case "buildToolPickerOverlayOutput":
       return withTempPaths(input, () => buildToolPickerOverlayOutput(input.host ?? {}, input.cols ?? 80, input.rows ?? 24));
+    case "buildToolOptionsOverlayOutput":
+      return withTempPaths(input, () => buildToolOptionsOverlayOutput(input.host ?? {}, input.cols ?? 80, input.rows ?? 24));
     default:
       throw new Error(`unknown api ${input.api}`);
   }
@@ -240,6 +243,38 @@ const inputs = [
     name: "renders the switch source in the tool picker title",
     api: "buildToolPickerOverlayOutput",
     host: { pickerMode: "switch-tool", switchToolSourceSessionId: "claude-1" },
+    cols: 80,
+    rows: 24,
+  },
+  {
+    name: "renders launch options with parsed args and env preview",
+    api: "buildToolOptionsOverlayOutput",
+    host: {
+      pickerMode: "launch",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: { text: "--model opus", cursor: 12 },
+        env: { text: "FOO=bar MSG='hello world'", cursor: 25 },
+        activeField: "env",
+        error: null,
+      },
+    },
+    cols: 80,
+    rows: 24,
+  },
+  {
+    name: "renders launch option parse errors with danger chrome",
+    api: "buildToolOptionsOverlayOutput",
+    host: {
+      pickerMode: "launch",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: { text: "'unterminated", cursor: 13 },
+        env: { text: "", cursor: 0 },
+        activeField: "args",
+        error: null,
+      },
+    },
     cols: 80,
     rows: 24,
   },
