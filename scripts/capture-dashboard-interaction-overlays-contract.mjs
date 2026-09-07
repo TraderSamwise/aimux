@@ -76,6 +76,7 @@ function makeHost(input) {
     footerFlash: null,
     footerFlashTicks: 0,
     dashboardOverlayState: input.overlayKind ? { kind: input.overlayKind } : null,
+    dashboardInputEpoch: input.dashboardInputEpoch ?? 0,
     getDashboardSessions: rec.fn("getDashboardSessions", () => clone(input.dashboardSessionsCache ?? [])),
     getSelectedDashboardSessionForActions: rec.fn("getSelectedDashboardSessionForActions", () =>
       clone(input.selectedSession ?? null),
@@ -115,6 +116,13 @@ function makeHost(input) {
     }),
     dashboardCoreCommandRequest: rec.fn("dashboardCoreCommandRequest", async () => clone(input.coreCommandResponse ?? {})),
     refreshDashboardModelFromService: rec.fn("refreshDashboardModelFromService", async () => undefined),
+    waitAndOpenLiveTmuxWindowForEntry: rec.fn("waitAndOpenLiveTmuxWindowForEntry", async () => input.waitOpenResult),
+    postToProjectService: rec.fn("postToProjectService", async (path, body, opts) => {
+      if (input.postThrows) {
+        throw new Error(input.postThrows);
+      }
+      return clone(input.postResult ?? { ok: true, path, body, opts });
+    }),
   };
   return { host, calls: rec.calls };
 }
@@ -220,6 +228,29 @@ const casesInput = [
     input: { method: "handleOverseerOverlayKey", key: "x", overlayKind: "overseer" },
   },
   {
+    name: "overseer overlay unwatch without selected session flashes",
+    input: { method: "handleOverseerOverlayKey", key: "u", overlayKind: "overseer" },
+  },
+  {
+    name: "overseer overlay unwatch selected session posts loop removal",
+    input: {
+      method: "handleOverseerOverlayKey",
+      key: "u",
+      overlayKind: "overseer",
+      selectedSession: { id: "codex-1", command: "codex", label: "Codex" },
+    },
+  },
+  {
+    name: "overseer overlay unwatch reports mutation failure",
+    input: {
+      method: "handleOverseerOverlayKey",
+      key: "u",
+      overlayKind: "overseer",
+      selectedSession: { id: "codex-1", command: "codex", label: "Codex" },
+      postThrows: "project service unavailable",
+    },
+  },
+  {
     name: "overseer overlay stop uses running overseer runtime when present",
     input: {
       method: "handleOverseerOverlayKey",
@@ -250,8 +281,51 @@ const casesInput = [
     },
   },
   {
+    name: "overseer watch instructions enter without target renders dashboard",
+    input: { method: "handleOverseerWatchInstructionsKey", key: "enter", overseerWatchInstructionsBuffer: "watch this" },
+  },
+  {
+    name: "overseer watch instructions enter posts watch request",
+    input: {
+      method: "handleOverseerWatchInstructionsKey",
+      key: "enter",
+      overseerWatchInstructionsBuffer: "  keep pressure  ",
+      overseerWatchInstructionsTarget: { id: "codex-1", command: "codex", taskDescription: "port dashboard" },
+    },
+  },
+  {
+    name: "overseer watch instructions opens returned overseer and suppresses dashboard flash",
+    input: {
+      method: "handleOverseerWatchInstructionsKey",
+      key: "enter",
+      overseerWatchInstructionsBuffer: "watch",
+      overseerWatchInstructionsTarget: { id: "codex-1", command: "codex" },
+      coreCommandResponse: { result: { overseerSessionId: "overseer-1" } },
+      waitOpenResult: "opened",
+    },
+  },
+  {
+    name: "overseer watch instructions reports open failure for returned overseer",
+    input: {
+      method: "handleOverseerWatchInstructionsKey",
+      key: "enter",
+      overseerWatchInstructionsBuffer: "watch",
+      overseerWatchInstructionsTarget: { id: "codex-1", command: "codex" },
+      coreCommandResponse: { result: { overseerSessionId: "overseer-1" } },
+      waitOpenResult: "missing",
+    },
+  },
+  {
     name: "service input appends printable text",
     input: { method: "handleServiceInputKey", key: "worker", serviceInputBuffer: "run " },
+  },
+  {
+    name: "service input backspace trims buffer",
+    input: { method: "handleServiceInputKey", key: "backspace", serviceInputBuffer: "service" },
+  },
+  {
+    name: "service input escape clears overlay and restores dashboard",
+    input: { method: "handleServiceInputKey", key: "escape", overlayKind: "service-input", serviceInputBuffer: "service" },
   },
   {
     name: "service input enter creates dashboard service",
@@ -272,12 +346,34 @@ const casesInput = [
     input: { method: "handleLabelInputKey", key: "enter", overlayKind: "label-input", labelInputBuffer: "  New Label  ", labelInputTarget: "codex-1" },
   },
   {
+    name: "label input backspace trims buffer",
+    input: { method: "handleLabelInputKey", key: "backspace", overlayKind: "label-input", labelInputBuffer: "Label" },
+  },
+  {
+    name: "label input enter without target restores dashboard",
+    input: { method: "handleLabelInputKey", key: "enter", overlayKind: "label-input", labelInputBuffer: "No Target" },
+  },
+  {
     name: "label input escape clears target and restores dashboard",
     input: { method: "handleLabelInputKey", key: "escape", overlayKind: "label-input", labelInputBuffer: "draft", labelInputTarget: "codex-1" },
   },
   {
     name: "work outline down and up clamp offset",
     input: { method: "handleWorkOutlineOverlayKey", key: "j", workOutlineOverlayEntries: [{ id: "a" }, { id: "b" }], workOutlineOverlayOffset: 0 },
+  },
+  {
+    name: "work outline refresh reloads entries and clamps offset",
+    input: {
+      method: "handleWorkOutlineOverlayKey",
+      key: "r",
+      workOutlineOverlayEntries: [{ id: "a" }, { id: "b" }, { id: "c" }],
+      reloadedWorkOutlineOverlayEntries: [{ id: "a" }],
+      workOutlineOverlayOffset: 2,
+    },
+  },
+  {
+    name: "work outline refresh stops when reload fails",
+    input: { method: "handleWorkOutlineOverlayKey", key: "r", loadWorkOutlineResult: false, workOutlineOverlayOffset: 2 },
   },
   {
     name: "work outline enter opens scribe when live scribe exists",
@@ -296,6 +392,29 @@ const casesInput = [
   {
     name: "work outline stop without running scribe flashes",
     input: { method: "handleWorkOutlineOverlayKey", key: "x", overlayKind: "work-outline" },
+  },
+  {
+    name: "work outline unset without configured scribe flashes",
+    input: { method: "handleWorkOutlineOverlayKey", key: "d", overlayKind: "work-outline" },
+  },
+  {
+    name: "work outline unset posts inactive scribe update",
+    input: {
+      method: "handleWorkOutlineOverlayKey",
+      key: "d",
+      overlayKind: "work-outline",
+      dashboardScribeSessionsCache: [{ id: "scribe-1", command: "codex", label: "Scribe", status: "running", scribe: true }],
+    },
+  },
+  {
+    name: "work outline unset reports mutation failure",
+    input: {
+      method: "handleWorkOutlineOverlayKey",
+      key: "d",
+      overlayKind: "work-outline",
+      dashboardScribeSessionsCache: [{ id: "scribe-1", command: "codex", label: "Scribe", status: "running", scribe: true }],
+      postThrows: "write failed",
+    },
   },
   {
     name: "work outline stop uses running scribe runtime when present",

@@ -42,9 +42,14 @@ struct OverlayState {
     label_input_target: Value,
     work_outline_overlay_entries: Vec<Value>,
     work_outline_overlay_offset: i64,
+    reloaded_work_outline_overlay_entries: Option<Vec<Value>>,
+    load_work_outline_result: bool,
     footer_flash: Value,
     footer_flash_ticks: i64,
     open_live_result: String,
+    wait_open_result: Value,
+    core_command_response: Value,
+    post_throws: Option<String>,
     calls: Vec<Value>,
 }
 
@@ -101,9 +106,26 @@ impl OverlayState {
                 .get("workOutlineOverlayOffset")
                 .and_then(Value::as_i64)
                 .unwrap_or_default(),
+            reloaded_work_outline_overlay_entries: input
+                .get("reloadedWorkOutlineOverlayEntries")
+                .and_then(Value::as_array)
+                .cloned(),
+            load_work_outline_result: input
+                .get("loadWorkOutlineResult")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             footer_flash: Value::Null,
             footer_flash_ticks: 0,
             open_live_result: string_field_default(input, "openLiveResult", "missing"),
+            wait_open_result: input.get("waitOpenResult").cloned().unwrap_or(Value::Null),
+            core_command_response: input
+                .get("coreCommandResponse")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+            post_throws: input
+                .get("postThrows")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
             calls: Vec::new(),
         }
     }
@@ -388,6 +410,47 @@ impl OverlayState {
                 self.open_dashboard_overlay("overseer-watch-instructions");
                 self.call("renderOverseerWatchInstructions", vec![]);
             }
+            "u" => {
+                let selected = self.get_selected_dashboard_session_for_actions();
+                if selected.is_null() {
+                    self.footer_flash = json!("Select an agent first");
+                    self.footer_flash_ticks = 2;
+                    self.call("renderOverseerOverlay", vec![]);
+                    return;
+                }
+                self.call(
+                    "postToProjectService",
+                    vec![
+                        json!("/agents/loop"),
+                        json!({
+                            "sessionId": string_field(&selected, "id"),
+                            "active": false,
+                            "action": "remove",
+                            "source": "dashboard",
+                            "updatedBy": "dashboard",
+                        }),
+                    ],
+                );
+                if let Some(error) = self.post_throws.clone() {
+                    self.footer_flash = json!(format!("Overseer update failed: {error}"));
+                    self.footer_flash_ticks = 3;
+                    self.call("renderOverseerOverlay", vec![]);
+                    return;
+                }
+                self.call(
+                    "refreshDashboardModelFromService",
+                    vec![
+                        json!(true),
+                        json!({ "lifecycle": dashboard_input_lifecycle() }),
+                    ],
+                );
+                self.footer_flash = json!(format!(
+                    "{} removed from overseer loop",
+                    dashboard_session_label(&selected)
+                ));
+                self.footer_flash_ticks = 2;
+                self.call("renderOverseerOverlay", vec![]);
+            }
             "x" => {
                 let overseer = self
                     .dashboard_overseer_entries()
@@ -427,12 +490,67 @@ impl OverlayState {
         }
         if key == "enter" || key == "return" {
             let target = self.overseer_watch_instructions_target.clone();
+            let instructions = self.overseer_watch_instructions_buffer.trim().to_owned();
             self.clear_dashboard_overlay();
             self.overseer_watch_instructions_buffer.clear();
             self.overseer_watch_instructions_target = Value::Null;
             if target.is_null() {
                 self.call("renderDashboard", vec![]);
+                return;
             }
+            let mut body = json!({
+                "projectRoot": "/tmp/aimux-fixture-project",
+                "sessionId": string_field(&target, "id"),
+                "instructions": instructions,
+            });
+            if let Some(goal) = target
+                .get("taskDescription")
+                .and_then(Value::as_str)
+                .or_else(|| target.get("headline").and_then(Value::as_str))
+                .filter(|value| !value.is_empty())
+            {
+                body["goal"] = json!(goal);
+            }
+            self.call(
+                "dashboardCoreCommandRequest",
+                vec![
+                    json!("core.overseer.watch"),
+                    body,
+                    json!({ "timeoutMs": 20_000 }),
+                ],
+            );
+            self.call(
+                "refreshDashboardModelFromService",
+                vec![
+                    json!(true),
+                    json!({ "lifecycle": dashboard_input_lifecycle() }),
+                ],
+            );
+            let overseer_session_id = self
+                .core_command_response
+                .get("result")
+                .and_then(|result| result.get("overseerSessionId"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned);
+            if let Some(overseer_session_id) = overseer_session_id {
+                self.call(
+                    "waitAndOpenLiveTmuxWindowForEntry",
+                    vec![json!({ "id": overseer_session_id }), json!(10_000)],
+                );
+                if matches!(self.wait_open_result.as_str(), Some("missing" | "error")) {
+                    self.footer_flash = json!("Overseer updated, but could not open overseer");
+                    self.footer_flash_ticks = 3;
+                    self.call("renderDashboard", vec![]);
+                }
+                return;
+            }
+            self.footer_flash = json!(format!(
+                "{} added to overseer loop",
+                dashboard_session_label(&target)
+            ));
+            self.footer_flash_ticks = 2;
+            self.call("renderDashboard", vec![]);
             return;
         }
         if !key.is_empty() {
@@ -542,6 +660,12 @@ impl OverlayState {
             }
             "r" => {
                 self.call("loadWorkOutlineOverlayEntries", vec![]);
+                if !self.load_work_outline_result {
+                    return;
+                }
+                if let Some(entries) = &self.reloaded_work_outline_overlay_entries {
+                    self.work_outline_overlay_entries = entries.clone();
+                }
                 let max_offset = (self.work_outline_overlay_entries.len() as i64 - 1).max(0);
                 self.work_outline_overlay_offset = self.work_outline_overlay_offset.min(max_offset);
                 self.call("renderWorkOutlineOverlay", vec![]);
@@ -581,7 +705,38 @@ impl OverlayState {
                     self.footer_flash = json!("No scribe configured");
                     self.footer_flash_ticks = 2;
                     self.call("renderWorkOutlineOverlay", vec![]);
+                    return;
                 }
+                let scribe = self.dashboard_scribe_entries()[0].clone();
+                self.call(
+                    "postToProjectService",
+                    vec![
+                        json!("/agents/scribe"),
+                        json!({
+                            "sessionId": string_field(&scribe, "id"),
+                            "active": false,
+                        }),
+                    ],
+                );
+                if let Some(error) = self.post_throws.clone() {
+                    self.footer_flash = json!(format!("Scribe update failed: {error}"));
+                    self.footer_flash_ticks = 3;
+                    self.call("renderWorkOutlineOverlay", vec![]);
+                    return;
+                }
+                self.call(
+                    "refreshDashboardModelFromService",
+                    vec![
+                        json!(true),
+                        json!({ "lifecycle": dashboard_input_lifecycle() }),
+                    ],
+                );
+                self.footer_flash = json!(format!(
+                    "{} unset as scribe",
+                    dashboard_session_label(&scribe)
+                ));
+                self.footer_flash_ticks = 2;
+                self.call("renderWorkOutlineOverlay", vec![]);
             }
             _ => {}
         }
@@ -762,4 +917,12 @@ fn dedupe_by_id(entries: Vec<Value>) -> Vec<Value> {
         result.push(entry);
     }
     result
+}
+
+fn dashboard_input_lifecycle() -> Value {
+    json!({
+        "mode": "dashboard",
+        "inputEpoch": 0,
+        "requiresInputEpoch": true,
+    })
 }
