@@ -6,7 +6,9 @@ import prettier from "prettier";
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/tui-api-runtime-state.json", ROOT);
 
-const { TuiApiRuntime } = await import(new URL("dist/multiplexer/tui-api-runtime.js", ROOT));
+const { getJsonWithTuiApiRuntime, postJsonWithTuiApiRuntime, TuiApiRuntime } = await import(
+  new URL("dist/multiplexer/tui-api-runtime.js", ROOT)
+);
 
 const FIXED_NOW = 1_700_000_000_000;
 Date.now = () => FIXED_NOW;
@@ -52,6 +54,14 @@ function normalize(value) {
   if (Array.isArray(value)) return value.map(normalize);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, normalize(entry)]));
+}
+
+async function capturesThrow(fn) {
+  try {
+    return { ok: true, value: normalize(await fn()) };
+  } catch (error) {
+    return { ok: false, error: normalizeError(error) };
+  }
 }
 
 function makeSequenceTransport(steps, calls) {
@@ -144,6 +154,41 @@ async function runCase(input) {
       result.states = states;
       return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
     }
+    case "older-mutation-failure-after-newer-success": {
+      const slow = deferred();
+      const fast = deferred();
+      mutateCalls.length = 0;
+      const mutationRuntime = new TuiApiRuntime({
+        request,
+        mutate: makeSequenceTransport([{ deferred: slow }, { deferred: fast }], mutateCalls),
+        onRequestFailure: (caught) => failures.push(normalizeError(caught)),
+      });
+      const slowMutation = mutationRuntime.mutateJson("/slow", {}, (value) => value);
+      const fastMutation = mutationRuntime.mutateJson("/fast", {}, (value) => value);
+      fast.resolve({ ok: true });
+      result.fast = normalize(await fastMutation);
+      slow.reject(error("late timeout"));
+      result.slow = normalize(await slowMutation);
+      result.snapshot = snapshot(mutationRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
+    case "older-refresh-failure-after-newer-direct-success": {
+      const slow = deferred();
+      const fast = deferred();
+      requestCalls.length = 0;
+      const mixedRuntime = new TuiApiRuntime({
+        request: makeSequenceTransport([{ deferred: slow }, { deferred: fast }], requestCalls),
+        onRequestFailure: (caught) => failures.push(normalizeError(caught)),
+      });
+      const refresh = mixedRuntime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+      const read = mixedRuntime.requestJson("/health", (value) => value);
+      fast.resolve({ ok: true });
+      result.read = normalize(await read);
+      slow.reject(error("late timeout"));
+      result.refresh = normalize(await refresh);
+      result.snapshot = snapshot(mixedRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
     case "critical-resource-recovers": {
       const critical = deferred();
       const health = deferred();
@@ -167,6 +212,141 @@ async function runCase(input) {
       result.recovery = normalize(await recovery);
       result.afterRecovery = snapshot(criticalRuntime);
       return { result, states, failures, requestCalls, mutateCalls, snapshot: result.afterRecovery };
+    }
+    case "best-effort-mutation-failure": {
+      result.failed = normalize(
+        await runtime.mutateJson("/notification-context", { source: "tui" }, (value) => value, {
+          timeoutMs: 3000,
+          recoverOnFailure: false,
+        }),
+      );
+      break;
+    }
+    case "superseded-refresh-response": {
+      const first = deferred();
+      const second = deferred();
+      requestCalls.length = 0;
+      const supersededRuntime = new TuiApiRuntime({
+        request: makeSequenceTransport([{ deferred: first }, { deferred: second }], requestCalls),
+      });
+      const slow = supersededRuntime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+      const fast = supersededRuntime.refreshJson("desktop-state", "/desktop-state", (value) => value, {
+        supersede: true,
+      });
+      second.resolve({ ok: true, value: 2 });
+      result.fast = normalize(await fast);
+      first.resolve({ ok: true, value: 1 });
+      result.slow = normalize(await slow);
+      result.snapshot = snapshot(supersededRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
+    case "disposed-pending-refresh-success": {
+      const pending = deferred();
+      requestCalls.length = 0;
+      const disposedRuntime = new TuiApiRuntime({
+        request: makeSequenceTransport([{ deferred: pending }], requestCalls),
+      });
+      const refresh = disposedRuntime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+      disposedRuntime.dispose();
+      pending.resolve({ ok: true, value: 1 });
+      result.refresh = normalize(await refresh);
+      result.snapshot = snapshot(disposedRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
+    case "disposed-pending-refresh-failure": {
+      const pending = deferred();
+      requestCalls.length = 0;
+      const disposedRuntime = new TuiApiRuntime({
+        request: makeSequenceTransport([{ deferred: pending }], requestCalls),
+        onRequestFailure: (caught) => failures.push(normalizeError(caught)),
+      });
+      const refresh = disposedRuntime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+      disposedRuntime.dispose();
+      pending.reject(error("transport failed after teardown"));
+      result.refresh = normalize(await refresh);
+      result.snapshot = snapshot(disposedRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
+    case "disposed-direct-read-success": {
+      const pending = deferred();
+      requestCalls.length = 0;
+      const disposedRuntime = new TuiApiRuntime({
+        request: makeSequenceTransport([{ deferred: pending }], requestCalls),
+        onConnectionStateChange: (state) => states.push(state),
+      });
+      const read = disposedRuntime.requestJson("/desktop-state", (value) => value);
+      disposedRuntime.dispose();
+      pending.resolve({ ok: true });
+      result.read = normalize(await read);
+      result.snapshot = snapshot(disposedRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
+    case "disposed-mutation-success": {
+      const pending = deferred();
+      mutateCalls.length = 0;
+      const disposedRuntime = new TuiApiRuntime({
+        request,
+        mutate: makeSequenceTransport([{ deferred: pending }], mutateCalls),
+        onConnectionStateChange: (state) => states.push(state),
+      });
+      const mutation = disposedRuntime.mutateJson("/agents/stop", { sessionId: "codex-1" }, (value) => value);
+      disposedRuntime.dispose();
+      pending.resolve({ ok: true });
+      result.mutation = normalize(await mutation);
+      result.snapshot = snapshot(disposedRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
+    case "wrapper-read-uses-runtime-transport": {
+      const host = {};
+      const calls = [];
+      const requestWrapper = async (targetHost, path, opts) => {
+        calls.push({ sameHost: targetHost === host, path, opts: normalize(opts) ?? null });
+        return { ok: true, value: 1 };
+      };
+      result.read = await capturesThrow(() => getJsonWithTuiApiRuntime(host, "/desktop-state", { timeoutMs: 5000 }, requestWrapper));
+      result.calls = calls;
+      result.connectionState = host.tuiApiRuntime?.getConnectionState?.();
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: normalize(host.tuiApiRuntime?.getConnectionSnapshot?.()) };
+    }
+    case "wrapper-read-failure-thrown": {
+      const host = {};
+      const calls = [];
+      const requestWrapper = async (targetHost, path, opts) => {
+        calls.push({ sameHost: targetHost === host, path, opts: normalize(opts) ?? null });
+        throw error("offline");
+      };
+      result.read = await capturesThrow(() => getJsonWithTuiApiRuntime(host, "/desktop-state", undefined, requestWrapper));
+      result.calls = calls;
+      result.hostConnectionState = host.tuiApiConnectionState;
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: normalize(host.tuiApiRuntime?.getConnectionSnapshot?.()) };
+    }
+    case "wrapper-mutation-uses-runtime-transport": {
+      const host = {};
+      const calls = [];
+      const mutateWrapper = async (targetHost, path, body, opts) => {
+        calls.push({ sameHost: targetHost === host, path, body: normalize(body), opts: normalize(opts) ?? null });
+        return { ok: true, warning: "kept" };
+      };
+      result.mutation = await capturesThrow(() =>
+        postJsonWithTuiApiRuntime(host, "/agents/resume", { sessionId: "claude-1" }, { timeoutMs: 60000 }, mutateWrapper),
+      );
+      result.calls = calls;
+      result.connectionState = host.tuiApiRuntime?.getConnectionState?.();
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: normalize(host.tuiApiRuntime?.getConnectionSnapshot?.()) };
+    }
+    case "wrapper-mutation-failure-thrown": {
+      const host = {};
+      const calls = [];
+      const mutateWrapper = async (targetHost, path, body, opts) => {
+        calls.push({ sameHost: targetHost === host, path, body: normalize(body), opts: normalize(opts) ?? null });
+        throw error("offline");
+      };
+      result.mutation = await capturesThrow(() =>
+        postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "claude-1" }, undefined, mutateWrapper),
+      );
+      result.calls = calls;
+      result.hostConnectionState = host.tuiApiConnectionState;
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: normalize(host.tuiApiRuntime?.getConnectionSnapshot?.()) };
     }
     default:
       throw new Error(`unknown scenario ${input.scenario}`);
@@ -225,6 +405,57 @@ const cases = [
   {
     name: "critical resource failures keep reconnecting until the resource refreshes",
     input: { scenario: "critical-resource-recovers" },
+  },
+  {
+    name: "older wrapper mutation failure does not degrade newer success",
+    input: { scenario: "older-mutation-failure-after-newer-success" },
+  },
+  {
+    name: "older resource refresh failure does not degrade newer direct success",
+    input: { scenario: "older-refresh-failure-after-newer-direct-success" },
+  },
+  {
+    name: "best effort mutation failures do not enter reconnecting state",
+    input: {
+      scenario: "best-effort-mutation-failure",
+      mutateSteps: [{ throw: { message: "telemetry timeout" } }],
+    },
+  },
+  {
+    name: "newer superseded refresh response owns the resource snapshot",
+    input: { scenario: "superseded-refresh-response" },
+  },
+  {
+    name: "pending refresh success is ignored after disposal",
+    input: { scenario: "disposed-pending-refresh-success" },
+  },
+  {
+    name: "pending refresh failure is ignored after disposal",
+    input: { scenario: "disposed-pending-refresh-failure" },
+  },
+  {
+    name: "direct read success is ignored after disposal",
+    input: { scenario: "disposed-direct-read-success" },
+  },
+  {
+    name: "mutation success is ignored after disposal",
+    input: { scenario: "disposed-mutation-success" },
+  },
+  {
+    name: "wrapper reads route through the shared runtime transport",
+    input: { scenario: "wrapper-read-uses-runtime-transport" },
+  },
+  {
+    name: "wrapper read failures stay thrown for existing callers",
+    input: { scenario: "wrapper-read-failure-thrown" },
+  },
+  {
+    name: "wrapper mutations route through the shared runtime transport",
+    input: { scenario: "wrapper-mutation-uses-runtime-transport" },
+  },
+  {
+    name: "wrapper mutation failures stay thrown for existing callers",
+    input: { scenario: "wrapper-mutation-failure-thrown" },
   },
 ];
 
