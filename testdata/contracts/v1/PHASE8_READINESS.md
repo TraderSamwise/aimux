@@ -1,10 +1,10 @@
 # Phase 8 Readiness
 
-Audit point: `08f2476bfe74cc82d3b365a68d6110fc541c545c`
+Audit point: `d85e7a73fb5dc38b6f6601c396c648e4cf4aa78e`
 
 Question: what actually breaks if the TypeScript hot path is deleted today?
 
-Answer: the checklist gate is now clear for captured behavior: all 269 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. The remaining hard gap is plugin runtime scope: Rust proves bundled wrapper/status behavior in fixtures, but there is no installed-shim command surface that invokes bundled plugin wrapper seeding, and arbitrary user JS plugin execution is not replaceable by Rust today.
+Answer: the checklist gate is now clear for captured behavior: all 269 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. The remaining hard gap is plugin runtime scope: bundled plugin wrapper seeding is live TypeScript behavior, not dead code, but it has no native installed command path today. Arbitrary user JS plugin execution is also not replaceable by Rust today. Phase 8 is not safe as a blanket TypeScript deletion unless Sam explicitly chooses the plugin strategy below.
 
 ## Evidence Baseline
 
@@ -35,7 +35,7 @@ Results:
 | Dashboard launch | Pass | `__dashboard-internal-native --once` rendered from a temp desktop-state snapshot |
 | Tmux statusline | Pass | `__tmux-statusline-internal --line top` read temp statusline state and printed `top-smoke` |
 | Tmux control | Pass with limited scope | `__tmux-control-internal active` exited 0 against temp state; this proves the installed native entrypoint, not live window switching |
-| Plugin wrapper seeding from installed shim | Not proven | no installed `aimux` command invokes `ensure_bundled_default_plugin_wrappers` |
+| Plugin wrapper seeding from installed shim | Not proven | TypeScript `PluginRuntime.start()` invokes wrapper seeding, but no installed native `aimux` command invokes `ensure_bundled_default_plugin_wrappers` |
 
 ## Node Dependency Sweep
 
@@ -49,7 +49,7 @@ Results:
 | Dashboard launch | `runtime/cli-launcher.json`; `dashboard/command-spec.json`; no-Node smoke | Yes: native entrypoint `__dashboard-internal-native`; production command spec defaults `AIMUX_DASHBOARD_IMPLEMENTATION=native` | Native for production dashboard spec; explicit legacy/source-helper paths still exist | Installed production dashboard works without JS. Explicit legacy `--tmux-dashboard-internal` or source-checkout helper paths break if `dist` is removed; retire or keep as dev-only. |
 | Tmux control/statusline/open-hyperlink scripts | `tmux/control-script.json`; `tmux/statusline-script.json`; no-Node smoke for control/statusline | Mostly yes: native internal commands exist for control/statusline/open-hyperlink; scripts are packaged shell helpers | Shell scripts plus native CLI; no Node requirement in statusline/control | `tmux-control.sh` and `tmux-statusline.sh` do not require Node. `tmux-open-hyperlink.sh` uses `python3` for JSON/text extraction, so it survives TypeScript deletion but still has a non-Rust runtime dependency. |
 | Tmux runtime manager | `tmux/*.json` corpora; `tmux/doctor.json`; fixture suites are `PROVEN-FAILS` | Strong for captured behavior | Native tmux command execution | Captured behavior survives TypeScript deletion. Live PTY/tmux timing remains residual risk. |
-| Plugin runtime | `plugin/runtime.json`; `default-plugins/*.json`; `fixture_plugin_runtime` is `PROVEN-FAILS` | Partial: Rust contract covers bundled wrapper seeding, plugin status shape, and default plugin behavior | Native contract surface; JS wrapper files are still plugin payload format | Wrapper/status behavior is captured, but installed-shim wrapper seeding is not empirically exposed, and arbitrary user JS plugin execution is not proven replaceable by Rust. Do not delete JS plugin payload/execution semantics without a separate replacement. |
+| Plugin runtime | `plugin/runtime.json`; `default-plugins/*.json`; `fixture_plugin_runtime` is `PROVEN-FAILS` | Partial: Rust contract covers bundled wrapper seeding, plugin status shape, and default plugin behavior | TypeScript dashboard/multiplexer starts the real runtime; native project-service currently reports `plugins: []` | Wrapper/status behavior is captured, but production native Rust does not start a plugin runtime or seed wrappers from an installed command. Arbitrary user JS plugin execution is not replaceable by Rust. Do not delete JS plugin payload/execution semantics without a separate product decision. |
 | Claude/Codex hooks | `hooks/tool-hooks.json`; `shell/hooks.json`; no-Node hook POST smoke | Yes for captured hook payload parsing/settings emission and project-service hook routes | Native | Captured hook payload behavior survives. Live external-tool invocation ordering is still a residual integration risk. |
 | Release/build scripts | `scripts/build-release-asset.sh`; `release/asset.json`; `release/package-manifest.json` | Yes for packaging native binary and excluding Node runtime payload | Native release artifact | Full local release build still runs `yarn build:release` and `yarn build:ui:local` before packaging. That is build-time Node, not installed runtime Node. |
 | Local UI / app | `service/local-ui-server.json`; app-state corpora | Rust has local static server contracts, app remains TypeScript by scope | Not part of phase-8 hot path deletion | Deleting `app/` TypeScript would break the Expo client and is out of scope. |
@@ -64,7 +64,7 @@ Results:
 | Project service HTTP/SSE/stores | Mostly implemented | `project-api/*.json`, `metadata-server/*.json`, `metadata-store/store.json`, `runtime-state/project-event-stream.json`, `runtime-exchange/*.json`, `runtime-topology/*.json` are `PROVEN-FAILS`; no-Node project-service smoke | End-to-end HTTP/SSE ordering under load remains live-only residual risk. |
 | Agent output/parser/transcript/state | Implemented | Parser adversarial/fuzz/audit/activity corpora, bounds/stream/read-metrics, transcript, transcript-reconciler, liveness/status/restore/tracker, ANSI/rich-text are `PROVEN-FAILS` | No checklist rows remain in this subsystem. |
 | Agent coordination/orchestration | Implemented for captured semantics | `coordination/*.json`, `orchestration/*.json`, `agent-prompt-delivery/delivery.json`, `coordination/scribe-watcher.json` are `PROVEN-FAILS` | Cross-process delivery timing remains residual risk. |
-| Hooks and default plugins | Implemented for captured contracts | `hooks/tool-hooks.json`, `shell/hooks.json`, `default-plugins/gh-pr-context.json`, `default-plugins/transcript-length.json`, `plugin/runtime.json` are `PROVEN-FAILS`; hook route smoke | Runtime execution of arbitrary user JS plugins is not proven replaceable by Rust; installed-shim wrapper seeding has no command surface to smoke. |
+| Hooks and default plugins | Implemented for captured contracts; plugin runtime is partial | `hooks/tool-hooks.json`, `shell/hooks.json`, `default-plugins/gh-pr-context.json`, `default-plugins/transcript-length.json`, `plugin/runtime.json` are `PROVEN-FAILS`; hook route smoke | Runtime execution of arbitrary user JS plugins is TypeScript-only today; installed-shim wrapper seeding has no native production call path to smoke. |
 | Dashboard model/TUI/client helpers | Implemented for captured surfaces | Dashboard/TUI corpora, including golden desktop state, navigation, repair notices, notifications, rich text, command spec, order, targets, interaction, lifecycle, and render helpers are `PROVEN-FAILS`; dashboard `--once` smoke | Live keyboard/terminal rendering and focus behavior still need manual/live coverage. |
 | Tmux runtime/control/render | Strong for captured surfaces | `tmux/*.json`, `terminal/*.json`, statusline/control/open/doctor/expose corpora are `PROVEN-FAILS`; limited no-Node control/statusline smoke | Live attach/detach/PTY timing cannot be fully reduced to corpus data. |
 | Hosted/remote/mobile notification surfaces | Implemented for captured contracts | `hosted/*.json`, `remote-access/access.json`, `relay/client.json`, `notifications/mobile-push.json`, `desktop-notifier/notifier.json` are `PROVEN-FAILS` | Network, platform notification delivery, and auth callback races remain live-only residual risk. |
@@ -89,7 +89,7 @@ Not safe to delete as implemented behavior today:
 | Surface | Reason |
 | --- | --- |
 | Arbitrary user JS plugin execution | Rust has fixture coverage for wrapper seeding/status/default plugin behavior, but not a runtime replacement for executing user JS plugins. |
-| Bundled plugin wrapper seeding from installed shim | `plugin/runtime.json` is mutation-proven, but the installed `aimux` command surface does not expose or invoke `ensure_bundled_default_plugin_wrappers`, so the requested installed-shim smoke item is not empirically proven. |
+| Bundled plugin wrapper seeding from installed shim | This is not dead code in TypeScript: `PluginRuntime.start()` calls `ensureBundledDefaultPluginWrappers()` after the Node dashboard/multiplexer starts the project service. It is native contract-only today: Rust has `ensure_bundled_default_plugin_wrappers`, but production native startup does not call it and diagnostics returns `plugins: []`. If plugins are in scope for phase 8, this is a blocker. |
 | `app/` TypeScript | Explicitly outside phase-8 deletion scope; deleting it breaks the Expo client. |
 | Build/capture/dev TypeScript paths | Capture scripts, Vitest, `yarn build`, source-checkout dev flows, and fixture regeneration intentionally use Node while TypeScript exists. |
 
@@ -98,6 +98,24 @@ Conditional/development-only deletion notes:
 - `src/main.ts`, `src/full/main.ts`, `src/launcher-bin.ts`, and source-checkout `dist/*` entrypoints are safe to remove from the installed hot path only after all callers use `bin/aimux` or native internal entrypoints. Source-checkout tests and dev scripts still assume a TS build exists.
 - `src/default-plugins/*.ts` behavior is captured and Rust-enforced, but the plugin runtime still treats `.js` wrapper files as plugin payloads. Do not delete required plugin payload generation or JS execution without a separate replacement.
 - `app/` TypeScript is outside the phase-8 deletion scope and should not be deleted.
+
+## Plugin Decision
+
+Sam needs an explicit plugin decision before phase 8 deletes TypeScript runtime code.
+
+Option A: keep the user plugin model.
+
+- Consequence: Aimux still needs a Node-compatible JS execution host for arbitrary user plugins after phase 8, or a new native plugin sandbox that can run the existing plugin API.
+- Cost: preserve/package the default plugin JS payloads or compile them to a supported runtime form; add a native production entrypoint that starts the plugin host or delegates to Node; seed bundled wrappers from installed startup; report real plugin statuses in diagnostics instead of `plugins: []`; supervise plugin lifecycle, file watching, error capture, and resource-failure behavior; keep this outside any "zero Node runtime" claim unless the JS host is replaced.
+- Deletion impact: TypeScript project-service/dashboard hot path may still be deletable, but plugin JS payloads and a Node runtime remain required runtime dependencies for users who enable plugins.
+
+Option B: retire or suspend the user plugin model for phase 8.
+
+- Consequence: Aimux can keep the installed CLI/daemon/project-service/dashboard/tmux hot path Node-free, but user plugins stop executing.
+- Cost: remove or hide plugin diagnostics/status UI, make project-service plugin diagnostics explicitly unsupported instead of silently empty, migrate the two bundled default plugin behaviors into native code where they are still wanted, document the breaking change, and ignore or remove user `~/.aimux/plugins/*.js` wrappers intentionally.
+- Deletion impact: plugin TypeScript and default plugin payloads can be deleted only after the product accepts the feature removal/suspension and the native UI/API no longer implies plugin support.
+
+Current state: neither option is fully implemented. The existing native code proves plugin contracts in tests but does not provide a production plugin runtime.
 
 ## Residual Risk After Deletion
 
@@ -110,12 +128,20 @@ Conditional/development-only deletion notes:
 - Installed-shim plugin seeding: there is no installed CLI path to empirically invoke bundled wrapper seeding today.
 - Source-checkout developer flow: installed runtime can be Node-free, but local capture/dev/test scripts still intentionally use Node and `dist` while TypeScript exists.
 
+Smallest live suite that would cover these residuals:
+
+1. `phase8-live-tmux-smoke`: install a local release into a temp `AIMUX_INSTALL_ROOT`, use a temp tmux socket/session prefix, start one agent-like pane, send input, resize the pane, detach/reattach, render statusline, and assert topology plus captured pane output through the installed native CLI. This catches PTY buffering regressions, resize propagation errors, attach/detach state loss, statusline file races, and tmux command argument drift.
+2. `phase8-sse-stress`: start a temp project-service, attach 8-16 SSE clients, emit 100-500 ordered mutations through the HTTP API, disconnect/reconnect a subset of clients, and assert monotonic event IDs with no missing or duplicated events per client. This catches event ordering, backpressure, reconnect replay, and concurrent store-notification bugs that corpus fixtures cannot exercise.
+3. `phase8-process-race-smoke`: in a temp home, loop daemon/project-service startup on random ports while injecting stale pid files, stale manifests, occupied ports, and concurrent ensure/start requests; assert the native daemon does not adopt old Node processes, does not corrupt manifests, and recovers to healthy endpoints. This catches lock, PID reuse, port takeover, and startup/shutdown races.
+
+These should run only against temp roots and unique ports/sockets. They should not touch the user's installed Aimux, live daemon, project services, or tmux sessions.
+
 ## Gate Decision
 
-Phase 8 is ready for the normal installed CLI, daemon, project-service, tmux runtime, and dashboard hot path only if plugin JS execution and wrapper payloads are explicitly excluded from the TypeScript deletion set or replaced in the same change. The fixture checklist gate is clear and the native installed hot path ran without Node, but plugin runtime deletion is not safe as a blanket claim.
+Phase 8 is ready for the normal installed CLI, daemon, project-service, tmux runtime, and dashboard hot path only if plugin JS execution and wrapper payloads are explicitly excluded from the TypeScript deletion set, retired as a product feature, or replaced in the same change. The fixture checklist gate is clear and the native installed hot path ran without Node, but plugin runtime deletion is not safe as a blanket claim.
 
 Minimum remaining work:
 
-1. Decide plugin scope before deletion: either keep JS plugin execution/payloads out of phase 8, or add a Rust/runtime replacement and an installed-shim smoke path for bundled wrapper seeding.
+1. Decide plugin scope before deletion: either keep Node-backed JS plugin execution/payloads out of phase 8, retire/suspend plugins, or add a Rust/runtime replacement and an installed-shim smoke path for bundled wrapper seeding.
 2. Keep `app/` TypeScript and build/capture scripts out of the deletion set.
-3. Add live smoke/stress coverage for PTY/SSE/process-race residuals, because corpus mutation tests cannot prove those timing properties.
+3. Add the live smoke/stress coverage above for PTY/SSE/process-race residuals, because corpus mutation tests cannot prove those timing properties.
