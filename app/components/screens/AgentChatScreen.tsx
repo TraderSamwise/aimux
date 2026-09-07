@@ -136,6 +136,10 @@ import {
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import {
+  terminalVisibleOutputForLiveChange,
+  terminalVisibleOutputForPinned,
+} from "@/lib/terminal-visible-output";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import type { AgentOutputFeedPurpose } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
@@ -2618,23 +2622,115 @@ function AgentTerminalOutputPane({
     () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
     [output],
   );
-  const lines = useMemo(
+  const liveLines = useMemo(
     () =>
       formatTerminalOutputForDisplay(outputTail, {
         dividerWidth: Math.max(48, dividerWidth * 2),
       }),
     [dividerWidth, outputTail],
   );
-  const hasOutput = output.trim().length > 0 || outputAvailable;
-  const scrollToTerminalEnd = useCallback(() => {
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollToEnd({ animated: false });
-    });
+  const liveOutput = useMemo(
+    () =>
+      terminalVisibleOutputForPinned({
+        lines: liveLines,
+        outputAvailable,
+        outputText: outputTail,
+        sessionKey,
+      }),
+    [liveLines, outputAvailable, outputTail, sessionKey],
+  );
+  const [visibleOutput, setVisibleOutput] = useState(liveOutput);
+  const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+  const terminalScrollFrameRef = useRef<number | null>(null);
+  const terminalInitialLayoutKeyRef = useRef<string | null>(null);
+  const visibleLines = visibleOutput.sessionKey === sessionKey ? visibleOutput.lines : liveLines;
+  const visibleOutputText =
+    visibleOutput.sessionKey === sessionKey ? visibleOutput.outputText : outputTail;
+  const visibleOutputAvailable =
+    visibleOutput.sessionKey === sessionKey ? visibleOutput.outputAvailable : outputAvailable;
+  const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
+
+  const cancelPendingTerminalScroll = useCallback(() => {
+    if (terminalScrollFrameRef.current === null) return;
+    cancelAnimationFrame(terminalScrollFrameRef.current);
+    terminalScrollFrameRef.current = null;
   }, []);
 
   useEffect(() => {
-    scrollToTerminalEnd();
-  }, [lines.length, outputTail.length, scrollToTerminalEnd]);
+    return cancelPendingTerminalScroll;
+  }, [cancelPendingTerminalScroll]);
+
+  const executeTerminalScrollCommand = useCallback(
+    (command: ChatScrollCommand) => {
+      if (command.kind === "none") return;
+      cancelPendingTerminalScroll();
+      terminalScrollFrameRef.current = requestAnimationFrame(() => {
+        terminalScrollFrameRef.current = null;
+        if (
+          command.reason !== "initial" &&
+          command.reason !== "navigation" &&
+          terminalScrollPolicyRef.current.intent !== "pinned"
+        ) {
+          return;
+        }
+        scrollRef.current?.scrollToEnd({ animated: command.animated });
+      });
+    },
+    [cancelPendingTerminalScroll],
+  );
+
+  useEffect(() => {
+    terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+    terminalInitialLayoutKeyRef.current = null;
+    executeTerminalScrollCommand(chatCommandForNavigationFocus());
+  }, [executeTerminalScrollCommand, sessionKey]);
+
+  useEffect(() => {
+    const next = terminalVisibleOutputForLiveChange(visibleOutput, {
+      intent: terminalScrollPolicyRef.current.intent,
+      liveOutput,
+    });
+    if (next !== visibleOutput) setVisibleOutput(next);
+  }, [liveOutput, visibleOutput]);
+
+  const handleTerminalLayout = useCallback(
+    (_event: LayoutChangeEvent) => {
+      if (terminalInitialLayoutKeyRef.current !== sessionKey) {
+        terminalInitialLayoutKeyRef.current = sessionKey;
+        executeTerminalScrollCommand(chatCommandForInitialLayout());
+        return;
+      }
+      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
+    },
+    [executeTerminalScrollCommand, sessionKey],
+  );
+
+  const handleTerminalContentSizeChange = useCallback(
+    (_contentWidth: number, _contentHeight: number) => {
+      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
+    },
+    [executeTerminalScrollCommand],
+  );
+
+  const handleTerminalScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const metrics: ChatScrollMetrics = {
+        contentHeight: event.nativeEvent.contentSize.height,
+        offsetY: event.nativeEvent.contentOffset.y,
+        viewportHeight: event.nativeEvent.layoutMeasurement.height,
+      };
+      const previousIntent = terminalScrollPolicyRef.current.intent;
+      const nextPolicy = chatPolicyAfterUserScroll(terminalScrollPolicyRef.current, metrics);
+      if (nextPolicy.intent === "reading") {
+        cancelPendingTerminalScroll();
+      }
+      terminalScrollPolicyRef.current = nextPolicy;
+      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+        setVisibleOutput(liveOutput);
+      }
+    },
+    [cancelPendingTerminalScroll, liveOutput],
+  );
 
   return (
     <ScrollView
@@ -2649,13 +2745,15 @@ function AgentTerminalOutputPane({
       }}
       keyboardDismissMode={Platform.OS === "web" ? "on-drag" : "interactive"}
       keyboardShouldPersistTaps="handled"
-      onContentSizeChange={scrollToTerminalEnd}
-      onLayout={scrollToTerminalEnd}
+      onContentSizeChange={handleTerminalContentSizeChange}
+      onLayout={handleTerminalLayout}
+      onScroll={handleTerminalScroll}
+      scrollEventThrottle={16}
       showsVerticalScrollIndicator
     >
       {hasOutput ? (
         <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
-          {lines.map((line, lineIndex) => (
+          {visibleLines.map((line, lineIndex) => (
             <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
               {line.length === 0
                 ? "\u00a0"
