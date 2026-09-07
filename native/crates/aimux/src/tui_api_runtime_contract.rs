@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn run_tui_api_runtime_contract_case(input: &Value) -> Value {
     match str_field(input, "api") {
