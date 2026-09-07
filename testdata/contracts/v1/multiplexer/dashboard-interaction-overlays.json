@@ -1,0 +1,748 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-interaction.ts",
+  "generatedBy": "scripts/capture-dashboard-interaction-overlays-contract.mjs",
+  "description": "Dashboard interaction overlay key handlers captured by running TypeScript against a fake dashboard host.",
+  "cases": [
+    {
+      "id": "dashboard-interaction-overlays-001",
+      "name": "showTeammatePicker flashes when no parent session is selected",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showTeammatePicker",
+      "input": { "method": "showTeammatePicker", "key": "", "dashboardSessionsCache": [] },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": "Select an agent with teammates",
+        "footerFlashTicks": 2,
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "9bec568f0873f11c55f7172418f1068d16d80598428a55f7c2092ef1b52e045a"
+    },
+    {
+      "id": "dashboard-interaction-overlays-002",
+      "name": "showTeammatePicker flashes when parent has no teammates",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showTeammatePicker",
+      "input": {
+        "method": "showTeammatePicker",
+        "key": "",
+        "dashboardSessionsCache": [{ "id": "codex-parent", "command": "codex", "label": "Parent", "status": "running" }]
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": "Parent has no teammates",
+        "footerFlashTicks": 2,
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "42b65575bb30ad984997bcc476f3ce45a05e184abd6e818d8d9e7fa674b2e22f"
+    },
+    {
+      "id": "dashboard-interaction-overlays-003",
+      "name": "showTeammatePicker opens picker when selected parent has teammates",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showTeammatePicker",
+      "input": {
+        "method": "showTeammatePicker",
+        "key": "",
+        "dashboardSessionsCache": [
+          { "id": "codex-parent", "command": "codex", "label": "Parent", "status": "running" }
+        ],
+        "dashboardTeammatesCache": [
+          {
+            "id": "codex-reviewer",
+            "command": "codex",
+            "label": "Reviewer",
+            "status": "running",
+            "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent", "role": "reviewer", "order": 2 }
+          },
+          {
+            "id": "codex-tester",
+            "command": "codex",
+            "label": "Tester",
+            "status": "running",
+            "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent", "role": "tester", "order": 1 }
+          }
+        ]
+      },
+      "output": {
+        "overlayKind": "teammate-picker",
+        "teammatePickerState": { "parentSessionId": "codex-parent", "index": 0 },
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "openDashboardOverlay", "args": ["teammate-picker"] },
+          { "method": "renderTeammatePicker", "args": [] }
+        ]
+      },
+      "inputSha256": "2e2edcab25b18a87bdd1aa954f255ab4f5f4e65f7de0f2e0933b6103450b265a"
+    },
+    {
+      "id": "dashboard-interaction-overlays-004",
+      "name": "teammate picker moves down through visible teammates",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleTeammatePickerKey",
+      "input": {
+        "method": "handleTeammatePickerKey",
+        "key": "j",
+        "teammatePickerState": { "parentSessionId": "codex-parent", "index": 0 },
+        "dashboardSessionsCache": [
+          { "id": "codex-parent", "command": "codex", "label": "Parent", "status": "running" }
+        ],
+        "dashboardTeammatesCache": [
+          {
+            "id": "codex-reviewer",
+            "command": "codex",
+            "label": "Reviewer",
+            "status": "running",
+            "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent", "role": "reviewer", "order": 2 }
+          },
+          {
+            "id": "codex-tester",
+            "command": "codex",
+            "label": "Tester",
+            "status": "running",
+            "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent", "role": "tester", "order": 1 }
+          }
+        ]
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": { "parentSessionId": "codex-parent", "index": 1 },
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "renderTeammatePicker", "args": [] }
+        ]
+      },
+      "inputSha256": "fd7e7efcb25ce84c0b92ac16987c26d20a5df805b5e61f406a75d4a875e7c2ad"
+    },
+    {
+      "id": "dashboard-interaction-overlays-005",
+      "name": "teammate picker digit activates teammate and clears overlay",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleTeammatePickerKey",
+      "input": {
+        "method": "handleTeammatePickerKey",
+        "key": "2",
+        "overlayKind": "teammate-picker",
+        "teammatePickerState": { "parentSessionId": "codex-parent", "index": 0 },
+        "dashboardSessionsCache": [
+          { "id": "codex-parent", "command": "codex", "label": "Parent", "status": "running" }
+        ],
+        "dashboardTeammatesCache": [
+          {
+            "id": "codex-reviewer",
+            "command": "codex",
+            "label": "Reviewer",
+            "status": "running",
+            "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent", "role": "reviewer", "order": 2 }
+          },
+          {
+            "id": "codex-tester",
+            "command": "codex",
+            "label": "Tester",
+            "status": "running",
+            "team": { "teamId": "team-codex-parent", "parentSessionId": "codex-parent", "role": "tester", "order": 1 }
+          }
+        ]
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "clearDashboardOverlay", "args": [] },
+          {
+            "method": "activateDashboardEntry",
+            "args": [
+              {
+                "id": "codex-reviewer",
+                "command": "codex",
+                "label": "Reviewer",
+                "status": "running",
+                "team": {
+                  "teamId": "team-codex-parent",
+                  "parentSessionId": "codex-parent",
+                  "role": "reviewer",
+                  "order": 2
+                },
+                "index": 1
+              },
+              { "preserveDashboardSelection": true }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "ad84767ed4422bdd604b277852def4a45fae8e0a87dfdf6a6c43423ed3977628"
+    },
+    {
+      "id": "dashboard-interaction-overlays-006",
+      "name": "teammate picker escape clears overlay and restores dashboard",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleTeammatePickerKey",
+      "input": { "method": "handleTeammatePickerKey", "key": "escape", "overlayKind": "teammate-picker" },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "restoreDashboardAfterOverlayDismiss", "args": [] }
+        ]
+      },
+      "inputSha256": "36c2c00cd77bed559d313aa02468b65836441ca568b70fdd3deb9dfc0597839d"
+    },
+    {
+      "id": "dashboard-interaction-overlays-007",
+      "name": "overseer overlay enter creates overseer action",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerOverlayKey",
+      "input": { "method": "handleOverseerOverlayKey", "key": "enter", "overlayKind": "overseer" },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "handleAction", "args": [{ "type": "create-overseer" }] }
+        ]
+      },
+      "inputSha256": "67bf531b5f7385d1f07638fcbb42db4bce4eabd6e53ea2b73973eb33b00b5f08"
+    },
+    {
+      "id": "dashboard-interaction-overlays-008",
+      "name": "overseer overlay watch without selected session flashes",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerOverlayKey",
+      "input": { "method": "handleOverseerOverlayKey", "key": "w", "overlayKind": "overseer" },
+      "output": {
+        "overlayKind": "overseer",
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": "Select an agent first",
+        "footerFlashTicks": 2,
+        "calls": [
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          { "method": "renderOverseerOverlay", "args": [] }
+        ]
+      },
+      "inputSha256": "0095b44b29587d922e7eeb383d2e78694898345dbaf6bd23f947425defa9bced"
+    },
+    {
+      "id": "dashboard-interaction-overlays-009",
+      "name": "overseer overlay watch selected session opens instruction input",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerOverlayKey",
+      "input": {
+        "method": "handleOverseerOverlayKey",
+        "key": "w",
+        "overlayKind": "overseer",
+        "selectedSession": { "id": "codex-1", "command": "codex", "label": "Codex", "status": "running" }
+      },
+      "output": {
+        "overlayKind": "overseer-watch-instructions",
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": {
+          "id": "codex-1",
+          "command": "codex",
+          "label": "Codex",
+          "status": "running"
+        },
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "getSelectedDashboardSessionForActions", "args": [] },
+          {
+            "method": "showOverseerWatchInstructions",
+            "args": [{ "id": "codex-1", "command": "codex", "label": "Codex", "status": "running" }]
+          },
+          { "method": "openDashboardOverlay", "args": ["overseer-watch-instructions"] },
+          { "method": "renderOverseerWatchInstructions", "args": [] }
+        ]
+      },
+      "inputSha256": "16d9c10a38e36a4c1b9be701407667865f1249e1721a8ca265543863aee69361"
+    },
+    {
+      "id": "dashboard-interaction-overlays-010",
+      "name": "overseer overlay stop without running overseer flashes",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerOverlayKey",
+      "input": { "method": "handleOverseerOverlayKey", "key": "x", "overlayKind": "overseer" },
+      "output": {
+        "overlayKind": "overseer",
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": "No running overseer",
+        "footerFlashTicks": 2,
+        "calls": [{ "method": "renderOverseerOverlay", "args": [] }]
+      },
+      "inputSha256": "42b2abe7d5451890197dda7edb7022dca5ea8d73bd5603d70d1aa5c3bd635379"
+    },
+    {
+      "id": "dashboard-interaction-overlays-011",
+      "name": "overseer overlay stop uses running overseer runtime when present",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerOverlayKey",
+      "input": {
+        "method": "handleOverseerOverlayKey",
+        "key": "x",
+        "overlayKind": "overseer",
+        "sessions": [{ "id": "overseer-1", "command": "claude", "status": "running" }],
+        "dashboardOverseerSessionsCache": [
+          { "id": "overseer-1", "command": "claude", "status": "running", "team": { "role": "overseer" } }
+        ]
+      },
+      "output": {
+        "overlayKind": "overseer",
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          {
+            "method": "stopSessionToOfflineWithFeedback",
+            "args": [{ "id": "overseer-1", "command": "claude", "status": "running" }]
+          },
+          { "method": "renderOverseerOverlay", "args": [] }
+        ]
+      },
+      "inputSha256": "2a295b9681ed66512a53d98f66e3d4470b5fa1ef7e1c23772a60553febce0225"
+    },
+    {
+      "id": "dashboard-interaction-overlays-012",
+      "name": "overseer watch instructions appends printable text",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerWatchInstructionsKey",
+      "input": {
+        "method": "handleOverseerWatchInstructionsKey",
+        "key": "abc",
+        "overseerWatchInstructionsBuffer": "go "
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "go abc",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "renderOverseerWatchInstructions", "args": [] }]
+      },
+      "inputSha256": "5dfdf9f29317e35939cc10181035ad16b8b0660053a3dab50d22657d4a5096c1"
+    },
+    {
+      "id": "dashboard-interaction-overlays-013",
+      "name": "overseer watch instructions backspace trims buffer",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerWatchInstructionsKey",
+      "input": {
+        "method": "handleOverseerWatchInstructionsKey",
+        "key": "backspace",
+        "overseerWatchInstructionsBuffer": "abcd"
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "abc",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "renderOverseerWatchInstructions", "args": [] }]
+      },
+      "inputSha256": "02c8389c6c00a5f1e0f7ab200a180b1430f75c50fed092d04fc94221b0546abf"
+    },
+    {
+      "id": "dashboard-interaction-overlays-014",
+      "name": "overseer watch instructions escape clears target and restores dashboard",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleOverseerWatchInstructionsKey",
+      "input": {
+        "method": "handleOverseerWatchInstructionsKey",
+        "key": "escape",
+        "overlayKind": "overseer-watch-instructions",
+        "overseerWatchInstructionsBuffer": "watch",
+        "overseerWatchInstructionsTarget": { "id": "codex-1", "command": "codex" }
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "restoreDashboardAfterOverlayDismiss", "args": [] }
+        ]
+      },
+      "inputSha256": "22c20bb14c2a025f5358467e8d45f0fcc5cc60ee30174ad7b223126b355222bd"
+    },
+    {
+      "id": "dashboard-interaction-overlays-015",
+      "name": "service input appends printable text",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleServiceInputKey",
+      "input": { "method": "handleServiceInputKey", "key": "worker", "serviceInputBuffer": "run " },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "run worker",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "renderServiceInput", "args": [] }]
+      },
+      "inputSha256": "faa40300fa36ed46b05135f5f3dbf89016affdb80bbe3145ff0e1f3800bccffd"
+    },
+    {
+      "id": "dashboard-interaction-overlays-016",
+      "name": "service input enter creates dashboard service",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleServiceInputKey",
+      "input": {
+        "method": "handleServiceInputKey",
+        "key": "enter",
+        "overlayKind": "service-input",
+        "serviceInputBuffer": "npm run dev",
+        "focusedWorktreePath": "/repo/wt"
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "npm run dev",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "createDashboardServiceWithFeedback", "args": ["npm run dev", "/repo/wt"] },
+          { "method": "restoreDashboardAfterOverlayDismiss", "args": [] }
+        ]
+      },
+      "inputSha256": "f6d43852b2b56a4d9230a052973b84fdd14ed92e20e10c4b3c33842a2df6ed72"
+    },
+    {
+      "id": "dashboard-interaction-overlays-017",
+      "name": "service input enter blocks outside dashboard mode",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleServiceInputKey",
+      "input": {
+        "method": "handleServiceInputKey",
+        "key": "enter",
+        "overlayKind": "service-input",
+        "serviceInputBuffer": "svc",
+        "mode": "session"
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "svc",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          {
+            "method": "showDashboardError",
+            "args": ["Failed to create service", ["Service creation requires the project service."]]
+          }
+        ]
+      },
+      "inputSha256": "dbe6a32508f38a07afb71ec9b89bb04711c9dfa4461efa2c9d6b7062b5c89f80"
+    },
+    {
+      "id": "dashboard-interaction-overlays-018",
+      "name": "label input enter updates target label",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleLabelInputKey",
+      "input": {
+        "method": "handleLabelInputKey",
+        "key": "enter",
+        "overlayKind": "label-input",
+        "labelInputBuffer": "  New Label  ",
+        "labelInputTarget": "codex-1"
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "  New Label  ",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "updateSessionLabel", "args": ["codex-1", "New Label"] }
+        ]
+      },
+      "inputSha256": "e6967a9af2eb5ea7d280a2b17ee7409e145c218dff5e5406056b38f7b583f1e0"
+    },
+    {
+      "id": "dashboard-interaction-overlays-019",
+      "name": "label input escape clears target and restores dashboard",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleLabelInputKey",
+      "input": {
+        "method": "handleLabelInputKey",
+        "key": "escape",
+        "overlayKind": "label-input",
+        "labelInputBuffer": "draft",
+        "labelInputTarget": "codex-1"
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "draft",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "restoreDashboardAfterOverlayDismiss", "args": [] }
+        ]
+      },
+      "inputSha256": "f25e159d6fda5e6ed42140cfc4867adae959335964e1eb6733047ed1231e0137"
+    },
+    {
+      "id": "dashboard-interaction-overlays-020",
+      "name": "work outline down and up clamp offset",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleWorkOutlineOverlayKey",
+      "input": {
+        "method": "handleWorkOutlineOverlayKey",
+        "key": "j",
+        "workOutlineOverlayEntries": [{ "id": "a" }, { "id": "b" }],
+        "workOutlineOverlayOffset": 0
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 1,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "renderWorkOutlineOverlay", "args": [] }]
+      },
+      "inputSha256": "3e9e8bf917437414247f0d3fdb4ba51051aa998adaa8d6182b695a395cef2d3d"
+    },
+    {
+      "id": "dashboard-interaction-overlays-021",
+      "name": "work outline enter opens scribe when live scribe exists",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleWorkOutlineOverlayKey",
+      "input": {
+        "method": "handleWorkOutlineOverlayKey",
+        "key": "enter",
+        "overlayKind": "work-outline",
+        "dashboardScribeSessionsCache": [{ "id": "scribe-1", "command": "codex", "status": "running", "scribe": true }],
+        "openLiveResult": "opened"
+      },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "openLiveTmuxWindowForEntry", "args": [{ "id": "scribe-1" }] }
+        ]
+      },
+      "inputSha256": "c28e1870c48fe9fb243e2b930484360de9e0f8f59f3e66f90095505e4e9f5fbc"
+    },
+    {
+      "id": "dashboard-interaction-overlays-022",
+      "name": "work outline enter opens scribe picker when no live scribe exists",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleWorkOutlineOverlayKey",
+      "input": { "method": "handleWorkOutlineOverlayKey", "key": "enter", "overlayKind": "work-outline" },
+      "output": {
+        "overlayKind": null,
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "showToolPicker", "args": [null, { "scribe": true }] }
+        ]
+      },
+      "inputSha256": "7f0c7d9cbe686b697eec53ba07237680b177ef4eed0f9659ffb72402ca52417c"
+    },
+    {
+      "id": "dashboard-interaction-overlays-023",
+      "name": "work outline stop without running scribe flashes",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleWorkOutlineOverlayKey",
+      "input": { "method": "handleWorkOutlineOverlayKey", "key": "x", "overlayKind": "work-outline" },
+      "output": {
+        "overlayKind": "work-outline",
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": "No running scribe",
+        "footerFlashTicks": 2,
+        "calls": [{ "method": "renderWorkOutlineOverlay", "args": [] }]
+      },
+      "inputSha256": "d3d0ba9f450ff91d1120dd402ef9a0b933aa5abb9e8859c5864f67ac5162fa15"
+    },
+    {
+      "id": "dashboard-interaction-overlays-024",
+      "name": "work outline stop uses running scribe runtime when present",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "handleWorkOutlineOverlayKey",
+      "input": {
+        "method": "handleWorkOutlineOverlayKey",
+        "key": "x",
+        "overlayKind": "work-outline",
+        "sessions": [{ "id": "scribe-1", "command": "codex", "status": "running" }],
+        "dashboardScribeSessionsCache": [{ "id": "scribe-1", "command": "codex", "status": "running", "scribe": true }]
+      },
+      "output": {
+        "overlayKind": "work-outline",
+        "teammatePickerState": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "",
+        "serviceInputBuffer": "",
+        "labelInputBuffer": "",
+        "labelInputTarget": null,
+        "workOutlineOverlayOffset": 0,
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          {
+            "method": "stopSessionToOfflineWithFeedback",
+            "args": [{ "id": "scribe-1", "command": "codex", "status": "running" }]
+          },
+          { "method": "renderWorkOutlineOverlay", "args": [] }
+        ]
+      },
+      "inputSha256": "946b801164a635cad5d77b2bb1752fc2f02035c6e3b3bc1ceffb00fe2c1dfc2b"
+    }
+  ]
+}
