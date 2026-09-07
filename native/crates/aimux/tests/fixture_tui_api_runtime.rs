@@ -24,7 +24,7 @@ struct Case {
 #[test]
 fn tui_api_runtime_contract_matches_typescript() {
     let contract: Contract = serde_json::from_str(FIXTURE).expect("tui api runtime fixture parses");
-    assert_eq!(contract.cases.len(), 12);
+    assert_eq!(contract.cases.len(), 19);
 
     let mut failures = Vec::new();
     for case in contract.cases {

@@ -2,7 +2,7 @@
   "version": 1,
   "source": "src/multiplexer/tui-api-runtime.test.ts",
   "generatedBy": "scripts/capture-tui-api-runtime-contract.mjs",
-  "description": "TUI API runtime pure connection policy contracts captured by running TypeScript mutation-blocking, recoverable-error, and read-transport helpers.",
+  "description": "TUI API runtime pure connection policy and scheduler contracts captured by running TypeScript mutation-blocking, recoverable-error, read-transport, and recovery helpers.",
   "cases": [
     {
       "id": "tui-api-runtime-001",
@@ -199,6 +199,289 @@
         { "host": "empty", "hasReadTransport": false }
       ],
       "inputSha256": "cbcc9b6812291b17dbdadbf37b0424188de184569037f31bb643df89e514d186"
+    },
+    {
+      "id": "tui-api-runtime-013",
+      "name": "does not schedule recovery outside dashboard mode",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "does not schedule recovery outside dashboard mode",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "project-service"
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": false,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryTimer": null,
+          "dashboardRepairNotices": []
+        },
+        "timers": [],
+        "cleared": [],
+        "unref": [],
+        "calls": []
+      },
+      "inputSha256": "0413dcdbf3bb74d7c4728479bbbce1e646b62212b977db4b3f70d31b9d96a95c"
+    },
+    {
+      "id": "tui-api-runtime-014",
+      "name": "debounces first dashboard recovery request",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "debounces first dashboard recovery request",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard"
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryDueAt": 1700000000250,
+          "tuiApiRecoveryTimer": { "id": 1, "delay": 250 },
+          "dashboardRepairNotices": []
+        },
+        "timers": [{ "id": 1, "delay": 250 }],
+        "cleared": [],
+        "unref": [1],
+        "calls": []
+      },
+      "inputSha256": "45549e8663fc00c42e7a7902d9521a7e3fe5e7045d21973bd350f98fe860b905"
+    },
+    {
+      "id": "tui-api-runtime-015",
+      "name": "immediate recovery replaces later pending timer",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "immediate recovery replaces later pending timer",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "options": { "immediate": true },
+        "existingTimerDelay": 250,
+        "existingDueAt": 1700000000250
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryDueAt": 1700000000000,
+          "tuiApiRecoveryTimer": { "id": 1, "delay": 0 },
+          "dashboardRepairNotices": []
+        },
+        "timers": [{ "id": 1, "delay": 0 }],
+        "cleared": [0],
+        "unref": [1],
+        "calls": []
+      },
+      "inputSha256": "b01a31c941bdc74c61d10ae3f4eb4c1db1a1474ced5540f2d26ee20581bf3c02"
+    },
+    {
+      "id": "tui-api-runtime-016",
+      "name": "failure streak and last recovery time throttle retries",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "failure streak and last recovery time throttle retries",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "options": { "immediate": true },
+        "failureStreak": 2,
+        "lastRecoveryAt": 1699999999900
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryDueAt": 1700000003900,
+          "tuiApiRecoveryTimer": { "id": 1, "delay": 3900 },
+          "tuiApiRecoveryFailureStreak": 2,
+          "tuiApiLastRecoveryAt": 1699999999900,
+          "dashboardRepairNotices": []
+        },
+        "timers": [{ "id": 1, "delay": 3900 }],
+        "cleared": [],
+        "unref": [1],
+        "calls": []
+      },
+      "inputSha256": "ea1d2da1c816d7b7091c5e0bb3f5b6808bfb52e7783d890797e89d16b9fa3bc7"
+    },
+    {
+      "id": "tui-api-runtime-017",
+      "name": "scheduled recovery success clears pending retry state",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "scheduled recovery success clears pending retry state",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "options": { "immediate": true },
+        "failureStreak": 3,
+        "fireScheduled": true
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": false,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryTimer": null,
+          "tuiApiRecoveryFailureStreak": 0,
+          "tuiApiLastRecoveryAt": 1700000000000,
+          "dashboardRepairNotices": [
+            {
+              "kind": "tui-api-recovery",
+              "phase": "started",
+              "message": "Aimux API recovery started",
+              "at": 1700000000000
+            },
+            {
+              "kind": "tui-api-recovery",
+              "phase": "succeeded",
+              "message": "Aimux API recovery complete",
+              "at": 1700000000000
+            }
+          ],
+          "footerFlash": "Aimux API recovery complete",
+          "footerFlashTicks": 4
+        },
+        "timers": [{ "id": 1, "delay": 0 }],
+        "cleared": [],
+        "unref": [1],
+        "calls": [
+          { "method": "tuiApiRuntime.beginRecovery", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshRuntimeGuard", "args": [] },
+          { "method": "tuiApiRuntime.refreshCriticalResources", "args": [] },
+          { "method": "tuiApiRuntime.finishRecovery", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] }
+        ]
+      },
+      "inputSha256": "be7179f0c7cdba0c7a54cb23a361579b1269d03ef6b7beecaa3de5606d337df0"
+    },
+    {
+      "id": "tui-api-runtime-018",
+      "name": "scheduled recovery waits and reschedules when critical resources are unverified",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "scheduled recovery waits and reschedules when critical resources are unverified",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "options": { "immediate": true },
+        "fireScheduled": true,
+        "refreshCriticalResources": {
+          "attemptedResources": [],
+          "missingResources": ["desktop-state"],
+          "failedResources": []
+        },
+        "connectionSnapshot": {
+          "state": "reconnecting",
+          "failedCriticalResources": ["desktop-state"],
+          "lastError": "desktop-state unavailable"
+        }
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryDueAt": 1700000001000,
+          "tuiApiRecoveryTimer": { "id": 2, "delay": 1000 },
+          "tuiApiRecoveryFailureStreak": 1,
+          "tuiApiLastRecoveryAt": 1700000000000,
+          "dashboardRepairNotices": [
+            {
+              "kind": "tui-api-recovery",
+              "phase": "started",
+              "message": "Aimux API recovery started",
+              "at": 1700000000000
+            },
+            {
+              "kind": "tui-api-recovery",
+              "phase": "waiting",
+              "message": "Aimux API recovery still reconnecting",
+              "at": 1700000000000,
+              "error": "desktop-state unavailable"
+            }
+          ],
+          "footerFlash": "Aimux API recovery still reconnecting",
+          "footerFlashTicks": 4
+        },
+        "timers": [
+          { "id": 1, "delay": 0 },
+          { "id": 2, "delay": 1000 }
+        ],
+        "cleared": [],
+        "unref": [1, 2],
+        "calls": [
+          { "method": "tuiApiRuntime.beginRecovery", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshRuntimeGuard", "args": [] },
+          { "method": "tuiApiRuntime.refreshCriticalResources", "args": [] },
+          { "method": "tuiApiRuntime.finishRecovery", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] }
+        ]
+      },
+      "inputSha256": "c8a31920873f865ff33e3e3569fe2ea6b167dd9a2f2ccc337956994c4d2623c2"
+    },
+    {
+      "id": "tui-api-runtime-019",
+      "name": "scheduled recovery failure records error and backs off",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "scheduled recovery failure records error and backs off",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "options": { "immediate": true },
+        "fireScheduled": true,
+        "refreshCriticalThrows": "desktop-state timeout"
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryDueAt": 1700000001000,
+          "tuiApiRecoveryTimer": { "id": 2, "delay": 1000 },
+          "tuiApiRecoveryFailureStreak": 1,
+          "tuiApiLastRecoveryAt": 1700000000000,
+          "tuiApiRecoveryLastError": { "name": "Error", "message": "desktop-state timeout" },
+          "dashboardRepairNotices": [
+            {
+              "kind": "tui-api-recovery",
+              "phase": "started",
+              "message": "Aimux API recovery started",
+              "at": 1700000000000
+            },
+            {
+              "kind": "tui-api-recovery",
+              "phase": "failed",
+              "message": "Aimux API recovery failed",
+              "at": 1700000000000,
+              "error": "desktop-state timeout"
+            }
+          ],
+          "footerFlash": "Aimux API recovery failed",
+          "footerFlashTicks": 4
+        },
+        "timers": [
+          { "id": 1, "delay": 0 },
+          { "id": 2, "delay": 1000 }
+        ],
+        "cleared": [],
+        "unref": [1, 2],
+        "calls": [
+          { "method": "tuiApiRuntime.beginRecovery", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshRuntimeGuard", "args": [] },
+          { "method": "tuiApiRuntime.refreshCriticalResources", "args": [] },
+          {
+            "method": "tuiApiRuntime.markRecoveryFailed",
+            "args": [{ "name": "Error", "message": "desktop-state timeout" }]
+          },
+          { "method": "renderCurrentDashboardView", "args": [] }
+        ]
+      },
+      "inputSha256": "5d5e870d3305cde029fb64caa8ec8d456e723e447719e62c862cce01b29ecfda"
     }
   ]
 }
